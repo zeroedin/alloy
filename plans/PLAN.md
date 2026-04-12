@@ -2561,7 +2561,7 @@ Track which data keys each page actually reads during template rendering, enabli
 
 **Concept:** Wrap the template context in a proxy object that intercepts property access, records the key, and returns the value. After rendering, each page has a read set (e.g., `["site.title", "collections.blog"]`). On rebuild, only pages whose read set includes the changed data key are re-rendered.
 
-**Challenge:** Requires the Liquid library to route all property resolution through an interceptable interface rather than direct map access. Neither `Notifuse/liquidgo` nor `osteele/liquid` currently supports this. Implementation would require forking a Liquid library or contributing an upstream change to add a `Drop`-like interface with property access interception (similar to Ruby Liquid's `method_missing`). Go has no language-level equivalent of `method_missing`, so this must be an explicit library design choice.
+**Challenge:** Requires liquidgo to route all property resolution through an interceptable interface rather than direct map access. liquidgo does not currently support this. Implementation would require forking liquidgo or contributing an upstream change to add a `Drop`-like interface with property access interception (similar to Ruby Liquid's `method_missing`). Go has no language-level equivalent of `method_missing`, so this must be an explicit library design choice.
 
 **Impact:** At v1 performance targets (1,000 pages < 5s), full rebuilds on shared data changes are acceptable since they're infrequent. This becomes more valuable at scale (10k+ pages) or for sites with frequently-changing external data sources.
 
