@@ -33,5 +33,41 @@ type PageContext struct {
 
 // BuildTemplateContext assembles the complete template context for rendering a page.
 func BuildTemplateContext(page *content.Page, siteData map[string]interface{}, allPages []*content.Page, collections map[string]interface{}) *TemplateContext {
-	return nil
+	ctx := &TemplateContext{
+		Pages:       allPages,
+		Collections: collections,
+	}
+
+	// Populate site context
+	if title, ok := siteData["title"].(string); ok {
+		ctx.Site.Title = title
+	}
+	if baseURL, ok := siteData["baseURL"].(string); ok {
+		ctx.Site.BaseURL = baseURL
+	}
+	if language, ok := siteData["language"].(string); ok {
+		ctx.Site.Language = language
+	}
+	if data, ok := siteData["data"].(map[string]interface{}); ok {
+		ctx.Site.Data = data
+	}
+
+	// Populate page context
+	if title, ok := page.FrontMatter["title"].(string); ok {
+		ctx.Page.Title = title
+	}
+	ctx.Page.URL = page.URL
+	ctx.Page.Collection = page.Collection
+	ctx.Page.FrontMatter = page.FrontMatter
+	if !page.Date.IsZero() {
+		ctx.Page.Date = page.Date
+	}
+
+	// Set content from rendered body
+	if len(page.RenderedBody) > 0 {
+		ctx.Content = string(page.RenderedBody)
+		ctx.Page.Content = string(page.RenderedBody)
+	}
+
+	return ctx
 }
