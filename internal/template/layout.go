@@ -1,34 +1,241 @@
 package template
 
-import "github.com/zeroedin/alloy/internal/content"
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
-// ResolveLayout finds the correct layout file for a page following the lookup order.
+	"github.com/zeroedin/alloy/internal/content"
+)
+
+// layoutExtension returns the file extension for the given template engine.
+func layoutExtension(engine string) string {
+	switch engine {
+	case "gotemplate":
+		return ".html"
+	default:
+		return ".liquid"
+	}
+}
+
+// ResolveLayout finds the correct layout file for a page following the lookup order:
+// 1. Front matter layout
+// 2. "post" (for pages in date-based permalink sections)
+// 3. Section name (for index pages)
+// 4. Filename (without extension)
+// 5. "default"
+// Returns error if no layout file is found on disk.
 func ResolveLayout(page *content.Page, layoutsDir string, engine string, permalinkCfg map[string]string) (string, error) {
-	return "", ErrNotImplemented
+	ext := layoutExtension(engine)
+
+	// Check for layout: false
+	if val, ok := page.FrontMatter["layout"]; ok {
+		if b, ok := val.(bool); ok && !b {
+			return "", nil
+		}
+	}
+
+	// Build lookup chain
+	var candidates []string
+
+	// 1. Front matter layout
+	if layout, ok := page.FrontMatter["layout"].(string); ok && layout != "" {
+		candidates = append(candidates, filepath.Join(layoutsDir, layout+ext))
+	}
+
+	// 2. For pages in date-based permalink sections, try "post" layout
+	if isDateBasedSection(page.Section, permalinkCfg) && !isIndexPage(page.RelPath) {
+		candidates = append(candidates, filepath.Join(layoutsDir, "post"+ext))
+	}
+
+	// 3. Section name (for index pages)
+	if isIndexPage(page.RelPath) && page.Section != "" {
+		candidates = append(candidates, filepath.Join(layoutsDir, page.Section+ext))
+	}
+
+	// 4. Filename (without extension)
+	filename := filenameWithoutExt(page.RelPath)
+	candidates = append(candidates, filepath.Join(layoutsDir, filename+ext))
+
+	// 5. Default
+	candidates = append(candidates, filepath.Join(layoutsDir, "default"+ext))
+
+	// Return the first candidate that exists on disk
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c, nil
+		}
+	}
+
+	return "", fmt.Errorf("no layout found for page %q", page.RelPath)
 }
 
 // ResolveLayoutForFormat finds the correct layout for a specific output format.
-// For example, a page requesting "json" output with the Liquid engine looks for
-// "layouts/single.json.liquid" first, then "layouts/single.json".
 func ResolveLayoutForFormat(page *content.Page, layoutsDir string, engine string, format string) (string, error) {
-	return "", ErrNotImplemented
+	ext := layoutExtension(engine)
+
+	var candidates []string
+
+	// Format-specific layout: single.<format>.<engine-ext>
+	candidates = append(candidates, filepath.Join(layoutsDir, "single."+format+ext))
+
+	// Section-specific format layout
+	if page.Section != "" {
+		candidates = append(candidates, filepath.Join(layoutsDir, page.Section+"."+format+ext))
+	}
+
+	// Filename-specific format layout
+	filename := filenameWithoutExt(page.RelPath)
+	candidates = append(candidates, filepath.Join(layoutsDir, filename+"."+format+ext))
+
+	// Default format layout
+	candidates = append(candidates, filepath.Join(layoutsDir, "default."+format+ext))
+
+	// Return the first candidate that exists on disk
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c, nil
+		}
+	}
+
+	return "", fmt.Errorf("no layout found for page %q with format %q", page.RelPath, format)
 }
 
-// ResolveTaxonomyLayout finds the layout for a taxonomy page following the
-// taxonomy-specific lookup order: layouts/taxonomies/<name>.liquid → layouts/<name>.liquid.
-// Returns an error if no layout is found (build must abort).
+// ResolveTaxonomyLayout finds the layout for a taxonomy page.
+// Lookup: layouts/taxonomies/<name>.<ext> → layouts/<name>.<ext>
 func ResolveTaxonomyLayout(taxonomyName string, layoutOverride string, layoutsDir string, engine string) (string, error) {
-	return "", ErrNotImplemented
+	ext := layoutExtension(engine)
+	name := taxonomyName
+	if layoutOverride != "" {
+		name = layoutOverride
+	}
+
+	candidates := []string{
+		filepath.Join(layoutsDir, "taxonomies", name+ext),
+		filepath.Join(layoutsDir, name+ext),
+	}
+
+	// Return the first candidate that exists on disk
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c, nil
+		}
+	}
+
+	return "", fmt.Errorf("no layout found for taxonomy %q", taxonomyName)
 }
 
 // DetectCircularLayouts checks for circular references in layout chains.
-// Returns an error naming the cycle if one is found.
 func DetectCircularLayouts(layoutsDir string) error {
-	return ErrNotImplemented
+	// Scan all layout files for "layout:" or "extends:" directives
+	layouts := make(map[string]string) // file -> parent layout
+
+	err := filepath.Walk(layoutsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		parent := extractLayoutParent(path)
+		if parent != "" {
+			rel, _ := filepath.Rel(layoutsDir, path)
+			layouts[rel] = parent
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("error scanning layouts: %w", err)
+	}
+
+	// Detect cycles
+	for start := range layouts {
+		visited := make(map[string]bool)
+		current := start
+		for {
+			if visited[current] {
+				return fmt.Errorf("circular layout reference detected: %s", current)
+			}
+			visited[current] = true
+			parent, ok := layouts[current]
+			if !ok {
+				break
+			}
+			current = parent
+		}
+	}
+
+	return nil
 }
 
-// ResolveLayoutWithCascade resolves the layout for a page, considering both
-// front matter and _data.yaml cascade data. Front matter takes priority.
+// extractLayoutParent reads a layout file and looks for a parent reference.
+func extractLayoutParent(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		// Look for {% layout "parent" %} or layout: parent in front matter
+		if strings.Contains(line, "layout:") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				return strings.TrimSpace(strings.Trim(parts[1], `"' `))
+			}
+		}
+	}
+	return ""
+}
+
+// ResolveLayoutWithCascade resolves layout considering cascade data.
 func ResolveLayoutWithCascade(page *content.Page, layoutsDir, engine string, permalinkCfg map[string]string, cascadeData map[string]interface{}) (string, error) {
-	return "", ErrNotImplemented
+	ext := layoutExtension(engine)
+
+	// Check for layout: false in front matter
+	if val, ok := page.FrontMatter["layout"]; ok {
+		if b, ok := val.(bool); ok && !b {
+			return "", nil
+		}
+	}
+
+	// 1. Front matter layout takes priority
+	if layout, ok := page.FrontMatter["layout"].(string); ok && layout != "" {
+		return filepath.Join(layoutsDir, layout+ext), nil
+	}
+
+	// 2. Cascade data layout
+	if cascadeData != nil {
+		if layout, ok := cascadeData["layout"].(string); ok && layout != "" {
+			return filepath.Join(layoutsDir, layout+ext), nil
+		}
+	}
+
+	// 3. Fall back to standard resolution
+	return ResolveLayout(page, layoutsDir, engine, permalinkCfg)
+}
+
+// isDateBasedSection checks if a section has a date-based permalink pattern.
+func isDateBasedSection(section string, permalinkCfg map[string]string) bool {
+	pattern, ok := permalinkCfg[section]
+	if !ok {
+		return false
+	}
+	return strings.Contains(pattern, ":year") ||
+		strings.Contains(pattern, ":month") ||
+		strings.Contains(pattern, ":day")
+}
+
+// isIndexPage checks if a page is an index file.
+func isIndexPage(relPath string) bool {
+	base := filepath.Base(relPath)
+	return base == "index.md" || base == "index.html"
+}
+
+// filenameWithoutExt returns the base filename without its extension.
+func filenameWithoutExt(relPath string) string {
+	base := filepath.Base(relPath)
+	ext := filepath.Ext(base)
+	return strings.TrimSuffix(base, ext)
 }

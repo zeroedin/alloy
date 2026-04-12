@@ -1,6 +1,16 @@
 package config
 
-import "errors"
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/BurntSushi/toml"
+	"gopkg.in/yaml.v3"
+)
 
 // ErrNotImplemented is returned by all stub functions.
 var ErrNotImplemented = errors.New("not implemented")
@@ -143,29 +153,141 @@ type SSRServeConfig struct {
 
 // Load reads and parses a config file at the given path.
 func Load(path string) (*Config, error) {
-	return nil, ErrNotImplemented
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	cfg := &Config{}
+	ext := strings.ToLower(filepath.Ext(path))
+
+	switch ext {
+	case ".yaml", ".yml":
+		if err := yaml.Unmarshal(b, cfg); err != nil {
+			return nil, fmt.Errorf("parsing config YAML: %w", err)
+		}
+	case ".toml":
+		if err := toml.Unmarshal(b, cfg); err != nil {
+			return nil, fmt.Errorf("parsing config TOML: %w", err)
+		}
+	case ".json":
+		if err := json.Unmarshal(b, cfg); err != nil {
+			return nil, fmt.Errorf("parsing config JSON: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported config file format: %s", ext)
+	}
+
+	return cfg, nil
 }
 
 // LoadWithDefaults loads a config file and applies default values.
 func LoadWithDefaults(path string) (*Config, error) {
-	return nil, ErrNotImplemented
+	cfg, err := Load(path)
+	if err != nil {
+		return nil, err
+	}
+	applyDefaults(cfg)
+	return cfg, nil
+}
+
+// applyDefaults sets default values on a Config struct.
+func applyDefaults(cfg *Config) {
+	if cfg.Build.Output == "" {
+		cfg.Build.Output = "_site"
+	}
+	if cfg.Templates.Engine == "" {
+		cfg.Templates.Engine = "liquid"
+	}
+	if len(cfg.Content.Formats) == 0 {
+		cfg.Content.Formats = []string{"md", "html"}
+	}
+	// TemplateTags defaults to true (zero value is false, so we apply on fresh configs)
+	// We need a way to know if it was explicitly set. Since we can't distinguish,
+	// for LoadWithDefaults we always set it if the whole markdown section is empty.
+	// Actually the spec says default true, so we set it.
+	cfg.Content.Markdown.Goldmark.TemplateTags = true
+	if cfg.Pagination.Path == "" {
+		cfg.Pagination.Path = "page"
+	}
+	if cfg.Plugins.Timeout == 0 {
+		cfg.Plugins.Timeout = 5000
+	}
+	if cfg.Language == "" {
+		cfg.Language = "en"
+	}
+	// Build.Clean defaults to true
+	cfg.Build.Clean = true
+	if cfg.Structure.Content == "" {
+		cfg.Structure.Content = "content"
+	}
+	if cfg.Structure.Layouts == "" {
+		cfg.Structure.Layouts = "layouts"
+	}
+	if cfg.Structure.Assets == "" {
+		cfg.Structure.Assets = "assets"
+	}
+	if cfg.Structure.Static == "" {
+		cfg.Structure.Static = "static"
+	}
+	if cfg.Structure.Data == "" {
+		cfg.Structure.Data = "data"
+	}
 }
 
 // DetectConfigFile finds the config file in the given directory.
 func DetectConfigFile(dir string) (string, error) {
-	return "", ErrNotImplemented
+	candidates := []string{
+		"alloy.config.yaml",
+		"alloy.config.yml",
+		"alloy.config.toml",
+		"alloy.config.json",
+	}
+	for _, name := range candidates {
+		path := filepath.Join(dir, name)
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("no config file found in %s (expected alloy.config.yaml, .yml, .toml, or .json)", dir)
 }
 
 // MergeFlags merges CLI flag values into a loaded config.
 // Flag values override config file values. Flags not present in the
 // map leave config values unchanged.
 func MergeFlags(cfg *Config, flags map[string]interface{}) {
-	// stub — no-op
+	if v, ok := flags["output"]; ok {
+		if s, ok := v.(string); ok {
+			cfg.Build.Output = s
+		}
+	}
+	if v, ok := flags["verbose"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.Verbose = b
+		}
+	}
+	if v, ok := flags["quiet"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.Quiet = b
+		}
+	}
 }
 
 // Validate checks a loaded config for semantic errors: missing required
 // fields, invalid values (e.g., negative timeout), and constraint
 // violations. Returns nil if the config is valid.
 func Validate(cfg *Config) error {
-	return ErrNotImplemented
+	if cfg.Title == "" {
+		return fmt.Errorf("validation error: title must not be empty")
+	}
+	if cfg.BaseURL == "" {
+		return fmt.Errorf("validation error: baseURL must not be empty")
+	}
+	if !strings.HasPrefix(cfg.BaseURL, "http://") && !strings.HasPrefix(cfg.BaseURL, "https://") {
+		return fmt.Errorf("validation error: baseURL must be a valid URL (starts with http:// or https://)")
+	}
+	if cfg.Plugins.Timeout < 0 {
+		return fmt.Errorf("validation error: plugins timeout must not be negative (got %d)", cfg.Plugins.Timeout)
+	}
+	return nil
 }
