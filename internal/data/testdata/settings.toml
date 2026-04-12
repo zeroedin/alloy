@@ -1,0 +1,6 @@
+[site]
+name = "Test"
+version = 2
+
+[features]
+dark_mode = true

@@ -1,0 +1,4 @@
+layout: "default"
+author:
+  name: "Content Author"
+scripts: ["base.js"]

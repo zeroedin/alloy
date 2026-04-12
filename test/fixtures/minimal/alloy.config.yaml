@@ -1,0 +1,10 @@
+title: "Minimal Test Site"
+baseURL: "https://example.com"
+
+build:
+  output: "_site"
+  clean: true
+
+permalinks:
+  blog: "/:year/:month/:slug/"
+  default: "/:slug/"

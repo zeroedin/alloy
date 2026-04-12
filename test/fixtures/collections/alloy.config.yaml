@@ -1,0 +1,22 @@
+title: "Collections Test Site"
+baseURL: "https://example.com"
+
+build:
+  output: "_site"
+
+taxonomies:
+  tags:
+    permalink: "/tags/:slug/"
+    layout: "tags"
+  categories:
+    permalink: "/categories/:slug/"
+    layout: "categories"
+
+permalinks:
+  blog: "/:year/:month/:slug/"
+  default: "/:slug/"
+
+collections:
+  blog:
+    sortBy: "date"
+    order: "desc"

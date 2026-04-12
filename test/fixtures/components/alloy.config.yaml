@@ -1,0 +1,13 @@
+title: "Components Fixture"
+baseURL: "https://example.com"
+build:
+  output: _site
+  clean: true
+templates:
+  engine: liquid
+ssr:
+  build: "golit render _site/**/*.html"
+  serve:
+    cmd: "golit serve"
+    endpoint: "http://localhost:6570"
+    protocol: http

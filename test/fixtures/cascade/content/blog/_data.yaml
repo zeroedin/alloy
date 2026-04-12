@@ -1,0 +1,5 @@
+layout: "post"
+author:
+  name: "Blog Author"
+  twitter: "@blogauthor"
+scripts: ["blog.js"]

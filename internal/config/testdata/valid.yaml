@@ -1,0 +1,93 @@
+title: "Test Site"
+baseURL: "https://example.com"
+language: "en"
+
+build:
+  output: "_site"
+  clean: true
+
+content:
+  formats: ["md", "html"]
+  markdown:
+    goldmark:
+      unsafe: true
+      typographer: true
+      templateTags: true
+
+templates:
+  engine: "liquid"
+
+plugins:
+  node: true
+  timeout: 5000
+
+taxonomies:
+  tags:
+    permalink: "/tags/:slug/"
+    layout: "tags"
+  categories:
+    permalink: "/categories/:slug/"
+    layout: "categories"
+
+permalinks:
+  blog: "/:year/:month/:slug/"
+  default: "/:slug/"
+
+pagination:
+  path: "page"
+
+passthrough:
+  - from: "../design-system/dist/elements"
+    to: "elements"
+  - from: "../shared-assets/fonts"
+    to: "assets/fonts"
+
+sources:
+  posts:
+    type: "rest"
+    url: "https://api.example.com/posts.json"
+    cache: 3600
+    as: "posts"
+  products:
+    type: "graphql"
+    endpoint: "https://api.example.com/graphql"
+    query: "{ products { id, name, price, slug } }"
+    cache: 1800
+    as: "products"
+
+sitemap:
+  changefreq: "weekly"
+  priority: 0.5
+
+structure:
+  content: "content"
+  layouts: "layouts"
+  assets: "assets"
+  static: "static"
+  data: "data"
+
+collections:
+  blog:
+    sortBy: "date"
+    order: "desc"
+
+ssr:
+  build: "golit transform _site/"
+  serve:
+    cmd: "golit serve --defs bundles/"
+    endpoint: "http://localhost:9777/render"
+
+languages:
+  en:
+    title: "Test Site"
+    weight: 1
+    root: true
+    strings:
+      read_more: "Read more"
+      posted_on: "Posted on"
+  fr:
+    title: "Site Test"
+    weight: 2
+    strings:
+      read_more: "Lire la suite"
+      posted_on: "Publié le"
