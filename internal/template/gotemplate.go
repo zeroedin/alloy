@@ -33,12 +33,17 @@ func (e *goEngine) Parse(name string, content []byte) (Template, error) {
 	return &goTemplate{tpl: parsed, name: name}, nil
 }
 
+// AddFilter registers a filter function. Must be called before Parse —
+// Go's html/template binds functions at parse time, not render time.
 func (e *goEngine) AddFilter(name string, fn FilterFunc) error {
 	e.funcMap[name] = fn
 	return nil
 }
 
 func (e *goEngine) AddTag(name string, fn TagFunc) error {
+	e.funcMap[name] = func(args ...string) string {
+		return fn(args, "")
+	}
 	return nil
 }
 
@@ -52,17 +57,24 @@ func (t *goTemplate) Render(ctx map[string]interface{}) ([]byte, error) {
 }
 
 // markHTMLSafe recursively converts string values in known HTML fields
-// (like "content") to template.HTML so they render unescaped.
+// (content, summary) to template.HTML so they render unescaped.
+// Recurses into nested maps so that fields like page.content and
+// page.summary are also converted at any depth.
 func markHTMLSafe(ctx map[string]interface{}) map[string]interface{} {
 	out := make(map[string]interface{}, len(ctx))
 	for k, v := range ctx {
-		if k == "content" {
-			if s, ok := v.(string); ok {
-				out[k] = gohtml.HTML(s)
-				continue
+		switch val := v.(type) {
+		case string:
+			if k == "content" || k == "summary" {
+				out[k] = gohtml.HTML(val)
+			} else {
+				out[k] = v
 			}
+		case map[string]interface{}:
+			out[k] = markHTMLSafe(val)
+		default:
+			out[k] = v
 		}
-		out[k] = v
 	}
 	return out
 }
