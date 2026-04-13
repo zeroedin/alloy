@@ -42,6 +42,6 @@ baseURL: "http://localhost:3000"
 	if err := os.WriteFile(configPath, []byte(defaultConfig), 0644); err != nil {
 		return err
 	}
-	fmt.Println("Created alloy.config.yaml")
+	fmt.Printf("Created %s\n", configPath)
 	return nil
 }
