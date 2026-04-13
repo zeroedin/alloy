@@ -289,8 +289,13 @@ func validateOutputDir(cfg *config.Config) error {
 	outputClean := filepath.Clean(cfg.Build.Output)
 	for _, managed := range managedDirs {
 		managedClean := filepath.Clean(managed)
-		if strings.Contains(outputClean, managedClean) {
-			return fmt.Errorf("output directory %q conflicts with managed directory %q: cannot contain content directory path", outputClean, managedClean)
+		// Check for exact match or parent/child nesting — not substring.
+		// "my_content_site" must NOT match "content", but "content" and
+		// "content/output" must match.
+		if outputClean == managedClean ||
+			strings.HasPrefix(outputClean, managedClean+string(filepath.Separator)) ||
+			strings.HasPrefix(managedClean, outputClean+string(filepath.Separator)) {
+			return fmt.Errorf("output directory %q conflicts with managed directory %q", outputClean, managedClean)
 		}
 	}
 
