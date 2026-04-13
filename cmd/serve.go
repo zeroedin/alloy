@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
-	"os"
+	"io/fs"
+	"log"
 	"strconv"
 
 	"github.com/spf13/cobra"
 	"github.com/zeroedin/alloy/internal/config"
+	"github.com/zeroedin/alloy/internal/pipeline"
 	"github.com/zeroedin/alloy/internal/server"
 )
 
@@ -19,7 +22,7 @@ func newServeCommand() *cobra.Command {
 
 			cfg, err := config.LoadWithDefaults(configPath)
 			if err != nil {
-				if os.IsNotExist(err) {
+				if errors.Is(err, fs.ErrNotExist) {
 					// No config file — serve with defaults
 					cfg = &config.Config{}
 					config.ApplyDefaults(cfg)
@@ -42,8 +45,17 @@ func newServeCommand() *cobra.Command {
 				v, _ := cmd.Flags().GetBool("quiet")
 				flags["quiet"] = v
 			}
+			if cmd.Flags().Changed("refetch") {
+				v, _ := cmd.Flags().GetBool("refetch")
+				flags["refetch"] = v
+			}
 			if len(flags) > 0 {
 				config.MergeFlags(cfg, flags)
+			}
+
+			// Initial build per spec §9 step 2
+			if _, err := pipeline.Build(cfg); err != nil {
+				log.Printf("warning: initial build failed: %v", err)
 			}
 
 			// Determine server mode
