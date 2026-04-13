@@ -13,7 +13,7 @@ var _ = Describe("Error message contracts", func() {
 		cfg := &config.Config{
 			Title:   "Error Test",
 			BaseURL: "https://example.com",
-			Build:   config.BuildConfig{Output: "nonexistent-content-dir"},
+			Build:   config.BuildConfig{Output: "content"},
 		}
 		_, err := pipeline.Build(cfg)
 		Expect(err).To(HaveOccurred())

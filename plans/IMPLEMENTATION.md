@@ -210,6 +210,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 - `Build`: Orchestrate full pipeline. Set `SSRSkipped=true` when no SSR config. Handle empty content (PageCount=0). Return `OutputDir`, `PageCount`, `Duration`.
 - `BuildWithContent`: Accept injected content, render through pipeline. Error messages must contain source file path + "template rendering" stage.
 - `BuildPhase1`/`BuildPhase2`: Phase separation. Phase 2 inserts `<template shadowrootmode="open">` markers for custom elements (minimal SSR simulation).
+- **`validateOutputDir`** (issue #9): Uses path equality + parent/child overlap detection (not substring matching). Only rejects exact matches (`output == content`) and nesting (`output = content/build` or `content` inside `output`). Names like `my_content_site` are valid output directories.
 
 ### WALKING SKELETON MILESTONE
 At this point, `alloy build` works end-to-end on test fixtures.
