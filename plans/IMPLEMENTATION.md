@@ -156,7 +156,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 ### 3C: `internal/template` — context, layout, shortcodes (~23 tests)
 **Files**: `context.go`, `layout.go`, `shortcodes.go`
 
-- `BuildTemplateContext`: Populate `TemplateContext` from page + site data
+- `BuildTemplateContext`: Populate `TemplateContext` from page + site data. All pages live under `site.pages` (not top-level `pages`) for consistency with `site.title`, `site.data`, etc.
 - `ResolveLayout`: Lookup chain per spec (front matter > section name > filename > default). Handle `layout: false`.
 - `ResolveLayoutWithCascade(page, layoutsDir, engine, permalinkCfg, cascadeData)`: Same lookup chain as `ResolveLayout`, but also considers `_data.yaml` cascade data for layout resolution. Front matter takes priority over cascade data.
 - `ResolveTaxonomyLayout`: `layouts/taxonomies/<name>.liquid` > `layouts/<name>.liquid`

@@ -88,10 +88,10 @@ var _ = Describe("Template Context Shape (§3)", func() {
 		Expect(ctx.Page.Collection).To(Equal("blog"))
 	})
 
-	It("{{ pages }} contains all pages", func() {
+	It("{{ site.pages }} contains all pages", func() {
 		ctx := template.BuildTemplateContext(page, siteData, allPages, collections)
 		Expect(ctx).NotTo(BeNil())
-		Expect(ctx.Pages).To(HaveLen(1))
+		Expect(ctx.Site.Pages).To(HaveLen(1))
 	})
 
 	It("{{ collections.blog }} is the section collection", func() {
