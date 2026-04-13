@@ -191,7 +191,12 @@ func renderPages(pages []*content.Page, cfg *config.Config) ([]string, error) {
 	for _, page := range pages {
 		body := page.Body
 
-		// If the body contains template syntax, render it first
+		// Render template tags first so that errors in template syntax
+		// are caught early and reported with the source file context.
+		// NOTE: Spec §6 Phase 1 steps 3–4 suggest markdown-first ordering.
+		// Current order (template→markdown) is needed because markdown
+		// rendering can obscure template syntax errors. Revisit when the
+		// template engine supports raw-block protection for code fences.
 		if hasTemplateSyntax(body) {
 			ctx := buildTemplateContext(page, cfg)
 			result, err := tmpl.RenderTemplate(string(body), page.RelPath, ctx)
@@ -233,6 +238,8 @@ func hasTemplateSyntax(body []byte) bool {
 // buildTemplateContext creates the template rendering context for a page.
 func buildTemplateContext(page *content.Page, cfg *config.Config) map[string]interface{} {
 	ctx := make(map[string]interface{})
+	// TODO: Expand per spec §3 — needs page.url, page.content, page.date,
+	// page.collection, site.data, site.pages, site.collections, collections.*
 	ctx["page"] = page.FrontMatter
 	ctx["site"] = map[string]interface{}{
 		"title":   cfg.Title,
@@ -242,6 +249,8 @@ func buildTemplateContext(page *content.Page, cfg *config.Config) map[string]int
 }
 
 // setDefaults applies build-time defaults to a config.
+// TODO: Consolidate with config.applyDefaults — single source of truth for defaults.
+// Callers should use config.LoadWithDefaults, or applyDefaults should be exported.
 func setDefaults(cfg *config.Config) {
 	if cfg.Structure.Content == "" {
 		cfg.Structure.Content = "content"
@@ -288,6 +297,10 @@ func validateOutputDir(cfg *config.Config) error {
 	return nil
 }
 
+// customElementOpen matches the opening tag of a custom element (contains a hyphen).
+// Allows digits per HTML custom element spec (e.g., my-component-2).
+var customElementOpen = regexp.MustCompile(`<([a-zA-Z][a-zA-Z0-9]*-[a-zA-Z0-9-]*)([^>]*)>`)
+
 // transformCustomElements finds custom elements (tags with hyphens) and
 // wraps their content in Declarative Shadow DOM templates.
 func transformCustomElements(html string) string {
@@ -295,21 +308,38 @@ func transformCustomElements(html string) string {
 	// and add Declarative Shadow DOM template wrapping.
 	// This is a simplified implementation — real SSR would execute
 	// the component's render function.
-	result := html
-
-	// Pattern: <tag-name ...>content</tag-name>
-	// Replace with SSR'd version containing shadowrootmode
-	customElementPattern := regexp.MustCompile(`<([a-z]+-[a-z-]+)([^>]*)>(.*?)</([a-z]+-[a-z-]+)>`)
-	result = customElementPattern.ReplaceAllStringFunc(result, func(match string) string {
-		submatches := customElementPattern.FindStringSubmatch(match)
-		if len(submatches) < 5 {
-			return match
+	// Uses iterative matching instead of backreferences (unsupported in Go RE2).
+	var out strings.Builder
+	remaining := html
+	for {
+		loc := customElementOpen.FindStringSubmatchIndex(remaining)
+		if loc == nil {
+			out.WriteString(remaining)
+			break
 		}
-		tagName := submatches[1]
-		attrs := submatches[2]
-		inner := submatches[3]
-		return fmt.Sprintf(`<%s%s><template shadowrootmode="open">%s</template></%s>`, tagName, attrs, inner, tagName)
-	})
+		tagName := remaining[loc[2]:loc[3]]
+		attrs := remaining[loc[4]:loc[5]]
+		afterOpen := loc[1]
 
-	return result
+		// Find the matching closing tag for this specific element
+		closeTag := "</" + tagName + ">"
+		closeIdx := strings.Index(remaining[afterOpen:], closeTag)
+		if closeIdx < 0 {
+			// No closing tag — write through end of opening tag and continue
+			out.WriteString(remaining[:afterOpen])
+			remaining = remaining[afterOpen:]
+			continue
+		}
+		closeIdx += afterOpen
+		inner := remaining[afterOpen:closeIdx]
+
+		// Write everything before this element, then the transformed version
+		out.WriteString(remaining[:loc[0]])
+		fmt.Fprintf(&out, `<%s%s><template shadowrootmode="open">%s</template></%s>`,
+			tagName, attrs, inner, tagName)
+
+		remaining = remaining[closeIdx+len(closeTag):]
+	}
+
+	return out.String()
 }
