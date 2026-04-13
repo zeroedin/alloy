@@ -207,11 +207,43 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 ### 4D: `internal/pipeline` — 16 tests
 **File**: `internal/pipeline/build.go`
 
-- `Build`: Orchestrate full pipeline. Set `SSRSkipped=true` when no SSR config. Handle empty content (PageCount=0). Return `OutputDir`, `PageCount`, `Duration`.
 - `BuildWithContent`: Accept injected content, render through pipeline. Error messages must contain source file path + "template rendering" stage.
 - `BuildPhase1`/`BuildPhase2`: Phase separation. Phase 2 inserts `<template shadowrootmode="open">` markers for custom elements (minimal SSR simulation).
 - **`validateOutputDir`** (issue #9): Uses path equality + parent/child overlap detection (not substring matching). Only rejects exact matches (`output == content`) and nesting (`output = content/build` or `content` inside `output`). Names like `my_content_site` are valid output directories.
 - **Render ordering** (issue #10): Markdown renders first, then template tags — per spec §6 steps 3-4. Goldmark's TemplateTags extension preserves `{{ }}`/`{% %}` through markdown rendering. Code fences protect their contents automatically (goldmark parsers take precedence). Markdown errors use stage name `"content transformation"`, template errors use `"template rendering"`.
+
+#### `Build()` full orchestration (issue #30)
+
+`Build()` must orchestrate all pipeline stages from §2. Currently it stops after markdown+template rendering. The individual packages for each stage are implemented and pass tests — they need to be called in order:
+
+```
+ 1. config.ApplyDefaults(cfg)                           ✅ done
+ 2. validateOutputDir(cfg)                               ✅ done
+ 3. content.DiscoverWithFormats(contentDir, formats)      ✅ done
+ 4. content.FilterByLifecycle(pages, now, false)          ✅ done
+ 5. permalink.ResolveForSection(page, cfg.Permalinks)     ❌ missing — page.URL never set
+ 6. data.LoadDirectory(dataDir) → siteData                ✅ done
+ 7. collection.BuildCollections(pages, permalinks)        ✅ done
+ 8. collection.BuildTaxonomies(pages, taxonomies)         ✅ done
+ 9. template.RegisterBuiltinFilters(engine)               ❌ missing — filters unavailable
+10. renderPages (markdown → template tags)                ✅ done
+11. template.ResolveLayout(page, layoutsDir, engine)      ❌ missing — no layout wrapping
+12. Render page through layout ({{ content }} injection)  ❌ missing
+13. output.ComputeOutputPath(page) → output path          ❌ missing
+14. output.WriteFile(outputPath, html)                    ❌ missing — nothing written to disk
+15. static.CopyStatic(staticDir, outputDir)               ❌ missing
+16. assets.CopyAssets(assetsDir, outputDir)                ❌ missing
+17. static.CopyPassthroughWithValidation(...)             ❌ missing
+18. output.GenerateSitemap(pages, baseURL, outputDir)     ❌ missing
+19. cache.SaveTo(cacheFile)                               ❌ missing
+```
+
+**Key implementation notes:**
+- Steps 5-8 happen before rendering (step 10) so templates can access `page.url`, `collections.*`, etc.
+- Step 9 must happen before step 10 so template filters like `{{ title | slugify }}` work.
+- Step 11-12 happen after step 10: content is rendered first, then injected into the layout via `{{ content }}`.
+- Steps 14-18 are post-render: write files, copy assets, generate sitemap.
+- If content directory doesn't exist or is empty, `Build()` should return a successful zero-page result (not error). This is required for `alloy init && alloy build` to work and for cmd tests to pass.
 
 ### WALKING SKELETON MILESTONE
 At this point, `alloy build` works end-to-end on test fixtures.
@@ -243,10 +275,40 @@ At this point, `alloy build` works end-to-end on test fixtures.
 ### 5D: `cmd/` + `main.go` — 15 tests
 **Files**: `main.go`, `root.go`, `build.go`, `serve.go`, `init.go`, `version.go`
 
-- **`main.go` entry point (blocker — issue #24)**: `main()` must call `cmd.Execute()` to wire the Cobra command tree to the binary. Without this, the compiled binary is a no-op (exits 0, no output). This is a one-line fix but blocks all CLI functionality.
-- Register Cobra flags (--config, --output, --verbose, --quiet, --port, --preview, --no-drafts, --refetch)
-- `RunInit`: Create default config, error if exists
-- `Version`: Set to non-empty string
+- **`main.go` exit code handling (issue #28)**: `main()` must check the error return from `cmd.Execute()` and call `os.Exit(1)` on failure. Without this, all CLI errors exit 0, breaking scripts and CI. Current code discards the error.
+- Register Cobra flags (--config, --output, --verbose, --quiet, --port, --preview, --no-drafts, --refetch) ✅ done
+- `Version`: Set to non-empty string ✅ done
+
+#### `cmd/init.go` (issue #26)
+
+`RunInit` needs 4 fixes:
+1. **Create target directory** if it doesn't exist (`os.MkdirAll(dir, 0755)` before writing).
+2. **Generated config must include `baseURL`** — current config is just `title: My Alloy Site` which fails `config.Validate`. Minimum: `title` + `baseURL: "http://localhost:3000"`.
+3. **Print success message** after writing: `fmt.Println("Created alloy.config.yaml")`.
+4. **Don't swallow "already exists" error** — the `RunE` wrapper catches the error, prints it, then returns `nil`. It must return the error so Cobra exits non-zero.
+
+#### `cmd/build.go` (issue #27)
+
+`RunE` is an empty stub. Must wire to pipeline:
+1. Read `--config` flag, call `config.DetectConfigFile` or `config.Load`. If no config file found, use `config.ApplyDefaults` on an empty `Config` (zero-page build, not an error).
+2. Read `--output`, `--verbose`, `--quiet` flags, call `config.MergeFlags`.
+3. Call `pipeline.Build(cfg)`.
+4. Print summary: `fmt.Printf("Built %d pages in %s\n", result.PageCount, result.Duration)`.
+5. Return any error from Build — Cobra will handle exit code.
+
+**Test note**: The existing cmd test `"build command executes the build pipeline successfully"` runs without a project fixture. Build must handle missing content directory gracefully (return zero-page success, not error) for this test to pass.
+
+#### `cmd/serve.go` (issue #29)
+
+`RunE` is an empty stub. Must wire to server:
+1. Load config (same as build).
+2. Run initial build via `pipeline.Build(cfg)`.
+3. Read `--port`, `--preview`, `--no-drafts`, `--refetch` flags.
+4. Call `server.NewWithMode(cfg, mode)` and `server.Start()`.
+5. Start file watcher.
+6. Block until interrupt.
+
+**Test note**: The existing cmd test `"serve command starts the dev server successfully"` expects no error. The serve command should not actually block in test — start and return, or detect test mode. Alternatively, `server.Start` should be non-blocking with a separate `Wait()` method. Current `server` package tests use `server.NewWithMode` directly so this is an orchestration concern.
 
 **Verify**: `go test ./internal/plugin/... ./internal/fetch/... ./internal/i18n/... ./cmd/...`
 

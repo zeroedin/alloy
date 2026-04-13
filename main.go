@@ -1,7 +1,13 @@
 package main
 
-import "github.com/zeroedin/alloy/cmd"
+import (
+	"os"
+
+	"github.com/zeroedin/alloy/cmd"
+)
 
 func main() {
-	cmd.Execute()
+	if err := cmd.Execute(); err != nil {
+		os.Exit(1)
+	}
 }
