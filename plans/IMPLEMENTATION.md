@@ -138,8 +138,8 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 - `ResolveTokens`: Replace `:year`, `:month`, `:day`, `:slug`, `:section`, `:filename`, `:title`
 - `Resolve`: Front matter permalink > pattern with tokens. Handle `permalink: false`.
 - `ContainsLiquidTags`: Check for `{{` in string
-- `DefaultFromPath`: `blog/my-post.md` -> `/blog/my-post/`
-- `ResolveForSection`: Front matter > section pattern > default pattern > file path
+- `DefaultFromPath`: `blog/my-post.md` -> `/blog/my-post/`. Handles index files: `index.md` → `/`, `blog/index.md` → `/blog/`, `blog/post/index.md` → `/blog/post/` (strips `/index` suffix).
+- `ResolveForSection`: Front matter > section pattern > default pattern > file path. **Index file override (issue #39)**: Before applying section or default patterns (steps 2-3), check if the page is an index file (`isIndexFile(page.RelPath)`). If so, skip directly to `DefaultFromPath` (step 4). This prevents `default: "/:slug/"` from turning `index.md` (title: "Home") into `/home/` instead of `/`. Front matter `permalink:` (step 1) still overrides — allows configuring index path for subdirectory deployments.
 - `ResolveAliases`: Return page's Aliases slice
 
 ### 3B: `internal/collection` — 21 tests
