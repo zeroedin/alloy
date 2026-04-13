@@ -122,6 +122,11 @@ func ResolveForSection(page *content.Page, permalinkCfg map[string]string) (stri
 		}
 	}
 
+	// Index files skip section/default patterns — resolve to directory path
+	if isIndexFile(page.RelPath) {
+		return DefaultFromPath(page.RelPath), nil
+	}
+
 	// 2. Section-specific pattern
 	if pattern, ok := permalinkCfg[page.Section]; ok {
 		return ResolveTokens(pattern, page), nil
@@ -166,6 +171,14 @@ func resolveSlug(page *content.Page) string {
 
 	// Filename without extension
 	return filenameWithoutExt(page.RelPath)
+}
+
+// isIndexFile returns true if the relative path refers to an index file
+// (e.g., index.md, index.html, blog/index.md).
+func isIndexFile(relPath string) bool {
+	base := filepath.Base(relPath)
+	name := strings.TrimSuffix(base, filepath.Ext(base))
+	return name == "index"
 }
 
 // filenameWithoutExt returns the base filename without its extension.
