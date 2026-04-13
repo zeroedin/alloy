@@ -11,6 +11,7 @@ import (
 
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
+	"github.com/zeroedin/alloy/internal/data"
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
@@ -48,8 +49,11 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 	// Filter by lifecycle (draft/publish/expiry)
 	pages = content.FilterByLifecycle(pages, time.Now(), false)
 
+	// Load data files
+	siteData := loadSiteData(cfg)
+
 	// Render each page
-	rendered, renderErr := renderPages(pages, cfg)
+	rendered, renderErr := renderPages(pages, cfg, siteData)
 	if renderErr != nil {
 		return nil, renderErr
 	}
@@ -110,8 +114,8 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildR
 		return nil, fmt.Errorf("content discovery: %w", err)
 	}
 
-	// Render each page
-	rendered, renderErr := renderPages(pages, cfg)
+	// Render each page (no data files available in injected content mode)
+	rendered, renderErr := renderPages(pages, cfg, nil)
 	if renderErr != nil {
 		return nil, renderErr
 	}
@@ -179,7 +183,7 @@ func BuildPhase2(intermediateHTML map[string]string, ssrCfg *config.SSRConfig) (
 
 // renderPages renders all pages through the markdown and template pipeline.
 // Returns the list of rendered page paths or an error.
-func renderPages(pages []*content.Page, cfg *config.Config) ([]string, error) {
+func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]interface{}) ([]string, error) {
 	mdOpts := content.MarkdownOptions{
 		Unsafe:       cfg.Content.Markdown.Goldmark.Unsafe,
 		Typographer:  cfg.Content.Markdown.Goldmark.Typographer,
@@ -212,7 +216,7 @@ func renderPages(pages []*content.Page, cfg *config.Config) ([]string, error) {
 
 		// Step 2: Render template tags with full page/site context.
 		if hasTemplateSyntax(html) {
-			ctx := buildTemplateContext(page, cfg)
+			ctx := buildTemplateContext(page, cfg, pages, siteData)
 			result, err := tmpl.RenderTemplate(string(html), page.RelPath, ctx)
 			if err != nil {
 				return nil, fmt.Errorf("template rendering: %s", err.Error())
@@ -233,17 +237,56 @@ func hasTemplateSyntax(body []byte) bool {
 	return strings.Contains(s, "{{") || strings.Contains(s, "{%")
 }
 
-// buildTemplateContext creates the template rendering context for a page.
-func buildTemplateContext(page *content.Page, cfg *config.Config) map[string]interface{} {
-	ctx := make(map[string]interface{})
-	// TODO: Expand per spec §3 — needs page.url, page.content, page.date,
-	// page.collection, site.data, site.pages, site.collections, collections.*
-	ctx["page"] = page.FrontMatter
-	ctx["site"] = map[string]interface{}{
+// buildTemplateContext creates the template rendering context for a page
+// per spec §3 (Template Context).
+func buildTemplateContext(page *content.Page, cfg *config.Config, allPages []*content.Page, siteData map[string]interface{}) map[string]interface{} {
+	// Page context: start with front matter, then overlay computed fields.
+	pageCtx := make(map[string]interface{}, len(page.FrontMatter)+4)
+	for k, v := range page.FrontMatter {
+		pageCtx[k] = v
+	}
+	if page.URL != "" {
+		pageCtx["url"] = page.URL
+	}
+	if !page.Date.IsZero() {
+		pageCtx["date"] = page.Date
+	}
+	if page.Section != "" {
+		pageCtx["collection"] = page.Section
+	}
+
+	// Site context
+	site := map[string]interface{}{
 		"title":   cfg.Title,
 		"baseURL": cfg.BaseURL,
 	}
+	if siteData != nil {
+		site["data"] = siteData
+	} else {
+		site["data"] = make(map[string]interface{})
+	}
+	if allPages != nil {
+		site["pages"] = allPages
+	}
+
+	ctx := make(map[string]interface{})
+	ctx["page"] = pageCtx
+	ctx["site"] = site
 	return ctx
+}
+
+// loadSiteData loads data files from the configured data directory.
+// Returns an empty map if the directory doesn't exist or can't be read.
+func loadSiteData(cfg *config.Config) map[string]interface{} {
+	dataDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Data)
+	if dataDir == "" {
+		return nil
+	}
+	loaded, err := data.LoadDirectory(dataDir)
+	if err != nil {
+		return nil
+	}
+	return loaded
 }
 
 // resolveDir resolves a relative directory against the project root.
