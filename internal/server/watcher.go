@@ -42,11 +42,25 @@ const (
 	RebuildFull
 )
 
+// structureDir returns a config directory or falls back to the default name.
+func structureDir(configured, fallback string) string {
+	if configured != "" {
+		return configured
+	}
+	return fallback
+}
+
 // WatchDirs returns the list of directories to watch for file changes,
 // derived from the project config. Always includes content/, layouts/,
 // data/, assets/, static/. Adds component source dirs when SSR is configured.
 func WatchDirs(cfg *config.Config) []string {
-	dirs := []string{"content", "layouts", "data", "assets", "static"}
+	dirs := []string{
+		structureDir(cfg.Structure.Content, "content"),
+		structureDir(cfg.Structure.Layouts, "layouts"),
+		structureDir(cfg.Structure.Data, "data"),
+		structureDir(cfg.Structure.Assets, "assets"),
+		structureDir(cfg.Structure.Static, "static"),
+	}
 	if cfg.SSR != nil {
 		dirs = append(dirs, "components")
 	}
@@ -56,22 +70,33 @@ func WatchDirs(cfg *config.Config) []string {
 // ClassifyChange determines the ChangeType for a modified file path
 // based on which watched directory it falls under.
 func ClassifyChange(path string, cfg *config.Config) ChangeType {
+	contentDir := structureDir(cfg.Structure.Content, "content")
+	layoutsDir := structureDir(cfg.Structure.Layouts, "layouts")
+	dataDir := structureDir(cfg.Structure.Data, "data")
+	assetsDir := structureDir(cfg.Structure.Assets, "assets")
+	staticDir := structureDir(cfg.Structure.Static, "static")
+
 	switch {
-	case strings.HasPrefix(path, "content/") || strings.HasPrefix(path, "content\\"):
+	case hasPathPrefix(path, contentDir):
 		return ContentChange
-	case strings.HasPrefix(path, "layouts/") || strings.HasPrefix(path, "layouts\\"):
+	case hasPathPrefix(path, layoutsDir):
 		return LayoutChange
-	case strings.HasPrefix(path, "data/") || strings.HasPrefix(path, "data\\"):
+	case hasPathPrefix(path, dataDir):
 		return DataChange
-	case strings.HasPrefix(path, "assets/") || strings.HasPrefix(path, "assets\\"):
+	case hasPathPrefix(path, assetsDir):
 		return AssetChange
-	case strings.HasPrefix(path, "static/") || strings.HasPrefix(path, "static\\"):
+	case hasPathPrefix(path, staticDir):
 		return StaticChange
-	case strings.HasPrefix(path, "components/") || strings.HasPrefix(path, "components\\"):
+	case hasPathPrefix(path, "components"):
 		return ComponentChange
 	default:
 		return ContentChange
 	}
+}
+
+// hasPathPrefix checks if a file path is under the given directory.
+func hasPathPrefix(path, dir string) bool {
+	return strings.HasPrefix(path, dir+"/") || strings.HasPrefix(path, dir+"\\")
 }
 
 // ReloadMessage returns the JSON message sent to the browser via WebSocket

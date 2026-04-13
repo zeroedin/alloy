@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/zeroedin/alloy/internal/config"
+	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
 // ServerMode represents the operating mode of the dev server.
@@ -113,18 +114,17 @@ func (s *Server) ShouldOpenBrowser() bool {
 // In dev mode, returns error overlay HTML on failure instead of propagating the error.
 // In build mode, returns the error directly.
 func (s *Server) RenderPage(path string, content []byte) ([]byte, error) {
-	if s.mode == ModeDev {
-		// In dev mode, capture render errors for the overlay instead of propagating
-		rendered := content
-		if strings.Contains(string(content), "{{") && strings.Contains(string(content), "broken") {
+	rendered, err := tmpl.RenderTemplate(string(content), path, nil)
+	if err != nil {
+		if s.mode == ModeDev {
 			overlay := RenderOverlay([]BuildError{
-				{FilePath: path, Message: "template error", Stage: "template rendering"},
+				{FilePath: path, Message: err.Error(), Stage: "template rendering"},
 			})
 			return []byte(overlay), nil
 		}
-		return rendered, nil
+		return nil, err
 	}
-	return content, nil
+	return []byte(rendered), nil
 }
 
 // HandleExternalSourceFailure handles an unreachable external data source.

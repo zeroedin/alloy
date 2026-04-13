@@ -82,27 +82,32 @@ func DeduplicateInstances(instances []ComponentInstance) []ComponentInstance {
 }
 
 // InsertMarkers wraps component instances with <!--alloy-ssr:hash--> comment markers.
+// Wraps ALL occurrences of each component tag, not just the first.
 func InsertMarkers(html string, instances []ComponentInstance) string {
 	result := html
 	for _, inst := range instances {
-		// Build the opening tag pattern to find
 		openTag := "<" + inst.Tag
 		closingTag := "</" + inst.Tag + ">"
 		startMarker := fmt.Sprintf("<!--alloy-ssr:%s-->", inst.Hash)
 		endMarker := fmt.Sprintf("<!--/alloy-ssr:%s-->", inst.Hash)
 
-		// Find the component in the HTML and wrap it with markers
-		idx := strings.Index(result, openTag)
-		if idx < 0 {
-			continue
+		offset := 0
+		for {
+			idx := strings.Index(result[offset:], openTag)
+			if idx < 0 {
+				break
+			}
+			idx += offset
+			closeIdx := strings.Index(result[idx:], closingTag)
+			if closeIdx < 0 {
+				break
+			}
+			closeEnd := idx + closeIdx + len(closingTag)
+			componentHTML := result[idx:closeEnd]
+			replacement := startMarker + componentHTML + endMarker
+			result = result[:idx] + replacement + result[closeEnd:]
+			offset = idx + len(replacement)
 		}
-		closeIdx := strings.Index(result[idx:], closingTag)
-		if closeIdx < 0 {
-			continue
-		}
-		closeEnd := idx + closeIdx + len(closingTag)
-		componentHTML := result[idx:closeEnd]
-		result = result[:idx] + startMarker + componentHTML + endMarker + result[closeEnd:]
 	}
 	return result
 }
@@ -118,18 +123,24 @@ func StampBack(html string, ssrResults map[string]string) string {
 	for hash, dsd := range ssrResults {
 		startMarker := fmt.Sprintf("<!--alloy-ssr:%s-->", hash)
 		endMarker := fmt.Sprintf("<!--/alloy-ssr:%s-->", hash)
-		startIdx := strings.Index(result, startMarker)
-		if startIdx < 0 {
-			continue
+
+		offset := 0
+		for {
+			startIdx := strings.Index(result[offset:], startMarker)
+			if startIdx < 0 {
+				break
+			}
+			startIdx += offset
+			endIdx := strings.Index(result[startIdx:], endMarker)
+			if endIdx < 0 {
+				break
+			}
+			markerUsed = true
+			componentHTML := result[startIdx+len(startMarker) : startIdx+endIdx]
+			replaced := insertDSDIntoComponent(componentHTML, dsd)
+			result = result[:startIdx] + replaced + result[startIdx+endIdx+len(endMarker):]
+			offset = startIdx + len(replaced)
 		}
-		endIdx := strings.Index(result[startIdx:], endMarker)
-		if endIdx < 0 {
-			continue
-		}
-		markerUsed = true
-		componentHTML := result[startIdx+len(startMarker) : startIdx+endIdx]
-		replaced := insertDSDIntoComponent(componentHTML, dsd)
-		result = result[:startIdx] + replaced + result[startIdx+endIdx+len(endMarker):]
 	}
 
 	if markerUsed {
