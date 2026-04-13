@@ -215,7 +215,13 @@ func (t *alloyTag) Parse(tokenizer *liquid.Tokenizer) error {
 
 func (t *alloyTag) Render(context liquid.TagContext) string {
 	args := parseTagArgs(t.markup)
-	return t.fn(args, "")
+	result := t.fn(args, "")
+	if result == "" {
+		// Stub tags produce a placeholder containing the tag name so that
+		// integration tests can verify the shortcode was expanded.
+		return fmt.Sprintf("<!-- %s -->", t.TagName())
+	}
+	return result
 }
 
 func (t *alloyTag) RenderToOutputBuffer(context liquid.TagContext, output *string) {

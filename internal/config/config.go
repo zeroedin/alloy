@@ -17,6 +17,7 @@ var ErrNotImplemented = errors.New("not implemented")
 
 // Config represents the full alloy.config.yaml structure.
 type Config struct {
+	ProjectRoot string                       `yaml:"-" toml:"-" json:"-"` // set by Load; directory containing the config file
 	Title       string                       `yaml:"title" toml:"title" json:"title"`
 	BaseURL     string                       `yaml:"baseURL" toml:"baseURL" json:"baseURL"`
 	Language    string                       `yaml:"language" toml:"language" json:"language"`
@@ -176,6 +177,11 @@ func Load(path string) (*Config, error) {
 		}
 	default:
 		return nil, fmt.Errorf("unsupported config file format: %s", ext)
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err == nil {
+		cfg.ProjectRoot = filepath.Dir(absPath)
 	}
 
 	return cfg, nil
