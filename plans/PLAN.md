@@ -242,6 +242,30 @@ slug: "custom-slug"                 # Override just the :slug token
 
 If no `permalink` in front matter, the section default from config is used. If no section match, the `default` pattern is used. If no config at all, the file path maps directly to the URL (`content/blog/my-post.md` → `/blog/my-post/`).
 
+### Index Files
+
+Index files (`index.md`, `index.html`) are directory landing pages and resolve to their parent directory path by default, **skipping** section and default permalink patterns:
+
+- `content/index.md` → `/` (site root)
+- `content/blog/index.md` → `/blog/` (section landing)
+- `content/blog/second-post/index.md` → `/blog/second-post/` (page bundle)
+
+This prevents a `default: "/:slug/"` pattern from turning `content/index.md` (title: "Home") into `/home/` instead of `/`.
+
+**Front matter `permalink:` still overrides** — useful when the site is served from a subdirectory:
+```yaml
+---
+title: "Home"
+permalink: "/docs/"   # site lives at example.com/docs/
+---
+```
+
+The lookup order for index files is:
+1. Front matter `permalink:` (if set) — always honored
+2. `DefaultFromPath` — strips `/index` suffix, returns directory path
+
+Non-index files follow the full chain: front matter → section pattern → default pattern → `DefaultFromPath`.
+
 **Performance:** 3000 pages with token replacement ≈ 1ms. Only pages with `{{ }}` in their permalink pay the Liquid rendering cost.
 
 ### `permalink: false`

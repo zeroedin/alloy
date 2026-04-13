@@ -138,6 +138,24 @@ var _ = Describe("Permalink", func() {
 			result := permalink.DefaultFromPath("blog/my-post.md")
 			Expect(result).To(Equal("/blog/my-post/"))
 		})
+
+		It("root index.md resolves to /", func() {
+			result := permalink.DefaultFromPath("index.md")
+			Expect(result).To(Equal("/"),
+				"content/index.md is the site root — must resolve to /")
+		})
+
+		It("section index.md resolves to section path (blog/index.md -> /blog/)", func() {
+			result := permalink.DefaultFromPath("blog/index.md")
+			Expect(result).To(Equal("/blog/"),
+				"content/blog/index.md is the section landing — must resolve to /blog/")
+		})
+
+		It("page bundle index.md resolves to parent path (blog/post/index.md -> /blog/post/)", func() {
+			result := permalink.DefaultFromPath("blog/post/index.md")
+			Expect(result).To(Equal("/blog/post/"),
+				"page bundle index.md must resolve to its parent directory path")
+		})
 	})
 
 	// ── :title token ──────────────────────────────────────────────────
@@ -206,6 +224,56 @@ var _ = Describe("Permalink", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).To(Equal("/pages/about/"),
 				"no config must fall back to file path default")
+		})
+
+		It("root index.md resolves to / even when default pattern exists", func() {
+			page := &content.Page{
+				Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+				FrontMatter: map[string]interface{}{"title": "Home"},
+				Section:     "",
+				RelPath:     "index.md",
+			}
+			permalinkCfg := map[string]string{
+				"blog":    "/:year/:month/:slug/",
+				"default": "/:slug/",
+			}
+			result, err := permalink.ResolveForSection(page, permalinkCfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("/"),
+				"index.md must resolve to / — default pattern must not produce /home/")
+		})
+
+		It("section index.md resolves to /blog/ even when blog pattern exists", func() {
+			page := &content.Page{
+				Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+				FrontMatter: map[string]interface{}{"title": "Blog"},
+				Section:     "blog",
+				RelPath:     "blog/index.md",
+			}
+			permalinkCfg := map[string]string{
+				"blog":    "/:year/:month/:slug/",
+				"default": "/:slug/",
+			}
+			result, err := permalink.ResolveForSection(page, permalinkCfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("/blog/"),
+				"blog/index.md is the section landing page — must not apply date pattern")
+		})
+
+		It("front matter permalink overrides index file default", func() {
+			page := &content.Page{
+				Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+				FrontMatter: map[string]interface{}{"title": "Home", "permalink": "/docs/"},
+				Section:     "",
+				RelPath:     "index.md",
+			}
+			permalinkCfg := map[string]string{
+				"default": "/:slug/",
+			}
+			result, err := permalink.ResolveForSection(page, permalinkCfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("/docs/"),
+				"front matter permalink must override index file default — enables subdirectory deployments")
 		})
 	})
 
