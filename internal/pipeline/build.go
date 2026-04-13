@@ -31,7 +31,7 @@ type BuildResult struct {
 func Build(cfg *config.Config) (*BuildResult, error) {
 	start := time.Now()
 
-	setDefaults(cfg)
+	config.ApplyDefaults(cfg)
 
 	// Validate output directory doesn't overlap with managed directories
 	if err := validateOutputDir(cfg); err != nil {
@@ -75,7 +75,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildResult, error) {
 	start := time.Now()
 
-	setDefaults(cfg)
+	config.ApplyDefaults(cfg)
 
 	if len(contentMap) == 0 {
 		return &BuildResult{
@@ -129,7 +129,7 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildR
 // source paths to intermediate HTML. Custom element tags are preserved
 // as raw tags — they are not rendered until Phase 2 SSR.
 func BuildPhase1(cfg *config.Config) (map[string]string, error) {
-	setDefaults(cfg)
+	config.ApplyDefaults(cfg)
 
 	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
 	pages, err := content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
@@ -253,32 +253,6 @@ func resolveDir(projectRoot, dir string) string {
 		return dir
 	}
 	return filepath.Join(projectRoot, dir)
-}
-
-// setDefaults applies build-time defaults to a config.
-// TODO: Consolidate with config.applyDefaults — single source of truth for defaults.
-// Callers should use config.LoadWithDefaults, or applyDefaults should be exported.
-func setDefaults(cfg *config.Config) {
-	if cfg.Structure.Content == "" {
-		cfg.Structure.Content = "content"
-	}
-	if cfg.Structure.Layouts == "" {
-		cfg.Structure.Layouts = "layouts"
-	}
-	if cfg.Templates.Engine == "" {
-		cfg.Templates.Engine = "liquid"
-	}
-	if len(cfg.Content.Formats) == 0 {
-		cfg.Content.Formats = []string{"md", "html"}
-	}
-	if cfg.Build.Output == "" {
-		cfg.Build.Output = "_site"
-	}
-	// TemplateTags must default to true so Goldmark preserves {{ }}/{% %}
-	// through markdown rendering (required for markdown-first ordering).
-	if !cfg.Content.Markdown.Goldmark.TemplateTags {
-		cfg.Content.Markdown.Goldmark.TemplateTags = true
-	}
 }
 
 // validateOutputDir ensures the output directory doesn't conflict with

@@ -193,12 +193,14 @@ func LoadWithDefaults(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	applyDefaults(cfg)
+	ApplyDefaults(cfg)
 	return cfg, nil
 }
 
-// applyDefaults sets default values on a Config struct.
-func applyDefaults(cfg *Config) {
+// ApplyDefaults sets default values on a Config struct.
+// Exported so that callers (e.g. pipeline.Build) that receive a Config
+// without going through LoadWithDefaults can still apply canonical defaults.
+func ApplyDefaults(cfg *Config) {
 	if cfg.Build.Output == "" {
 		cfg.Build.Output = "_site"
 	}
