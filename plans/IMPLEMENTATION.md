@@ -225,7 +225,7 @@ At this point, `alloy build` works end-to-end on test fixtures.
 ### 5A: `internal/plugin` — 58 tests
 **Files**: `hooks.go`, `registry.go`, `node.go`, `wasm.go`
 
-- **hooks.go**: Hook registry with timeout, chained execution, warnings
+- **hooks.go**: Hook registry with timeout, chained execution, warnings. `HookFunc` signature is `func(ctx context.Context, payload interface{}) (interface{}, error)` — context carries timeout deadline for cooperative cancellation (issue #13). `Run()` passes `context.Background()`. `RunWithTimeout()` uses `context.WithTimeout()` and passes the derived context to each hook.
 - **registry.go**: Plugin classification by file type, discovery, filter registration, conflict warnings
 - **node.go**: LSP-style message encoding/decoding, bridge state management
 - **wasm.go**: QuickJS/WASM runtime stubs (may need `wazero` dep — defer if complex)

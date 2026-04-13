@@ -1692,7 +1692,7 @@ Content-Length: 82\r\n
 
 ### Performance Safeguards
 
-- **Timeout**: Each plugin hook has a configurable timeout (default 5s). If exceeded, build continues without that plugin's modifications and logs a warning.
+- **Timeout**: Each plugin hook has a configurable timeout (default 5s). If exceeded, build continues without that plugin's modifications and logs a warning. Hook functions receive a `context.Context` as their first parameter carrying the timeout deadline. Hooks should check `ctx.Done()` for cooperative cancellation — a timed-out hook's goroutine will not be forcefully killed, but the context signals that its result will be discarded.
 - **Batching**: Pages are sent to Node plugins in batches (not one-at-a-time) to amortize IPC overhead. WASM plugins process in-process so batching is unnecessary.
 - **Caching**: Node plugin results are cached by content hash. If content hasn't changed, skip the IPC call.
 - **Lazy start**: Node process only spawns if Node plugins exist. WASM plugins load in ~1ms.

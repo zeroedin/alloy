@@ -1,6 +1,7 @@
 package plugin_test
 
 import (
+	"context"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -16,7 +17,7 @@ var _ = Describe("Hooks", func() {
 	Describe("Hook registration", func() {
 		It("registers a hook for onContentLoaded", func() {
 			registry := plugin.NewHookRegistry()
-			fn := func(payload interface{}) (interface{}, error) {
+			fn := func(_ context.Context, payload interface{}) (interface{}, error) {
 				return payload, nil
 			}
 			registry.Register(plugin.OnContentLoaded, fn)
@@ -27,10 +28,10 @@ var _ = Describe("Hooks", func() {
 
 		It("registers multiple hooks for the same event", func() {
 			registry := plugin.NewHookRegistry()
-			fn1 := func(payload interface{}) (interface{}, error) {
+			fn1 := func(_ context.Context, payload interface{}) (interface{}, error) {
 				return payload, nil
 			}
-			fn2 := func(payload interface{}) (interface{}, error) {
+			fn2 := func(_ context.Context, payload interface{}) (interface{}, error) {
 				return payload, nil
 			}
 			registry.Register(plugin.OnContentLoaded, fn1)
@@ -47,11 +48,11 @@ var _ = Describe("Hooks", func() {
 		It("executes hooks in registration order", func() {
 			registry := plugin.NewHookRegistry()
 			var order []int
-			registry.Register(plugin.OnBuildComplete, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnBuildComplete, func(_ context.Context, payload interface{}) (interface{}, error) {
 				order = append(order, 1)
 				return payload, nil
 			})
-			registry.Register(plugin.OnBuildComplete, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnBuildComplete, func(_ context.Context, payload interface{}) (interface{}, error) {
 				order = append(order, 2)
 				return payload, nil
 			})
@@ -63,7 +64,7 @@ var _ = Describe("Hooks", func() {
 		It("passes payload to hook function", func() {
 			registry := plugin.NewHookRegistry()
 			var received interface{}
-			registry.Register(plugin.OnConfig, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnConfig, func(_ context.Context, payload interface{}) (interface{}, error) {
 				received = payload
 				return payload, nil
 			})
@@ -74,10 +75,10 @@ var _ = Describe("Hooks", func() {
 
 		It("chains output: each hook receives previous hook's output", func() {
 			registry := plugin.NewHookRegistry()
-			registry.Register(plugin.OnContentLoaded, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnContentLoaded, func(_ context.Context, payload interface{}) (interface{}, error) {
 				return payload.(string) + "-first", nil
 			})
-			registry.Register(plugin.OnContentLoaded, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnContentLoaded, func(_ context.Context, payload interface{}) (interface{}, error) {
 				return payload.(string) + "-second", nil
 			})
 			result, err := registry.Run(plugin.OnContentLoaded, "start")
@@ -87,7 +88,7 @@ var _ = Describe("Hooks", func() {
 
 		It("returns modified payload from hook chain", func() {
 			registry := plugin.NewHookRegistry()
-			registry.Register(plugin.OnConfig, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnConfig, func(_ context.Context, payload interface{}) (interface{}, error) {
 				m := payload.(map[string]string)
 				m["added"] = "value"
 				return m, nil
@@ -119,7 +120,7 @@ var _ = Describe("Hooks", func() {
 		It("hook completing within timeout returns its result", func() {
 			registry := plugin.NewHookRegistry()
 			registry.SetTimeout(5000)
-			registry.Register(plugin.OnConfig, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnConfig, func(_ context.Context, payload interface{}) (interface{}, error) {
 				// Fast hook — well within timeout
 				return payload.(string) + "-modified", nil
 			})
@@ -134,7 +135,7 @@ var _ = Describe("Hooks", func() {
 			registry := plugin.NewHookRegistry()
 			registry.SetTimeout(50) // 50ms timeout for test speed
 
-			registry.Register(plugin.OnContentLoaded, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnContentLoaded, func(_ context.Context, payload interface{}) (interface{}, error) {
 				// Simulate a slow hook that exceeds the timeout
 				time.Sleep(200 * time.Millisecond)
 				return "should-be-discarded", nil
@@ -150,7 +151,7 @@ var _ = Describe("Hooks", func() {
 			registry := plugin.NewHookRegistry()
 			registry.SetTimeout(50) // 50ms timeout for test speed
 
-			registry.Register(plugin.OnContentTransformed, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnContentTransformed, func(_ context.Context, payload interface{}) (interface{}, error) {
 				time.Sleep(200 * time.Millisecond)
 				return payload, nil
 			})
@@ -176,7 +177,7 @@ var _ = Describe("Hooks", func() {
 			// Constant alone is trivially true; verify hooks actually fire for this event
 			registry := plugin.NewHookRegistry()
 			called := false
-			registry.Register(plugin.OnConfig, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnConfig, func(_ context.Context, payload interface{}) (interface{}, error) {
 				called = true
 				return payload, nil
 			})
@@ -191,7 +192,7 @@ var _ = Describe("Hooks", func() {
 
 			registry := plugin.NewHookRegistry()
 			called := false
-			registry.Register(plugin.OnContentLoaded, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnContentLoaded, func(_ context.Context, payload interface{}) (interface{}, error) {
 				called = true
 				return payload, nil
 			})
@@ -206,7 +207,7 @@ var _ = Describe("Hooks", func() {
 
 			registry := plugin.NewHookRegistry()
 			called := false
-			registry.Register(plugin.OnBuildComplete, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnBuildComplete, func(_ context.Context, payload interface{}) (interface{}, error) {
 				called = true
 				return payload, nil
 			})
@@ -222,7 +223,7 @@ var _ = Describe("Hooks", func() {
 	Describe("Remaining lifecycle hooks", func() {
 		It("onBeforeValidation hook can append to output path map", func() {
 			registry := plugin.NewHookRegistry()
-			registry.Register(plugin.OnBeforeValidation, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnBeforeValidation, func(_ context.Context, payload interface{}) (interface{}, error) {
 				paths := payload.(map[string]string)
 				paths["/api/data.json"] = "plugin:my-api"
 				return paths, nil
@@ -238,7 +239,7 @@ var _ = Describe("Hooks", func() {
 		It("onAfterValidation hook receives read-only validation results", func() {
 			registry := plugin.NewHookRegistry()
 			var received interface{}
-			registry.Register(plugin.OnAfterValidation, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnAfterValidation, func(_ context.Context, payload interface{}) (interface{}, error) {
 				received = payload
 				return payload, nil
 			})
@@ -250,7 +251,7 @@ var _ = Describe("Hooks", func() {
 
 		It("onDataFetched hook can modify fetched data", func() {
 			registry := plugin.NewHookRegistry()
-			registry.Register(plugin.OnDataFetched, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnDataFetched, func(_ context.Context, payload interface{}) (interface{}, error) {
 				data := payload.(map[string]interface{})
 				data["injected"] = true
 				return data, nil
@@ -265,7 +266,7 @@ var _ = Describe("Hooks", func() {
 		It("onDataCascadeReady hook can inspect cascade", func() {
 			registry := plugin.NewHookRegistry()
 			var inspected bool
-			registry.Register(plugin.OnDataCascadeReady, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnDataCascadeReady, func(_ context.Context, payload interface{}) (interface{}, error) {
 				inspected = true
 				return payload, nil
 			})
@@ -277,7 +278,7 @@ var _ = Describe("Hooks", func() {
 
 		It("onContentTransformed hook can modify rendered HTML", func() {
 			registry := plugin.NewHookRegistry()
-			registry.Register(plugin.OnContentTransformed, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnContentTransformed, func(_ context.Context, payload interface{}) (interface{}, error) {
 				html := payload.(string)
 				return html + "<!-- injected by plugin -->", nil
 			})
@@ -288,7 +289,7 @@ var _ = Describe("Hooks", func() {
 
 		It("onPageRendered hook post-processes page HTML", func() {
 			registry := plugin.NewHookRegistry()
-			registry.Register(plugin.OnPageRendered, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnPageRendered, func(_ context.Context, payload interface{}) (interface{}, error) {
 				return payload.(string) + "\n<!-- minified -->", nil
 			})
 			result, err := registry.Run(plugin.OnPageRendered, "<html></html>")
@@ -299,7 +300,7 @@ var _ = Describe("Hooks", func() {
 		It("onAssetProcess hook receives asset file path", func() {
 			registry := plugin.NewHookRegistry()
 			var receivedPath interface{}
-			registry.Register(plugin.OnAssetProcess, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnAssetProcess, func(_ context.Context, payload interface{}) (interface{}, error) {
 				receivedPath = payload
 				return payload, nil
 			})
@@ -311,7 +312,7 @@ var _ = Describe("Hooks", func() {
 		It("onDevServerStart hook fires on server start", func() {
 			registry := plugin.NewHookRegistry()
 			var fired bool
-			registry.Register(plugin.OnDevServerStart, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnDevServerStart, func(_ context.Context, payload interface{}) (interface{}, error) {
 				fired = true
 				return payload, nil
 			})
@@ -323,7 +324,7 @@ var _ = Describe("Hooks", func() {
 		It("onFileChanged hook receives changed file path", func() {
 			registry := plugin.NewHookRegistry()
 			var changedFile interface{}
-			registry.Register(plugin.OnFileChanged, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnFileChanged, func(_ context.Context, payload interface{}) (interface{}, error) {
 				changedFile = payload
 				return payload, nil
 			})
@@ -347,7 +348,7 @@ var _ = Describe("Hooks", func() {
 			}
 
 			// Hook mutates the cascade data
-			registry.Register(plugin.OnDataCascadeReady, func(payload interface{}) (interface{}, error) {
+			registry.Register(plugin.OnDataCascadeReady, func(_ context.Context, payload interface{}) (interface{}, error) {
 				data := payload.(map[string]interface{})
 				site := data["site"].(map[string]interface{})
 				site["injected"] = "plugin-value"
