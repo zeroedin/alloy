@@ -1,8 +1,9 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
-	"os"
+	"io/fs"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -19,7 +20,7 @@ func newBuildCommand() *cobra.Command {
 
 			cfg, err := config.LoadWithDefaults(configPath)
 			if err != nil {
-				if os.IsNotExist(err) {
+				if errors.Is(err, fs.ErrNotExist) {
 					// No config file — build with defaults
 					cfg = &config.Config{}
 					config.ApplyDefaults(cfg)
@@ -52,7 +53,7 @@ func newBuildCommand() *cobra.Command {
 			}
 
 			if !cfg.Quiet {
-				fmt.Fprintf(cmd.OutOrStdout(), "Build complete: %d pages in %s\n",
+				fmt.Fprintf(cmd.OutOrStdout(), "Built %d pages in %s\n",
 					result.PageCount, result.Duration.Round(time.Millisecond))
 			}
 
