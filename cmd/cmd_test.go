@@ -37,6 +37,13 @@ var _ = Describe("CLI Commands", func() {
 		})
 
 		It("init command executes successfully", func() {
+			// Clean up CWD artifact from init (no directory arg defaults to ".")
+			DeferCleanup(func() {
+				os.Remove("alloy.config.yaml")
+			})
+			// Remove any leftover from a previous run so this test is idempotent
+			os.Remove("alloy.config.yaml")
+
 			root := cmd.NewRootCommand()
 			root.SilenceErrors = true
 			root.SilenceUsage = true
