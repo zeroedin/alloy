@@ -51,6 +51,9 @@ func BuildTemplateContext(page *content.Page, siteData map[string]interface{}, a
 	if data, ok := siteData["data"].(map[string]interface{}); ok {
 		ctx.Site.Data = data
 	}
+	if ctx.Site.Data == nil {
+		ctx.Site.Data = make(map[string]interface{})
+	}
 
 	// Populate page context
 	if title, ok := page.FrontMatter["title"].(string); ok {

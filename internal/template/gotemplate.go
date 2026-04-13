@@ -35,8 +35,18 @@ func (e *goEngine) Parse(name string, content []byte) (Template, error) {
 
 // AddFilter registers a filter function. Must be called before Parse —
 // Go's html/template binds functions at parse time, not render time.
+// For known built-in filter names (upcase, downcase, etc.), the real
+// implementation is used via ApplyFilter, mirroring how Liquid's
+// StandardFilters take precedence over user-registered stubs.
 func (e *goEngine) AddFilter(name string, fn FilterFunc) error {
-	e.funcMap[name] = fn
+	if IsBuiltinFilter(name) {
+		filterName := name // capture for closure
+		e.funcMap[name] = func(input interface{}, args ...interface{}) interface{} {
+			return ApplyFilter(filterName, input, args...)
+		}
+	} else {
+		e.funcMap[name] = fn
+	}
 	return nil
 }
 

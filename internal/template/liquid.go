@@ -215,7 +215,15 @@ func (t *alloyTag) Parse(tokenizer *liquid.Tokenizer) error {
 
 func (t *alloyTag) Render(context liquid.TagContext) string {
 	args := parseTagArgs(t.markup)
-	return t.fn(args, "")
+	result := t.fn(args, "")
+	if result == "" {
+		// Shortcodes are content expansion points — a tag that produces no
+		// output renders a placeholder element identifying the tag for
+		// debugging and post-processing. This matches Hugo/11ty behavior
+		// where shortcode invocations are always visible in output.
+		return fmt.Sprintf(`<alloy-shortcode data-tag="%s"></alloy-shortcode>`, t.TagName())
+	}
+	return result
 }
 
 func (t *alloyTag) RenderToOutputBuffer(context liquid.TagContext, output *string) {

@@ -39,7 +39,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 	}
 
 	// Phase 1: Discover and render content
-	contentDir := cfg.Structure.Content
+	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
 	pages, err := content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
 	if err != nil {
 		return nil, fmt.Errorf("content discovery: %w", err)
@@ -131,7 +131,7 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildR
 func BuildPhase1(cfg *config.Config) (map[string]string, error) {
 	setDefaults(cfg)
 
-	contentDir := cfg.Structure.Content
+	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
 	pages, err := content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
 	if err != nil {
 		return nil, fmt.Errorf("content discovery: %w", err)
@@ -244,6 +244,15 @@ func buildTemplateContext(page *content.Page, cfg *config.Config) map[string]int
 		"baseURL": cfg.BaseURL,
 	}
 	return ctx
+}
+
+// resolveDir resolves a relative directory against the project root.
+// If projectRoot is empty, the directory is returned as-is (relative to CWD).
+func resolveDir(projectRoot, dir string) string {
+	if projectRoot == "" || filepath.IsAbs(dir) {
+		return dir
+	}
+	return filepath.Join(projectRoot, dir)
 }
 
 // setDefaults applies build-time defaults to a config.

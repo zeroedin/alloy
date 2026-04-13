@@ -1,6 +1,9 @@
 package integration_test
 
 import (
+	"context"
+	"path/filepath"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -18,7 +21,7 @@ var _ = Describe("Cross-Cutting Integration", func() {
 
 	Describe("Data file → template rendering", func() {
 		It("loads data/navigation.yaml and makes it available as site.data.navigation in template", func() {
-			navData, err := data.LoadFile("test/fixtures/minimal/data/navigation.yaml")
+			navData, err := data.LoadFile(filepath.Join(fixtureDir("minimal"), "data", "navigation.yaml"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(navData).NotTo(BeNil())
 
@@ -106,7 +109,7 @@ var _ = Describe("Cross-Cutting Integration", func() {
 			// This is a minimal simulation: register a transform hook, run it,
 			// and verify the payload was processed
 			transformCalled := false
-			hookFn := func(payload interface{}) (interface{}, error) {
+			hookFn := func(_ context.Context, payload interface{}) (interface{}, error) {
 				transformCalled = true
 				return payload, nil // pass-through
 			}
