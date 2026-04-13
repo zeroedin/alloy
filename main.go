@@ -1,5 +1,7 @@
 package main
 
+import "github.com/zeroedin/alloy/cmd"
+
 func main() {
-	// CLI entry point — will call cmd.Execute()
+	cmd.Execute()
 }

@@ -240,9 +240,10 @@ At this point, `alloy build` works end-to-end on test fixtures.
 
 - Language context building, translation linking, output prefixes, per-language filtering
 
-### 5D: `cmd/` — 15 tests
-**Files**: `root.go`, `build.go`, `serve.go`, `init.go`, `version.go`
+### 5D: `cmd/` + `main.go` — 15 tests
+**Files**: `main.go`, `root.go`, `build.go`, `serve.go`, `init.go`, `version.go`
 
+- **`main.go` entry point (blocker — issue #24)**: `main()` must call `cmd.Execute()` to wire the Cobra command tree to the binary. Without this, the compiled binary is a no-op (exits 0, no output). This is a one-line fix but blocks all CLI functionality.
 - Register Cobra flags (--config, --output, --verbose, --quiet, --port, --preview, --no-drafts, --refetch)
 - `RunInit`: Create default config, error if exists
 - `Version`: Set to non-empty string

@@ -2213,6 +2213,22 @@ Without an `ssr:` config block (and no SSR plugin), `--preview` still works — 
 
 ## 9. CLI Design
 
+### Entry Point
+
+`main.go` must call `cmd.Execute()` to wire the Cobra command tree to the binary. All command logic lives in `cmd/` — `main.go` is a one-line entry point:
+
+```go
+package main
+
+import "github.com/zeroedin/alloy/cmd"
+
+func main() {
+	cmd.Execute()
+}
+```
+
+### Commands
+
 ```
 alloy init               # Create default alloy.config.yaml (fails if one already exists)
 alloy build              # Run pipeline (Phase 1 + Phase 2 if SSR configured), write _site/, exit
