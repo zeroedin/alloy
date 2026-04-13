@@ -735,6 +735,35 @@ func ApplyFilter(name string, input interface{}, args ...interface{}) interface{
 	return fn(input, args...)
 }
 
+// IsBuiltinFilter reports whether name is a known built-in filter.
+func IsBuiltinFilter(name string) bool {
+	// Use the same map as ApplyFilter — single source of truth.
+	return ApplyFilter(name, "") != nil || isBuiltinName(name)
+}
+
+// isBuiltinName checks the filter name against the canonical set.
+// Needed because ApplyFilter returns nil for some valid inputs (e.g.,
+// filters that return "" for empty input are indistinguishable from
+// unknown filters). This list is derived from the ApplyFilter map.
+func isBuiltinName(name string) bool {
+	builtins := map[string]bool{
+		"slugify": true, "upcase": true, "downcase": true, "capitalize": true,
+		"truncate": true, "truncatewords": true, "strip_html": true, "escape": true,
+		"replace": true, "replace_first": true, "split": true, "join": true,
+		"strip": true, "append": true, "prepend": true, "newline_to_br": true,
+		"contains": true, "date": true, "sort": true, "reverse": true,
+		"first": true, "last": true, "where": true, "group_by": true,
+		"size": true, "map": true, "uniq": true, "compact": true, "concat": true,
+		"intersect": true, "union": true, "complement": true, "url": true,
+		"absolute_url": true, "url_encode": true, "url_decode": true,
+		"plus": true, "minus": true, "times": true, "divided_by": true,
+		"modulo": true, "ceil": true, "floor": true, "round": true, "abs": true,
+		"markdownify": true, "findRE": true, "replaceRE": true,
+		"json": true, "default": true, "fingerprint": true, "safeHTML": true,
+	}
+	return builtins[name]
+}
+
 // --- Helper functions ---
 
 func toString(v interface{}) string {

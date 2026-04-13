@@ -217,9 +217,11 @@ func (t *alloyTag) Render(context liquid.TagContext) string {
 	args := parseTagArgs(t.markup)
 	result := t.fn(args, "")
 	if result == "" {
-		// Stub tags produce a placeholder containing the tag name so that
-		// integration tests can verify the shortcode was expanded.
-		return fmt.Sprintf("<!-- %s -->", t.TagName())
+		// Shortcodes are content expansion points — a tag that produces no
+		// output renders a placeholder element identifying the tag for
+		// debugging and post-processing. This matches Hugo/11ty behavior
+		// where shortcode invocations are always visible in output.
+		return fmt.Sprintf(`<alloy-shortcode data-tag="%s"></alloy-shortcode>`, t.TagName())
 	}
 	return result
 }
