@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -28,7 +29,8 @@ const (
 )
 
 // HookFunc processes a hook payload and returns a (potentially modified) result.
-type HookFunc func(payload interface{}) (interface{}, error)
+// The context carries the per-hook timeout deadline for cooperative cancellation.
+type HookFunc func(ctx context.Context, payload interface{}) (interface{}, error)
 
 // HookRegistry manages lifecycle hook registrations and execution.
 type HookRegistry struct {
@@ -70,7 +72,7 @@ func (r *HookRegistry) Run(event HookName, payload interface{}) (interface{}, er
 	fns := r.hooks[event]
 	current := payload
 	for _, fn := range fns {
-		result, err := fn(current)
+		result, err := fn(context.Background(), current)
 		if err != nil {
 			return nil, err
 		}
@@ -82,28 +84,34 @@ func (r *HookRegistry) Run(event HookName, payload interface{}) (interface{}, er
 // RunWithTimeout executes all hooks for an event with timeout enforcement.
 // If a hook exceeds the timeout, its modifications are discarded (the pre-hook
 // payload is kept), a warning is logged, and the build continues.
+// Each hook receives a context with the timeout deadline for cooperative cancellation.
 func (r *HookRegistry) RunWithTimeout(event HookName, payload interface{}) (interface{}, error) {
 	fns := r.hooks[event]
 	current := payload
 	for _, fn := range fns {
 		preHook := current
+		timeout := time.Duration(r.timeout) * time.Millisecond
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+
 		type hookResult struct {
 			val interface{}
 			err error
 		}
 		ch := make(chan hookResult, 1)
 		go func() {
-			result, err := fn(preHook)
+			result, err := fn(ctx, preHook)
 			ch <- hookResult{result, err}
 		}()
 
 		select {
 		case res := <-ch:
+			cancel()
 			if res.err != nil {
 				return nil, res.err
 			}
 			current = res.val
-		case <-time.After(time.Duration(r.timeout) * time.Millisecond):
+		case <-ctx.Done():
+			cancel()
 			current = preHook
 			r.warnings = append(r.warnings, fmt.Sprintf("hook timeout: %s exceeded %dms", string(event), r.timeout))
 		}
