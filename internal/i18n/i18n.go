@@ -52,11 +52,19 @@ func BuildLanguageContexts(cfg map[string]*config.LanguageConfig) ([]LanguageCon
 }
 
 // LinkTranslations connects pages across languages by matching relative paths.
+// It strips any leading language prefix (matching entries in `languages`) from
+// RelPath before grouping, so "en/about.md" and "fr/about.md" are linked.
 func LinkTranslations(pages []*content.Page, languages []string) error {
-	// Group pages by RelPath
+	langSet := make(map[string]bool, len(languages))
+	for _, l := range languages {
+		langSet[l] = true
+	}
+
+	// Group pages by RelPath with language prefix stripped
 	byPath := make(map[string][]*content.Page)
 	for _, page := range pages {
-		byPath[page.RelPath] = append(byPath[page.RelPath], page)
+		key := stripLangPrefix(page.RelPath, langSet)
+		byPath[key] = append(byPath[key], page)
 	}
 
 	// For each group with multiple pages, link them as translations
@@ -102,6 +110,17 @@ func LanguageData(ctx LanguageContext) map[string]interface{} {
 		data["strings"] = ctx.Strings
 	}
 	return data
+}
+
+// stripLangPrefix removes a leading language directory from a path if it matches
+// one of the declared languages. E.g. "fr/about.md" → "about.md".
+func stripLangPrefix(relPath string, langSet map[string]bool) string {
+	normalized := filepath.ToSlash(relPath)
+	parts := strings.SplitN(normalized, "/", 2)
+	if len(parts) == 2 && langSet[parts[0]] {
+		return parts[1]
+	}
+	return relPath
 }
 
 // FilterByLanguage filters a page slice to only include pages for a given language.

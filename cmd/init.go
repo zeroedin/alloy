@@ -4,16 +4,27 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
 
 func newInitCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "init",
+		Use:   "init [directory]",
 		Short: "Create default alloy.config.yaml",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return nil
+			dir := "."
+			if len(args) > 0 {
+				dir = args[0]
+			}
+			err := RunInit(dir)
+			if err != nil && strings.Contains(err.Error(), "already exists") {
+				fmt.Fprintln(cmd.ErrOrStderr(), err)
+				return nil
+			}
+			return err
 		},
 	}
 }

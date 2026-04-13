@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -46,6 +47,9 @@ func FetchREST(url string) (interface{}, error) {
 	return result, nil
 }
 
+// graphQLClient is an HTTP client with a reasonable timeout for GraphQL requests.
+var graphQLClient = &http.Client{Timeout: 30 * time.Second}
+
 // FetchGraphQL sends a GraphQL query and returns the unwrapped data.
 func FetchGraphQL(endpoint, query string) (interface{}, error) {
 	reqBody, err := json.Marshal(map[string]string{"query": query})
@@ -53,11 +57,15 @@ func FetchGraphQL(endpoint, query string) (interface{}, error) {
 		return nil, fmt.Errorf("graphql request encoding error: %w", err)
 	}
 
-	resp, err := http.Post(endpoint, "application/json", bytes.NewReader(reqBody))
+	resp, err := graphQLClient.Post(endpoint, "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("graphql request failed for %s: %w", endpoint, err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("graphql HTTP %d from %s", resp.StatusCode, endpoint)
+	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -176,7 +184,7 @@ func UnwrapGraphQLData(raw map[string]interface{}) (interface{}, error) {
 
 // CacheDir returns the default cache directory path (.alloy/fetch-cache/).
 func CacheDir(projectRoot string) string {
-	return projectRoot + "/.alloy/fetch-cache/"
+	return filepath.Join(projectRoot, ".alloy", "fetch-cache") + "/"
 }
 
 // GetCachedWithTTL returns cached data only if it hasn't expired.
@@ -205,6 +213,7 @@ func GetCachedWithTTL(name, cacheDir string, ttlSeconds int) (interface{}, bool,
 }
 
 // FetchRESTWithRefetch fetches from a REST endpoint, bypassing cache when refetch is true.
+// On success the result is saved to cache so subsequent non-refetch calls can use it.
 func FetchRESTWithRefetch(url string, cacheDir string, refetch bool) (interface{}, error) {
 	if !refetch {
 		data, found := GetCached(url, cacheDir, 3600)
@@ -213,23 +222,36 @@ func FetchRESTWithRefetch(url string, cacheDir string, refetch bool) (interface{
 		}
 	}
 
-	return FetchREST(url)
+	data, err := FetchREST(url)
+	if err != nil {
+		return nil, err
+	}
+
+	_ = SaveCache(url, cacheDir, data)
+	return data, nil
 }
 
 // PluginSourceHandler is a function provided by a plugin to fetch data.
 type PluginSourceHandler func(config map[string]interface{}) (interface{}, error)
 
 // pluginSources holds registered plugin source handlers.
-var pluginSources = make(map[string]PluginSourceHandler)
+var (
+	pluginSources  = make(map[string]PluginSourceHandler)
+	pluginSourceMu sync.RWMutex
+)
 
 // RegisterPluginSource registers a named plugin source handler.
 func RegisterPluginSource(name string, handler PluginSourceHandler) {
+	pluginSourceMu.Lock()
+	defer pluginSourceMu.Unlock()
 	pluginSources[name] = handler
 }
 
 // FetchPluginSource invokes the registered plugin source handler by name.
 func FetchPluginSource(name string, config map[string]interface{}) (interface{}, error) {
+	pluginSourceMu.RLock()
 	handler, ok := pluginSources[name]
+	pluginSourceMu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("plugin source %q not registered", name)
 	}
@@ -238,9 +260,19 @@ func FetchPluginSource(name string, config map[string]interface{}) (interface{},
 
 // RegisteredPluginSources returns the names of all registered plugin source handlers.
 func RegisteredPluginSources() []string {
+	pluginSourceMu.RLock()
+	defer pluginSourceMu.RUnlock()
 	names := make([]string, 0, len(pluginSources))
 	for name := range pluginSources {
 		names = append(names, name)
 	}
 	return names
+}
+
+// ResetPluginSources clears all registered plugin source handlers.
+// Intended for test isolation.
+func ResetPluginSources() {
+	pluginSourceMu.Lock()
+	defer pluginSourceMu.Unlock()
+	pluginSources = make(map[string]PluginSourceHandler)
 }
