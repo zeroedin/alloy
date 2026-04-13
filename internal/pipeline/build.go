@@ -9,8 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"log"
+
+	"github.com/zeroedin/alloy/internal/collection"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
+	"github.com/zeroedin/alloy/internal/data"
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
@@ -48,8 +52,14 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 	// Filter by lifecycle (draft/publish/expiry)
 	pages = content.FilterByLifecycle(pages, time.Now(), false)
 
+	// Load data files
+	siteData := loadSiteData(cfg)
+
+	// Build collections and taxonomies
+	collectionsCtx := buildCollectionsContext(pages, cfg)
+
 	// Render each page
-	rendered, renderErr := renderPages(pages, cfg)
+	rendered, renderErr := renderPages(pages, cfg, siteData, collectionsCtx)
 	if renderErr != nil {
 		return nil, renderErr
 	}
@@ -110,8 +120,8 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildR
 		return nil, fmt.Errorf("content discovery: %w", err)
 	}
 
-	// Render each page
-	rendered, renderErr := renderPages(pages, cfg)
+	// Render each page (no data files or collections in injected content mode)
+	rendered, renderErr := renderPages(pages, cfg, nil, nil)
 	if renderErr != nil {
 		return nil, renderErr
 	}
@@ -179,7 +189,7 @@ func BuildPhase2(intermediateHTML map[string]string, ssrCfg *config.SSRConfig) (
 
 // renderPages renders all pages through the markdown and template pipeline.
 // Returns the list of rendered page paths or an error.
-func renderPages(pages []*content.Page, cfg *config.Config) ([]string, error) {
+func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]interface{}, collectionsCtx map[string]interface{}) ([]string, error) {
 	mdOpts := content.MarkdownOptions{
 		Unsafe:       cfg.Content.Markdown.Goldmark.Unsafe,
 		Typographer:  cfg.Content.Markdown.Goldmark.Typographer,
@@ -212,7 +222,7 @@ func renderPages(pages []*content.Page, cfg *config.Config) ([]string, error) {
 
 		// Step 2: Render template tags with full page/site context.
 		if hasTemplateSyntax(html) {
-			ctx := buildTemplateContext(page, cfg)
+			ctx := buildTemplateContext(page, cfg, pages, siteData, collectionsCtx, html)
 			result, err := tmpl.RenderTemplate(string(html), page.RelPath, ctx)
 			if err != nil {
 				return nil, fmt.Errorf("template rendering: %s", err.Error())
@@ -233,17 +243,95 @@ func hasTemplateSyntax(body []byte) bool {
 	return strings.Contains(s, "{{") || strings.Contains(s, "{%")
 }
 
-// buildTemplateContext creates the template rendering context for a page.
-func buildTemplateContext(page *content.Page, cfg *config.Config) map[string]interface{} {
-	ctx := make(map[string]interface{})
-	// TODO: Expand per spec §3 — needs page.url, page.content, page.date,
-	// page.collection, site.data, site.pages, site.collections, collections.*
-	ctx["page"] = page.FrontMatter
-	ctx["site"] = map[string]interface{}{
+// buildTemplateContext creates the template rendering context for a page
+// per spec §3 (Template Context). renderedHTML is the markdown-rendered
+// content (pre-template processing), exposed as page.content.
+func buildTemplateContext(page *content.Page, cfg *config.Config, allPages []*content.Page, siteData map[string]interface{}, collectionsCtx map[string]interface{}, renderedHTML []byte) map[string]interface{} {
+	// Page context: start with front matter, then overlay computed fields.
+	pageCtx := make(map[string]interface{}, len(page.FrontMatter)+5)
+	for k, v := range page.FrontMatter {
+		pageCtx[k] = v
+	}
+	if page.URL != "" {
+		pageCtx["url"] = page.URL
+	}
+	if !page.Date.IsZero() {
+		pageCtx["date"] = page.Date
+	}
+	if page.Section != "" {
+		pageCtx["collection"] = page.Section
+	}
+	if len(renderedHTML) > 0 {
+		pageCtx["content"] = string(renderedHTML)
+	}
+
+	// Site context
+	site := map[string]interface{}{
 		"title":   cfg.Title,
 		"baseURL": cfg.BaseURL,
 	}
+	if siteData != nil {
+		site["data"] = siteData
+	} else {
+		site["data"] = make(map[string]interface{})
+	}
+	if allPages != nil {
+		site["pages"] = allPages
+	}
+	if collectionsCtx != nil {
+		site["collections"] = collectionsCtx
+	}
+
+	ctx := make(map[string]interface{})
+	ctx["page"] = pageCtx
+	ctx["site"] = site
+	if collectionsCtx != nil {
+		ctx["collections"] = collectionsCtx
+	}
 	return ctx
+}
+
+// loadSiteData loads data files from the configured data directory.
+// Returns nil if the directory doesn't exist. Logs a warning if the
+// directory exists but contains files that fail to parse.
+func loadSiteData(cfg *config.Config) map[string]interface{} {
+	dataDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Data)
+	if dataDir == "" {
+		return nil
+	}
+	loaded, err := data.LoadDirectory(dataDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("warning: failed to load data directory %s: %v", dataDir, err)
+		}
+		return nil
+	}
+	return loaded
+}
+
+// buildCollectionsContext builds section collections and taxonomies,
+// returning them as a template-friendly map.
+func buildCollectionsContext(pages []*content.Page, cfg *config.Config) map[string]interface{} {
+	result := make(map[string]interface{})
+
+	// Section collections
+	colls := collection.BuildCollections(pages, cfg.Permalinks)
+	for name, coll := range colls {
+		result[name] = coll.Pages
+	}
+
+	// Taxonomy collections
+	if cfg.Taxonomies != nil {
+		taxonomies := collection.BuildTaxonomies(pages, cfg.Taxonomies)
+		for name, tc := range taxonomies {
+			result[name] = tc.Terms
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 // resolveDir resolves a relative directory against the project root.
