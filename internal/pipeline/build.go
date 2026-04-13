@@ -3,18 +3,22 @@ package pipeline
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
-	"log"
-
+	"github.com/zeroedin/alloy/internal/assets"
+	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/collection"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/data"
+	"github.com/zeroedin/alloy/internal/output"
+	"github.com/zeroedin/alloy/internal/permalink"
+	"github.com/zeroedin/alloy/internal/static"
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
@@ -42,15 +46,42 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		return nil, err
 	}
 
-	// Phase 1: Discover and render content
+	// Stage 1: Create template engine and register built-in filters
+	var engine tmpl.TemplateEngine
+	if cfg.Templates.Engine == "gotemplate" {
+		engine = tmpl.NewGoEngine()
+	} else {
+		engine = tmpl.NewLiquidEngine()
+	}
+	tmpl.RegisterBuiltinFilters(engine)
+
+	// Discover content
 	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
 	pages, err := content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
 	if err != nil {
+		// Stage 2: Handle missing content directory gracefully
+		if os.IsNotExist(err) {
+			return &BuildResult{
+				OutputDir:  cfg.Build.Output,
+				PageCount:  0,
+				Duration:   time.Since(start),
+				SSRSkipped: cfg.SSR == nil,
+			}, nil
+		}
 		return nil, fmt.Errorf("content discovery: %w", err)
 	}
 
 	// Filter by lifecycle (draft/publish/expiry)
 	pages = content.FilterByLifecycle(pages, time.Now(), false)
+
+	// Stage 3: Resolve permalinks
+	for _, page := range pages {
+		url, err := permalink.ResolveForSection(page, cfg.Permalinks)
+		if err != nil {
+			return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
+		}
+		page.URL = url
+	}
 
 	// Load data files
 	siteData := loadSiteData(cfg)
@@ -58,10 +89,106 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 	// Build collections and taxonomies
 	collectionsCtx := buildCollectionsContext(pages, cfg)
 
-	// Render each page
-	rendered, renderErr := renderPages(pages, cfg, siteData, collectionsCtx)
+	// Stage 4: Render each page (with engine for custom filter support)
+	rendered, renderErr := renderPages(pages, cfg, siteData, collectionsCtx, engine)
 	if renderErr != nil {
 		return nil, renderErr
+	}
+
+	// Stage 5: Layout resolution and rendering
+	layoutsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts)
+	engineName := cfg.Templates.Engine
+	for _, page := range pages {
+		layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, engineName, cfg.Permalinks)
+		if err != nil {
+			// No layout found on disk — skip layout wrapping
+			continue
+		}
+		if layoutPath == "" {
+			// layout: false — skip
+			continue
+		}
+
+		layoutContent, err := os.ReadFile(layoutPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading layout %s: %w", layoutPath, err)
+		}
+
+		tpl, err := engine.Parse(layoutPath, layoutContent)
+		if err != nil {
+			return nil, fmt.Errorf("parsing layout %s: %w", layoutPath, err)
+		}
+
+		ctx := buildTemplateContext(page, cfg, pages, siteData, collectionsCtx, page.RenderedBody)
+		layoutResult, err := tpl.Render(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("rendering layout %s: %w", layoutPath, err)
+		}
+		page.RenderedBody = layoutResult
+	}
+
+	// Stage 6: Output writing
+	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
+	if cfg.Build.Clean {
+		if _, statErr := os.Stat(outputDir); statErr == nil {
+			if err := output.CleanOutputDir(outputDir); err != nil {
+				return nil, fmt.Errorf("cleaning output directory: %w", err)
+			}
+		}
+	}
+	for _, page := range pages {
+		if !output.ShouldWrite(page.URL) {
+			continue
+		}
+		outPath := output.ComputeOutputPath(page.URL)
+		if err := output.WriteFile(outputDir, outPath, page.RenderedBody); err != nil {
+			return nil, fmt.Errorf("writing output %s: %w", outPath, err)
+		}
+	}
+
+	// Stage 7: Static files, assets, and passthrough copy
+	staticDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Static)
+	if err := static.CopyStatic(staticDir, outputDir); err != nil {
+		return nil, fmt.Errorf("copying static files: %w", err)
+	}
+	assetsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Assets)
+	if err := assets.CopyAssets(assetsDir, outputDir); err != nil {
+		return nil, fmt.Errorf("copying assets: %w", err)
+	}
+	if len(cfg.Passthrough) > 0 {
+		managedDirs := []string{
+			cfg.Structure.Content,
+			cfg.Structure.Layouts,
+			cfg.Structure.Assets,
+			cfg.Structure.Static,
+			cfg.Structure.Data,
+		}
+		if err := static.CopyPassthroughWithValidation(cfg.Passthrough, cfg.ProjectRoot, outputDir, managedDirs); err != nil {
+			return nil, fmt.Errorf("copying passthrough files: %w", err)
+		}
+	}
+
+	// Stage 8: Sitemap generation
+	if len(pages) > 0 {
+		sitemapXML, err := output.GenerateSitemap(pages, cfg.Sitemap, cfg.BaseURL)
+		if err != nil {
+			return nil, fmt.Errorf("generating sitemap: %w", err)
+		}
+		if err := output.WriteFile(outputDir, "sitemap.xml", sitemapXML); err != nil {
+			return nil, fmt.Errorf("writing sitemap: %w", err)
+		}
+	}
+
+	// Stage 9: Cache persistence (non-fatal, only with a real project root)
+	if cfg.ProjectRoot != "" {
+		buildCache := cache.New()
+		for _, page := range pages {
+			buildCache.SetHash(page.RelPath, cache.HashContent(page.Content))
+		}
+		cacheDir := resolveDir(cfg.ProjectRoot, ".alloy")
+		if err := buildCache.SaveTo(cacheDir); err != nil {
+			log.Printf("warning: failed to save build cache: %v", err)
+		}
 	}
 
 	result := &BuildResult{
@@ -120,8 +247,8 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildR
 		return nil, fmt.Errorf("content discovery: %w", err)
 	}
 
-	// Render each page (no data files or collections in injected content mode)
-	rendered, renderErr := renderPages(pages, cfg, nil, nil)
+	// Render each page (no data files, collections, or engine in injected content mode)
+	rendered, renderErr := renderPages(pages, cfg, nil, nil, nil)
 	if renderErr != nil {
 		return nil, renderErr
 	}
@@ -188,8 +315,10 @@ func BuildPhase2(intermediateHTML map[string]string, ssrCfg *config.SSRConfig) (
 }
 
 // renderPages renders all pages through the markdown and template pipeline.
-// Returns the list of rendered page paths or an error.
-func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]interface{}, collectionsCtx map[string]interface{}) ([]string, error) {
+// When engine is non-nil, it is used for template rendering (with custom filters).
+// When engine is nil (BuildWithContent path), the standalone RenderTemplate is
+// used with strict filters to catch undefined filter usage in tests.
+func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]interface{}, collectionsCtx map[string]interface{}, engine tmpl.TemplateEngine) ([]string, error) {
 	mdOpts := content.MarkdownOptions{
 		Unsafe:       cfg.Content.Markdown.Goldmark.Unsafe,
 		Typographer:  cfg.Content.Markdown.Goldmark.Typographer,
@@ -223,11 +352,23 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 		// Step 2: Render template tags with full page/site context.
 		if hasTemplateSyntax(html) {
 			ctx := buildTemplateContext(page, cfg, pages, siteData, collectionsCtx, html)
-			result, err := tmpl.RenderTemplate(string(html), page.RelPath, ctx)
-			if err != nil {
-				return nil, fmt.Errorf("template rendering: %s", err.Error())
+			if engine != nil {
+				tpl, err := engine.Parse(page.RelPath, html)
+				if err != nil {
+					return nil, fmt.Errorf("template rendering: %s", err.Error())
+				}
+				rendered, err := tpl.Render(ctx)
+				if err != nil {
+					return nil, fmt.Errorf("template rendering: %s", err.Error())
+				}
+				html = rendered
+			} else {
+				result, err := tmpl.RenderTemplate(string(html), page.RelPath, ctx)
+				if err != nil {
+					return nil, fmt.Errorf("template rendering: %s", err.Error())
+				}
+				html = []byte(result)
 			}
-			html = []byte(result)
 		}
 
 		page.RenderedBody = html

@@ -1,5 +1,9 @@
 .claude/settings.local.json
 alloy
 
+# Build output and cache (created by pipeline during builds/tests)
+_site/
+.alloy/
+
 # Test artifact: cmd tests create this in CWD
 cmd/alloy.config.yaml
