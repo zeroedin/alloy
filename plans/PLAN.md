@@ -1191,7 +1191,7 @@ Every template receives:
 {{ page.date }}           -- from front matter or file date
 {{ page.url }}            -- computed permalink
 {{ page.collection }}     -- the collection this page belongs to
-{{ pages }}               -- all pages (for cross-referencing)
+{{ site.pages }}          -- all pages (for cross-referencing)
 {{ collections.blog }}    -- blog section collection (date-based permalink)
 {{ collections.taxonomies.tags.javascript }} -- taxonomy collection (cross-cutting)
 ```
