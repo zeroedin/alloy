@@ -23,6 +23,7 @@ type Config struct {
 	Language    string                       `yaml:"language" toml:"language" json:"language"`
 	Verbose     bool                         `yaml:"-" toml:"-" json:"-"` // CLI-only, set via MergeFlags
 	Quiet       bool                         `yaml:"-" toml:"-" json:"-"` // CLI-only, set via MergeFlags
+	Refetch     bool                         `yaml:"-" toml:"-" json:"-"` // CLI-only: --refetch bypasses fetch cache
 	Build       BuildConfig                  `yaml:"build" toml:"build" json:"build"`
 	Content     ContentConfig                `yaml:"content" toml:"content" json:"content"`
 	Templates   TemplatesConfig              `yaml:"templates" toml:"templates" json:"templates"`
@@ -277,6 +278,11 @@ func MergeFlags(cfg *Config, flags map[string]interface{}) {
 	if v, ok := flags["quiet"]; ok {
 		if b, ok := v.(bool); ok {
 			cfg.Quiet = b
+		}
+	}
+	if v, ok := flags["refetch"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.Refetch = b
 		}
 	}
 }
