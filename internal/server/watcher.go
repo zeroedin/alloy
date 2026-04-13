@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/zeroedin/alloy/internal/config"
@@ -44,19 +46,39 @@ const (
 // derived from the project config. Always includes content/, layouts/,
 // data/, assets/, static/. Adds component source dirs when SSR is configured.
 func WatchDirs(cfg *config.Config) []string {
-	return nil
+	dirs := []string{"content", "layouts", "data", "assets", "static"}
+	if cfg.SSR != nil {
+		dirs = append(dirs, "components")
+	}
+	return dirs
 }
 
 // ClassifyChange determines the ChangeType for a modified file path
 // based on which watched directory it falls under.
 func ClassifyChange(path string, cfg *config.Config) ChangeType {
-	return 0
+	switch {
+	case strings.HasPrefix(path, "content/") || strings.HasPrefix(path, "content\\"):
+		return ContentChange
+	case strings.HasPrefix(path, "layouts/") || strings.HasPrefix(path, "layouts\\"):
+		return LayoutChange
+	case strings.HasPrefix(path, "data/") || strings.HasPrefix(path, "data\\"):
+		return DataChange
+	case strings.HasPrefix(path, "assets/") || strings.HasPrefix(path, "assets\\"):
+		return AssetChange
+	case strings.HasPrefix(path, "static/") || strings.HasPrefix(path, "static\\"):
+		return StaticChange
+	case strings.HasPrefix(path, "components/") || strings.HasPrefix(path, "components\\"):
+		return ComponentChange
+	default:
+		return ContentChange
+	}
 }
 
 // ReloadMessage returns the JSON message sent to the browser via WebSocket
 // to trigger a full page reload.
 func ReloadMessage() []byte {
-	return nil
+	msg, _ := json.Marshal(map[string]string{"type": "reload"})
+	return msg
 }
 
 // Debouncer collects rapid file change events and fires a single callback
@@ -81,5 +103,8 @@ func NewDebouncer(interval time.Duration, bulkThreshold int) *Debouncer {
 // the quiet interval elapses. Returns the accumulated events and the
 // recommended rebuild scope (incremental vs full).
 func (d *Debouncer) Debounce(events []ChangeEvent) ([]ChangeEvent, RebuildScope) {
-	return nil, 0
+	if len(events) > d.bulkThreshold {
+		return events, RebuildFull
+	}
+	return events, RebuildIncremental
 }

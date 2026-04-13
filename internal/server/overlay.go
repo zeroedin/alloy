@@ -1,5 +1,11 @@
 package server
 
+import (
+	"fmt"
+	"html"
+	"strings"
+)
+
 // BuildError represents a structured error from the build pipeline,
 // displayed in the browser error overlay during dev mode (alloy serve only).
 type BuildError struct {
@@ -24,32 +30,32 @@ func NewOverlayState() *OverlayState {
 
 // SetErrors records build errors from a failed rebuild.
 func (s *OverlayState) SetErrors(errs []BuildError) {
-	// stub — no-op
+	s.errors = errs
 }
 
 // ClearErrors removes all active errors after a successful rebuild.
 func (s *OverlayState) ClearErrors() {
-	// stub — no-op
+	s.errors = nil
 }
 
 // HasErrors returns true if there are active build errors.
 func (s *OverlayState) HasErrors() bool {
-	return false
+	return len(s.errors) > 0
 }
 
 // Errors returns the active build errors.
 func (s *OverlayState) Errors() []BuildError {
-	return nil
+	return s.errors
 }
 
 // SetWarnings records persistent warnings (e.g., unreachable data sources).
 func (s *OverlayState) SetWarnings(warnings []string) {
-	// stub — no-op
+	s.warnings = warnings
 }
 
 // Warnings returns the active warnings.
 func (s *OverlayState) Warnings() []string {
-	return nil
+	return s.warnings
 }
 
 // RenderOverlay produces an HTML string for the browser error overlay,
@@ -57,12 +63,35 @@ func (s *OverlayState) Warnings() []string {
 // error message, pipeline stage, and source code snippet.
 // Used only in dev mode (alloy serve). Never included in alloy build output.
 func RenderOverlay(errs []BuildError) string {
-	return ""
+	var b strings.Builder
+	b.WriteString(`<div id="alloy-error-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);color:#fff;z-index:99999;padding:2em;overflow:auto;font-family:monospace;">`)
+	for _, e := range errs {
+		b.WriteString(`<div class="alloy-error" style="margin-bottom:1em;padding:1em;border:1px solid #f44;">`)
+		b.WriteString(fmt.Sprintf(`<div><strong>%s</strong>`, html.EscapeString(e.FilePath)))
+		if e.Line > 0 {
+			b.WriteString(fmt.Sprintf(` line %d`, e.Line))
+		}
+		b.WriteString(`</div>`)
+		b.WriteString(fmt.Sprintf(`<div>Stage: %s</div>`, html.EscapeString(e.Stage)))
+		b.WriteString(fmt.Sprintf(`<div>%s</div>`, html.EscapeString(e.Message)))
+		if e.Snippet != "" {
+			b.WriteString(fmt.Sprintf(`<pre>%s</pre>`, html.EscapeString(e.Snippet)))
+		}
+		b.WriteString(`</div>`)
+	}
+	b.WriteString(`</div>`)
+	return b.String()
 }
 
 // RenderWarningBanner produces an HTML string for the persistent warning
 // banner displayed when data sources are unreachable. Shows alongside
 // the error overlay in the browser during dev mode.
 func RenderWarningBanner(warnings []string) string {
-	return ""
+	var b strings.Builder
+	b.WriteString(`<div id="alloy-warning-banner" style="position:fixed;bottom:0;left:0;width:100%;background:#f90;color:#000;padding:0.5em 1em;z-index:99998;font-family:sans-serif;">`)
+	for _, w := range warnings {
+		b.WriteString(fmt.Sprintf(`<div>%s</div>`, html.EscapeString(w)))
+	}
+	b.WriteString(`</div>`)
+	return b.String()
 }
