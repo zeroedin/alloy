@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -19,12 +18,7 @@ func newInitCommand() *cobra.Command {
 			if len(args) > 0 {
 				dir = args[0]
 			}
-			err := RunInit(dir)
-			if err != nil && strings.Contains(err.Error(), "already exists") {
-				fmt.Fprintln(cmd.ErrOrStderr(), err)
-				return nil
-			}
-			return err
+			return RunInit(dir)
 		},
 	}
 }
@@ -32,13 +26,22 @@ func newInitCommand() *cobra.Command {
 // RunInit creates an alloy.config.yaml in the given directory.
 // Returns an error if the config file already exists.
 func RunInit(dir string) error {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", dir, err)
+	}
+
 	configPath := filepath.Join(dir, "alloy.config.yaml")
 
 	if _, err := os.Stat(configPath); err == nil {
 		return fmt.Errorf("config file already exists: %s", configPath)
 	}
 
-	defaultConfig := `title: My Alloy Site
+	defaultConfig := `title: "My Alloy Site"
+baseURL: "http://localhost:3000"
 `
-	return os.WriteFile(configPath, []byte(defaultConfig), 0644)
+	if err := os.WriteFile(configPath, []byte(defaultConfig), 0644); err != nil {
+		return err
+	}
+	fmt.Println("Created alloy.config.yaml")
+	return nil
 }
