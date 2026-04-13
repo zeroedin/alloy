@@ -3,6 +3,7 @@ package pipeline
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -60,7 +61,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 	pages, err := content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
 	if err != nil {
 		// Stage 2: Handle missing content directory gracefully
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return &BuildResult{
 				OutputDir:  cfg.Build.Output,
 				PageCount:  0,
@@ -442,7 +443,7 @@ func loadSiteData(cfg *config.Config) map[string]interface{} {
 	}
 	loaded, err := data.LoadDirectory(dataDir)
 	if err != nil {
-		if !os.IsNotExist(err) {
+		if !errors.Is(err, fs.ErrNotExist) {
 			log.Printf("warning: failed to load data directory %s: %v", dataDir, err)
 		}
 		return nil
