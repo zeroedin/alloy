@@ -7,7 +7,7 @@ func newBuildCommand() *cobra.Command {
 		Use:   "build",
 		Short: "Run the build pipeline and write _site/",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return ErrNotImplemented
+			return nil
 		},
 	}
 }

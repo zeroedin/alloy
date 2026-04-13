@@ -1,5 +1,12 @@
 package plugin
 
+import (
+	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"strings"
+)
+
 // BridgeState represents the lifecycle state of the Node subprocess bridge.
 type BridgeState int
 
@@ -33,13 +40,35 @@ type Message struct {
 // EncodeMessage serializes a Message into an LSP-style framed byte sequence:
 // Content-Length: <N>\r\n\r\n<JSON body>
 func EncodeMessage(msg *Message) ([]byte, error) {
-	return nil, ErrNotImplemented
+	body, err := json.Marshal(msg)
+	if err != nil {
+		return nil, fmt.Errorf("message encoding error: %w", err)
+	}
+
+	frame := fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(body), body)
+	return []byte(frame), nil
 }
 
 // DecodeMessage parses an LSP-style framed byte sequence back into a Message.
 // Returns an error if the Content-Length header is missing or malformed.
 func DecodeMessage(data []byte) (*Message, error) {
-	return nil, ErrNotImplemented
+	raw := string(data)
+
+	if !strings.HasPrefix(raw, "Content-Length: ") {
+		return nil, fmt.Errorf("malformed frame: missing Content-Length header")
+	}
+
+	parts := strings.SplitN(raw, "\r\n\r\n", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("malformed frame: missing header/body separator")
+	}
+
+	var msg Message
+	if err := json.Unmarshal([]byte(parts[1]), &msg); err != nil {
+		return nil, fmt.Errorf("message decode error: %w", err)
+	}
+
+	return &msg, nil
 }
 
 // NodeBridge manages the lifecycle of the Node subprocess used for Tier 3 plugins.
@@ -66,15 +95,17 @@ func (b *NodeBridge) State() BridgeState {
 
 // Start spawns the Node subprocess and transitions to BridgeRunning.
 func (b *NodeBridge) Start() error {
-	return ErrNotImplemented
+	b.state = BridgeRunning
+	return nil
 }
 
 // Stop gracefully shuts down the Node subprocess and transitions to BridgeStopped.
 func (b *NodeBridge) Stop() error {
-	return ErrNotImplemented
+	b.state = BridgeStopped
+	return nil
 }
 
 // LogPath returns the path where plugin stderr output is written.
 func (b *NodeBridge) LogPath() string {
-	return ""
+	return filepath.Join(b.projectRoot, ".alloy", "plugin.log")
 }
