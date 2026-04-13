@@ -2215,17 +2215,31 @@ Without an `ssr:` config block (and no SSR plugin), `--preview` still works — 
 
 ### Entry Point
 
-`main.go` must call `cmd.Execute()` to wire the Cobra command tree to the binary. All command logic lives in `cmd/` — `main.go` is a one-line entry point:
+`main.go` must call `cmd.Execute()` and exit non-zero on error. All command logic lives in `cmd/` — `main.go` is a thin entry point:
 
 ```go
 package main
 
-import "github.com/zeroedin/alloy/cmd"
+import (
+	"os"
+
+	"github.com/zeroedin/alloy/cmd"
+)
 
 func main() {
-	cmd.Execute()
+	if err := cmd.Execute(); err != nil {
+		os.Exit(1)
+	}
 }
 ```
+
+### Exit Codes
+
+All CLI commands follow standard Unix conventions:
+- **Exit 0** — command completed successfully
+- **Exit 1** — command failed (invalid config, build error, missing resource, unknown command, etc.)
+
+Scripts and CI pipelines rely on exit codes. The error return from `cmd.Execute()` must never be discarded.
 
 ### Commands
 
@@ -2238,6 +2252,41 @@ alloy serve --refetch    # Bypass source cache TTL, fetch fresh external data on
 alloy version            # Print version
 alloy help               # Help text
 ```
+
+#### `alloy init [directory]`
+
+Creates a default `alloy.config.yaml` in the target directory (default: current directory).
+
+- **Creates target directory** if it does not exist (`os.MkdirAll`).
+- **Fails with exit 1** if `alloy.config.yaml` already exists. Error message must contain `"already exists"`.
+- **Prints success message** on creation: `Created alloy.config.yaml` (or `Created <dir>/alloy.config.yaml` when a directory argument is given).
+- **Generated config** must be valid for `config.Validate` — at minimum `title` and `baseURL`:
+
+```yaml
+title: "My Alloy Site"
+baseURL: "http://localhost:3000"
+```
+
+#### `alloy build`
+
+Runs the full build pipeline and writes output to `_site/` (or the configured output directory).
+
+1. Detect and load config file (via `config.DetectConfigFile` + `config.LoadWithDefaults`). If no config file is found, fall back to built-in defaults so an empty project produces a successful zero-page build.
+2. Apply CLI flag overrides via `config.MergeFlags` (`--output`, `--verbose`, `--quiet`).
+3. Call `pipeline.Build(cfg)`.
+4. Print build summary: page count and duration (e.g., `Built 42 pages in 127ms`).
+5. Exit 0 on success, exit 1 on any error.
+
+#### `alloy serve`
+
+Starts the development server with live reload.
+
+1. Load config (same as build).
+2. Run initial build via `pipeline.Build(cfg)`.
+3. Start HTTP server on `--port` (default 3000).
+4. Start file watcher for live reload.
+5. Print startup message: `Serving at http://localhost:<port>`.
+6. Block until interrupted (Ctrl+C).
 
 ### Flags
 

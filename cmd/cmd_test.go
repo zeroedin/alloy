@@ -203,6 +203,60 @@ var _ = Describe("CLI Commands", func() {
 			Expect(err.Error()).To(ContainSubstring("already exists"),
 				"error must explain that config already exists")
 		})
+
+		It("creates target directory if it does not exist", func() {
+			tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+			Expect(err).NotTo(HaveOccurred())
+			defer os.RemoveAll(tmpDir)
+
+			nestedDir := filepath.Join(tmpDir, "new-project", "subdir")
+			err = cmd.RunInit(nestedDir)
+			Expect(err).NotTo(HaveOccurred(),
+				"RunInit must create target directory if it does not exist")
+
+			configPath := filepath.Join(nestedDir, "alloy.config.yaml")
+			_, err = os.Stat(configPath)
+			Expect(err).NotTo(HaveOccurred(),
+				"alloy.config.yaml must exist in the created directory")
+		})
+
+		It("generated config includes baseURL so it passes validation", func() {
+			tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+			Expect(err).NotTo(HaveOccurred())
+			defer os.RemoveAll(tmpDir)
+
+			err = cmd.RunInit(tmpDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			configPath := filepath.Join(tmpDir, "alloy.config.yaml")
+			configBytes, err := os.ReadFile(configPath)
+			Expect(err).NotTo(HaveOccurred())
+			configStr := string(configBytes)
+			Expect(configStr).To(ContainSubstring("baseURL"),
+				"generated config must include baseURL for config.Validate to pass")
+		})
+
+		It("init command returns error (not exit 0) when config already exists", func() {
+			tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+			Expect(err).NotTo(HaveOccurred())
+			defer os.RemoveAll(tmpDir)
+
+			// Pre-create config
+			err = os.WriteFile(
+				filepath.Join(tmpDir, "alloy.config.yaml"),
+				[]byte("title: Existing Site"),
+				0644,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			root := cmd.NewRootCommand()
+			root.SilenceErrors = true
+			root.SilenceUsage = true
+			root.SetArgs([]string{"init", tmpDir})
+			err = root.Execute()
+			Expect(err).To(HaveOccurred(),
+				"init command must return error when config exists — not swallow it and exit 0")
+		})
 	})
 
 	// ── alloy version ────────────────────────────────────────────────
