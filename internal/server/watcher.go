@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/zeroedin/alloy/internal/config"
@@ -40,23 +42,68 @@ const (
 	RebuildFull
 )
 
+// structureDir returns a config directory or falls back to the default name.
+func structureDir(configured, fallback string) string {
+	if configured != "" {
+		return configured
+	}
+	return fallback
+}
+
 // WatchDirs returns the list of directories to watch for file changes,
 // derived from the project config. Always includes content/, layouts/,
 // data/, assets/, static/. Adds component source dirs when SSR is configured.
 func WatchDirs(cfg *config.Config) []string {
-	return nil
+	dirs := []string{
+		structureDir(cfg.Structure.Content, "content"),
+		structureDir(cfg.Structure.Layouts, "layouts"),
+		structureDir(cfg.Structure.Data, "data"),
+		structureDir(cfg.Structure.Assets, "assets"),
+		structureDir(cfg.Structure.Static, "static"),
+	}
+	if cfg.SSR != nil {
+		dirs = append(dirs, "components")
+	}
+	return dirs
 }
 
 // ClassifyChange determines the ChangeType for a modified file path
 // based on which watched directory it falls under.
 func ClassifyChange(path string, cfg *config.Config) ChangeType {
-	return 0
+	contentDir := structureDir(cfg.Structure.Content, "content")
+	layoutsDir := structureDir(cfg.Structure.Layouts, "layouts")
+	dataDir := structureDir(cfg.Structure.Data, "data")
+	assetsDir := structureDir(cfg.Structure.Assets, "assets")
+	staticDir := structureDir(cfg.Structure.Static, "static")
+
+	switch {
+	case hasPathPrefix(path, contentDir):
+		return ContentChange
+	case hasPathPrefix(path, layoutsDir):
+		return LayoutChange
+	case hasPathPrefix(path, dataDir):
+		return DataChange
+	case hasPathPrefix(path, assetsDir):
+		return AssetChange
+	case hasPathPrefix(path, staticDir):
+		return StaticChange
+	case hasPathPrefix(path, "components"):
+		return ComponentChange
+	default:
+		return ContentChange
+	}
+}
+
+// hasPathPrefix checks if a file path is under the given directory.
+func hasPathPrefix(path, dir string) bool {
+	return strings.HasPrefix(path, dir+"/") || strings.HasPrefix(path, dir+"\\")
 }
 
 // ReloadMessage returns the JSON message sent to the browser via WebSocket
 // to trigger a full page reload.
 func ReloadMessage() []byte {
-	return nil
+	msg, _ := json.Marshal(map[string]string{"type": "reload"})
+	return msg
 }
 
 // Debouncer collects rapid file change events and fires a single callback
@@ -81,5 +128,8 @@ func NewDebouncer(interval time.Duration, bulkThreshold int) *Debouncer {
 // the quiet interval elapses. Returns the accumulated events and the
 // recommended rebuild scope (incremental vs full).
 func (d *Debouncer) Debounce(events []ChangeEvent) ([]ChangeEvent, RebuildScope) {
-	return nil, 0
+	if len(events) > d.bulkThreshold {
+		return events, RebuildFull
+	}
+	return events, RebuildIncremental
 }
