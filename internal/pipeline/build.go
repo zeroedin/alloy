@@ -54,7 +54,9 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 	} else {
 		engine = tmpl.NewLiquidEngine()
 	}
-	tmpl.RegisterBuiltinFilters(engine)
+	if err := tmpl.RegisterBuiltinFilters(engine); err != nil {
+		return nil, fmt.Errorf("registering template filters: %w", err)
+	}
 
 	// Discover content
 	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
@@ -121,6 +123,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		}
 
 		ctx := buildTemplateContext(page, cfg, pages, siteData, collectionsCtx, page.RenderedBody)
+		ctx["content"] = string(page.RenderedBody) // spec §6 step 14: top-level {{ content }} for layouts
 		layoutResult, err := tpl.Render(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("rendering layout %s: %w", layoutPath, err)
