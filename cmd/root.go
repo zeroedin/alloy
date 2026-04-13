@@ -16,6 +16,13 @@ func NewRootCommand() *cobra.Command {
 		Use:   "alloy",
 		Short: "Alloy static site generator",
 	}
+
+	// Global persistent flags
+	root.PersistentFlags().StringP("config", "c", "alloy.config.yaml", "Path to config file")
+	root.PersistentFlags().StringP("output", "o", "_site", "Output directory")
+	root.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose output")
+	root.PersistentFlags().BoolP("quiet", "q", false, "Suppress non-error output")
+
 	root.AddCommand(newBuildCommand())
 	root.AddCommand(newServeCommand())
 	root.AddCommand(newInitCommand())

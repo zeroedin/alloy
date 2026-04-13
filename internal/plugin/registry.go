@@ -1,5 +1,14 @@
 package plugin
 
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
 // PluginTier represents the execution tier of a plugin.
 type PluginTier int
 
@@ -32,46 +41,144 @@ type PluginInfo struct {
 
 // Registry manages plugin discovery and loading.
 type Registry struct {
-	pluginsDir string
+	pluginsDir      string
+	plugins         []PluginInfo
+	filterRegistry  map[string]string // filter name → source
+	conflictWarns   []string
 }
 
 // NewRegistry creates a plugin registry for the given plugins directory.
 func NewRegistry(pluginsDir string) *Registry {
-	return &Registry{pluginsDir: pluginsDir}
+	return &Registry{
+		pluginsDir:     pluginsDir,
+		filterRegistry: make(map[string]string),
+	}
+}
+
+// supportedExtensions lists file extensions recognized as plugins.
+var supportedExtensions = map[string]bool{
+	".js":   true,
+	".ts":   true,
+	".wasm": true,
 }
 
 // DiscoverPlugins scans the plugins directory and loads plugins by file extension.
 func (r *Registry) DiscoverPlugins() error {
-	return ErrNotImplemented
+	entries, err := os.ReadDir(r.pluginsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reading plugins directory: %w", err)
+	}
+
+	var discovered []PluginInfo
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		ext := filepath.Ext(entry.Name())
+		if !supportedExtensions[ext] {
+			continue
+		}
+
+		path := filepath.Join(r.pluginsDir, entry.Name())
+		info, err := ClassifyPlugin(path)
+		if err != nil {
+			continue
+		}
+		discovered = append(discovered, *info)
+	}
+
+	// Sort by tier first, then alphabetically by name within each tier
+	sort.Slice(discovered, func(i, j int) bool {
+		if discovered[i].Tier != discovered[j].Tier {
+			return discovered[i].Tier < discovered[j].Tier
+		}
+		return discovered[i].Name < discovered[j].Name
+	})
+
+	r.plugins = discovered
+	return nil
 }
 
 // Plugins returns the list of discovered plugins after DiscoverPlugins is called.
-// Plugins are sorted by load order: Tier 1 first, then Tier 2, then Tier 3,
-// with alphabetical filename order within each tier.
 func (r *Registry) Plugins() []PluginInfo {
-	return nil
+	return r.plugins
 }
 
 // ConflictWarnings returns any name conflict warnings produced during plugin loading.
-// A conflict occurs when two plugins register the same filter or shortcode name.
 func (r *Registry) ConflictWarnings() []string {
-	return nil
+	return r.conflictWarns
 }
 
 // RegisterFilter records a filter registration and tracks name conflicts.
-// If a filter with the same name was already registered, a warning is recorded.
 func (r *Registry) RegisterFilter(name, source string) {
-	// stub — no-op
+	if existing, ok := r.filterRegistry[name]; ok {
+		r.conflictWarns = append(r.conflictWarns,
+			fmt.Sprintf("filter %q conflict: registered by %s and %s", name, existing, source))
+	}
+	r.filterRegistry[name] = source
 }
 
 // ClassifyPlugin determines the tier and runtime for a plugin file based on
 // its extension and (for .js/.ts files) whether it exports runtime: "node".
 func ClassifyPlugin(path string) (*PluginInfo, error) {
-	return nil, ErrNotImplemented
+	ext := filepath.Ext(path)
+	base := filepath.Base(path)
+	name := strings.TrimSuffix(base, ext)
+
+	switch ext {
+	case ".wasm":
+		return &PluginInfo{
+			Path:    path,
+			Name:    name,
+			Tier:    TierInProcess,
+			Runtime: RuntimeWASM,
+		}, nil
+
+	case ".js", ".ts":
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("reading plugin file %s: %w", path, err)
+		}
+
+		src := string(content)
+		if hasNodeRuntimeExport(src) {
+			return &PluginInfo{
+				Path:    path,
+				Name:    name,
+				Tier:    TierNode,
+				Runtime: RuntimeNode,
+			}, nil
+		}
+
+		return &PluginInfo{
+			Path:    path,
+			Name:    name,
+			Tier:    TierInProcess,
+			Runtime: RuntimeQuickJS,
+		}, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported plugin extension %q", ext)
+	}
+}
+
+// hasNodeRuntimeExport checks if JS/TS source declares runtime = "node".
+func hasNodeRuntimeExport(src string) bool {
+	// Match patterns like: export const runtime = "node"
+	return strings.Contains(src, `runtime = "node"`) ||
+		strings.Contains(src, `runtime = 'node'`) ||
+		strings.Contains(src, "runtime: \"node\"") ||
+		strings.Contains(src, "runtime: 'node'")
 }
 
 // CheckNodeAvailable verifies that the `node` binary is available in PATH.
-// Returns a descriptive error if Node plugins exist but node is not found.
 func CheckNodeAvailable() error {
-	return ErrNotImplemented
+	_, err := exec.LookPath("node")
+	if err != nil {
+		return fmt.Errorf("node not found in PATH: Tier 3 plugins require Node.js")
+	}
+	return nil
 }
