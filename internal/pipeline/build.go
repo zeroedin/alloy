@@ -191,22 +191,10 @@ func renderPages(pages []*content.Page, cfg *config.Config) ([]string, error) {
 	for _, page := range pages {
 		body := page.Body
 
-		// Render template tags first so that errors in template syntax
-		// are caught early and reported with the source file context.
-		// NOTE: Spec §6 Phase 1 steps 3–4 suggest markdown-first ordering.
-		// Current order (template→markdown) is needed because markdown
-		// rendering can obscure template syntax errors. Revisit when the
-		// template engine supports raw-block protection for code fences.
-		if hasTemplateSyntax(body) {
-			ctx := buildTemplateContext(page, cfg)
-			result, err := tmpl.RenderTemplate(string(body), page.RelPath, ctx)
-			if err != nil {
-				return nil, fmt.Errorf("template rendering: %s", err.Error())
-			}
-			body = []byte(result)
-		}
-
-		// Render markdown
+		// Step 1: Render markdown first per spec §6 Phase 1 steps 3–4.
+		// Goldmark's TemplateTags extension preserves {{ }} and {% %} as
+		// raw nodes. Code fences protect their contents automatically
+		// (goldmark's parsers take precedence over the template tag extension).
 		ext := filepath.Ext(page.RelPath)
 		var html []byte
 		var err error
@@ -219,7 +207,17 @@ func renderPages(pages []*content.Page, cfg *config.Config) ([]string, error) {
 			html = body
 		}
 		if err != nil {
-			return nil, fmt.Errorf("template rendering: %s: %w", page.RelPath, err)
+			return nil, fmt.Errorf("content transformation: %s: %w", page.RelPath, err)
+		}
+
+		// Step 2: Render template tags with full page/site context.
+		if hasTemplateSyntax(html) {
+			ctx := buildTemplateContext(page, cfg)
+			result, err := tmpl.RenderTemplate(string(html), page.RelPath, ctx)
+			if err != nil {
+				return nil, fmt.Errorf("template rendering: %s", err.Error())
+			}
+			html = []byte(result)
 		}
 
 		page.RenderedBody = html
@@ -266,6 +264,11 @@ func setDefaults(cfg *config.Config) {
 	}
 	if cfg.Build.Output == "" {
 		cfg.Build.Output = "_site"
+	}
+	// TemplateTags must default to true so Goldmark preserves {{ }}/{% %}
+	// through markdown rendering (required for markdown-first ordering).
+	if !cfg.Content.Markdown.Goldmark.TemplateTags {
+		cfg.Content.Markdown.Goldmark.TemplateTags = true
 	}
 }
 

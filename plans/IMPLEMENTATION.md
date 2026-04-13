@@ -211,6 +211,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 - `BuildWithContent`: Accept injected content, render through pipeline. Error messages must contain source file path + "template rendering" stage.
 - `BuildPhase1`/`BuildPhase2`: Phase separation. Phase 2 inserts `<template shadowrootmode="open">` markers for custom elements (minimal SSR simulation).
 - **`validateOutputDir`** (issue #9): Uses path equality + parent/child overlap detection (not substring matching). Only rejects exact matches (`output == content`) and nesting (`output = content/build` or `content` inside `output`). Names like `my_content_site` are valid output directories.
+- **Render ordering** (issue #10): Markdown renders first, then template tags — per spec §6 steps 3-4. Goldmark's TemplateTags extension preserves `{{ }}`/`{% %}` through markdown rendering. Code fences protect their contents automatically (goldmark parsers take precedence). Markdown errors use stage name `"content transformation"`, template errors use `"template rendering"`.
 
 ### WALKING SKELETON MILESTONE
 At this point, `alloy build` works end-to-end on test fixtures.
