@@ -89,3 +89,84 @@ func BuildTemplateContext(page *content.Page, siteData map[string]interface{}, a
 
 	return ctx
 }
+
+// ToMap converts the TemplateContext to a raw map[string]interface{} for use
+// with template engines (e.g., osteele/liquid) that require a plain map.
+// The map shape matches the spec §3 context: page.*, site.*, collections.*,
+// with pagination and custom "as" variables hoisted to the top level.
+func (tc *TemplateContext) ToMap() map[string]interface{} {
+	// Page context: start with all front matter, overlay computed fields.
+	pageCtx := make(map[string]interface{}, len(tc.Page.FrontMatter)+5)
+	for k, v := range tc.Page.FrontMatter {
+		pageCtx[k] = v
+	}
+	if tc.Page.URL != "" {
+		pageCtx["url"] = tc.Page.URL
+	}
+	if tc.Page.Date != nil {
+		pageCtx["date"] = tc.Page.Date
+	}
+	if tc.Page.Collection != "" {
+		pageCtx["collection"] = tc.Page.Collection
+	}
+	if tc.Content != "" {
+		pageCtx["content"] = tc.Content
+	}
+
+	// Site context
+	site := map[string]interface{}{
+		"title":   tc.Site.Title,
+		"baseURL": tc.Site.BaseURL,
+	}
+	if tc.Site.Data != nil {
+		site["data"] = tc.Site.Data
+	} else {
+		site["data"] = make(map[string]interface{})
+	}
+	if tc.Site.Pages != nil {
+		site["pages"] = tc.Site.Pages
+	}
+	if tc.Collections != nil {
+		site["collections"] = tc.Collections
+	}
+
+	ctx := map[string]interface{}{
+		"page": pageCtx,
+		"site": site,
+	}
+	if tc.Collections != nil {
+		ctx["collections"] = tc.Collections
+	}
+
+	// Hoist pagination to top level per spec §1c.
+	// Two sources: explicit Pagination field (from BuildTemplateContext params)
+	// or _pagination* transport keys in FrontMatter (from processPagination).
+	if tc.Pagination != nil {
+		ctx["pagination"] = map[string]interface{}{
+			"pageNumber":   tc.Pagination.PageNumber,
+			"totalPages":   tc.Pagination.TotalPages,
+			"previousPage": tc.Pagination.PreviousPage,
+			"nextPage":     tc.Pagination.NextPage,
+			"first":        tc.Pagination.First,
+			"last":         tc.Pagination.Last,
+			"items":        tc.Pagination.Items,
+		}
+	} else if paginationCtx, ok := pageCtx["_paginationCtx"]; ok {
+		ctx["pagination"] = paginationCtx
+		delete(pageCtx, "_paginationCtx")
+	}
+
+	// Hoist custom "as" variables.
+	for k, v := range tc.Custom {
+		ctx[k] = v
+	}
+	if asVar, ok := pageCtx["_paginationAs"].(string); ok {
+		if data, ok := pageCtx["_paginationData"]; ok {
+			ctx[asVar] = data
+		}
+		delete(pageCtx, "_paginationAs")
+		delete(pageCtx, "_paginationData")
+	}
+
+	return ctx
+}
