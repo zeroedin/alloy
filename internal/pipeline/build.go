@@ -118,8 +118,14 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		page.FrontMatter = pctx.ToMap()
 	}
 
-	// Build collections and taxonomies
-	collectionsCtx := buildCollectionsContext(pages, cfg)
+	// Build taxonomies once (used for both template context and page generation)
+	var taxonomies map[string]*collection.TaxonomyCollection
+	if cfg.Taxonomies != nil {
+		taxonomies = collection.BuildTaxonomies(pages, cfg.Taxonomies)
+	}
+
+	// Build collections and taxonomies for template context
+	collectionsCtx := buildCollectionsContext(pages, cfg, taxonomies)
 
 	// Stage 4: Render each page (with engine for custom filter support)
 	rendered, renderErr := renderPages(pages, cfg, siteData, collectionsCtx, engine)
@@ -158,6 +164,55 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			return nil, fmt.Errorf("rendering layout %s: %w", layoutPath, err)
 		}
 		page.RenderedBody = layoutResult
+	}
+
+	// Generate and render taxonomy pages (virtual index + per-term pages)
+	if taxonomies != nil && engine != nil {
+
+		// Detect duplicate term slugs before generating pages
+		for taxName, tc := range taxonomies {
+			dupes := collection.DetectDuplicateTermSlugs(tc)
+			if len(dupes) > 0 {
+				return nil, fmt.Errorf("taxonomy %q has duplicate term slugs: %v", taxName, dupes)
+			}
+		}
+
+		for taxName, tc := range taxonomies {
+			taxCfg := cfg.Taxonomies[taxName]
+
+			// Resolve layout once per taxonomy (not per page)
+			layoutPath, err := tmpl.ResolveTaxonomyLayout(taxName, taxCfg.Layout, layoutsDir, engineName)
+			if err != nil {
+				return nil, fmt.Errorf("taxonomy %q layout: %w", taxName, err)
+			}
+			layoutContent, err := os.ReadFile(layoutPath)
+			if err != nil {
+				return nil, fmt.Errorf("reading taxonomy layout %s: %w", layoutPath, err)
+			}
+			tpl, err := engine.Parse(layoutPath, layoutContent)
+			if err != nil {
+				return nil, fmt.Errorf("parsing taxonomy layout %s: %w", layoutPath, err)
+			}
+
+			taxPages := collection.GenerateTaxonomyPages(tc, taxCfg)
+			for _, taxPage := range taxPages {
+				ctx := buildTemplateContext(taxPage, cfg, pages, siteData, collectionsCtx, nil)
+				term := ""
+				if taxPage.Kind == "taxonomy_term" {
+					if t, ok := taxPage.FrontMatter["title"].(string); ok {
+						term = t
+					}
+				}
+				ctx["taxonomy"] = collection.BuildTaxonomyPageContext(tc, term).ToMap()
+				ctx["content"] = ""
+				out, err := tpl.Render(ctx)
+				if err != nil {
+					return nil, fmt.Errorf("rendering taxonomy page %s: %w", taxPage.URL, err)
+				}
+				taxPage.RenderedBody = out
+				pages = append(pages, taxPage)
+			}
+		}
 	}
 
 	// Pre-build validation: permalink/alias conflicts
@@ -263,7 +318,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 
 	result := &BuildResult{
 		OutputDir:     cfg.Build.Output,
-		PageCount:     len(rendered),
+		PageCount:     len(pages),
 		Duration:      time.Since(start),
 		SSRSkipped:    cfg.SSR == nil,
 		PagesRendered: rendered,
@@ -546,9 +601,9 @@ func loadSiteData(cfg *config.Config) map[string]interface{} {
 	return loaded
 }
 
-// buildCollectionsContext builds section collections and taxonomies,
-// returning them as a template-friendly map.
-func buildCollectionsContext(pages []*content.Page, cfg *config.Config) map[string]interface{} {
+// buildCollectionsContext builds section collections and includes pre-built
+// taxonomies, returning them as a template-friendly map.
+func buildCollectionsContext(pages []*content.Page, cfg *config.Config, taxonomies map[string]*collection.TaxonomyCollection) map[string]interface{} {
 	result := make(map[string]interface{})
 
 	// Section collections
@@ -558,11 +613,8 @@ func buildCollectionsContext(pages []*content.Page, cfg *config.Config) map[stri
 	}
 
 	// Taxonomy collections
-	if cfg.Taxonomies != nil {
-		taxonomies := collection.BuildTaxonomies(pages, cfg.Taxonomies)
-		for name, tc := range taxonomies {
-			result[name] = tc.Terms
-		}
+	for name, tc := range taxonomies {
+		result[name] = tc.Terms
 	}
 
 	if len(result) == 0 {

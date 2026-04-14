@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head><title>Categories</title></head>
+<body>
+{% if taxonomy.term %}
+  <h1>{{ taxonomy.term }}</h1>
+  {% for post in taxonomy.items %}
+    <a href="{{ post.url }}">{{ post.title }}</a>
+  {% endfor %}
+{% else %}
+  {% for cat in taxonomy.terms %}
+    <a href="{{ cat.url }}">{{ cat.name }} ({{ cat.items | size }})</a>
+  {% endfor %}
+{% endif %}
+</body>
+</html>

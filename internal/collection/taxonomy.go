@@ -117,6 +117,30 @@ type TaxonomyPageContext struct {
 	Items []*content.Page
 }
 
+// ToMap converts the context to a map with lowercase keys for reliable
+// template access (avoids liquidgo acronym-mapping issues with struct fields).
+func (ctx *TaxonomyPageContext) ToMap() map[string]interface{} {
+	m := map[string]interface{}{
+		"term": ctx.Term,
+	}
+	if ctx.Terms != nil {
+		terms := make([]map[string]interface{}, len(ctx.Terms))
+		for i, t := range ctx.Terms {
+			terms[i] = map[string]interface{}{
+				"name":  t.Name,
+				"slug":  t.Slug,
+				"url":   t.URL,
+				"items": t.Items,
+			}
+		}
+		m["terms"] = terms
+	}
+	if ctx.Items != nil {
+		m["items"] = ctx.Items
+	}
+	return m
+}
+
 // BuildTaxonomyPageContext creates the template context for a taxonomy page.
 // For index pages (term=""), it provides Terms. For term pages, it provides Items.
 func BuildTaxonomyPageContext(taxonomy *TaxonomyCollection, term string) *TaxonomyPageContext {
