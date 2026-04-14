@@ -36,6 +36,7 @@ type Server struct {
 	httpServer *http.Server
 	listener   net.Listener
 	done       chan struct{} // closed when the server stops
+	port       int           // actual port the server is listening on
 }
 
 // New creates a new Server with the given config in dev mode.
@@ -130,6 +131,7 @@ func (s *Server) startOnAddr(addr string) error {
 		return fmt.Errorf("listen on %s: %w", addr, err)
 	}
 	s.listener = ln
+	s.port = ln.Addr().(*net.TCPAddr).Port
 
 	s.httpServer = &http.Server{Handler: mux}
 	s.done = make(chan struct{})
@@ -181,6 +183,32 @@ func (s *Server) ResolvePassthrough(urlPath string) (string, error) {
 // Returns a descriptive error if the port is already in use.
 func (s *Server) StartOnPort(port int) error {
 	return s.startOnAddr(fmt.Sprintf(":%d", port))
+}
+
+// Port returns the actual port the server is listening on.
+// Returns 0 before the server has started.
+func (s *Server) Port() int {
+	return s.port
+}
+
+// StartWithPortFallback tries to start the server on preferredPort, incrementing
+// up to maxAttempts times if the port is occupied. Returns the actual port used.
+func (s *Server) StartWithPortFallback(preferredPort, maxAttempts int) (int, error) {
+	if maxAttempts <= 0 {
+		return 0, fmt.Errorf("no available port: maxAttempts is 0")
+	}
+	for i := 0; i < maxAttempts; i++ {
+		port := preferredPort + i
+		err := s.startOnAddr(fmt.Sprintf(":%d", port))
+		if err == nil {
+			return s.port, nil
+		}
+		if i < maxAttempts-1 {
+			log.Printf("warning: port %d in use, trying %d", port, port+1)
+		}
+	}
+	return 0, fmt.Errorf("no available port after %d attempts (tried %d–%d)",
+		maxAttempts, preferredPort, preferredPort+maxAttempts-1)
 }
 
 // ShouldOpenBrowser returns true if the server should auto-open a browser on start.
