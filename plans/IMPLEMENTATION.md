@@ -246,6 +246,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 - Step 12-13 happen after step 11: content is rendered first, then injected into the layout via `{{ content }}`.
 - Steps 15-20 are post-render: write files, copy assets, generate sitemap, persist cache.
 - If content directory doesn't exist or is empty, `Build()` should return a successful zero-page result (not error). This is required for `alloy init && alloy build` to work and for cmd tests to pass.
+- **i18n (issue #70)**: When `cfg.Languages` is present, the pipeline uses a two-pass per-language loop (see Phase 5C wiring). Pass 1 runs steps 3-11 (discovery through content rendering) per language. Then `LinkTranslations` runs once across all languages. Pass 2 runs steps 12-15 (layout resolution through output writing) per language — this ensures `page.Translations` is populated before templates render. Steps 1-2 (config/validation) and 16-20 (static/assets/sitemap/cache) run once outside the loop.
 
 #### Cascade wiring (PR #55)
 
@@ -283,7 +284,89 @@ At this point, `alloy build` works end-to-end on test fixtures.
 ### 5C: `internal/i18n` — 18 tests
 **File**: `internal/i18n/i18n.go`
 
-- Language context building, translation linking, output prefixes, per-language filtering
+- `BuildLanguageContexts(cfg map[string]*config.LanguageConfig) ([]LanguageContext, error)`: Returns contexts sorted by weight (lowest first = default). Errors when nil/empty.
+- `OutputPrefix(langCode string, isRoot bool) string`: Returns `""` for root language, `"lang/"` for non-root.
+- `ContentTreeRoute(langCode string) string`: Returns `"content/<lang>/"` for language-specific content discovery.
+- `LanguageData(ctx LanguageContext) map[string]interface{}`: Returns `site.language` data cascade entry (`code`, `title`, `root`, `strings`).
+- `LanguageSiteTitle(globalTitle string, langCfg *config.LanguageConfig) string`: Returns language-specific title override, falling back to global.
+- `FilterByLanguage(pages []*content.Page, langCode string) []*content.Page`: Filters pages by `lang` front matter field.
+- `LinkTranslations(pages []*content.Page, languages []string) error`: Groups pages by relative path (stripping language prefix), links matching pages as translations.
+- `GetTranslations(page *content.Page) []TranslationInfo`: Returns URL + language code for each linked translation.
+- `BuildTaxonomiesForLanguage(langCode string, pages []*content.Page) map[string]interface{}`: Generates per-language taxonomy maps from language-scoped pages.
+
+#### i18n pipeline wiring (issue #70)
+
+The pipeline needs a language-aware outer loop. When `cfg.Languages` is nil/empty, the pipeline runs once (current behavior — single-language site). When `cfg.Languages` is present, the pipeline iterates over each language:
+
+```
+if cfg.Languages != nil {
+    langContexts := i18n.BuildLanguageContexts(cfg.Languages)
+    allLangPages := []*content.Page{}  // collect across languages for translation linking
+
+    // ── Pass 1: discover + content-render per language (steps 3-11) ──
+    // Each language's pages are discovered, filtered, collected, and
+    // content-rendered (Markdown → HTML). Layout resolution and output
+    // writing are deferred so that page.Translations is populated first.
+    type langBatch struct {
+        ctx         LanguageContext
+        pages       []*content.Page
+        collections map[string]interface{}
+        siteData    map[string]interface{} // per-language copy
+    }
+    var batches []langBatch
+
+    for _, langCtx := range langContexts {
+        // Scope content discovery to content/<lang>/
+        contentDir := filepath.Join(projectRoot, "content", langCtx.Code)
+        pages := content.DiscoverWithFormats(contentDir, formats)
+
+        // Set lang on each page's front matter
+        for _, page := range pages {
+            page.FrontMatter["lang"] = langCtx.Code
+        }
+
+        // Apply output prefix to permalinks
+        prefix := i18n.OutputPrefix(langCtx.Code, langCtx.Root)
+        // prefix permalinks: page.URL = prefix + page.URL
+
+        // Inject site.language into per-language site data copy
+        langSiteData := copyMap(siteData)
+        langSiteData["language"] = i18n.LanguageData(langCtx)
+        langSiteData["title"] = i18n.LanguageSiteTitle(cfg.Title, cfg.Languages[langCtx.Code])
+
+        // Run steps 4-11 (lifecycle filter, cascade, permalinks,
+        // collections, taxonomies, content rendering) per language
+        // Collections and taxonomies are per-language (scoped to langPages)
+
+        allLangPages = append(allLangPages, pages...)
+        batches = append(batches, langBatch{ctx: langCtx, pages: pages, collections: langCollections, siteData: langSiteData})
+    }
+
+    // ── Link translations across all language trees ──
+    langCodes := make([]string, len(langContexts))
+    for i, ctx := range langContexts { langCodes[i] = ctx.Code }
+    i18n.LinkTranslations(allLangPages, langCodes)
+
+    // ── Pass 2: layout resolution + output writing (steps 12-15) ──
+    // page.Translations is now populated, so templates can render
+    // {% for trans in page.translations %} correctly.
+    for _, batch := range batches {
+        // Run steps 12-15 (layout resolution, template context build,
+        // layout rendering, output writing) with batch.pages, batch.siteData
+    }
+
+    // Steps 16-20 (static copy, assets, sitemap, cache) run once after all languages
+} else {
+    // Single-language build (current behavior, no changes)
+}
+```
+
+Key points:
+- **Two-pass per-language loop**: Pass 1 (steps 3-11) discovers and content-renders each language. `LinkTranslations` runs between passes. Pass 2 (steps 12-15) resolves layouts and writes output. This ensures `page.Translations` is populated before templates render, enabling `{% for trans in page.translations %}` for `<link rel="alternate" hreflang="...">` tags.
+- `layouts/` is shared across all languages — never scoped
+- `data/` globals are shared, but `site.language` and `site.title` are overridden per-language iteration via a shallow copy
+- Collections and taxonomies are per-language: `collections.blog` for English only contains English posts
+- Languages can build in parallel (independent content trees) but initial implementation should be sequential
 
 ### 5D: `cmd/` + `main.go` — 15 tests
 **Files**: `main.go`, `root.go`, `build.go`, `serve.go`, `init.go`, `version.go`
@@ -420,7 +503,7 @@ Cross-package integration paths that should mostly pass once pipeline works:
 | 4 | template (liquid/go engines), static, pipeline **[WALKING SKELETON]** | ~56 | ~363 |
 | 5 | plugin, fetch, i18n, cmd | ~107 | ~470 |
 | 6 | server, ssr | ~70 | ~540 |
-| 7 | integration tests + remaining | ~74 | ~614 |
+| 7 | integration tests + remaining | ~77 | ~617 |
 
 ## Key Risks
 
