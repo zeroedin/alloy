@@ -242,6 +242,15 @@ func ApplyDefaults(cfg *Config) {
 	if cfg.Structure.Data == "" {
 		cfg.Structure.Data = "data"
 	}
+	// Replace nil TaxonomyConfig entries with zero-value structs.
+	// YAML `tags:` with no value produces a nil *TaxonomyConfig pointer;
+	// downstream code (GenerateTaxonomyPages, ResolveTaxonomyLayout)
+	// dereferences the pointer without nil checks, causing a panic.
+	for name, tc := range cfg.Taxonomies {
+		if tc == nil {
+			cfg.Taxonomies[name] = &TaxonomyConfig{}
+		}
+	}
 }
 
 // DetectConfigFile finds the config file in the given directory.
