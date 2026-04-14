@@ -172,7 +172,43 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 - `RenderFeedTemplate(tmpl FeedTemplate, context)`: Render a discovered feed template with the appropriate filtered context (all pages for site-wide, section pages for section feeds, tagged pages for per-term feeds).
 - **Note**: Feeds are now opt-in via template placement, not auto-generated. The old `GenerateFeed` function has been removed.
 - `GenerateSitemap`: XML sitemap with baseURL prefix, per-page exclusions
-- `ResolveOutputFormat`/`ResolveFormatLayout`
+- `ResolveOutputFormat(page) string`: Returns first entry from `page.Outputs`, defaulting to `"html"` when unset.
+- `ResolveFormatLayout(page, format, layoutsDir, engine) (string, error)`: Finds layout for a specific format: `<layout>.<format>.<engine-ext>` (e.g., `single.json.liquid`).
+
+#### Multi-format pipeline wiring (issue #71)
+
+The pipeline currently renders each page once (HTML only). Pages with `outputs: ["html", "json"]` need to render once per format. The wiring change is in Stage 5 (layout resolution and rendering, `build.go` ~line 141):
+
+```
+// Current: single render per page
+for _, page := range pages {
+    layoutPath := tmpl.ResolveLayout(page, layoutsDir, engineName, cfg.Permalinks)
+    // ... render and write
+}
+
+// Required: render per format per page
+for _, page := range pages {
+    formats := page.Outputs
+    if len(formats) == 0 {
+        formats = []string{"html"}
+    }
+    for _, format := range formats {
+        if format == "html" {
+            // Existing HTML path: ResolveLayout → render → ComputeOutputPath
+        } else {
+            // Format-specific: ResolveLayoutForFormat(page, layoutsDir, engine, format)
+            // Output path: replace extension — /my-post/index.json instead of index.html
+        }
+    }
+}
+```
+
+Key points:
+- `page.Outputs` is populated from `outputs` front matter during `content.BuildPage` (the field already exists on `content.Page`)
+- HTML format uses existing `ResolveLayout` (no change). Non-HTML formats use `template.ResolveLayoutForFormat`.
+- Output path for non-HTML: `output.ComputeOutputPath(page.URL)` returns `slug/index.html` — for JSON it should produce `slug/index.json`. Either extend `ComputeOutputPath` to accept a format parameter, or compute manually.
+- The rendered body for each format is independent — a page's JSON output uses a different layout than its HTML output.
+- Content rendering (markdown → HTML) happens once. Layout rendering happens per format.
 
 ### 3E: `internal/assets` — 11 tests
 **File**: `internal/assets/assets.go`
@@ -243,6 +279,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 
 **Key implementation notes:**
 - Steps 5-9 happen before rendering (step 11) so templates can access `page.url`, `collections.*`, filters, etc.
+- **Multi-format output (issue #71)**: Steps 12-15 (layout resolution → render → compute path → write) must loop over `page.Outputs` when present. Content rendering (step 11) happens once; layout rendering happens per format. See Phase 3D wiring guidance.
 - Step 12-13 happen after step 11: content is rendered first, then injected into the layout via `{{ content }}`.
 - Steps 15-20 are post-render: write files, copy assets, generate sitemap, persist cache.
 - If content directory doesn't exist or is empty, `Build()` should return a successful zero-page result (not error). This is required for `alloy init && alloy build` to work and for cmd tests to pass.
