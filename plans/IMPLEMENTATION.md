@@ -51,11 +51,12 @@ These packages depend only on stdlib or already-defined types.
 - `LoadDirectory`: Walk dir, `LoadFile` each, key by filename without extension. **Stem collision detection**: Track seen stem names. If two files share a stem (e.g., `team.csv` and `team.yaml`), return an error listing both files. No silent overwrites — consistent with output path conflict philosophy (§2).
 - `LoadCSV`: `encoding/csv`, first row = headers, subsequent rows = `[]map[string]string`
 
-### 1C: `internal/cascade` — 22 tests
+### 1C: `internal/cascade` — 28 tests
 **Files**: `internal/cascade/merge.go`, `internal/cascade/context.go`
 
 - `DeepMerge`: Recursive map merge, arrays replaced (not concatenated)
-- `LoadDirectoryCascade`: Walk content dir for `_data.yaml` files, merge parent->child
+- `LoadDirectoryCascade`: Walk content dir for `_data.yaml` files, merge parent->child. Only creates entries for directories that contain `_data.yaml`.
+- `FindCascadeData(cascadeData, contentBase, relPath)`: Ancestor-walking lookup. Given a page's `relPath`, computes the directory key and walks up the directory tree to find the nearest ancestor with cascade data. Returns `nil` when no ancestor has data. The pipeline must use this instead of exact key lookup — otherwise pages in directories without `_data.yaml` miss ancestor inheritance (spec §3 requires cascade to flow to all descendants).
 - `BuildContext`/`BuildContextFull`: Allocate `PageContext` with shared pointers
 - `Get`: Lookup order: Computed > FrontMatter > Directory > Global. May need `PluginData` field added.
 
@@ -221,29 +222,40 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
  2. validateOutputDir(cfg)                               ✅ done
  3. content.DiscoverWithFormats(contentDir, formats)      ✅ done
  4. content.FilterByLifecycle(pages, now, false)          ✅ done
- 5. permalink.ResolveForSection(page, cfg.Permalinks)     ❌ missing — page.URL never set
- 6. data.LoadDirectory(dataDir) → siteData                ✅ done
- 7. collection.BuildCollections(pages, permalinks)        ✅ done
- 8. collection.BuildTaxonomies(pages, taxonomies)         ✅ done
- 9. template.RegisterBuiltinFilters(engine)               ❌ missing — filters unavailable
-10. renderPages (markdown → template tags)                ✅ done
-11. template.ResolveLayout(page, layoutsDir, engine)      ❌ missing — no layout wrapping
-12. Render page through layout ({{ content }} injection)  ❌ missing
-13. output.ComputeOutputPath(page) → output path          ❌ missing
-14. output.WriteFile(outputPath, html)                    ❌ missing — nothing written to disk
-15. static.CopyStatic(staticDir, outputDir)               ❌ missing
-16. assets.CopyAssets(assetsDir, outputDir)                ❌ missing
-17. static.CopyPassthroughWithValidation(...)             ❌ missing
-18. output.GenerateSitemap(pages, baseURL, outputDir)     ❌ missing
-19. cache.SaveTo(cacheFile)                               ❌ missing
+ 5. permalink.ResolveForSection(page, cfg.Permalinks)     ✅ done
+ 6. cascade.LoadDirectoryCascade + FindCascadeData + PageContext ✅ done
+ 7. data.LoadDirectory(dataDir) → siteData                ✅ done
+ 8. collection.BuildCollections(pages, permalinks)        ✅ done
+ 9. collection.BuildTaxonomies(pages, taxonomies)         ✅ done
+10. template.RegisterBuiltinFilters(engine)               ✅ done
+11. renderPages (markdown → template tags)                ✅ done
+12. template.ResolveLayout(page, layoutsDir, engine)      ✅ done
+13. Render page through layout ({{ content }} injection)  ✅ done
+14. output.ComputeOutputPath(page) → output path          ✅ done
+15. output.WriteFile(outputPath, html)                    ✅ done
+16. static.CopyStatic(staticDir, outputDir)               ✅ done
+17. assets.CopyAssets(assetsDir, outputDir)                ✅ done
+18. static.CopyPassthroughWithValidation(...)             ✅ done
+19. output.GenerateSitemap(pages, baseURL, outputDir)     ✅ done
+20. cache.SaveTo(cacheFile)                               ✅ done
 ```
 
 **Key implementation notes:**
-- Steps 5-8 happen before rendering (step 10) so templates can access `page.url`, `collections.*`, etc.
-- Step 9 must happen before step 10 so template filters like `{{ title | slugify }}` work.
-- Step 11-12 happen after step 10: content is rendered first, then injected into the layout via `{{ content }}`.
-- Steps 14-18 are post-render: write files, copy assets, generate sitemap.
+- Steps 5-9 happen before rendering (step 11) so templates can access `page.url`, `collections.*`, filters, etc.
+- Step 12-13 happen after step 11: content is rendered first, then injected into the layout via `{{ content }}`.
+- Steps 15-20 are post-render: write files, copy assets, generate sitemap, persist cache.
 - If content directory doesn't exist or is empty, `Build()` should return a successful zero-page result (not error). This is required for `alloy init && alloy build` to work and for cmd tests to pass.
+
+#### Cascade wiring (PR #55)
+
+The pipeline uses `cascade.PageContext` per spec §3 for proper 5-level cascade:
+
+1. `cascade.LoadDirectoryCascade(contentDir)` — loads all `_data.yaml` files with parent→child merge
+2. `cascade.FindCascadeData(cascadeData, contentBase, page.RelPath)` — walks up the directory tree to find the nearest ancestor with cascade data (handles directories without their own `_data.yaml`)
+3. `cascade.BuildContext(siteData, dirData, page.FrontMatter)` — creates a `PageContext` with shared pointers for Global (level 1) and Directory (level 2), per-page FrontMatter (level 3)
+4. `pctx.ToMap()` — flattens via `PageContext.Get()` (lazy deep-merge only for conflicting nested keys) into `page.FrontMatter` so downstream consumers (taxonomy building, collection sorting) see effective values
+
+Levels 4/5 (Computed/PluginData) are nil until plugin hooks populate them — `PageContext` is ready for plugins with no pipeline changes needed.
 
 ### WALKING SKELETON MILESTONE
 At this point, `alloy build` works end-to-end on test fixtures.

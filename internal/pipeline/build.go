@@ -13,6 +13,7 @@ import (
 
 	"github.com/zeroedin/alloy/internal/assets"
 	"github.com/zeroedin/alloy/internal/cache"
+	"github.com/zeroedin/alloy/internal/cascade"
 	"github.com/zeroedin/alloy/internal/collection"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
@@ -92,8 +93,30 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		page.URL = url
 	}
 
-	// Load data files
+	// Load directory data cascade (_data.yaml files)
+	cascadeData, cascadeErr := cascade.LoadDirectoryCascade(contentDir)
+	if cascadeErr != nil {
+		log.Printf("warning: loading cascade data: %v", cascadeErr)
+	}
+
+	// Load data files (Global cascade level 1)
 	siteData := loadSiteData(cfg)
+
+	// Build PageContexts per spec §3: shared pointers for Global/Directory,
+	// per-page FrontMatter. Levels 4/5 (Computed/PluginData) are nil until
+	// plugin hooks populate them.
+	contentBase := filepath.Base(contentDir)
+	for _, page := range pages {
+		var dirData map[string]interface{}
+		if len(cascadeData) > 0 {
+			dirData = cascade.FindCascadeData(cascadeData, contentBase, page.RelPath)
+		}
+		pctx := cascade.BuildContext(siteData, dirData, page.FrontMatter)
+		// Flatten cascade into FrontMatter so downstream consumers (taxonomy
+		// building, collection sorting) see the effective values. The PageContext
+		// is the source of truth; FrontMatter becomes the resolved view.
+		page.FrontMatter = pctx.ToMap()
+	}
 
 	// Build collections and taxonomies
 	collectionsCtx := buildCollectionsContext(pages, cfg)

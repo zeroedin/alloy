@@ -72,6 +72,38 @@ func (pc *PageContext) Get(key string) interface{} {
 	return merged
 }
 
+// ToMap flattens all cascade levels into a single map using Get() for each key.
+// The result reflects the full cascade priority (PluginData > Computed >
+// FrontMatter > Directory > Global) with lazy deep-merge for nested maps.
+func (pc *PageContext) ToMap() map[string]interface{} {
+	keys := make(map[string]struct{})
+	if pc.Global != nil {
+		for k := range *pc.Global {
+			keys[k] = struct{}{}
+		}
+	}
+	if pc.Directory != nil {
+		for k := range *pc.Directory {
+			keys[k] = struct{}{}
+		}
+	}
+	for k := range pc.FrontMatter {
+		keys[k] = struct{}{}
+	}
+	for k := range pc.Computed {
+		keys[k] = struct{}{}
+	}
+	for k := range pc.PluginData {
+		keys[k] = struct{}{}
+	}
+
+	result := make(map[string]interface{}, len(keys))
+	for k := range keys {
+		result[k] = pc.Get(k)
+	}
+	return result
+}
+
 // BuildContext creates a PageContext from the cascade levels.
 func BuildContext(global, directory, frontMatter map[string]interface{}) *PageContext {
 	return &PageContext{
