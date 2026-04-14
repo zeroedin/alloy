@@ -58,6 +58,11 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		return nil, fmt.Errorf("registering template filters: %w", err)
 	}
 
+	// Configure include/render tag resolution from layouts directory
+	if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
+		setter.SetIncludesDir(resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts))
+	}
+
 	// Discover content
 	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
 	pages, err := content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
