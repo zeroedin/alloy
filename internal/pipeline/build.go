@@ -469,20 +469,24 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 				Layout:      page.Layout,
 				Kind:        "page",
 			}
-			// Inject pagination context and data variable into front matter
-			vp.FrontMatter["pagination"] = map[string]interface{}{
-				"pageNumber": pctx.PageNumber,
-				"totalPages": pctx.TotalPages,
-				"previous":   pctx.PreviousPage,
-				"next":       pctx.NextPage,
-				"first":      pctx.First,
-				"last":       pctx.Last,
+			// Store pagination context for top-level template injection.
+			// Keys prefixed with "_pagination" are hoisted by buildTemplateContext
+			// to the top level (not nested under page.*) per spec §1c.
+			vp.FrontMatter["_paginationCtx"] = map[string]interface{}{
+				"pageNumber":   pctx.PageNumber,
+				"totalPages":   pctx.TotalPages,
+				"previousPage": pctx.PreviousPage,
+				"nextPage":     pctx.NextPage,
+				"first":        pctx.First,
+				"last":         pctx.Last,
+				"items":        pctx.Items,
 			}
+			vp.FrontMatter["_paginationAs"] = asVar
 			// Make the data items available under the 'as' variable name
 			if perPage == 1 && len(pctx.Items) == 1 {
-				vp.FrontMatter[asVar] = pctx.Items[0]
+				vp.FrontMatter["_paginationData"] = pctx.Items[0]
 			} else {
-				vp.FrontMatter[asVar] = pctx.Items
+				vp.FrontMatter["_paginationData"] = pctx.Items
 			}
 			result = append(result, vp)
 		}
@@ -550,6 +554,22 @@ func buildTemplateContext(page *content.Page, cfg *config.Config, allPages []*co
 	if collectionsCtx != nil {
 		ctx["collections"] = collectionsCtx
 	}
+
+	// Hoist pagination context to top level per spec §1c.
+	// Templates access {{ pagination.previousPage }} and {{ articles }}
+	// at the top level, not under page.*.
+	if paginationCtx, ok := pageCtx["_paginationCtx"]; ok {
+		ctx["pagination"] = paginationCtx
+		delete(pageCtx, "_paginationCtx")
+	}
+	if asVar, ok := pageCtx["_paginationAs"].(string); ok {
+		if data, ok := pageCtx["_paginationData"]; ok {
+			ctx[asVar] = data
+		}
+		delete(pageCtx, "_paginationAs")
+		delete(pageCtx, "_paginationData")
+	}
+
 	return ctx
 }
 
