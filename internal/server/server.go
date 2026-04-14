@@ -194,14 +194,18 @@ func (s *Server) Port() int {
 // StartWithPortFallback tries to start the server on preferredPort, incrementing
 // up to maxAttempts times if the port is occupied. Returns the actual port used.
 func (s *Server) StartWithPortFallback(preferredPort, maxAttempts int) (int, error) {
+	if maxAttempts <= 0 {
+		return 0, fmt.Errorf("no available port: maxAttempts is 0")
+	}
 	for i := 0; i < maxAttempts; i++ {
 		port := preferredPort + i
 		err := s.startOnAddr(fmt.Sprintf(":%d", port))
 		if err == nil {
 			return s.port, nil
 		}
-		// Log warning and try next port
-		log.Printf("warning: port %d in use, trying %d", port, port+1)
+		if i < maxAttempts-1 {
+			log.Printf("warning: port %d in use, trying %d", port, port+1)
+		}
 	}
 	return 0, fmt.Errorf("no available port after %d attempts (tried %d–%d)",
 		maxAttempts, preferredPort, preferredPort+maxAttempts-1)
