@@ -2235,6 +2235,7 @@ Without an `ssr:` config block (and no SSR plugin), `--preview` still works — 
 - **Dev mode (`alloy serve`)**: Rendered pages are held in an in-memory map — no `_site/` output written to disk, lower latency, no SSD wear. Source files (content, layouts, data, assets, static) are still read from disk normally. Static and passthrough files are served directly from their source locations (no copy).
 - **Preview mode (`alloy serve --preview`)**: Writes to `_site/` and serves from disk. Production-like output including SSR.
 - **Build mode (`alloy build`)**: Always writes to `_site/`.
+- **Port auto-increment**: If the requested port is occupied, the server tries up to 10 consecutive ports (e.g., 3000 → 3001 → … → 3009) before giving up with an error. A warning is logged for each skipped port (e.g., `[alloy] WARN Port 3000 in use, using 3001`). The startup message always shows the actual port. This matches the behavior of modern dev servers (Vite, Next.js) and reduces friction when multiple projects run simultaneously.
 - **Auto-opens browser** (optional)
 - **Colored terminal output** with build timing
 - **Error overlay in browser** on build errors (file path, line number, code snippet). Disappears on next successful build.
@@ -2320,9 +2321,9 @@ Starts the development server with live reload.
 
 1. Load config (same as build).
 2. Run initial build via `pipeline.Build(cfg)`.
-3. Start HTTP server on `--port` (default 3000).
+3. Start HTTP server on `--port` (default 3000). If the port is occupied, auto-increment up to 10 consecutive ports. If all 10 are occupied, exit 1 with an error listing the range tried.
 4. Start file watcher for live reload.
-5. Print startup message: `Serving at http://localhost:<port>`.
+5. Print startup message: `Serving at http://localhost:<actual-port>` (always shows the actual port, which may differ from `--port` if auto-increment kicked in).
 6. Block until interrupted (Ctrl+C).
 
 ### Flags

@@ -316,7 +316,7 @@ At this point, `alloy build` works end-to-end on test fixtures.
 
 ## Phase 6: Server + SSR (~65 tests)
 
-### 6A: `internal/server` — 40 tests
+### 6A: `internal/server` — 45 tests
 **Files**: `server.go`, `watcher.go`, `overlay.go`
 
 - HTTP server with mode-aware behavior (dev/preview)
@@ -325,6 +325,12 @@ At this point, `alloy build` works end-to-end on test fixtures.
 - `WebSocketReloadMessage()`: Return `{"type": "reload"}` JSON string for connected browser reload
 - `DebounceInterval()`: Return configurable debounce interval in milliseconds for file watcher
 - `DetermineRebuildAction(changedFiles []string) RebuildScope`: Classify file changes as incremental or full rebuild. Many simultaneous changes trigger a full rebuild.
+- `StartWithPortFallback(preferredPort, maxAttempts int) (int, error)`: Try `net.Listen("tcp", ":port")` starting at `preferredPort`. On `EADDRINUSE`, increment port and retry up to `maxAttempts` times. Return the actual port on success. After exhausting all attempts, return error containing `"no available port"` and the range tried. Log a warning when skipping an occupied port. Store the actual port on the Server struct.
+- `Port() int`: Return the actual port the server is listening on. Returns 0 before the server has started.
+
+#### Port auto-increment (issue #60)
+
+`cmd/serve.go` should call `srv.StartWithPortFallback(port, 10)` instead of `srv.Start(port)`. The returned actual port is used in the startup message (`Serving at http://localhost:<actual-port>`). The `--port` flag remains "preferred" — it's the starting point for the search, not a hard requirement. No `--strict-port` flag needed; `alloy serve` is a dev tool and auto-increment is always the right UX.
 
 ### 6B: `internal/ssr` — 25 tests
 **Files**: `scanner.go`, `depgraph.go`, `persistence.go`
@@ -367,8 +373,8 @@ Cross-package integration paths that should mostly pass once pipeline works:
 | 3 | permalink, collection, template (context/layout/shortcodes), output, assets | ~75 | ~303 |
 | 4 | template (liquid/go engines), static, pipeline **[WALKING SKELETON]** | ~56 | ~359 |
 | 5 | plugin, fetch, i18n, cmd | ~107 | ~466 |
-| 6 | server, ssr | ~65 | ~531 |
-| 7 | integration tests + remaining | ~74 | ~605 |
+| 6 | server, ssr | ~70 | ~536 |
+| 7 | integration tests + remaining | ~74 | ~610 |
 
 ## Key Risks
 
