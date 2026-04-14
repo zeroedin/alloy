@@ -194,6 +194,19 @@ Alloy supports YAML, TOML, and JSON wherever structured data is accepted:
 
 All formats parse into `map[string]any` — the rest of the pipeline (data cascade, template context, plugin hooks) is format-agnostic.
 
+**Data file name collisions are build errors.** Data files are keyed by stem name (filename without extension), so `team.csv` and `team.yaml` both claim the key `"team"`. If two or more data files in the same directory share a stem name, the build fails:
+
+```
+[alloy] ERROR Data file conflict in data/:
+        "team" is claimed by:
+          1. team.csv
+          2. team.yaml
+        Resolve by renaming one file.
+        Build aborted.
+```
+
+This follows the same principle as output path conflicts (§2): no silent overwrites, no priority system. The user must resolve collisions explicitly.
+
 ---
 
 ## 1b. Permalinks and URL Customization
