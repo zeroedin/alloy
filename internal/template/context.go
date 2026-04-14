@@ -2,6 +2,7 @@ package template
 
 import (
 	"github.com/zeroedin/alloy/internal/content"
+	"github.com/zeroedin/alloy/internal/pagination"
 )
 
 // TemplateContext is the complete context object passed to templates during rendering.
@@ -10,6 +11,8 @@ type TemplateContext struct {
 	Page        PageContext
 	Collections map[string]interface{}
 	Content     string // rendered HTML body
+	Pagination  *pagination.PaginationContext
+	Custom      map[string]interface{} // dynamic top-level variables (e.g., pagination "as" alias)
 }
 
 // SiteContext holds site-wide data available as {{ site.* }}.
@@ -32,7 +35,9 @@ type PageContext struct {
 }
 
 // BuildTemplateContext assembles the complete template context for rendering a page.
-func BuildTemplateContext(page *content.Page, siteData map[string]interface{}, allPages []*content.Page, collections map[string]interface{}) *TemplateContext {
+// For paginated pages, pass the PaginationContext and the "as" variable name.
+// For non-paginated pages, pass nil and "".
+func BuildTemplateContext(page *content.Page, siteData map[string]interface{}, allPages []*content.Page, collections map[string]interface{}, pagCtx *pagination.PaginationContext, asName string) *TemplateContext {
 	ctx := &TemplateContext{
 		Collections: collections,
 	}
@@ -70,6 +75,16 @@ func BuildTemplateContext(page *content.Page, siteData map[string]interface{}, a
 	if len(page.RenderedBody) > 0 {
 		ctx.Content = string(page.RenderedBody)
 		ctx.Page.Content = string(page.RenderedBody)
+	}
+
+	// Inject pagination context and "as" alias for paginated pages
+	if pagCtx != nil {
+		ctx.Pagination = pagCtx
+		if asName != "" {
+			ctx.Custom = map[string]interface{}{
+				asName: pagCtx.Items,
+			}
+		}
 	}
 
 	return ctx

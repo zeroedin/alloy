@@ -131,7 +131,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 
 ---
 
-## Phase 3: Mid-Level Packages (~75 tests)
+## Phase 3: Mid-Level Packages (~79 tests)
 
 ### 3A: `internal/permalink` — 22 tests
 **File**: `internal/permalink/permalink.go`
@@ -154,10 +154,11 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 - `GenerateTaxonomyPages`: Index + per-term pages with configured permalinks
 - `BuildTaxonomyPageContext`/`DetectDuplicateTermSlugs`
 
-### 3C: `internal/template` — context, layout, shortcodes (~23 tests)
+### 3C: `internal/template` — context, layout, shortcodes (~27 tests)
 **Files**: `context.go`, `layout.go`, `shortcodes.go`
 
-- `BuildTemplateContext`: Populate `TemplateContext` from page + site data. All pages live under `site.pages` (not top-level `pages`) for consistency with `site.title`, `site.data`, etc.
+- `BuildTemplateContext(page, siteData, allPages, collections, paginationCtx *pagination.PaginationContext, asName string)`: Populate `TemplateContext` from page + site data. All pages live under `site.pages` (not top-level `pages`) for consistency with `site.title`, `site.data`, etc. When `paginationCtx` is non-nil, set `ctx.Pagination` and inject `ctx.Custom[asName]` as a top-level alias for `pagination.items`. Non-paginated callers pass `nil, ""`.
+- `TemplateContext` struct additions: `Pagination *pagination.PaginationContext` field, `Custom map[string]interface{}` field for dynamic top-level variables (the `as` alias).
 - `ResolveLayout`: Lookup chain per spec (front matter > section name > filename > default). Handle `layout: false`.
 - `ResolveLayoutWithCascade(page, layoutsDir, engine, permalinkCfg, cascadeData)`: Same lookup chain as `ResolveLayout`, but also considers `_data.yaml` cascade data for layout resolution. Front matter takes priority over cascade data.
 - `ResolveTaxonomyLayout`: `layouts/taxonomies/<name>.liquid` > `layouts/<name>.liquid`
@@ -382,11 +383,11 @@ Cross-package integration paths that should mostly pass once pipeline works:
 | 0 | Dependencies only | 0 | 0 |
 | 1 | cache, data, cascade, validation, pagination, filters | ~109 | ~109 |
 | 2 | config, content | ~119 | ~228 |
-| 3 | permalink, collection, template (context/layout/shortcodes), output, assets | ~75 | ~303 |
-| 4 | template (liquid/go engines), static, pipeline **[WALKING SKELETON]** | ~56 | ~359 |
-| 5 | plugin, fetch, i18n, cmd | ~107 | ~466 |
-| 6 | server, ssr | ~70 | ~536 |
-| 7 | integration tests + remaining | ~74 | ~610 |
+| 3 | permalink, collection, template (context/layout/shortcodes), output, assets | ~79 | ~307 |
+| 4 | template (liquid/go engines), static, pipeline **[WALKING SKELETON]** | ~56 | ~363 |
+| 5 | plugin, fetch, i18n, cmd | ~107 | ~470 |
+| 6 | server, ssr | ~70 | ~540 |
+| 7 | integration tests + remaining | ~74 | ~614 |
 
 ## Key Risks
 
