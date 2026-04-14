@@ -126,17 +126,25 @@ func (ctx *TaxonomyPageContext) ToMap() map[string]interface{} {
 	if ctx.Terms != nil {
 		terms := make([]map[string]interface{}, len(ctx.Terms))
 		for i, t := range ctx.Terms {
+			items := make([]interface{}, len(t.Items))
+			for j, p := range t.Items {
+				items[j] = p.ToTemplateMap()
+			}
 			terms[i] = map[string]interface{}{
 				"name":  t.Name,
 				"slug":  t.Slug,
 				"url":   t.URL,
-				"items": t.Items,
+				"items": items,
 			}
 		}
 		m["terms"] = terms
 	}
 	if ctx.Items != nil {
-		m["items"] = ctx.Items
+		items := make([]interface{}, len(ctx.Items))
+		for i, p := range ctx.Items {
+			items[i] = p.ToTemplateMap()
+		}
+		m["items"] = items
 	}
 	return m
 }
