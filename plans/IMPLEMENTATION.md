@@ -246,7 +246,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 - Step 12-13 happen after step 11: content is rendered first, then injected into the layout via `{{ content }}`.
 - Steps 15-20 are post-render: write files, copy assets, generate sitemap, persist cache.
 - If content directory doesn't exist or is empty, `Build()` should return a successful zero-page result (not error). This is required for `alloy init && alloy build` to work and for cmd tests to pass.
-- **i18n (issue #70)**: When `cfg.Languages` is present, steps 3-15 run inside a per-language loop (see Phase 5C wiring). Steps 1-2 (config/validation) and 16-20 (static/assets/sitemap/cache) run once outside the loop. Step 3 is scoped to `content/<lang>/` per iteration.
+- **i18n (issue #70)**: When `cfg.Languages` is present, the pipeline uses a two-pass per-language loop (see Phase 5C wiring). Pass 1 runs steps 3-11 (discovery through content rendering) per language. Then `LinkTranslations` runs once across all languages. Pass 2 runs steps 12-15 (layout resolution through output writing) per language — this ensures `page.Translations` is populated before templates render. Steps 1-2 (config/validation) and 16-20 (static/assets/sitemap/cache) run once outside the loop.
 
 #### Cascade wiring (PR #55)
 
@@ -303,6 +303,18 @@ if cfg.Languages != nil {
     langContexts := i18n.BuildLanguageContexts(cfg.Languages)
     allLangPages := []*content.Page{}  // collect across languages for translation linking
 
+    // ── Pass 1: discover + content-render per language (steps 3-11) ──
+    // Each language's pages are discovered, filtered, collected, and
+    // content-rendered (Markdown → HTML). Layout resolution and output
+    // writing are deferred so that page.Translations is populated first.
+    type langBatch struct {
+        ctx         LanguageContext
+        pages       []*content.Page
+        collections map[string]interface{}
+        siteData    map[string]interface{} // per-language copy
+    }
+    var batches []langBatch
+
     for _, langCtx := range langContexts {
         // Scope content discovery to content/<lang>/
         contentDir := filepath.Join(projectRoot, "content", langCtx.Code)
@@ -317,20 +329,31 @@ if cfg.Languages != nil {
         prefix := i18n.OutputPrefix(langCtx.Code, langCtx.Root)
         // prefix permalinks: page.URL = prefix + page.URL
 
-        // Inject site.language into site data
-        siteData["language"] = i18n.LanguageData(langCtx)
-        siteData["title"] = i18n.LanguageSiteTitle(cfg.Title, cfg.Languages[langCtx.Code])
+        // Inject site.language into per-language site data copy
+        langSiteData := copyMap(siteData)
+        langSiteData["language"] = i18n.LanguageData(langCtx)
+        langSiteData["title"] = i18n.LanguageSiteTitle(cfg.Title, cfg.Languages[langCtx.Code])
 
-        // Run steps 4-15 (lifecycle filter through page rendering) per language
+        // Run steps 4-11 (lifecycle filter, cascade, permalinks,
+        // collections, taxonomies, content rendering) per language
         // Collections and taxonomies are per-language (scoped to langPages)
 
         allLangPages = append(allLangPages, pages...)
+        batches = append(batches, langBatch{ctx: langCtx, pages: pages, collections: langCollections, siteData: langSiteData})
     }
 
-    // After all languages: link translations across language trees
+    // ── Link translations across all language trees ──
     langCodes := make([]string, len(langContexts))
     for i, ctx := range langContexts { langCodes[i] = ctx.Code }
     i18n.LinkTranslations(allLangPages, langCodes)
+
+    // ── Pass 2: layout resolution + output writing (steps 12-15) ──
+    // page.Translations is now populated, so templates can render
+    // {% for trans in page.translations %} correctly.
+    for _, batch := range batches {
+        // Run steps 12-15 (layout resolution, template context build,
+        // layout rendering, output writing) with batch.pages, batch.siteData
+    }
 
     // Steps 16-20 (static copy, assets, sitemap, cache) run once after all languages
 } else {
@@ -339,10 +362,10 @@ if cfg.Languages != nil {
 ```
 
 Key points:
+- **Two-pass per-language loop**: Pass 1 (steps 3-11) discovers and content-renders each language. `LinkTranslations` runs between passes. Pass 2 (steps 12-15) resolves layouts and writes output. This ensures `page.Translations` is populated before templates render, enabling `{% for trans in page.translations %}` for `<link rel="alternate" hreflang="...">` tags.
 - `layouts/` is shared across all languages — never scoped
-- `data/` globals are shared, but `site.language` and `site.title` are overridden per-language iteration
+- `data/` globals are shared, but `site.language` and `site.title` are overridden per-language iteration via a shallow copy
 - Collections and taxonomies are per-language: `collections.blog` for English only contains English posts
-- Translation linking happens after all languages are discovered, before output writing
 - Languages can build in parallel (independent content trees) but initial implementation should be sequential
 
 ### 5D: `cmd/` + `main.go` — 15 tests
