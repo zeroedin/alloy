@@ -321,7 +321,7 @@ At this point, `alloy build` works end-to-end on test fixtures.
 5. Start file watcher.
 6. Block until interrupt.
 
-**Test note**: The existing cmd test `"serve command starts the dev server successfully"` expects no error. The serve command should not actually block in test — start and return, or detect test mode. Alternatively, `server.Start` should be non-blocking with a separate `Wait()` method. Current `server` package tests use `server.NewWithMode` directly so this is an orchestration concern.
+**Test note**: The cmd test `"serve command is registered and callable"` verifies command registration via `root.Find()` without calling `Execute()`, since the serve command blocks on `Wait()`. Server startup behavior is tested directly in `internal/server/server_test.go`.
 
 **Verify**: `go test ./internal/plugin/... ./internal/fetch/... ./internal/i18n/... ./cmd/...`
 
@@ -340,6 +340,8 @@ At this point, `alloy build` works end-to-end on test fixtures.
 - `DetermineRebuildAction(changedFiles []string) RebuildScope`: Classify file changes as incremental or full rebuild. Many simultaneous changes trigger a full rebuild.
 - `StartWithPortFallback(preferredPort, maxAttempts int) (int, error)`: Try `net.Listen("tcp", ":port")` starting at `preferredPort`. On `EADDRINUSE`, increment port and retry up to `maxAttempts` times. Return the actual port on success. After exhausting all attempts, return error containing `"no available port"` and the range tried. Log a warning when skipping an occupied port. Store the actual port on the Server struct.
 - `Port() int`: Return the actual port the server is listening on. Returns 0 before the server has started.
+
+**Test hygiene (issue #59)**: All server tests that call `Start()` must use port 0 (OS-assigned) to avoid collisions when `go test ./...` runs packages in parallel. Every successful `Start()` or `StartWithPortFallback()` must be paired with `defer srv.Stop()` to release the port promptly.
 
 #### Port auto-increment (issue #60)
 
