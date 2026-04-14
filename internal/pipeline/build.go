@@ -13,6 +13,7 @@ import (
 
 	"github.com/zeroedin/alloy/internal/assets"
 	"github.com/zeroedin/alloy/internal/cache"
+	"github.com/zeroedin/alloy/internal/cascade"
 	"github.com/zeroedin/alloy/internal/collection"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
@@ -84,6 +85,22 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
 		}
 		page.URL = url
+	}
+
+	// Load directory data cascade (_data.yaml files)
+	cascadeData, cascadeErr := cascade.LoadDirectoryCascade(contentDir)
+	if cascadeErr != nil {
+		log.Printf("warning: loading cascade data: %v", cascadeErr)
+	}
+	if len(cascadeData) > 0 {
+		contentBase := filepath.Base(contentDir)
+		for _, page := range pages {
+			dirKey := cascadeDirKey(contentBase, page.RelPath)
+			if dirData, ok := cascadeData[dirKey]; ok {
+				// Merge cascade data under page front matter (front matter wins)
+				page.FrontMatter = cascade.DeepMerge(dirData, page.FrontMatter)
+			}
+		}
 	}
 
 	// Load data files
@@ -380,6 +397,17 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 	}
 
 	return rendered, nil
+}
+
+// cascadeDirKey computes the cascade lookup key for a page's directory.
+// Given contentBase="content" and relPath="blog/my-post.md", returns "content/blog/".
+// For a root page like "index.md", returns "content/".
+func cascadeDirKey(contentBase, relPath string) string {
+	dir := filepath.Dir(relPath)
+	if dir == "." {
+		return contentBase + "/"
+	}
+	return contentBase + "/" + filepath.ToSlash(dir) + "/"
 }
 
 // hasTemplateSyntax checks if content contains Liquid template tags.
