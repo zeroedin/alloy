@@ -318,7 +318,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 
 	result := &BuildResult{
 		OutputDir:     cfg.Build.Output,
-		PageCount:     len(rendered),
+		PageCount:     len(pages),
 		Duration:      time.Since(start),
 		SSRSkipped:    cfg.SSR == nil,
 		PagesRendered: rendered,
