@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"errors"
+	"net"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -173,6 +174,63 @@ var _ = Describe("Server", func() {
 			err := srv.StartOnPort(0) // port 0 = let OS assign
 			Expect(err).NotTo(HaveOccurred(),
 				"port 0 should be assignable")
+		})
+	})
+
+	// ── Port auto-increment (§8) ─────────────────────────────────────
+
+	Describe("Port auto-increment", func() {
+		It("StartWithPortFallback returns preferred port when available", func() {
+			cfg := &config.Config{Title: "Test Site"}
+			srv := server.New(cfg)
+			actualPort, err := srv.StartWithPortFallback(0, 10) // port 0 = OS assigns a free port
+			Expect(err).NotTo(HaveOccurred())
+			Expect(actualPort).To(BeNumerically(">", 0),
+				"must return the actual port assigned by the OS")
+		})
+
+		It("StartWithPortFallback tries next port when preferred is occupied", func() {
+			cfg := &config.Config{Title: "Test Site"}
+
+			// Occupy a port by binding to it
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			Expect(err).NotTo(HaveOccurred())
+			defer listener.Close()
+			occupiedPort := listener.Addr().(*net.TCPAddr).Port
+
+			srv := server.New(cfg)
+			actualPort, err := srv.StartWithPortFallback(occupiedPort, 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(actualPort).NotTo(Equal(occupiedPort),
+				"must not return the occupied port")
+			Expect(actualPort).To(BeNumerically(">", occupiedPort),
+				"must increment to a higher port")
+		})
+
+		It("returns error after max attempts exhausted", func() {
+			cfg := &config.Config{Title: "Test Site"}
+			srv := server.New(cfg)
+			// maxAttempts=0 means no attempts allowed — must fail immediately
+			_, err := srv.StartWithPortFallback(3000, 0)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("no available port"),
+				"error must explain that no port was available")
+		})
+
+		It("Port() returns 0 before server has started", func() {
+			cfg := &config.Config{Title: "Test Site"}
+			srv := server.New(cfg)
+			Expect(srv.Port()).To(Equal(0),
+				"port must be 0 before server starts")
+		})
+
+		It("Port() returns actual port after successful start", func() {
+			cfg := &config.Config{Title: "Test Site"}
+			srv := server.New(cfg)
+			actualPort, err := srv.StartWithPortFallback(0, 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(srv.Port()).To(Equal(actualPort),
+				"Port() must return the same port that StartWithPortFallback returned")
 		})
 	})
 
