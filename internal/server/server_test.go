@@ -21,20 +21,22 @@ var _ = Describe("Server", func() {
 			srv := server.New(cfg)
 			Expect(srv).NotTo(BeNil())
 
-			// Server must actually start without error
-			err := srv.Start(8080)
+			// Server must actually start without error (port 0 = OS-assigned)
+			err := srv.Start(0)
 			Expect(err).NotTo(HaveOccurred())
+			defer srv.Stop()
 
 			// Clean shutdown must also succeed
 			err = srv.Stop()
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("defaults to port 3000 behavior", func() {
+		It("starts on an OS-assigned port without error", func() {
 			cfg := &config.Config{}
 			srv := server.New(cfg)
-			err := srv.Start(3000)
+			err := srv.Start(0)
 			Expect(err).NotTo(HaveOccurred())
+			defer srv.Stop()
 		})
 	})
 

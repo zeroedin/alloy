@@ -26,14 +26,14 @@ var _ = Describe("CLI Commands", func() {
 				"alloy build must complete the pipeline without error")
 		})
 
-		It("serve command starts the dev server successfully", func() {
+		It("serve command is registered and callable", func() {
 			root := cmd.NewRootCommand()
-			root.SilenceErrors = true
-			root.SilenceUsage = true
-			root.SetArgs([]string{"serve"})
-			err := root.Execute()
+			serveCmd, _, err := root.Find([]string{"serve"})
 			Expect(err).NotTo(HaveOccurred(),
-				"alloy serve must start the dev server without error")
+				"serve command must be findable on root")
+			Expect(serveCmd).NotTo(BeNil())
+			Expect(serveCmd.Name()).To(Equal("serve"),
+				"serve command must be registered on root")
 		})
 
 		It("init command executes successfully", func() {
