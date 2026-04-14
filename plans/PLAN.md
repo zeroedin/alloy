@@ -2347,6 +2347,7 @@ Starts the development server with live reload.
 
 ```
 --config, -c       Path to config file (default: alloy.config.yaml)
+--root, -r         Project root directory (default: config file's directory)
 --output, -o       Output directory (default: _site)
 --verbose, -v      Verbose logging
 --quiet, -q        Suppress output
@@ -2355,6 +2356,22 @@ Starts the development server with live reload.
 --no-drafts        Hide draft content in dev mode (alloy serve only, drafts visible by default)
 --refetch          Bypass source cache TTL, fetch fresh data on startup
 ```
+
+#### `--root` flag behavior
+
+By default, `ProjectRoot` is the directory containing the config file. The `--root` flag overrides this, setting `ProjectRoot` to the specified directory instead. All relative `structure:` paths and `build.output` resolve against `ProjectRoot`.
+
+This is essential for CI/CD environments where the config file may live in a subdirectory (`deploy/production.yaml`) but the working directory is the project root:
+
+```yaml
+# Without --root: requires ../content, ../layouts, etc. in structure: overrides
+alloy build --config deploy/production.yaml
+
+# With --root: clean config, paths resolve from CWD
+alloy build --config deploy/production.yaml --root .
+```
+
+When `--root` is not provided, the existing behavior is preserved: `ProjectRoot = filepath.Dir(configPath)`.
 
 ---
 

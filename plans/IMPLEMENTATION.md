@@ -289,7 +289,7 @@ At this point, `alloy build` works end-to-end on test fixtures.
 **Files**: `main.go`, `root.go`, `build.go`, `serve.go`, `init.go`, `version.go`
 
 - **`main.go` exit code handling (issue #28)**: `main()` must check the error return from `cmd.Execute()` and call `os.Exit(1)` on failure. Without this, all CLI errors exit 0, breaking scripts and CI. Current code discards the error.
-- Register Cobra flags (--config, --output, --verbose, --quiet, --port, --preview, --no-drafts, --refetch) ✅ done
+- Register Cobra flags (--config, --output, --root, --verbose, --quiet, --port, --preview, --no-drafts, --refetch) ✅ done (except --root)
 - `Version`: Set to non-empty string ✅ done
 
 #### `cmd/init.go` (issue #26)
@@ -304,7 +304,7 @@ At this point, `alloy build` works end-to-end on test fixtures.
 
 `RunE` is an empty stub. Must wire to pipeline:
 1. Read `--config` flag, call `config.DetectConfigFile` or `config.Load`. If no config file found, use `config.ApplyDefaults` on an empty `Config` (zero-page build, not an error).
-2. Read `--output`, `--verbose`, `--quiet` flags, call `config.MergeFlags`.
+2. Read `--output`, `--verbose`, `--quiet`, `--root` flags, call `config.MergeFlags`.
 3. Call `pipeline.Build(cfg)`.
 4. Print summary: `fmt.Printf("Built %d pages in %s\n", result.PageCount, result.Duration)`.
 5. Return any error from Build — Cobra will handle exit code.
@@ -322,6 +322,37 @@ At this point, `alloy build` works end-to-end on test fixtures.
 6. Block until interrupt.
 
 **Test note**: The cmd test `"serve command is registered and callable"` verifies command registration via `root.Find()` without calling `Execute()`, since the serve command blocks on `Wait()`. Server startup behavior is tested directly in `internal/server/server_test.go`.
+
+#### `--root` flag (issue #75)
+
+Add `--root` / `-r` as a persistent flag on the root command (like `--config`). Default: empty string (use config file directory). When set, overrides `cfg.ProjectRoot` after config loading.
+
+**`config.MergeFlags`** must handle the `"root"` key:
+```go
+if v, ok := flags["root"]; ok {
+    if s, ok := v.(string); ok && s != "" {
+        absRoot, err := filepath.Abs(s)
+        if err == nil {
+            cfg.ProjectRoot = absRoot
+        }
+    }
+}
+```
+
+**`cmd/root.go`**: Register `--root` as persistent flag:
+```go
+rootCmd.PersistentFlags().StringP("root", "r", "", "Project root directory (default: config file directory)")
+```
+
+**`cmd/build.go` and `cmd/serve.go`**: Read `--root` flag and pass to `MergeFlags`:
+```go
+if cmd.Flags().Changed("root") {
+    v, _ := cmd.Flags().GetString("root")
+    flags["root"] = v
+}
+```
+
+The flag must be applied **after** config loading but **before** pipeline execution, since all `structure:` paths resolve against `ProjectRoot`.
 
 **Verify**: `go test ./internal/plugin/... ./internal/fetch/... ./internal/i18n/... ./cmd/...`
 

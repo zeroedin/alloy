@@ -108,6 +108,18 @@ var _ = Describe("CLI Commands", func() {
 			}
 			Expect(flag.Shorthand).To(Equal("q"))
 		})
+
+		It("--root / -r defaults to empty string", func() {
+			root := cmd.NewRootCommand()
+			flag := root.PersistentFlags().Lookup("root")
+			if flag == nil {
+				Fail("--root flag must be registered on root command")
+				return
+			}
+			Expect(flag.Shorthand).To(Equal("r"))
+			Expect(flag.DefValue).To(Equal(""),
+				"--root must default to empty (use config file directory)")
+		})
 	})
 
 	// ── Serve-specific flags (§9 Flags) ──────────────────────────────

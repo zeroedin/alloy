@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"os"
+	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -380,6 +381,60 @@ var _ = Describe("Config", func() {
 			})
 			Expect(cfg.Verbose).To(BeTrue(),
 				"--verbose flag must be accessible on config after merge")
+		})
+
+		It("--root flag overrides ProjectRoot", func() {
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: "/original/project",
+			}
+			config.MergeFlags(cfg, map[string]interface{}{
+				"root": "/override/root",
+			})
+			Expect(cfg.ProjectRoot).To(Equal("/override/root"),
+				"--root flag must override ProjectRoot from config file location")
+		})
+
+		It("--root empty string does not override ProjectRoot", func() {
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: "/original/project",
+			}
+			config.MergeFlags(cfg, map[string]interface{}{
+				"root": "",
+			})
+			Expect(cfg.ProjectRoot).To(Equal("/original/project"),
+				"empty --root must not change ProjectRoot")
+		})
+
+		It("--root with relative path resolves to absolute", func() {
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: "/original/project",
+			}
+			config.MergeFlags(cfg, map[string]interface{}{
+				"root": ".",
+			})
+			Expect(cfg.ProjectRoot).NotTo(Equal("/original/project"),
+				"relative --root must override ProjectRoot")
+			Expect(cfg.ProjectRoot).NotTo(Equal("."),
+				"relative --root must be resolved to absolute path")
+			Expect(filepath.IsAbs(cfg.ProjectRoot)).To(BeTrue(),
+				"--root must always resolve to an absolute path")
+		})
+
+		It("--root with relative subdirectory resolves to absolute", func() {
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: "/original/project",
+			}
+			config.MergeFlags(cfg, map[string]interface{}{
+				"root": "./deploy",
+			})
+			Expect(filepath.IsAbs(cfg.ProjectRoot)).To(BeTrue(),
+				"--root with relative subdir must resolve to absolute path")
+			Expect(cfg.ProjectRoot).To(HaveSuffix("/deploy"),
+				"resolved path must end with the relative directory name")
 		})
 	})
 
