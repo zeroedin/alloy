@@ -2,6 +2,8 @@ package template
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -11,8 +13,9 @@ import (
 
 // liquidEngine adapts Notifuse/liquidgo to the TemplateEngine interface.
 type liquidEngine struct {
-	env     *liquid.Environment
-	filters *alloyFilterBridge
+	env         *liquid.Environment
+	filters     *alloyFilterBridge
+	includesDir string // layouts directory for resolving {% include %} / {% render %}
 }
 
 // NewLiquidEngine creates a new Liquid template engine with standard tags and filters.
@@ -28,10 +31,16 @@ func NewLiquidEngine() TemplateEngine {
 	return &liquidEngine{env: env, filters: bridge}
 }
 
+// SetIncludesDir sets the directory used to resolve {% include %} and {% render %} tags.
+func (e *liquidEngine) SetIncludesDir(dir string) {
+	e.includesDir = dir
+}
+
 // liquidTemplate wraps a parsed liquidgo template.
 type liquidTemplate struct {
-	tpl  *liquid.Template
-	name string
+	tpl         *liquid.Template
+	name        string
+	includesDir string
 }
 
 func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
@@ -43,7 +52,7 @@ func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
 		return nil, fmt.Errorf("liquid parse error in %s: %s", name, err.Error())
 	}
 	tpl.SetName(name)
-	return &liquidTemplate{tpl: tpl, name: name}, nil
+	return &liquidTemplate{tpl: tpl, name: name, includesDir: e.includesDir}, nil
 }
 
 func (e *liquidEngine) AddFilter(name string, fn FilterFunc) error {
@@ -61,7 +70,15 @@ func (e *liquidEngine) AddTag(name string, fn TagFunc) error {
 }
 
 func (t *liquidTemplate) Render(ctx map[string]interface{}) ([]byte, error) {
-	result := t.tpl.Render(ctx, nil)
+	var opts *liquid.RenderOptions
+	if t.includesDir != "" {
+		opts = &liquid.RenderOptions{
+			Registers: map[string]interface{}{
+				"file_system": &alloyFileSystem{root: t.includesDir},
+			},
+		}
+	}
+	result := t.tpl.Render(ctx, opts)
 	if errs := t.tpl.Errors(); len(errs) > 0 {
 		// In lax mode, liquidgo captures errors into tpl.Errors() rather than
 		// returning them from Render. Errors like missing partials produce error
@@ -98,6 +115,42 @@ func RenderTemplate(source string, sourcePath string, ctx map[string]interface{}
 		return "", fmt.Errorf("%s: %s", sourcePath, errs[0].Error())
 	}
 	return result, nil
+}
+
+// ---------------------------------------------------------------------------
+// alloyFileSystem — resolves {% include %} / {% render %} templates from
+// the layouts directory. Tries name.liquid, name.html, then the raw name.
+// ---------------------------------------------------------------------------
+
+type alloyFileSystem struct {
+	root string
+}
+
+func (fs *alloyFileSystem) ReadTemplateFile(templatePath string) (string, error) {
+	absRoot, err := filepath.Abs(fs.root)
+	if err != nil {
+		return "", fmt.Errorf("illegal template path %q: %w", templatePath, err)
+	}
+	candidates := []string{
+		filepath.Join(fs.root, templatePath+".liquid"),
+		filepath.Join(fs.root, templatePath+".html"),
+		filepath.Join(fs.root, templatePath),
+	}
+	for _, path := range candidates {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			continue
+		}
+		rel, relErr := filepath.Rel(absRoot, abs)
+		if relErr != nil || strings.HasPrefix(rel, "..") {
+			return "", fmt.Errorf("illegal template path %q", templatePath)
+		}
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return string(data), nil
+		}
+	}
+	return "", fmt.Errorf("no such template %q", templatePath)
 }
 
 // ---------------------------------------------------------------------------
