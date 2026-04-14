@@ -1,8 +1,15 @@
 package server
 
 import (
+	"context"
 	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/zeroedin/alloy/internal/config"
 	tmpl "github.com/zeroedin/alloy/internal/template"
@@ -22,10 +29,13 @@ const (
 
 // Server is the Alloy dev/preview server.
 type Server struct {
-	config   *config.Config
-	mode     ServerMode
-	noDrafts bool
-	pages    map[string][]byte // in-memory page store for dev mode
+	config     *config.Config
+	mode       ServerMode
+	noDrafts   bool
+	pages      map[string][]byte // in-memory page store for dev mode
+	httpServer *http.Server
+	listener   net.Listener
+	done       chan struct{} // closed when the server stops
 }
 
 // New creates a new Server with the given config in dev mode.
@@ -74,13 +84,81 @@ func (s *Server) ShouldIncludeDrafts() bool {
 }
 
 // Start launches the HTTP server on the given port.
+// The server runs in a background goroutine; call Stop() or Wait() to manage lifecycle.
 func (s *Server) Start(port int) error {
+	return s.startOnAddr(fmt.Sprintf(":%d", port))
+}
+
+func (s *Server) startOnAddr(addr string) error {
+	mux := http.NewServeMux()
+
+	// Serve from the built output directory
+	outputDir := s.config.Build.Output
+	if outputDir == "" {
+		outputDir = "_site"
+	}
+	if s.config.ProjectRoot != "" {
+		outputDir = filepath.Join(s.config.ProjectRoot, outputDir)
+	}
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		urlPath := r.URL.Path
+		filePath := filepath.Join(outputDir, filepath.FromSlash(urlPath))
+
+		// If path ends with /, try index.html
+		if strings.HasSuffix(urlPath, "/") {
+			filePath = filepath.Join(filePath, "index.html")
+		}
+
+		if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
+			http.ServeFile(w, r, filePath)
+			return
+		}
+
+		// Try adding /index.html for clean URLs
+		indexPath := filepath.Join(filePath, "index.html")
+		if info, err := os.Stat(indexPath); err == nil && !info.IsDir() {
+			http.ServeFile(w, r, indexPath)
+			return
+		}
+
+		http.NotFound(w, r)
+	})
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", addr, err)
+	}
+	s.listener = ln
+
+	s.httpServer = &http.Server{Handler: mux}
+	s.done = make(chan struct{})
+
+	go func() {
+		defer close(s.done)
+		if err := s.httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
+			log.Printf("server error: %v", err)
+		}
+	}()
+
 	return nil
 }
 
-// Stop gracefully shuts down the server.
+// Stop gracefully shuts down the server with a 5-second timeout.
 func (s *Server) Stop() error {
+	if s.httpServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return s.httpServer.Shutdown(ctx)
+	}
 	return nil
+}
+
+// Wait blocks until the server stops (via Stop() or error).
+func (s *Server) Wait() {
+	if s.done != nil {
+		<-s.done
+	}
 }
 
 // ServeHTTP handles an HTTP request and returns the response body for a given path.
@@ -102,7 +180,7 @@ func (s *Server) ResolvePassthrough(urlPath string) (string, error) {
 // StartOnPort attempts to start the server on a specific port.
 // Returns a descriptive error if the port is already in use.
 func (s *Server) StartOnPort(port int) error {
-	return nil
+	return s.startOnAddr(fmt.Sprintf(":%d", port))
 }
 
 // ShouldOpenBrowser returns true if the server should auto-open a browser on start.
