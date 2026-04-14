@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"path/filepath"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -171,15 +172,15 @@ var _ = Describe("Cross-Cutting Integration", func() {
 		})
 
 		It("output path uses format extension instead of html", func() {
-			// HTML path
+			// HTML path via ComputeOutputPath
 			htmlPath := output.ComputeOutputPath("/blog/post/")
 			Expect(htmlPath).To(Equal("blog/post/index.html"),
 				"HTML output path must end with index.html")
 
-			// For JSON, the pipeline must produce blog/post/index.json
-			// This is computed by replacing the extension in the output path
-			expectedJSONPath := "blog/post/index.json"
-			Expect(expectedJSONPath).To(ContainSubstring("index.json"),
+			// For JSON, the pipeline replaces .html with the format extension
+			// (same algorithm as WritePageFormats: TrimSuffix(".html") + "." + format)
+			jsonPath := strings.TrimSuffix(htmlPath, ".html") + ".json"
+			Expect(jsonPath).To(Equal("blog/post/index.json"),
 				"JSON output path must use .json extension")
 		})
 

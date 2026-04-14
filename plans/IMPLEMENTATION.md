@@ -194,9 +194,12 @@ for _, page := range pages {
     }
     for _, format := range formats {
         if format == "html" {
-            // Existing HTML path: ResolveLayout → render → ComputeOutputPath
+            // Existing HTML path: template.ResolveLayout → render → ComputeOutputPath
         } else {
-            // Format-specific: ResolveLayoutForFormat(page, layoutsDir, engine, format)
+            // Format-specific: template.ResolveLayoutForFormat(page, layoutsDir, engine, format)
+            // This is the canonical resolver — it checks disk for the layout file and
+            // returns an error if not found, consistent with ResolveLayout for HTML.
+            // (output.ResolveFormatLayout computes the path but does not validate existence.)
             // Output path: replace extension — /my-post/index.json instead of index.html
         }
     }
@@ -205,7 +208,7 @@ for _, page := range pages {
 
 Key points:
 - `page.Outputs` is populated from `outputs` front matter during `content.BuildPage` (the field already exists on `content.Page`)
-- HTML format uses existing `ResolveLayout` (no change). Non-HTML formats use `template.ResolveLayoutForFormat`.
+- HTML format uses existing `template.ResolveLayout` (no change). Non-HTML formats use `template.ResolveLayoutForFormat` — the canonical resolver that validates the layout file exists on disk. `output.ResolveFormatLayout` computes the expected path (useful for testing) but should not be used as the pipeline resolver.
 - Output path for non-HTML: `output.ComputeOutputPath(page.URL)` returns `slug/index.html` — for JSON it should produce `slug/index.json`. Either extend `ComputeOutputPath` to accept a format parameter, or compute manually.
 - The rendered body for each format is independent — a page's JSON output uses a different layout than its HTML output.
 - Content rendering (markdown → HTML) happens once. Layout rendering happens per format.
