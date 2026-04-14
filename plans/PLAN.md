@@ -1027,13 +1027,15 @@ Simplified from 11ty's model. **5 levels, last wins:**
 
 ### Directory Data Cascading
 
-`_data.yaml` cascades down into subdirectories. A child directory's `_data.yaml` can override parent values:
+`_data.yaml` cascades down into **all descendant directories**, not just those with their own `_data.yaml`. A child directory's `_data.yaml` can override parent values:
 
 ```
 content/_data.yaml          → applies to all content
-content/blog/_data.yaml     → merges over parent, applies to blog/ and blog/2024/
-content/blog/2024/_data.yaml → merges over parent, applies to blog/2024/ only
+content/blog/_data.yaml     → merges over parent, applies to blog/ and all subdirs
+content/blog/2024/_data.yaml → merges over parent, applies to blog/2024/ and its subdirs
 ```
+
+A page at `content/blog/2024/march/post.md` inherits from the nearest ancestor `_data.yaml` — the lookup walks up through `blog/2024/march/`, `blog/2024/`, `blog/`, `content/` until a `_data.yaml` is found. Most directories will not have their own `_data.yaml`; they rely entirely on ancestor inheritance.
 
 ### Merge Rules
 - Objects are **deep-merged** (nested keys merge recursively)
