@@ -131,6 +131,44 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		page.RenderedBody = layoutResult
 	}
 
+	// Generate and render taxonomy pages (virtual index + per-term pages)
+	if cfg.Taxonomies != nil && engine != nil {
+		taxonomies := collection.BuildTaxonomies(pages, cfg.Taxonomies)
+		for taxName, tc := range taxonomies {
+			taxCfg := cfg.Taxonomies[taxName]
+			taxPages := collection.GenerateTaxonomyPages(tc, taxCfg)
+			for _, taxPage := range taxPages {
+				layoutPath, err := tmpl.ResolveTaxonomyLayout(taxName, taxCfg.Layout, layoutsDir, engineName)
+				if err != nil {
+					continue // no layout — skip this taxonomy page
+				}
+				layoutContent, err := os.ReadFile(layoutPath)
+				if err != nil {
+					continue
+				}
+				tpl, err := engine.Parse(layoutPath, layoutContent)
+				if err != nil {
+					continue
+				}
+				ctx := buildTemplateContext(taxPage, cfg, pages, siteData, collectionsCtx, nil)
+				term := ""
+				if taxPage.Kind == "taxonomy_term" {
+					if t, ok := taxPage.FrontMatter["title"].(string); ok {
+						term = t
+					}
+				}
+				ctx["taxonomy"] = collection.BuildTaxonomyPageContext(tc, term)
+				ctx["content"] = ""
+				out, err := tpl.Render(ctx)
+				if err != nil {
+					continue
+				}
+				taxPage.RenderedBody = out
+				pages = append(pages, taxPage)
+			}
+		}
+	}
+
 	// Stage 6: Output writing
 	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
 	if cfg.Build.Clean {
