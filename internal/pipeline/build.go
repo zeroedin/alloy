@@ -13,6 +13,7 @@ import (
 
 	"github.com/zeroedin/alloy/internal/assets"
 	"github.com/zeroedin/alloy/internal/cache"
+	"github.com/zeroedin/alloy/internal/cascade"
 	"github.com/zeroedin/alloy/internal/collection"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
@@ -22,6 +23,7 @@ import (
 	"github.com/zeroedin/alloy/internal/permalink"
 	"github.com/zeroedin/alloy/internal/static"
 	tmpl "github.com/zeroedin/alloy/internal/template"
+	"github.com/zeroedin/alloy/internal/validation"
 )
 
 // ErrNotImplemented is returned by all stub functions.
@@ -59,6 +61,11 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		return nil, fmt.Errorf("registering template filters: %w", err)
 	}
 
+	// Configure include/render tag resolution from layouts directory
+	if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
+		setter.SetIncludesDir(resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts))
+	}
+
 	// Discover content
 	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
 	pages, err := content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
@@ -87,8 +94,30 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		page.URL = url
 	}
 
-	// Load data files
+	// Load directory data cascade (_data.yaml files)
+	cascadeData, cascadeErr := cascade.LoadDirectoryCascade(contentDir)
+	if cascadeErr != nil {
+		log.Printf("warning: loading cascade data: %v", cascadeErr)
+	}
+
+	// Load data files (Global cascade level 1)
 	siteData := loadSiteData(cfg)
+
+	// Build PageContexts per spec §3: shared pointers for Global/Directory,
+	// per-page FrontMatter. Levels 4/5 (Computed/PluginData) are nil until
+	// plugin hooks populate them.
+	contentBase := filepath.Base(contentDir)
+	for _, page := range pages {
+		var dirData map[string]interface{}
+		if len(cascadeData) > 0 {
+			dirData = cascade.FindCascadeData(cascadeData, contentBase, page.RelPath)
+		}
+		pctx := cascade.BuildContext(siteData, dirData, page.FrontMatter)
+		// Flatten cascade into FrontMatter so downstream consumers (taxonomy
+		// building, collection sorting) see the effective values. The PageContext
+		// is the source of truth; FrontMatter becomes the resolved view.
+		page.FrontMatter = pctx.ToMap()
+	}
 
 	// Build collections and taxonomies
 	collectionsCtx := buildCollectionsContext(pages, cfg)
@@ -136,6 +165,33 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		page.RenderedBody = layoutResult
 	}
 
+	// Pre-build validation: permalink/alias conflicts
+	if aliasErrs := validation.ValidatePermalinkAliases(pages); len(aliasErrs) > 0 {
+		return nil, aliasErrs[0]
+	}
+	var outputEntries []validation.OutputPathEntry
+	for _, page := range pages {
+		if !output.ShouldWrite(page.URL) {
+			continue
+		}
+		outPath := output.ComputeOutputPath(page.URL)
+		outputEntries = append(outputEntries, validation.OutputPathEntry{
+			Path: outPath, Source: page.RelPath,
+		})
+		aliases, _ := permalink.ResolveAliases(page)
+		for _, alias := range aliases {
+			aliasPath := output.ComputeOutputPath(alias)
+			outputEntries = append(outputEntries, validation.OutputPathEntry{
+				Path: aliasPath, Source: page.RelPath + " (alias)",
+			})
+		}
+	}
+	if conflicts, _ := validation.DetectConflicts(outputEntries); len(conflicts) > 0 {
+		c := conflicts[0]
+		return nil, fmt.Errorf("output path conflict: %q claimed by %s and %s",
+			c.Path, c.Sources[0], c.Sources[1])
+	}
+
 	// Stage 6: Output writing
 	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
 	if cfg.Build.Clean {
@@ -152,6 +208,16 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		outPath := output.ComputeOutputPath(page.URL)
 		if err := output.WriteFile(outputDir, outPath, page.RenderedBody); err != nil {
 			return nil, fmt.Errorf("writing output %s: %w", outPath, err)
+		}
+		// Write alias output paths (same content at additional URLs)
+		aliases, err := permalink.ResolveAliases(page)
+		if err != nil {
+			return nil, fmt.Errorf("resolving aliases for %s: %w", page.RelPath, err)
+		}
+		if len(aliases) > 0 {
+			if err := output.WriteAliases(outputDir, aliases, page.RenderedBody); err != nil {
+				return nil, fmt.Errorf("writing aliases for %s: %w", page.RelPath, err)
+			}
 		}
 	}
 
@@ -358,6 +424,11 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 			return nil, fmt.Errorf("content transformation: %s: %w", page.RelPath, err)
 		}
 
+		// Protect template tags inside <code> blocks from Liquid processing.
+		// After markdown rendering, template tags in code fences are literal text
+		// inside <code> elements — escape their braces so Liquid ignores them.
+		html = escapeTemplateTagsInCode(html)
+
 		// Step 2: Render template tags with full page/site context.
 		if hasTemplateSyntax(html) {
 			ctx := buildTemplateContext(page, cfg, pages, siteData, collectionsCtx, html)
@@ -410,25 +481,19 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 			continue
 		}
 
-		// Resolve data source — look up in site.data (nested under "data" key)
-		var dataSlice []interface{}
-		siteDataMap := siteData
-		if d, ok := siteData["data"]; ok {
-			if dm, ok := d.(map[string]interface{}); ok {
-				siteDataMap = dm
-			}
-		}
-		resolved, err := pagination.ResolveDataSource(dataRef, siteDataMap, collectionsCtx)
+		// Resolve data source — siteData is already the raw data map
+		resolved, err := pagination.ResolveDataSource(dataRef, siteData, collectionsCtx)
 		if err != nil {
 			log.Printf("warning: pagination data source %q: %v", dataRef, err)
 			result = append(result, page)
 			continue
 		}
-		dataSlice = resolved
 
 		perPage := 1
 		if pp, ok := paginationMap["perPage"].(int); ok && pp > 0 {
 			perPage = pp
+		} else if pp, ok := paginationMap["perPage"].(float64); ok && int(pp) > 0 {
+			perPage = int(pp)
 		}
 		asVar, _ := paginationMap["as"].(string)
 		if asVar == "" {
@@ -443,14 +508,14 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 		var paths []string
 
 		if useLiquidPermalink && perPage == 1 {
-			contexts, paths, err = pagination.PaginateWithLiquidPermalink(dataSlice, permalinkStr, asVar)
+			contexts, paths, err = pagination.PaginateWithLiquidPermalink(resolved, permalinkStr, asVar)
 		} else {
 			basePath := page.URL
 			if basePath == "" {
 				basePath = permalink.DefaultFromPath(page.RelPath)
 			}
 			pathSegment := cfg.Pagination.Path
-			contexts, paths, err = pagination.Paginate(dataSlice, perPage, basePath, pathSegment)
+			contexts, paths, err = pagination.Paginate(resolved, perPage, basePath, pathSegment)
 		}
 		if err != nil {
 			log.Printf("warning: pagination for %s: %v", page.RelPath, err)
@@ -501,6 +566,27 @@ func copyFrontMatter(fm map[string]interface{}) map[string]interface{} {
 		result[k] = v
 	}
 	return result
+}
+
+// codeBlockPattern matches <code> elements (including those with attributes).
+// The non-greedy .*? matches to the first </code>, so nested <code> tags would
+// not be handled correctly. This is fine because goldmark does not produce
+// nested <code> elements — inline code and fenced code blocks each emit a
+// single <code>…</code> pair.
+var codeBlockPattern = regexp.MustCompile(`(?s)<code[^>]*>.*?</code>`)
+
+// escapeTemplateTagsInCode replaces {{ }}, {% %} inside <code> elements with
+// HTML entities so Liquid won't process them. This preserves template syntax
+// examples in code fences for display purposes.
+func escapeTemplateTagsInCode(html []byte) []byte {
+	return codeBlockPattern.ReplaceAllFunc(html, func(match []byte) []byte {
+		s := string(match)
+		s = strings.ReplaceAll(s, "{{", "&#123;&#123;")
+		s = strings.ReplaceAll(s, "}}", "&#125;&#125;")
+		s = strings.ReplaceAll(s, "{%", "&#123;%")
+		s = strings.ReplaceAll(s, "%}", "%&#125;")
+		return []byte(s)
+	})
 }
 
 // hasTemplateSyntax checks if content contains Liquid template tags.
