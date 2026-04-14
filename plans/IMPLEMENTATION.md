@@ -223,7 +223,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
  3. content.DiscoverWithFormats(contentDir, formats)      ✅ done
  4. content.FilterByLifecycle(pages, now, false)          ✅ done
  5. permalink.ResolveForSection(page, cfg.Permalinks)     ✅ done
- 6. cascade.LoadDirectoryCascade + FindCascadeData        ⚠️  partial — ancestor lookup missing
+ 6. cascade.LoadDirectoryCascade + FindCascadeData + PageContext ✅ done
  7. data.LoadDirectory(dataDir) → siteData                ✅ done
  8. collection.BuildCollections(pages, permalinks)        ✅ done
  9. collection.BuildTaxonomies(pages, taxonomies)         ✅ done
@@ -246,27 +246,16 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 - Steps 15-20 are post-render: write files, copy assets, generate sitemap, persist cache.
 - If content directory doesn't exist or is empty, `Build()` should return a successful zero-page result (not error). This is required for `alloy init && alloy build` to work and for cmd tests to pass.
 
-#### Cascade ancestor lookup fix (PR #55 review)
+#### Cascade wiring (PR #55)
 
-**Bug**: The pipeline's `cascadeDirKey` does an exact lookup against `LoadDirectoryCascade` output. `LoadDirectoryCascade` only creates entries for directories that **contain** a `_data.yaml`. Pages in subdirectories without `_data.yaml` (e.g., `content/blog/2024/post.md` when only `content/blog/_data.yaml` exists) get no cascade data.
+The pipeline uses `cascade.PageContext` per spec §3 for proper 5-level cascade:
 
-**Fix**: Replace the exact lookup in `Build()` with `cascade.FindCascadeData(cascadeData, contentBase, page.RelPath)`, which walks up the directory tree to find the nearest ancestor with cascade data. The `FindCascadeData` function lives in the cascade package (not the pipeline) so the lookup logic stays with the cascade domain.
+1. `cascade.LoadDirectoryCascade(contentDir)` — loads all `_data.yaml` files with parent→child merge
+2. `cascade.FindCascadeData(cascadeData, contentBase, page.RelPath)` — walks up the directory tree to find the nearest ancestor with cascade data (handles directories without their own `_data.yaml`)
+3. `cascade.BuildContext(siteData, dirData, page.FrontMatter)` — creates a `PageContext` with shared pointers for Global (level 1) and Directory (level 2), per-page FrontMatter (level 3)
+4. `pctx.ToMap()` — flattens via `PageContext.Get()` (lazy deep-merge only for conflicting nested keys) into `page.FrontMatter` so downstream consumers (taxonomy building, collection sorting) see effective values
 
-Before (broken):
-```go
-dirKey := cascadeDirKey(contentBase, page.RelPath)
-if dirData, ok := cascadeData[dirKey]; ok { ... }
-```
-
-After (fixed):
-```go
-dirData := cascade.FindCascadeData(cascadeData, contentBase, page.RelPath)
-if dirData != nil { ... }
-```
-
-#### Known tech debt: eager merge vs. PageContext
-
-The current pipeline eagerly merges cascade data into `page.FrontMatter` via `cascade.DeepMerge(dirData, page.FrontMatter)`. This is functionally correct but collapses cascade levels 2 (directory) and 3 (front matter), defeats pointer sharing, and prevents lazy merge. When plugins (levels 4/5) are implemented, the pipeline should switch to `cascade.BuildContext()` / `PageContext.Get()` for proper 5-level lazy lookup per spec §3. Tracked as non-blocking tech debt — the eager approach works correctly for the current feature set.
+Levels 4/5 (Computed/PluginData) are nil until plugin hooks populate them — `PageContext` is ready for plugins with no pipeline changes needed.
 
 ### WALKING SKELETON MILESTONE
 At this point, `alloy build` works end-to-end on test fixtures.

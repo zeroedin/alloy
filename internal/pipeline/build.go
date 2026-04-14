@@ -92,19 +92,25 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 	if cascadeErr != nil {
 		log.Printf("warning: loading cascade data: %v", cascadeErr)
 	}
-	if len(cascadeData) > 0 {
-		contentBase := filepath.Base(contentDir)
-		for _, page := range pages {
-			dirKey := cascadeDirKey(contentBase, page.RelPath)
-			if dirData, ok := cascadeData[dirKey]; ok {
-				// Merge cascade data under page front matter (front matter wins)
-				page.FrontMatter = cascade.DeepMerge(dirData, page.FrontMatter)
-			}
-		}
-	}
 
-	// Load data files
+	// Load data files (Global cascade level 1)
 	siteData := loadSiteData(cfg)
+
+	// Build PageContexts per spec §3: shared pointers for Global/Directory,
+	// per-page FrontMatter. Levels 4/5 (Computed/PluginData) are nil until
+	// plugin hooks populate them.
+	contentBase := filepath.Base(contentDir)
+	for _, page := range pages {
+		var dirData map[string]interface{}
+		if len(cascadeData) > 0 {
+			dirData = cascade.FindCascadeData(cascadeData, contentBase, page.RelPath)
+		}
+		pctx := cascade.BuildContext(siteData, dirData, page.FrontMatter)
+		// Flatten cascade into FrontMatter so downstream consumers (taxonomy
+		// building, collection sorting) see the effective values. The PageContext
+		// is the source of truth; FrontMatter becomes the resolved view.
+		page.FrontMatter = pctx.ToMap()
+	}
 
 	// Build collections and taxonomies
 	collectionsCtx := buildCollectionsContext(pages, cfg)
@@ -397,17 +403,6 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 	}
 
 	return rendered, nil
-}
-
-// cascadeDirKey computes the cascade lookup key for a page's directory.
-// Given contentBase="content" and relPath="blog/my-post.md", returns "content/blog/".
-// For a root page like "index.md", returns "content/".
-func cascadeDirKey(contentBase, relPath string) string {
-	dir := filepath.Dir(relPath)
-	if dir == "." {
-		return contentBase + "/"
-	}
-	return contentBase + "/" + filepath.ToSlash(dir) + "/"
 }
 
 // hasTemplateSyntax checks if content contains Liquid template tags.

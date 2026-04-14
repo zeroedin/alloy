@@ -155,7 +155,23 @@ func LoadDirectoryCascade(contentDir string) (map[string]map[string]interface{},
 // This must be used instead of exact key lookup so pages in directories without
 // _data.yaml inherit from ancestors per spec §3.
 func FindCascadeData(cascadeData map[string]map[string]interface{}, contentBase, relPath string) map[string]interface{} {
-	return nil // stub — not implemented
+	dir := filepath.Dir(relPath)
+	for {
+		var key string
+		if dir == "." {
+			key = contentBase + "/"
+		} else {
+			key = contentBase + "/" + filepath.ToSlash(dir) + "/"
+		}
+		if data, ok := cascadeData[key]; ok {
+			return data
+		}
+		if dir == "." {
+			break
+		}
+		dir = filepath.Dir(dir)
+	}
+	return nil
 }
 
 // findParentKey finds the parent cascade key for a given directory key.
