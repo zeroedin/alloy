@@ -381,6 +381,30 @@ var _ = Describe("Config", func() {
 			Expect(cfg.Verbose).To(BeTrue(),
 				"--verbose flag must be accessible on config after merge")
 		})
+
+		It("--root flag overrides ProjectRoot", func() {
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: "/original/project",
+			}
+			config.MergeFlags(cfg, map[string]interface{}{
+				"root": "/override/root",
+			})
+			Expect(cfg.ProjectRoot).To(Equal("/override/root"),
+				"--root flag must override ProjectRoot from config file location")
+		})
+
+		It("--root empty string does not override ProjectRoot", func() {
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: "/original/project",
+			}
+			config.MergeFlags(cfg, map[string]interface{}{
+				"root": "",
+			})
+			Expect(cfg.ProjectRoot).To(Equal("/original/project"),
+				"empty --root must not change ProjectRoot")
+		})
 	})
 
 	// ── Config validation (semantic errors) ──────────────────────────
