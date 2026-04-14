@@ -183,9 +183,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			// Resolve layout once per taxonomy (not per page)
 			layoutPath, err := tmpl.ResolveTaxonomyLayout(taxName, taxCfg.Layout, layoutsDir, engineName)
 			if err != nil {
-				// No layout on disk — skip rendering pages for this taxonomy
-				// (same behavior as regular pages with no layout)
-				continue
+				return nil, fmt.Errorf("taxonomy %q layout: %w", taxName, err)
 			}
 			layoutContent, err := os.ReadFile(layoutPath)
 			if err != nil {
