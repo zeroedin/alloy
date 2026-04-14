@@ -185,6 +185,7 @@ var _ = Describe("Server", func() {
 			srv := server.New(cfg)
 			actualPort, err := srv.StartWithPortFallback(0, 10) // port 0 = OS assigns a free port
 			Expect(err).NotTo(HaveOccurred())
+			defer srv.Stop()
 			Expect(actualPort).To(BeNumerically(">", 0),
 				"must return the actual port assigned by the OS")
 		})
@@ -193,7 +194,7 @@ var _ = Describe("Server", func() {
 			cfg := &config.Config{Title: "Test Site"}
 
 			// Occupy a port by binding to it
-			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			listener, err := net.Listen("tcp", ":0")
 			Expect(err).NotTo(HaveOccurred())
 			defer listener.Close()
 			occupiedPort := listener.Addr().(*net.TCPAddr).Port
@@ -201,6 +202,7 @@ var _ = Describe("Server", func() {
 			srv := server.New(cfg)
 			actualPort, err := srv.StartWithPortFallback(occupiedPort, 10)
 			Expect(err).NotTo(HaveOccurred())
+			defer srv.Stop()
 			Expect(actualPort).NotTo(Equal(occupiedPort),
 				"must not return the occupied port")
 			Expect(actualPort).To(BeNumerically(">", occupiedPort),
@@ -229,6 +231,7 @@ var _ = Describe("Server", func() {
 			srv := server.New(cfg)
 			actualPort, err := srv.StartWithPortFallback(0, 10)
 			Expect(err).NotTo(HaveOccurred())
+			defer srv.Stop()
 			Expect(srv.Port()).To(Equal(actualPort),
 				"Port() must return the same port that StartWithPortFallback returned")
 		})
