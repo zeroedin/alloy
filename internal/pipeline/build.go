@@ -18,6 +18,7 @@ import (
 	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/data"
 	"github.com/zeroedin/alloy/internal/output"
+	"github.com/zeroedin/alloy/internal/pagination"
 	"github.com/zeroedin/alloy/internal/permalink"
 	"github.com/zeroedin/alloy/internal/static"
 	tmpl "github.com/zeroedin/alloy/internal/template"
@@ -91,6 +92,10 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 
 	// Build collections and taxonomies
 	collectionsCtx := buildCollectionsContext(pages, cfg)
+
+	// Process pagination: detect pages with pagination front matter,
+	// resolve data sources, and generate virtual/paginated pages.
+	pages = processPagination(pages, cfg, siteData, collectionsCtx)
 
 	// Stage 4: Render each page (with engine for custom filter support)
 	rendered, renderErr := renderPages(pages, cfg, siteData, collectionsCtx, engine)
@@ -380,6 +385,118 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 	}
 
 	return rendered, nil
+}
+
+// processPagination detects pages with pagination: front matter, resolves
+// data sources, and generates virtual or paginated pages. Original paginated
+// pages are replaced by their expanded set.
+func processPagination(pages []*content.Page, cfg *config.Config, siteData map[string]interface{}, collectionsCtx map[string]interface{}) []*content.Page {
+	var result []*content.Page
+	for _, page := range pages {
+		paginationRaw, ok := page.FrontMatter["pagination"]
+		if !ok {
+			result = append(result, page)
+			continue
+		}
+		paginationMap, ok := paginationRaw.(map[string]interface{})
+		if !ok {
+			result = append(result, page)
+			continue
+		}
+
+		dataRef, _ := paginationMap["data"].(string)
+		if dataRef == "" {
+			result = append(result, page)
+			continue
+		}
+
+		// Resolve data source — look up in site.data (nested under "data" key)
+		var dataSlice []interface{}
+		siteDataMap := siteData
+		if d, ok := siteData["data"]; ok {
+			if dm, ok := d.(map[string]interface{}); ok {
+				siteDataMap = dm
+			}
+		}
+		resolved, err := pagination.ResolveDataSource(dataRef, siteDataMap, collectionsCtx)
+		if err != nil {
+			log.Printf("warning: pagination data source %q: %v", dataRef, err)
+			result = append(result, page)
+			continue
+		}
+		dataSlice = resolved
+
+		perPage := 1
+		if pp, ok := paginationMap["perPage"].(int); ok && pp > 0 {
+			perPage = pp
+		}
+		asVar, _ := paginationMap["as"].(string)
+		if asVar == "" {
+			asVar = "item"
+		}
+
+		// Check if the page has a Liquid permalink (virtual page generation)
+		permalinkStr, _ := page.FrontMatter["permalink"].(string)
+		useLiquidPermalink := permalinkStr != "" && strings.Contains(permalinkStr, "{{")
+
+		var contexts []pagination.PaginationContext
+		var paths []string
+
+		if useLiquidPermalink && perPage == 1 {
+			contexts, paths, err = pagination.PaginateWithLiquidPermalink(dataSlice, permalinkStr, asVar)
+		} else {
+			basePath := page.URL
+			if basePath == "" {
+				basePath = permalink.DefaultFromPath(page.RelPath)
+			}
+			pathSegment := cfg.Pagination.Path
+			contexts, paths, err = pagination.Paginate(dataSlice, perPage, basePath, pathSegment)
+		}
+		if err != nil {
+			log.Printf("warning: pagination for %s: %v", page.RelPath, err)
+			result = append(result, page)
+			continue
+		}
+
+		// Generate virtual pages from pagination contexts
+		for i, pctx := range contexts {
+			vp := &content.Page{
+				RelPath:     page.RelPath,
+				Body:        page.Body,
+				FrontMatter: copyFrontMatter(page.FrontMatter),
+				Section:     page.Section,
+				URL:         paths[i],
+				Layout:      page.Layout,
+				Kind:        "page",
+			}
+			// Inject pagination context and data variable into front matter
+			vp.FrontMatter["pagination"] = map[string]interface{}{
+				"pageNumber": pctx.PageNumber,
+				"totalPages": pctx.TotalPages,
+				"previous":   pctx.PreviousPage,
+				"next":       pctx.NextPage,
+				"first":      pctx.First,
+				"last":       pctx.Last,
+			}
+			// Make the data items available under the 'as' variable name
+			if perPage == 1 && len(pctx.Items) == 1 {
+				vp.FrontMatter[asVar] = pctx.Items[0]
+			} else {
+				vp.FrontMatter[asVar] = pctx.Items
+			}
+			result = append(result, vp)
+		}
+	}
+	return result
+}
+
+// copyFrontMatter creates a shallow copy of front matter.
+func copyFrontMatter(fm map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{}, len(fm))
+	for k, v := range fm {
+		result[k] = v
+	}
+	return result
 }
 
 // hasTemplateSyntax checks if content contains Liquid template tags.
