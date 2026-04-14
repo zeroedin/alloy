@@ -2,6 +2,7 @@ package pagination
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 )
 
@@ -80,7 +81,7 @@ func ResolveDataSource(ref string, siteData map[string]interface{}, collections 
 		if !ok {
 			return nil, fmt.Errorf("data source %q not found in site data", ref)
 		}
-		slice, ok := val.([]interface{})
+		slice, ok := toInterfaceSlice(val)
 		if !ok {
 			return nil, fmt.Errorf("data source %q is not a slice", ref)
 		}
@@ -96,7 +97,7 @@ func ResolveDataSource(ref string, siteData map[string]interface{}, collections 
 		if !ok {
 			return nil, fmt.Errorf("data source %q not found in collections", ref)
 		}
-		slice, ok := val.([]interface{})
+		slice, ok := toInterfaceSlice(val)
 		if !ok {
 			return nil, fmt.Errorf("data source %q is not a slice", ref)
 		}
@@ -161,4 +162,22 @@ func renderSimpleLiquid(tmpl string, varName string, item interface{}) string {
 		result = strings.ReplaceAll(result, placeholder, fmt.Sprintf("%v", val))
 	}
 	return result
+}
+
+// toInterfaceSlice converts a value to []interface{}.
+// Handles both []interface{} directly and typed slices (e.g., []*content.Page)
+// via reflection.
+func toInterfaceSlice(val interface{}) ([]interface{}, bool) {
+	if slice, ok := val.([]interface{}); ok {
+		return slice, true
+	}
+	rv := reflect.ValueOf(val)
+	if rv.Kind() != reflect.Slice {
+		return nil, false
+	}
+	result := make([]interface{}, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		result[i] = rv.Index(i).Interface()
+	}
+	return result, true
 }
