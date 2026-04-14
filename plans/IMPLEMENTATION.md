@@ -48,14 +48,15 @@ These packages depend only on stdlib or already-defined types.
 **File**: `internal/data/loader.go`
 
 - `LoadFile`: Detect format by extension (.yaml/.yml, .toml, .json), parse with appropriate library
-- `LoadDirectory`: Walk dir, `LoadFile` each, key by filename without extension
+- `LoadDirectory`: Walk dir, `LoadFile` each, key by filename without extension. **Stem collision detection**: Track seen stem names. If two files share a stem (e.g., `team.csv` and `team.yaml`), return an error listing both files. No silent overwrites — consistent with output path conflict philosophy (§2).
 - `LoadCSV`: `encoding/csv`, first row = headers, subsequent rows = `[]map[string]string`
 
-### 1C: `internal/cascade` — 22 tests
+### 1C: `internal/cascade` — 28 tests
 **Files**: `internal/cascade/merge.go`, `internal/cascade/context.go`
 
 - `DeepMerge`: Recursive map merge, arrays replaced (not concatenated)
-- `LoadDirectoryCascade`: Walk content dir for `_data.yaml` files, merge parent->child
+- `LoadDirectoryCascade`: Walk content dir for `_data.yaml` files, merge parent->child. Only creates entries for directories that contain `_data.yaml`.
+- `FindCascadeData(cascadeData, contentBase, relPath)`: Ancestor-walking lookup. Given a page's `relPath`, computes the directory key and walks up the directory tree to find the nearest ancestor with cascade data. Returns `nil` when no ancestor has data. The pipeline must use this instead of exact key lookup — otherwise pages in directories without `_data.yaml` miss ancestor inheritance (spec §3 requires cascade to flow to all descendants).
 - `BuildContext`/`BuildContextFull`: Allocate `PageContext` with shared pointers
 - `Get`: Lookup order: Computed > FrontMatter > Directory > Global. May need `PluginData` field added.
 
@@ -210,7 +211,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 - `BuildWithContent`: Accept injected content, render through pipeline. Error messages must contain source file path + "template rendering" stage.
 - `BuildPhase1`/`BuildPhase2`: Phase separation. Phase 2 inserts `<template shadowrootmode="open">` markers for custom elements (minimal SSR simulation).
 - **`validateOutputDir`** (issue #9): Uses path equality + parent/child overlap detection (not substring matching). Only rejects exact matches (`output == content`) and nesting (`output = content/build` or `content` inside `output`). Names like `my_content_site` are valid output directories.
-- **Render ordering** (issue #10): Markdown renders first, then template tags — per spec §6 steps 3-4. Goldmark's TemplateTags extension preserves `{{ }}`/`{% %}` through markdown rendering. Code fences protect their contents automatically (goldmark parsers take precedence). Markdown errors use stage name `"content transformation"`, template errors use `"template rendering"`.
+- **Render ordering** (issue #10): Markdown renders first, then template tags — per spec §6 steps 3-4. Goldmark's TemplateTags extension preserves `{{ }}`/`{% %}` through markdown rendering. After markdown rendering and before Liquid processing, `escapeTemplateTagsInCode` converts template tags inside `<code>` elements to HTML entities so Liquid ignores them (issue #46). Markdown errors use stage name `"content transformation"`, template errors use `"template rendering"`.
 
 #### `Build()` full orchestration (issue #30)
 
@@ -221,29 +222,40 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
  2. validateOutputDir(cfg)                               ✅ done
  3. content.DiscoverWithFormats(contentDir, formats)      ✅ done
  4. content.FilterByLifecycle(pages, now, false)          ✅ done
- 5. permalink.ResolveForSection(page, cfg.Permalinks)     ❌ missing — page.URL never set
- 6. data.LoadDirectory(dataDir) → siteData                ✅ done
- 7. collection.BuildCollections(pages, permalinks)        ✅ done
- 8. collection.BuildTaxonomies(pages, taxonomies)         ✅ done
- 9. template.RegisterBuiltinFilters(engine)               ❌ missing — filters unavailable
-10. renderPages (markdown → template tags)                ✅ done
-11. template.ResolveLayout(page, layoutsDir, engine)      ❌ missing — no layout wrapping
-12. Render page through layout ({{ content }} injection)  ❌ missing
-13. output.ComputeOutputPath(page) → output path          ❌ missing
-14. output.WriteFile(outputPath, html)                    ❌ missing — nothing written to disk
-15. static.CopyStatic(staticDir, outputDir)               ❌ missing
-16. assets.CopyAssets(assetsDir, outputDir)                ❌ missing
-17. static.CopyPassthroughWithValidation(...)             ❌ missing
-18. output.GenerateSitemap(pages, baseURL, outputDir)     ❌ missing
-19. cache.SaveTo(cacheFile)                               ❌ missing
+ 5. permalink.ResolveForSection(page, cfg.Permalinks)     ✅ done
+ 6. cascade.LoadDirectoryCascade + FindCascadeData + PageContext ✅ done
+ 7. data.LoadDirectory(dataDir) → siteData                ✅ done
+ 8. collection.BuildCollections(pages, permalinks)        ✅ done
+ 9. collection.BuildTaxonomies(pages, taxonomies)         ✅ done
+10. template.RegisterBuiltinFilters(engine)               ✅ done
+11. renderPages (markdown → template tags)                ✅ done
+12. template.ResolveLayout(page, layoutsDir, engine)      ✅ done
+13. Render page through layout ({{ content }} injection)  ✅ done
+14. output.ComputeOutputPath(page) → output path          ✅ done
+15. output.WriteFile(outputPath, html)                    ✅ done
+16. static.CopyStatic(staticDir, outputDir)               ✅ done
+17. assets.CopyAssets(assetsDir, outputDir)                ✅ done
+18. static.CopyPassthroughWithValidation(...)             ✅ done
+19. output.GenerateSitemap(pages, baseURL, outputDir)     ✅ done
+20. cache.SaveTo(cacheFile)                               ✅ done
 ```
 
 **Key implementation notes:**
-- Steps 5-8 happen before rendering (step 10) so templates can access `page.url`, `collections.*`, etc.
-- Step 9 must happen before step 10 so template filters like `{{ title | slugify }}` work.
-- Step 11-12 happen after step 10: content is rendered first, then injected into the layout via `{{ content }}`.
-- Steps 14-18 are post-render: write files, copy assets, generate sitemap.
+- Steps 5-9 happen before rendering (step 11) so templates can access `page.url`, `collections.*`, filters, etc.
+- Step 12-13 happen after step 11: content is rendered first, then injected into the layout via `{{ content }}`.
+- Steps 15-20 are post-render: write files, copy assets, generate sitemap, persist cache.
 - If content directory doesn't exist or is empty, `Build()` should return a successful zero-page result (not error). This is required for `alloy init && alloy build` to work and for cmd tests to pass.
+
+#### Cascade wiring (PR #55)
+
+The pipeline uses `cascade.PageContext` per spec §3 for proper 5-level cascade:
+
+1. `cascade.LoadDirectoryCascade(contentDir)` — loads all `_data.yaml` files with parent→child merge
+2. `cascade.FindCascadeData(cascadeData, contentBase, page.RelPath)` — walks up the directory tree to find the nearest ancestor with cascade data (handles directories without their own `_data.yaml`)
+3. `cascade.BuildContext(siteData, dirData, page.FrontMatter)` — creates a `PageContext` with shared pointers for Global (level 1) and Directory (level 2), per-page FrontMatter (level 3)
+4. `pctx.ToMap()` — flattens via `PageContext.Get()` (lazy deep-merge only for conflicting nested keys) into `page.FrontMatter` so downstream consumers (taxonomy building, collection sorting) see effective values
+
+Levels 4/5 (Computed/PluginData) are nil until plugin hooks populate them — `PageContext` is ready for plugins with no pipeline changes needed.
 
 ### WALKING SKELETON MILESTONE
 At this point, `alloy build` works end-to-end on test fixtures.
@@ -316,7 +328,7 @@ At this point, `alloy build` works end-to-end on test fixtures.
 
 ## Phase 6: Server + SSR (~65 tests)
 
-### 6A: `internal/server` — 40 tests
+### 6A: `internal/server` — 45 tests
 **Files**: `server.go`, `watcher.go`, `overlay.go`
 
 - HTTP server with mode-aware behavior (dev/preview)
@@ -325,6 +337,12 @@ At this point, `alloy build` works end-to-end on test fixtures.
 - `WebSocketReloadMessage()`: Return `{"type": "reload"}` JSON string for connected browser reload
 - `DebounceInterval()`: Return configurable debounce interval in milliseconds for file watcher
 - `DetermineRebuildAction(changedFiles []string) RebuildScope`: Classify file changes as incremental or full rebuild. Many simultaneous changes trigger a full rebuild.
+- `StartWithPortFallback(preferredPort, maxAttempts int) (int, error)`: Try `net.Listen("tcp", ":port")` starting at `preferredPort`. On `EADDRINUSE`, increment port and retry up to `maxAttempts` times. Return the actual port on success. After exhausting all attempts, return error containing `"no available port"` and the range tried. Log a warning when skipping an occupied port. Store the actual port on the Server struct.
+- `Port() int`: Return the actual port the server is listening on. Returns 0 before the server has started.
+
+#### Port auto-increment (issue #60)
+
+`cmd/serve.go` should call `srv.StartWithPortFallback(port, 10)` instead of `srv.Start(port)`. The returned actual port is used in the startup message (`Serving at http://localhost:<actual-port>`). The `--port` flag remains "preferred" — it's the starting point for the search, not a hard requirement. No `--strict-port` flag needed; `alloy serve` is a dev tool and auto-increment is always the right UX.
 
 ### 6B: `internal/ssr` — 25 tests
 **Files**: `scanner.go`, `depgraph.go`, `persistence.go`
@@ -367,8 +385,8 @@ Cross-package integration paths that should mostly pass once pipeline works:
 | 3 | permalink, collection, template (context/layout/shortcodes), output, assets | ~75 | ~303 |
 | 4 | template (liquid/go engines), static, pipeline **[WALKING SKELETON]** | ~56 | ~359 |
 | 5 | plugin, fetch, i18n, cmd | ~107 | ~466 |
-| 6 | server, ssr | ~65 | ~531 |
-| 7 | integration tests + remaining | ~74 | ~605 |
+| 6 | server, ssr | ~70 | ~536 |
+| 7 | integration tests + remaining | ~74 | ~610 |
 
 ## Key Risks
 

@@ -12,8 +12,23 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// LoadFile loads a single data file (YAML, TOML, JSON) and returns its contents.
+// LoadFile loads a single data file (YAML, TOML, JSON) and returns its contents as a map.
+// For files with root-level arrays, use LoadFileAny instead.
 func LoadFile(path string) (map[string]interface{}, error) {
+	v, err := LoadFileAny(path)
+	if err != nil {
+		return nil, err
+	}
+	m, ok := v.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("parsing %s: expected map at root level, got %T", path, v)
+	}
+	return m, nil
+}
+
+// LoadFileAny loads a single data file (YAML, TOML, JSON) and returns its contents.
+// Unlike LoadFile, it supports both root-level maps and root-level arrays.
+func LoadFileAny(path string) (interface{}, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -21,7 +36,7 @@ func LoadFile(path string) (map[string]interface{}, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
 	case ".yaml", ".yml":
-		var result map[string]interface{}
+		var result interface{}
 		if err := yaml.Unmarshal(b, &result); err != nil {
 			return nil, fmt.Errorf("parsing YAML %s: %w", path, err)
 		}
@@ -33,7 +48,7 @@ func LoadFile(path string) (map[string]interface{}, error) {
 		}
 		return result, nil
 	case ".json":
-		var result map[string]interface{}
+		var result interface{}
 		if err := json.Unmarshal(b, &result); err != nil {
 			return nil, fmt.Errorf("parsing JSON %s: %w", path, err)
 		}
@@ -43,13 +58,15 @@ func LoadFile(path string) (map[string]interface{}, error) {
 	}
 }
 
-// LoadDirectory loads all data files from a directory, keyed by filename.
+// LoadDirectory loads all data files from a directory, keyed by filename stem.
+// Returns an error if two files share a stem name (e.g., team.csv and team.yaml).
 func LoadDirectory(dir string) (map[string]interface{}, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
 	result := make(map[string]interface{})
+	seen := make(map[string]string) // stem → first filename
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -59,12 +76,20 @@ func LoadDirectory(dir string) (map[string]interface{}, error) {
 		path := filepath.Join(dir, entry.Name())
 		switch ext {
 		case ".yaml", ".yml", ".toml", ".json":
-			data, err := LoadFile(path)
+			if prev, ok := seen[name]; ok {
+				return nil, fmt.Errorf("data file stem conflict: %q and %q both produce key %q", prev, entry.Name(), name)
+			}
+			seen[name] = entry.Name()
+			d, err := LoadFileAny(path)
 			if err != nil {
 				return nil, err
 			}
-			result[name] = data
+			result[name] = d
 		case ".csv":
+			if prev, ok := seen[name]; ok {
+				return nil, fmt.Errorf("data file stem conflict: %q and %q both produce key %q", prev, entry.Name(), name)
+			}
+			seen[name] = entry.Name()
 			rows, err := LoadCSV(path)
 			if err != nil {
 				return nil, err

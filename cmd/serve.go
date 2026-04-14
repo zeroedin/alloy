@@ -82,7 +82,11 @@ func newServeCommand() *cobra.Command {
 				fmt.Fprintf(cmd.OutOrStdout(), "Serving at http://localhost:%d\n", port)
 			}
 
-			return srv.Start(port)
+			if err := srv.Start(port); err != nil {
+				return err
+			}
+			srv.Wait() // block until shutdown
+			return nil
 		},
 	}
 

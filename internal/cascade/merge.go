@@ -150,6 +150,30 @@ func LoadDirectoryCascade(contentDir string) (map[string]map[string]interface{},
 	return result, nil
 }
 
+// FindCascadeData walks up the directory tree from a page's directory to find
+// the nearest ancestor with cascade data. Returns nil when no ancestor has data.
+// This must be used instead of exact key lookup so pages in directories without
+// _data.yaml inherit from ancestors per spec §3.
+func FindCascadeData(cascadeData map[string]map[string]interface{}, contentBase, relPath string) map[string]interface{} {
+	dir := filepath.Dir(relPath)
+	for {
+		var key string
+		if dir == "." {
+			key = contentBase + "/"
+		} else {
+			key = contentBase + "/" + filepath.ToSlash(dir) + "/"
+		}
+		if data, ok := cascadeData[key]; ok {
+			return data
+		}
+		if dir == "." {
+			break
+		}
+		dir = filepath.Dir(dir)
+	}
+	return nil
+}
+
 // findParentKey finds the parent cascade key for a given directory key.
 func findParentKey(key, baseName string) string {
 	// Remove trailing slash, get parent dir, add trailing slash

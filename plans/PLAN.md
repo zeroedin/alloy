@@ -194,6 +194,19 @@ Alloy supports YAML, TOML, and JSON wherever structured data is accepted:
 
 All formats parse into `map[string]any` — the rest of the pipeline (data cascade, template context, plugin hooks) is format-agnostic.
 
+**Data file name collisions are build errors.** Data files are keyed by stem name (filename without extension), so `team.csv` and `team.yaml` both claim the key `"team"`. If two or more data files in the same directory share a stem name, the build fails:
+
+```
+[alloy] ERROR Data file conflict in data/:
+        "team" is claimed by:
+          1. team.csv
+          2. team.yaml
+        Resolve by renaming one file.
+        Build aborted.
+```
+
+This follows the same principle as output path conflicts (§2): no silent overwrites, no priority system. The user must resolve collisions explicitly.
+
 ---
 
 ## 1b. Permalinks and URL Customization
@@ -1027,13 +1040,15 @@ Simplified from 11ty's model. **5 levels, last wins:**
 
 ### Directory Data Cascading
 
-`_data.yaml` cascades down into subdirectories. A child directory's `_data.yaml` can override parent values:
+`_data.yaml` cascades down into **all descendant directories**, not just those with their own `_data.yaml`. A child directory's `_data.yaml` can override parent values:
 
 ```
 content/_data.yaml          → applies to all content
-content/blog/_data.yaml     → merges over parent, applies to blog/ and blog/2024/
-content/blog/2024/_data.yaml → merges over parent, applies to blog/2024/ only
+content/blog/_data.yaml     → merges over parent, applies to blog/ and all subdirs
+content/blog/2024/_data.yaml → merges over parent, applies to blog/2024/ and its subdirs
 ```
+
+A page at `content/blog/2024/march/post.md` inherits from the nearest ancestor `_data.yaml` — the lookup walks up through `blog/2024/march/`, `blog/2024/`, `blog/`, `content/` until a `_data.yaml` is found. Most directories will not have their own `_data.yaml`; they rely entirely on ancestor inheritance.
 
 ### Merge Rules
 - Objects are **deep-merged** (nested keys merge recursively)
@@ -2222,6 +2237,7 @@ Without an `ssr:` config block (and no SSR plugin), `--preview` still works — 
 - **Dev mode (`alloy serve`)**: Rendered pages are held in an in-memory map — no `_site/` output written to disk, lower latency, no SSD wear. Source files (content, layouts, data, assets, static) are still read from disk normally. Static and passthrough files are served directly from their source locations (no copy).
 - **Preview mode (`alloy serve --preview`)**: Writes to `_site/` and serves from disk. Production-like output including SSR.
 - **Build mode (`alloy build`)**: Always writes to `_site/`.
+- **Port auto-increment**: If the requested port is occupied, the server tries up to 10 consecutive ports (e.g., 3000 → 3001 → … → 3009) before giving up with an error. A warning is logged for each skipped port (e.g., `[alloy] WARN Port 3000 in use, using 3001`). The startup message always shows the actual port. This matches the behavior of modern dev servers (Vite, Next.js) and reduces friction when multiple projects run simultaneously.
 - **Auto-opens browser** (optional)
 - **Colored terminal output** with build timing
 - **Error overlay in browser** on build errors (file path, line number, code snippet). Disappears on next successful build.
@@ -2307,9 +2323,9 @@ Starts the development server with live reload.
 
 1. Load config (same as build).
 2. Run initial build via `pipeline.Build(cfg)`.
-3. Start HTTP server on `--port` (default 3000).
+3. Start HTTP server on `--port` (default 3000). If the port is occupied, auto-increment up to 10 consecutive ports. If all 10 are occupied, exit 1 with an error listing the range tried.
 4. Start file watcher for live reload.
-5. Print startup message: `Serving at http://localhost:<port>`.
+5. Print startup message: `Serving at http://localhost:<actual-port>` (always shows the actual port, which may differ from `--port` if auto-increment kicked in).
 6. Block until interrupted (Ctrl+C).
 
 ### Flags
