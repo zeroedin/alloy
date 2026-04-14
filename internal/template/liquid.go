@@ -127,6 +127,10 @@ type alloyFileSystem struct {
 }
 
 func (fs *alloyFileSystem) ReadTemplateFile(templatePath string) (string, error) {
+	absRoot, err := filepath.Abs(fs.root)
+	if err != nil {
+		return "", fmt.Errorf("illegal template path %q: %w", templatePath, err)
+	}
 	candidates := []string{
 		filepath.Join(fs.root, templatePath+".liquid"),
 		filepath.Join(fs.root, templatePath+".html"),
@@ -137,11 +141,8 @@ func (fs *alloyFileSystem) ReadTemplateFile(templatePath string) (string, error)
 		if err != nil {
 			continue
 		}
-		absRoot, err := filepath.Abs(fs.root)
-		if err != nil {
-			continue
-		}
-		if !strings.HasPrefix(abs, absRoot) {
+		rel, relErr := filepath.Rel(absRoot, abs)
+		if relErr != nil || strings.HasPrefix(rel, "..") {
 			return "", fmt.Errorf("illegal template path %q", templatePath)
 		}
 		data, err := os.ReadFile(path)
