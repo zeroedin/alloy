@@ -148,6 +148,16 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		if err := output.WriteFile(outputDir, outPath, page.RenderedBody); err != nil {
 			return nil, fmt.Errorf("writing output %s: %w", outPath, err)
 		}
+		// Write alias output paths (same content at additional URLs)
+		aliases, err := permalink.ResolveAliases(page)
+		if err != nil {
+			return nil, fmt.Errorf("resolving aliases for %s: %w", page.RelPath, err)
+		}
+		if len(aliases) > 0 {
+			if err := output.WriteAliases(outputDir, aliases, page.RenderedBody); err != nil {
+				return nil, fmt.Errorf("writing aliases for %s: %w", page.RelPath, err)
+			}
+		}
 	}
 
 	// Stage 7: Static files, assets, and passthrough copy
