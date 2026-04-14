@@ -21,6 +21,7 @@ import (
 	"github.com/zeroedin/alloy/internal/permalink"
 	"github.com/zeroedin/alloy/internal/static"
 	tmpl "github.com/zeroedin/alloy/internal/template"
+	"github.com/zeroedin/alloy/internal/validation"
 )
 
 // ErrNotImplemented is returned by all stub functions.
@@ -136,6 +137,33 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		page.RenderedBody = layoutResult
 	}
 
+	// Pre-build validation: permalink/alias conflicts
+	if aliasErrs := validation.ValidatePermalinkAliases(pages); len(aliasErrs) > 0 {
+		return nil, aliasErrs[0]
+	}
+	var outputEntries []validation.OutputPathEntry
+	for _, page := range pages {
+		if !output.ShouldWrite(page.URL) {
+			continue
+		}
+		outPath := output.ComputeOutputPath(page.URL)
+		outputEntries = append(outputEntries, validation.OutputPathEntry{
+			Path: outPath, Source: page.RelPath,
+		})
+		aliases, _ := permalink.ResolveAliases(page)
+		for _, alias := range aliases {
+			aliasPath := output.ComputeOutputPath(alias)
+			outputEntries = append(outputEntries, validation.OutputPathEntry{
+				Path: aliasPath, Source: page.RelPath + " (alias)",
+			})
+		}
+	}
+	if conflicts, _ := validation.DetectConflicts(outputEntries); len(conflicts) > 0 {
+		c := conflicts[0]
+		return nil, fmt.Errorf("output path conflict: %q claimed by %s and %s",
+			c.Path, c.Sources[0], c.Sources[1])
+	}
+
 	// Stage 6: Output writing
 	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
 	if cfg.Build.Clean {
@@ -152,6 +180,16 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		outPath := output.ComputeOutputPath(page.URL)
 		if err := output.WriteFile(outputDir, outPath, page.RenderedBody); err != nil {
 			return nil, fmt.Errorf("writing output %s: %w", outPath, err)
+		}
+		// Write alias output paths (same content at additional URLs)
+		aliases, err := permalink.ResolveAliases(page)
+		if err != nil {
+			return nil, fmt.Errorf("resolving aliases for %s: %w", page.RelPath, err)
+		}
+		if len(aliases) > 0 {
+			if err := output.WriteAliases(outputDir, aliases, page.RenderedBody); err != nil {
+				return nil, fmt.Errorf("writing aliases for %s: %w", page.RelPath, err)
+			}
 		}
 	}
 
