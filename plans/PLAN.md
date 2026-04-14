@@ -1235,6 +1235,21 @@ Every template receives:
 {{ collections.taxonomies.tags.javascript }} -- taxonomy collection (cross-cutting)
 ```
 
+Paginated pages additionally receive:
+
+```liquid
+{{ pagination.pageNumber }}    -- current page (0-indexed)
+{{ pagination.totalPages }}    -- total page count
+{{ pagination.previousPage }}  -- URL of previous page (nil if first)
+{{ pagination.nextPage }}      -- URL of next page (nil if last)
+{{ pagination.first }}         -- URL of first page
+{{ pagination.last }}          -- URL of last page
+{{ pagination.items }}         -- items on current page
+{{ <as> }}                     -- alias for pagination.items (name from pagination.as config)
+```
+
+The `pagination` and `as` variables are only present on pages with a `pagination` front matter block. Non-paginated pages do not receive them. The `as` variable name is user-defined (e.g., `as: articles` → `{{ articles }}`) and provides a convenient top-level alias for `pagination.items`.
+
 ---
 
 ## 4. Template Engine Architecture

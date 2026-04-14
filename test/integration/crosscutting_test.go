@@ -34,6 +34,8 @@ var _ = Describe("Cross-Cutting Integration", func() {
 				siteData,
 				nil,
 				nil,
+				nil,
+				"",
 			)
 			Expect(ctx).NotTo(BeNil())
 			Expect(ctx.Site.Data).To(HaveKey("navigation"),
@@ -139,7 +141,7 @@ var _ = Describe("Cross-Cutting Integration", func() {
 				},
 			}
 
-			ctx := template.BuildTemplateContext(page, siteData, nil, nil)
+			ctx := template.BuildTemplateContext(page, siteData, nil, nil, nil, "")
 			Expect(ctx).NotTo(BeNil())
 			Expect(ctx.Site.Data).NotTo(BeNil())
 
