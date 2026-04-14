@@ -3,11 +3,13 @@ package server
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/zeroedin/alloy/internal/config"
 	tmpl "github.com/zeroedin/alloy/internal/template"
@@ -100,7 +102,6 @@ func (s *Server) startOnAddr(addr string) error {
 	}
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Try the exact path as a file
 		urlPath := r.URL.Path
 		filePath := filepath.Join(outputDir, filepath.FromSlash(urlPath))
 
@@ -135,16 +136,20 @@ func (s *Server) startOnAddr(addr string) error {
 
 	go func() {
 		defer close(s.done)
-		_ = s.httpServer.Serve(ln)
+		if err := s.httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
+			log.Printf("server error: %v", err)
+		}
 	}()
 
 	return nil
 }
 
-// Stop gracefully shuts down the server.
+// Stop gracefully shuts down the server with a 5-second timeout.
 func (s *Server) Stop() error {
 	if s.httpServer != nil {
-		return s.httpServer.Shutdown(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return s.httpServer.Shutdown(ctx)
 	}
 	return nil
 }
