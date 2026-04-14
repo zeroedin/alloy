@@ -21,6 +21,7 @@ import (
 	"github.com/zeroedin/alloy/internal/permalink"
 	"github.com/zeroedin/alloy/internal/static"
 	tmpl "github.com/zeroedin/alloy/internal/template"
+	"github.com/zeroedin/alloy/internal/validation"
 )
 
 // ErrNotImplemented is returned by all stub functions.
@@ -129,6 +130,33 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			return nil, fmt.Errorf("rendering layout %s: %w", layoutPath, err)
 		}
 		page.RenderedBody = layoutResult
+	}
+
+	// Pre-build validation: permalink/alias conflicts
+	if aliasErrs := validation.ValidatePermalinkAliases(pages); len(aliasErrs) > 0 {
+		return nil, aliasErrs[0]
+	}
+	var outputEntries []validation.OutputPathEntry
+	for _, page := range pages {
+		if !output.ShouldWrite(page.URL) {
+			continue
+		}
+		outPath := output.ComputeOutputPath(page.URL)
+		outputEntries = append(outputEntries, validation.OutputPathEntry{
+			Path: outPath, Source: page.RelPath,
+		})
+		aliases, _ := permalink.ResolveAliases(page)
+		for _, alias := range aliases {
+			aliasPath := output.ComputeOutputPath(alias)
+			outputEntries = append(outputEntries, validation.OutputPathEntry{
+				Path: aliasPath, Source: page.RelPath + " (alias)",
+			})
+		}
+	}
+	if conflicts, _ := validation.DetectConflicts(outputEntries); len(conflicts) > 0 {
+		c := conflicts[0]
+		return nil, fmt.Errorf("output path conflict: %q claimed by %s and %s",
+			c.Path, c.Sources[0], c.Sources[1])
 	}
 
 	// Stage 6: Output writing
