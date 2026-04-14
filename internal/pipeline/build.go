@@ -388,6 +388,10 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 }
 
 // codeBlockPattern matches <code> elements (including those with attributes).
+// The non-greedy .*? matches to the first </code>, so nested <code> tags would
+// not be handled correctly. This is fine because goldmark does not produce
+// nested <code> elements — inline code and fenced code blocks each emit a
+// single <code>…</code> pair.
 var codeBlockPattern = regexp.MustCompile(`(?s)<code[^>]*>.*?</code>`)
 
 // escapeTemplateTagsInCode replaces {{ }}, {% %} inside <code> elements with
