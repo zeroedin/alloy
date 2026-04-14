@@ -289,6 +289,46 @@ var _ = Describe("Config", func() {
 		})
 	})
 
+	// ── ApplyDefaults nil taxonomy handling (issue #65) ─────────────
+
+	Describe("ApplyDefaults", func() {
+		It("replaces nil TaxonomyConfig with zero-value struct", func() {
+			cfg := &config.Config{
+				Taxonomies: map[string]*config.TaxonomyConfig{"tags": nil},
+			}
+			config.ApplyDefaults(cfg)
+			Expect(cfg.Taxonomies["tags"]).NotTo(BeNil(),
+				"nil TaxonomyConfig must be replaced with zero-value struct")
+		})
+
+		It("replaces multiple nil TaxonomyConfig entries", func() {
+			cfg := &config.Config{
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags":       nil,
+					"categories": nil,
+				},
+			}
+			config.ApplyDefaults(cfg)
+			Expect(cfg.Taxonomies["tags"]).NotTo(BeNil(),
+				"nil tags entry must be replaced")
+			Expect(cfg.Taxonomies["categories"]).NotTo(BeNil(),
+				"nil categories entry must be replaced")
+		})
+
+		It("preserves non-nil TaxonomyConfig entries", func() {
+			cfg := &config.Config{
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags": {Permalink: "/tags/:slug/", Layout: "tags"},
+				},
+			}
+			config.ApplyDefaults(cfg)
+			Expect(cfg.Taxonomies["tags"].Permalink).To(Equal("/tags/:slug/"),
+				"existing permalink must not be overwritten")
+			Expect(cfg.Taxonomies["tags"].Layout).To(Equal("tags"),
+				"existing layout must not be overwritten")
+		})
+	})
+
 	// ── Config file auto-detection (§1 Data Formats) ─────────────────
 
 	Describe("DetectConfigFile auto-detection", func() {
