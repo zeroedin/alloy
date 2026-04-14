@@ -105,6 +105,21 @@ var _ = Describe("Data Loader", func() {
 		})
 	})
 
+	// ── Data file stem collisions ─────────────────────────────────────
+
+	Context("Data file stem collisions", func() {
+		It("returns error when two files share a stem name (team.csv and team.yaml)", func() {
+			dir := filepath.Join(testdataDir(), "collision")
+			_, err := data.LoadDirectory(dir)
+			Expect(err).To(HaveOccurred(),
+				"LoadDirectory must error when two files share a stem name")
+			Expect(err.Error()).To(SatisfyAll(
+				ContainSubstring("team"),
+				ContainSubstring("conflict"),
+			), "error must name the conflicting stem and mention conflict")
+		})
+	})
+
 	// ── Error handling ─────────────────────────────────────────────────
 
 	Context("Error handling", func() {

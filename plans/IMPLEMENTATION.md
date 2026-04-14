@@ -48,7 +48,7 @@ These packages depend only on stdlib or already-defined types.
 **File**: `internal/data/loader.go`
 
 - `LoadFile`: Detect format by extension (.yaml/.yml, .toml, .json), parse with appropriate library
-- `LoadDirectory`: Walk dir, `LoadFile` each, key by filename without extension
+- `LoadDirectory`: Walk dir, `LoadFile` each, key by filename without extension. **Stem collision detection**: Track seen stem names. If two files share a stem (e.g., `team.csv` and `team.yaml`), return an error listing both files. No silent overwrites — consistent with output path conflict philosophy (§2).
 - `LoadCSV`: `encoding/csv`, first row = headers, subsequent rows = `[]map[string]string`
 
 ### 1C: `internal/cascade` — 22 tests
