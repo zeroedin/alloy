@@ -11,6 +11,7 @@ import (
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/data"
+	"github.com/zeroedin/alloy/internal/i18n"
 	"github.com/zeroedin/alloy/internal/output"
 	"github.com/zeroedin/alloy/internal/pagination"
 	"github.com/zeroedin/alloy/internal/permalink"
@@ -151,6 +152,98 @@ var _ = Describe("Cross-Cutting Integration", func() {
 			Expect(ok).To(BeTrue())
 			Expect(strings["read_more"]).To(Equal("Read more"),
 				"site.language.strings.read_more must be available for language-specific rendering")
+		})
+	})
+
+	// ── i18n pipeline wiring (issue #70) ─────────────────────────────
+
+	Describe("i18n → pipeline wiring", func() {
+		It("language contexts scope content discovery and output prefixes", func() {
+			langCfg := map[string]*config.LanguageConfig{
+				"en": {Title: "English Site", Weight: 1, Root: true},
+				"fr": {Title: "Site Français", Weight: 2},
+			}
+			contexts, err := i18n.BuildLanguageContexts(langCfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(contexts).To(HaveLen(2))
+
+			// Default language (lowest weight) is first
+			Expect(contexts[0].Code).To(Equal("en"))
+
+			// Content trees are language-scoped
+			enContentDir := i18n.ContentTreeRoute("en")
+			frContentDir := i18n.ContentTreeRoute("fr")
+			Expect(enContentDir).To(Equal("content/en/"))
+			Expect(frContentDir).To(Equal("content/fr/"))
+
+			// Output prefixes: root language at /, non-root at /lang/
+			enPrefix := i18n.OutputPrefix("en", contexts[0].Root)
+			frPrefix := i18n.OutputPrefix("fr", contexts[1].Root)
+			Expect(enPrefix).To(Equal(""),
+				"root language must output at site root")
+			Expect(frPrefix).To(Equal("fr/"),
+				"non-root language must output under prefix")
+
+			// site.language data is injected per language iteration
+			enData := i18n.LanguageData(contexts[0])
+			Expect(enData["code"]).To(Equal("en"))
+			frData := i18n.LanguageData(contexts[1])
+			Expect(frData["code"]).To(Equal("fr"))
+
+			// site.title is overridden per language
+			enTitle := i18n.LanguageSiteTitle("Global Title", langCfg["en"])
+			frTitle := i18n.LanguageSiteTitle("Global Title", langCfg["fr"])
+			Expect(enTitle).To(Equal("English Site"))
+			Expect(frTitle).To(Equal("Site Français"))
+		})
+
+		It("translation linking connects pages across language trees", func() {
+			enPage := &content.Page{
+				RelPath:     "en/about.md",
+				URL:         "/about/",
+				FrontMatter: map[string]interface{}{"title": "About", "lang": "en"},
+			}
+			frPage := &content.Page{
+				RelPath:     "fr/about.md",
+				URL:         "/fr/about/",
+				FrontMatter: map[string]interface{}{"title": "À propos", "lang": "fr"},
+			}
+			allPages := []*content.Page{enPage, frPage}
+
+			err := i18n.LinkTranslations(allPages, []string{"en", "fr"})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Each page should reference the other as a translation
+			Expect(enPage.Translations).To(HaveLen(1),
+				"English page must link to French translation")
+			Expect(frPage.Translations).To(HaveLen(1),
+				"French page must link to English translation")
+
+			// Translation info includes URL and language code
+			enTranslations := i18n.GetTranslations(enPage)
+			Expect(enTranslations).To(HaveLen(1))
+			Expect(enTranslations[0].URL).To(Equal("/fr/about/"))
+			Expect(enTranslations[0].LangCode).To(Equal("fr"))
+		})
+
+		It("per-language collections are scoped to language pages only", func() {
+			allPages := []*content.Page{
+				{RelPath: "en/blog/post.md", FrontMatter: map[string]interface{}{"lang": "en", "tags": []interface{}{"go"}}},
+				{RelPath: "fr/blog/post.md", FrontMatter: map[string]interface{}{"lang": "fr", "tags": []interface{}{"go"}}},
+				{RelPath: "en/blog/other.md", FrontMatter: map[string]interface{}{"lang": "en"}},
+			}
+
+			enPages := i18n.FilterByLanguage(allPages, "en")
+			frPages := i18n.FilterByLanguage(allPages, "fr")
+			Expect(enPages).To(HaveLen(2),
+				"English collection must only contain English pages")
+			Expect(frPages).To(HaveLen(1),
+				"French collection must only contain French pages")
+
+			// Taxonomies are built from language-scoped pages
+			enTaxonomies := i18n.BuildTaxonomiesForLanguage("en", enPages)
+			Expect(enTaxonomies).To(HaveKey("tags"),
+				"English taxonomies must be built from English pages only")
 		})
 	})
 })
