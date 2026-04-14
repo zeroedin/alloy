@@ -358,6 +358,11 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 			return nil, fmt.Errorf("content transformation: %s: %w", page.RelPath, err)
 		}
 
+		// Protect template tags inside <code> blocks from Liquid processing.
+		// After markdown rendering, template tags in code fences are literal text
+		// inside <code> elements — escape their braces so Liquid ignores them.
+		html = escapeTemplateTagsInCode(html)
+
 		// Step 2: Render template tags with full page/site context.
 		if hasTemplateSyntax(html) {
 			ctx := buildTemplateContext(page, cfg, pages, siteData, collectionsCtx, html)
@@ -385,6 +390,27 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 	}
 
 	return rendered, nil
+}
+
+// codeBlockPattern matches <code> elements (including those with attributes).
+// The non-greedy .*? matches to the first </code>, so nested <code> tags would
+// not be handled correctly. This is fine because goldmark does not produce
+// nested <code> elements — inline code and fenced code blocks each emit a
+// single <code>…</code> pair.
+var codeBlockPattern = regexp.MustCompile(`(?s)<code[^>]*>.*?</code>`)
+
+// escapeTemplateTagsInCode replaces {{ }}, {% %} inside <code> elements with
+// HTML entities so Liquid won't process them. This preserves template syntax
+// examples in code fences for display purposes.
+func escapeTemplateTagsInCode(html []byte) []byte {
+	return codeBlockPattern.ReplaceAllFunc(html, func(match []byte) []byte {
+		s := string(match)
+		s = strings.ReplaceAll(s, "{{", "&#123;&#123;")
+		s = strings.ReplaceAll(s, "}}", "&#125;&#125;")
+		s = strings.ReplaceAll(s, "{%", "&#123;%")
+		s = strings.ReplaceAll(s, "%}", "%&#125;")
+		return []byte(s)
+	})
 }
 
 // hasTemplateSyntax checks if content contains Liquid template tags.
