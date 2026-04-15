@@ -21,6 +21,7 @@ import (
 	"github.com/zeroedin/alloy/internal/output"
 	"github.com/zeroedin/alloy/internal/pagination"
 	"github.com/zeroedin/alloy/internal/permalink"
+	"github.com/zeroedin/alloy/internal/plugin"
 	"github.com/zeroedin/alloy/internal/static"
 	tmpl "github.com/zeroedin/alloy/internal/template"
 	"github.com/zeroedin/alloy/internal/validation"
@@ -45,9 +46,47 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 
 	config.ApplyDefaults(cfg)
 
+	// Plugin system: discover plugins and set up hook registry
+	hooks := plugin.NewHookRegistry()
+	hooks.SetTimeout(cfg.Plugins.Timeout)
+
+	pluginsDir := resolveDir(cfg.ProjectRoot, "plugins")
+	registry := plugin.NewRegistry(pluginsDir)
+	if err := registry.DiscoverPlugins(); err != nil {
+		log.Printf("warning: plugin discovery: %v", err)
+	}
+	for _, w := range registry.ConflictWarnings() {
+		log.Printf("warning: %s", w)
+	}
+
+	// Load discovered plugins into the hook registry
+	for _, w := range registry.LoadPlugins(hooks) {
+		log.Printf("warning: %s", w)
+	}
+
+	// Fire onConfig hook — plugins can mutate config before validation
+	if _, err := hooks.RunWithTimeout(plugin.OnConfig, cfg); err != nil {
+		return nil, fmt.Errorf("plugin hook onConfig: %w", err)
+	}
+
+	// Build output path map for validation hooks
+	outputPathMap := map[string]string{
+		cfg.Build.Output: "build output",
+	}
+
+	// Fire onBeforeValidation hook — plugins can add entries (e.g. _redirects)
+	if _, err := hooks.RunWithTimeout(plugin.OnBeforeValidation, outputPathMap); err != nil {
+		return nil, fmt.Errorf("plugin hook onBeforeValidation: %w", err)
+	}
+
 	// Validate output directory doesn't overlap with managed directories
 	if err := validateOutputDir(cfg); err != nil {
 		return nil, err
+	}
+
+	// Fire onAfterValidation hook — validated manifest (read-only) + data cascade
+	if _, err := hooks.RunWithTimeout(plugin.OnAfterValidation, outputPathMap); err != nil {
+		return nil, fmt.Errorf("plugin hook onAfterValidation: %w", err)
 	}
 
 	// Stage 1: Create template engine and register built-in filters
@@ -85,6 +124,11 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 	// Filter by lifecycle (draft/publish/expiry)
 	pages = content.FilterByLifecycle(pages, time.Now(), false)
 
+	// Fire onContentLoaded hook — plugins can inspect/modify discovered pages
+	if _, err := hooks.RunWithTimeout(plugin.OnContentLoaded, pages); err != nil {
+		return nil, fmt.Errorf("plugin hook onContentLoaded: %w", err)
+	}
+
 	// Stage 3: Resolve permalinks
 	for _, page := range pages {
 		url, err := permalink.ResolveForSection(page, cfg.Permalinks)
@@ -103,6 +147,11 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 	// Load data files (Global cascade level 1)
 	siteData := loadSiteData(cfg)
 
+	// Fire onDataFetched hook — plugins can augment site data
+	if _, err := hooks.RunWithTimeout(plugin.OnDataFetched, siteData); err != nil {
+		return nil, fmt.Errorf("plugin hook onDataFetched: %w", err)
+	}
+
 	// Build PageContexts per spec §3: shared pointers for Global/Directory,
 	// per-page FrontMatter. Levels 4/5 (Computed/PluginData) are nil until
 	// plugin hooks populate them.
@@ -117,6 +166,11 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		// building, collection sorting) see the effective values. The PageContext
 		// is the source of truth; FrontMatter becomes the resolved view.
 		page.FrontMatter = pctx.ToMap()
+	}
+
+	// Fire onDataCascadeReady hook — cascade data is resolved for all pages
+	if _, err := hooks.RunWithTimeout(plugin.OnDataCascadeReady, pages); err != nil {
+		return nil, fmt.Errorf("plugin hook onDataCascadeReady: %w", err)
 	}
 
 	// Build taxonomies once (used for both template context and page generation)
@@ -136,6 +190,11 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 	rendered, renderErr := renderPages(pages, cfg, siteData, collectionsCtx, engine)
 	if renderErr != nil {
 		return nil, renderErr
+	}
+
+	// Fire onContentTransformed hook — markdown/template rendering is complete
+	if _, err := hooks.RunWithTimeout(plugin.OnContentTransformed, pages); err != nil {
+		return nil, fmt.Errorf("plugin hook onContentTransformed: %w", err)
 	}
 
 	// Stage 5: Layout resolution and rendering
@@ -221,6 +280,13 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		}
 	}
 
+	// Fire onPageRendered hook per-page — plugins can post-process each page's HTML
+	for _, page := range pages {
+		if _, err := hooks.RunWithTimeout(plugin.OnPageRendered, page); err != nil {
+			return nil, fmt.Errorf("plugin hook onPageRendered (%s): %w", page.RelPath, err)
+		}
+	}
+
 	// Pre-build validation: permalink/alias conflicts
 	if aliasErrs := validation.ValidatePermalinkAliases(pages); len(aliasErrs) > 0 {
 		return nil, aliasErrs[0]
@@ -301,6 +367,15 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		}
 	}
 
+	// Fire onAssetProcess hook — plugins can transform assets before copying
+	assetInfo := map[string]interface{}{
+		"assetsDir": resolveDir(cfg.ProjectRoot, cfg.Structure.Assets),
+		"outputDir": outputDir,
+	}
+	if _, err := hooks.RunWithTimeout(plugin.OnAssetProcess, assetInfo); err != nil {
+		return nil, fmt.Errorf("plugin hook onAssetProcess: %w", err)
+	}
+
 	// Stage 7: Static files, assets, and passthrough copy
 	staticDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Static)
 	if err := static.CopyStatic(staticDir, outputDir); err != nil {
@@ -346,13 +421,25 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		}
 	}
 
-	return &BuildResult{
+	result := &BuildResult{
 		OutputDir:     cfg.Build.Output,
 		PageCount:     len(pages),
 		Duration:      time.Since(start),
 		SSRSkipped:    ssrSkipped,
 		PagesRendered: rendered,
-	}, nil
+	}
+
+	// Fire onBuildComplete hook — build is finished, plugins can run post-build tasks
+	if _, err := hooks.RunWithTimeout(plugin.OnBuildComplete, result); err != nil {
+		return nil, fmt.Errorf("plugin hook onBuildComplete: %w", err)
+	}
+
+	// Log any plugin timeout warnings
+	for _, w := range hooks.Warnings() {
+		log.Printf("warning: %s", w)
+	}
+
+	return result, nil
 }
 
 // BuildWithContent runs the pipeline with injected content for testing.

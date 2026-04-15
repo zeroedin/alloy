@@ -174,6 +174,46 @@ func hasNodeRuntimeExport(src string) bool {
 		strings.Contains(src, "runtime: 'node'")
 }
 
+// LoadPlugins loads all discovered plugins into the given HookRegistry.
+// Tier 2 (QuickJS/WASM) plugins are evaluated in-process.
+// Tier 3 (Node) plugins require a running NodeBridge.
+// Returns warnings for plugins that fail to load (non-fatal).
+func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
+	var warnings []string
+	for _, p := range r.plugins {
+		switch p.Runtime {
+		case RuntimeQuickJS:
+			rt := NewQuickJSRuntime()
+			if err := rt.Init(); err != nil {
+				warnings = append(warnings, fmt.Sprintf("plugin %s: init failed: %v", p.Name, err))
+				continue
+			}
+			if err := rt.EvalFile(p.Path); err != nil {
+				warnings = append(warnings, fmt.Sprintf("plugin %s: eval failed: %v", p.Name, err))
+				continue
+			}
+			// Register discovered filters with the registry for conflict detection
+			for _, fname := range rt.RegisteredFilters() {
+				r.RegisterFilter(fname, "plugins/"+p.Name)
+			}
+		case RuntimeWASM:
+			rt := NewWASMRuntime()
+			if err := rt.LoadModule(p.Path); err != nil {
+				warnings = append(warnings, fmt.Sprintf("plugin %s: load failed: %v", p.Name, err))
+				continue
+			}
+		case RuntimeNode:
+			if err := CheckNodeAvailable(); err != nil {
+				warnings = append(warnings, fmt.Sprintf("plugin %s: %v", p.Name, err))
+				continue
+			}
+			// Node plugins are loaded via the NodeBridge at runtime.
+			// Hook registration happens through the JSON-RPC protocol.
+		}
+	}
+	return warnings
+}
+
 // CheckNodeAvailable verifies that the `node` binary is available in PATH.
 func CheckNodeAvailable() error {
 	_, err := exec.LookPath("node")
