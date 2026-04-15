@@ -1,6 +1,8 @@
 package content_test
 
 import (
+	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -212,6 +214,68 @@ var _ = Describe("ParseFrontMatter", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(fm).To(HaveKeyWithValue("sitemap", false),
 				"sitemap: false must be parsed as boolean false")
+		})
+	})
+
+	// ── ToTemplateMap (issue #66, #67) ────────────────────────────────
+
+	Describe("ToTemplateMap", func() {
+		It("struct fields overlay FrontMatter keys of the same name", func() {
+			p := &content.Page{
+				URL:         "/computed/",
+				FrontMatter: map[string]interface{}{"url": "/old/", "title": "My Post"},
+			}
+			m := p.ToTemplateMap()
+			Expect(m["url"]).To(Equal("/computed/"),
+				"struct URL must take precedence over FrontMatter url")
+			Expect(m["title"]).To(Equal("My Post"),
+				"FrontMatter-only keys must be preserved")
+		})
+
+		It("includes all FrontMatter keys in output map", func() {
+			p := &content.Page{
+				FrontMatter: map[string]interface{}{
+					"title": "Test",
+					"tags":  []string{"go", "ssg"},
+					"draft": true,
+				},
+			}
+			m := p.ToTemplateMap()
+			Expect(m["title"]).To(Equal("Test"))
+			Expect(m["tags"]).To(ConsistOf("go", "ssg"))
+			Expect(m["draft"]).To(BeTrue())
+		})
+
+		It("does not set zero-value struct fields over FrontMatter", func() {
+			p := &content.Page{
+				URL:         "", // zero value
+				FrontMatter: map[string]interface{}{"url": "/from-frontmatter/"},
+			}
+			m := p.ToTemplateMap()
+			Expect(m["url"]).To(Equal("/from-frontmatter/"),
+				"empty struct URL must not override FrontMatter url")
+		})
+
+		It("maps Section to collection key", func() {
+			p := &content.Page{
+				Section:     "blog",
+				FrontMatter: map[string]interface{}{"title": "Post"},
+			}
+			m := p.ToTemplateMap()
+			Expect(m["collection"]).To(Equal("blog"),
+				"Section must be exposed as 'collection' for template access")
+		})
+
+		It("includes date and summary when set", func() {
+			now := time.Now()
+			p := &content.Page{
+				Date:        now,
+				Summary:     "A brief summary",
+				FrontMatter: map[string]interface{}{"title": "Post"},
+			}
+			m := p.ToTemplateMap()
+			Expect(m["date"]).To(Equal(now))
+			Expect(m["summary"]).To(Equal("A brief summary"))
 		})
 	})
 

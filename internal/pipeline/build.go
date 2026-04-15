@@ -737,10 +737,15 @@ func loadSiteData(cfg *config.Config) map[string]interface{} {
 func buildCollectionsContext(pages []*content.Page, cfg *config.Config, taxonomies map[string]*collection.TaxonomyCollection) map[string]interface{} {
 	result := make(map[string]interface{})
 
-	// Section collections
+	// Section collections — convert pages to template-friendly maps so
+	// Liquid can access fields like {{ post.title }} and {{ post.url }}.
 	colls := collection.BuildCollections(pages, cfg.Permalinks)
 	for name, coll := range colls {
-		result[name] = coll.Pages
+		items := make([]interface{}, len(coll.Pages))
+		for i, p := range coll.Pages {
+			items[i] = p.ToTemplateMap()
+		}
+		result[name] = items
 	}
 
 	// Taxonomy collections
