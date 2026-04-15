@@ -5,11 +5,18 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"os"
+	"os/signal"
+	"path/filepath"
 	"strconv"
+	"syscall"
+	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/pipeline"
+	"github.com/zeroedin/alloy/internal/plugin"
 	"github.com/zeroedin/alloy/internal/server"
 )
 
@@ -87,15 +94,148 @@ func newServeCommand() *cobra.Command {
 				return fmt.Errorf("invalid port %q: %w", portStr, err)
 			}
 
-			if !cfg.Quiet {
-				fmt.Fprintf(cmd.OutOrStdout(), "Serving at http://localhost:%d\n", port)
-			}
-
-			if err := srv.Start(port); err != nil {
+			// Start server with port auto-increment per spec §9
+			actualPort, err := srv.StartWithPortFallback(port, 10)
+			if err != nil {
 				return err
 			}
-			srv.Wait() // block until shutdown
-			return nil
+
+			if !cfg.Quiet {
+				fmt.Fprintf(cmd.OutOrStdout(), "Serving at http://localhost:%d\n", actualPort)
+			}
+
+			// Set up plugin hooks for dev server
+			hooks := plugin.NewHookRegistry()
+			hooks.SetTimeout(cfg.Plugins.Timeout)
+			pluginsDir := "plugins"
+			if cfg.ProjectRoot != "" {
+				pluginsDir = filepath.Join(cfg.ProjectRoot, "plugins")
+			}
+			registry := plugin.NewRegistry(pluginsDir)
+			if err := registry.DiscoverPlugins(); err != nil {
+				log.Printf("warning: plugin discovery: %v", err)
+			}
+			for _, w := range registry.LoadPlugins(hooks) {
+				log.Printf("warning: %s", w)
+			}
+			if _, err := hooks.RunWithTimeout(plugin.OnDevServerStart, cfg); err != nil {
+				log.Printf("warning: plugin hook onDevServerStart: %v", err)
+			}
+
+			// Set up file watcher for live rebuild
+			watcher, err := fsnotify.NewWatcher()
+			if err != nil {
+				log.Printf("warning: file watcher unavailable: %v", err)
+			} else {
+				defer watcher.Close()
+
+				// Watch configured directories
+				watchDirs := server.WatchDirs(cfg)
+				for _, dir := range watchDirs {
+					absDir := dir
+					if cfg.ProjectRoot != "" {
+						absDir = filepath.Join(cfg.ProjectRoot, dir)
+					}
+					if info, err := os.Stat(absDir); err == nil && info.IsDir() {
+						if err := addRecursiveWatch(watcher, absDir); err != nil {
+							log.Printf("warning: watching %s: %v", dir, err)
+						}
+					}
+				}
+
+				debouncer := server.NewDebouncer(
+					time.Duration(srv.DebounceInterval())*time.Millisecond,
+					10,
+				)
+
+				// File watcher goroutine
+				go func() {
+					var pending []server.ChangeEvent
+					timer := time.NewTimer(time.Duration(srv.DebounceInterval()) * time.Millisecond)
+					timer.Stop()
+
+					for {
+						select {
+						case event, ok := <-watcher.Events:
+							if !ok {
+								return
+							}
+							if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) == 0 {
+								continue
+							}
+
+							// Make path relative to project root for classification
+							relPath := event.Name
+							if cfg.ProjectRoot != "" {
+								if r, err := filepath.Rel(cfg.ProjectRoot, event.Name); err == nil {
+									relPath = r
+								}
+							}
+
+							changeType := server.ClassifyChange(relPath, cfg)
+							pending = append(pending, server.ChangeEvent{
+								Path:       relPath,
+								ChangeType: changeType,
+							})
+
+							// If a new directory was created, add it to the watcher
+							if event.Op&fsnotify.Create != 0 {
+								if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
+									addRecursiveWatch(watcher, event.Name)
+								}
+							}
+
+							// Reset debounce timer
+							timer.Reset(time.Duration(srv.DebounceInterval()) * time.Millisecond)
+
+						case <-timer.C:
+							if len(pending) == 0 {
+								continue
+							}
+
+							events := pending
+							pending = nil
+
+							debouncer.Debounce(events)
+
+							// Fire onFileChanged plugin hook
+							if _, err := hooks.RunWithTimeout(plugin.OnFileChanged, events); err != nil {
+								log.Printf("warning: plugin hook onFileChanged: %v", err)
+							}
+
+							if !cfg.Quiet {
+								log.Printf("rebuilding (%d files changed)...", len(events))
+							}
+
+							// Trigger rebuild
+							if _, err := pipeline.Build(cfg); err != nil {
+								log.Printf("rebuild failed: %v", err)
+							} else {
+								if !cfg.Quiet {
+									log.Printf("rebuild complete")
+								}
+								srv.BroadcastReload()
+							}
+
+						case err, ok := <-watcher.Errors:
+							if !ok {
+								return
+							}
+							log.Printf("watcher error: %v", err)
+						}
+					}
+				}()
+			}
+
+			// Wait for interrupt signal
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+			<-sigCh
+
+			if !cfg.Quiet {
+				fmt.Fprintln(cmd.OutOrStdout(), "\nShutting down...")
+			}
+			return srv.Stop()
 		},
 	}
 
@@ -105,4 +245,17 @@ func newServeCommand() *cobra.Command {
 	cmd.Flags().Bool("refetch", false, "Bypass fetch cache")
 
 	return cmd
+}
+
+// addRecursiveWatch adds a directory and all its subdirectories to the watcher.
+func addRecursiveWatch(watcher *fsnotify.Watcher, root string) error {
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // skip inaccessible directories
+		}
+		if d.IsDir() {
+			return watcher.Add(path)
+		}
+		return nil
+	})
 }

@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/zeroedin/alloy/internal/config"
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
@@ -37,6 +39,10 @@ type Server struct {
 	listener   net.Listener
 	done       chan struct{} // closed when the server stops
 	port       int           // actual port the server is listening on
+
+	// WebSocket live-reload clients
+	wsClients map[*websocket.Conn]struct{}
+	wsMu      sync.Mutex
 }
 
 // New creates a new Server with the given config in dev mode.
@@ -90,6 +96,17 @@ func (s *Server) Start(port int) error {
 	return s.startOnAddr(fmt.Sprintf(":%d", port))
 }
 
+// wsUpgrader handles WebSocket upgrade for live reload connections.
+var wsUpgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+// liveReloadScript is the JavaScript injected before </body> in dev mode
+// to establish a WebSocket connection for live reload.
+const liveReloadScript = `<script>
+(function(){var ws=new WebSocket("ws://"+location.host+"/_alloy/ws");ws.onmessage=function(e){var d=JSON.parse(e.data);if(d.type==="reload")location.reload()};ws.onclose=function(){setTimeout(function(){location.reload()},1000)}})();
+</script>`
+
 func (s *Server) startOnAddr(addr string) error {
 	mux := http.NewServeMux()
 
@@ -102,6 +119,10 @@ func (s *Server) startOnAddr(addr string) error {
 		outputDir = filepath.Join(s.config.ProjectRoot, outputDir)
 	}
 
+	// WebSocket endpoint for live reload
+	s.wsClients = make(map[*websocket.Conn]struct{})
+	mux.HandleFunc("/_alloy/ws", s.handleWebSocket)
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		urlPath := r.URL.Path
 		filePath := filepath.Join(outputDir, filepath.FromSlash(urlPath))
@@ -112,14 +133,14 @@ func (s *Server) startOnAddr(addr string) error {
 		}
 
 		if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
-			http.ServeFile(w, r, filePath)
+			s.serveFileWithReload(w, r, filePath)
 			return
 		}
 
 		// Try adding /index.html for clean URLs
 		indexPath := filepath.Join(filePath, "index.html")
 		if info, err := os.Stat(indexPath); err == nil && !info.IsDir() {
-			http.ServeFile(w, r, indexPath)
+			s.serveFileWithReload(w, r, indexPath)
 			return
 		}
 
@@ -144,6 +165,71 @@ func (s *Server) startOnAddr(addr string) error {
 	}()
 
 	return nil
+}
+
+// serveFileWithReload serves a file, injecting the live-reload script into
+// HTML responses when running in dev mode. Non-HTML files and preview mode
+// use http.ServeFile (with ETag/Last-Modified caching). Dev mode HTML is
+// served without cache headers to ensure browsers always get fresh content
+// after a live-reload rebuild.
+func (s *Server) serveFileWithReload(w http.ResponseWriter, r *http.Request, filePath string) {
+	if s.mode != ModeDev || !strings.HasSuffix(filePath, ".html") {
+		http.ServeFile(w, r, filePath)
+		return
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		http.Error(w, "read error", http.StatusInternalServerError)
+		return
+	}
+
+	html := string(data)
+	if idx := strings.LastIndex(html, "</body>"); idx >= 0 {
+		html = html[:idx] + liveReloadScript + html[idx:]
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(html))
+}
+
+// handleWebSocket upgrades an HTTP connection to a WebSocket for live reload.
+func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("websocket upgrade: %v", err)
+		return
+	}
+
+	s.wsMu.Lock()
+	s.wsClients[conn] = struct{}{}
+	s.wsMu.Unlock()
+
+	// Read loop — keeps connection alive until client disconnects
+	for {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			break
+		}
+	}
+
+	s.wsMu.Lock()
+	delete(s.wsClients, conn)
+	s.wsMu.Unlock()
+	conn.Close()
+}
+
+// BroadcastReload sends a reload message to all connected WebSocket clients.
+// Failed connections are removed from the map but not closed here —
+// handleWebSocket owns the close to avoid double-close.
+func (s *Server) BroadcastReload() {
+	msg := ReloadMessage()
+	s.wsMu.Lock()
+	defer s.wsMu.Unlock()
+	for conn := range s.wsClients {
+		if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			delete(s.wsClients, conn)
+		}
+	}
 }
 
 // Stop gracefully shuts down the server with a 5-second timeout.
