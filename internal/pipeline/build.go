@@ -331,6 +331,23 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 
 	// Phase 2: SSR (if configured)
 	if cfg.SSR != nil {
+		intermediateHTML := make(map[string]string, len(pages))
+		for _, page := range pages {
+			if len(page.RenderedBody) > 0 {
+				intermediateHTML[page.RelPath] = string(page.RenderedBody)
+			}
+		}
+
+		finalHTML, err := BuildPhase2(intermediateHTML, cfg.SSR)
+		if err != nil {
+			return nil, fmt.Errorf("SSR Phase 2: %w", err)
+		}
+
+		for _, page := range pages {
+			if transformed, ok := finalHTML[page.RelPath]; ok {
+				page.RenderedBody = []byte(transformed)
+			}
+		}
 		result.SSRSkipped = false
 	}
 
