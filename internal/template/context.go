@@ -28,7 +28,6 @@ type SiteContext struct {
 type PageContext struct {
 	Title       string
 	URL         string
-	Content     string
 	Date        interface{}
 	Collection  string
 	FrontMatter map[string]interface{}
@@ -74,7 +73,6 @@ func BuildTemplateContext(page *content.Page, siteData map[string]interface{}, a
 	// Set content from rendered body
 	if len(page.RenderedBody) > 0 {
 		ctx.Content = string(page.RenderedBody)
-		ctx.Page.Content = string(page.RenderedBody)
 	}
 
 	// Inject pagination context and "as" alias for paginated pages

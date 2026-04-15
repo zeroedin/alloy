@@ -163,8 +163,6 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		}
 
 		tc := tmpl.BuildTemplateContext(page, combinedSiteData(cfg, siteData), pages, collectionsCtx, nil, "")
-		tc.Content = string(page.RenderedBody)
-		tc.Page.Content = string(page.RenderedBody)
 		ctx := tc.ToMap()
 		ctx["content"] = string(page.RenderedBody) // spec §6 step 14: top-level {{ content }} for layouts
 		layoutResult, err := tpl.Render(ctx)
@@ -491,7 +489,6 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 		if hasTemplateSyntax(html) {
 			tc := tmpl.BuildTemplateContext(page, combinedSiteData(cfg, siteData), pages, collectionsCtx, nil, "")
 			tc.Content = string(html)
-			tc.Page.Content = string(html)
 			ctx := tc.ToMap()
 			if engine != nil {
 				tpl, err := engine.Parse(page.RelPath, html)
