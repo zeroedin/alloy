@@ -248,6 +248,30 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			c.Path, c.Sources[0], c.Sources[1])
 	}
 
+	// Phase 2: SSR (if configured) — must run before output writing so
+	// transformed HTML reaches disk (spec §6: Phase 1 → Phase 2 → Phase 3).
+	ssrSkipped := cfg.SSR == nil
+	if cfg.SSR != nil {
+		intermediateHTML := make(map[string]string, len(pages))
+		for _, page := range pages {
+			if len(page.RenderedBody) > 0 {
+				intermediateHTML[page.RelPath] = string(page.RenderedBody)
+			}
+		}
+
+		finalHTML, err := BuildPhase2(intermediateHTML, cfg.SSR)
+		if err != nil {
+			return nil, fmt.Errorf("SSR Phase 2: %w", err)
+		}
+
+		for _, page := range pages {
+			if transformed, ok := finalHTML[page.RelPath]; ok {
+				page.RenderedBody = []byte(transformed)
+			}
+		}
+		ssrSkipped = false
+	}
+
 	// Stage 6: Output writing
 	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
 	if cfg.Build.Clean {
@@ -322,20 +346,13 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		}
 	}
 
-	result := &BuildResult{
+	return &BuildResult{
 		OutputDir:     cfg.Build.Output,
 		PageCount:     len(pages),
 		Duration:      time.Since(start),
-		SSRSkipped:    cfg.SSR == nil,
+		SSRSkipped:    ssrSkipped,
 		PagesRendered: rendered,
-	}
-
-	// Phase 2: SSR (if configured)
-	if cfg.SSR != nil {
-		result.SSRSkipped = false
-	}
-
-	return result, nil
+	}, nil
 }
 
 // BuildWithContent runs the pipeline with injected content for testing.
@@ -384,11 +401,32 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildR
 		return nil, renderErr
 	}
 
+	// Phase 2: SSR (if configured)
+	ssrSkipped := cfg.SSR == nil
+	if cfg.SSR != nil {
+		intermediateHTML := make(map[string]string, len(pages))
+		for _, page := range pages {
+			if len(page.RenderedBody) > 0 {
+				intermediateHTML[page.RelPath] = string(page.RenderedBody)
+			}
+		}
+		finalHTML, err := BuildPhase2(intermediateHTML, cfg.SSR)
+		if err != nil {
+			return nil, fmt.Errorf("SSR Phase 2: %w", err)
+		}
+		for _, page := range pages {
+			if transformed, ok := finalHTML[page.RelPath]; ok {
+				page.RenderedBody = []byte(transformed)
+			}
+		}
+		ssrSkipped = false
+	}
+
 	return &BuildResult{
 		OutputDir:     cfg.Build.Output,
 		PageCount:     len(rendered),
 		Duration:      time.Since(start),
-		SSRSkipped:    cfg.SSR == nil,
+		SSRSkipped:    ssrSkipped,
 		PagesRendered: rendered,
 	}, nil
 }
