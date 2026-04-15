@@ -31,6 +31,8 @@ func GenerateSitemap(pages []*content.Page, cfg config.SitemapConfig, baseURL st
 		XMLNS: "http://www.sitemaps.org/schemas/sitemap/0.9",
 	}
 
+	seen := make(map[string]bool)
+
 	for _, page := range pages {
 		// Exclude pages with sitemap: false
 		if val, ok := page.FrontMatter["sitemap"]; ok {
@@ -39,8 +41,15 @@ func GenerateSitemap(pages []*content.Page, cfg config.SitemapConfig, baseURL st
 			}
 		}
 
+		// Normalize: ensure consistent trailing slash on all URLs
+		loc := strings.TrimRight(baseURL+page.URL, "/") + "/"
+		if seen[loc] {
+			continue
+		}
+		seen[loc] = true
+
 		u := sitemapURL{
-			Loc: baseURL + page.URL,
+			Loc: loc,
 		}
 
 		// Apply per-page overrides or config defaults
