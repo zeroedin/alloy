@@ -162,7 +162,8 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			return nil, fmt.Errorf("parsing layout %s: %w", layoutPath, err)
 		}
 
-		ctx := buildTemplateContext(page, cfg, pages, siteData, collectionsCtx, page.RenderedBody)
+		tc := tmpl.BuildTemplateContext(page, combinedSiteData(cfg, siteData), pages, collectionsCtx, nil, "")
+		ctx := tc.ToMap()
 		ctx["content"] = string(page.RenderedBody) // spec §6 step 14: top-level {{ content }} for layouts
 		layoutResult, err := tpl.Render(ctx)
 		if err != nil {
@@ -201,7 +202,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 
 			taxPages := collection.GenerateTaxonomyPages(tc, taxCfg)
 			for _, taxPage := range taxPages {
-				ctx := buildTemplateContext(taxPage, cfg, pages, siteData, collectionsCtx, nil)
+				ctx := tmpl.BuildTemplateContext(taxPage, combinedSiteData(cfg, siteData), pages, collectionsCtx, nil, "").ToMap()
 				term := ""
 				if taxPage.Kind == "taxonomy_term" {
 					if t, ok := taxPage.FrontMatter["title"].(string); ok {
@@ -486,7 +487,9 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 
 		// Step 2: Render template tags with full page/site context.
 		if hasTemplateSyntax(html) {
-			ctx := buildTemplateContext(page, cfg, pages, siteData, collectionsCtx, html)
+			tc := tmpl.BuildTemplateContext(page, combinedSiteData(cfg, siteData), pages, collectionsCtx, nil, "")
+			tc.Content = string(html)
+			ctx := tc.ToMap()
 			if engine != nil {
 				tpl, err := engine.Parse(page.RelPath, html)
 				if err != nil {
@@ -650,68 +653,17 @@ func hasTemplateSyntax(body []byte) bool {
 	return strings.Contains(s, "{{") || strings.Contains(s, "{%")
 }
 
-// buildTemplateContext creates the template rendering context for a page
-// per spec §3 (Template Context). renderedHTML is the markdown-rendered
-// content (pre-template processing), exposed as page.content.
-func buildTemplateContext(page *content.Page, cfg *config.Config, allPages []*content.Page, siteData map[string]interface{}, collectionsCtx map[string]interface{}, renderedHTML []byte) map[string]interface{} {
-	// Page context: start with front matter, then overlay computed fields.
-	pageCtx := make(map[string]interface{}, len(page.FrontMatter)+5)
-	for k, v := range page.FrontMatter {
-		pageCtx[k] = v
-	}
-	if page.URL != "" {
-		pageCtx["url"] = page.URL
-	}
-	if !page.Date.IsZero() {
-		pageCtx["date"] = page.Date
-	}
-	if page.Section != "" {
-		pageCtx["collection"] = page.Section
-	}
-	if len(renderedHTML) > 0 {
-		pageCtx["content"] = string(renderedHTML)
-	}
-
-	// Site context
-	site := map[string]interface{}{
+// combinedSiteData builds the site data map expected by BuildTemplateContext,
+// combining config-level fields (title, baseURL) with data/ directory files.
+func combinedSiteData(cfg *config.Config, siteData map[string]interface{}) map[string]interface{} {
+	m := map[string]interface{}{
 		"title":   cfg.Title,
 		"baseURL": cfg.BaseURL,
 	}
 	if siteData != nil {
-		site["data"] = siteData
-	} else {
-		site["data"] = make(map[string]interface{})
+		m["data"] = siteData
 	}
-	if allPages != nil {
-		site["pages"] = allPages
-	}
-	if collectionsCtx != nil {
-		site["collections"] = collectionsCtx
-	}
-
-	ctx := make(map[string]interface{})
-	ctx["page"] = pageCtx
-	ctx["site"] = site
-	if collectionsCtx != nil {
-		ctx["collections"] = collectionsCtx
-	}
-
-	// Hoist pagination context to top level per spec §1c.
-	// Templates access {{ pagination.previousPage }} and {{ articles }}
-	// at the top level, not under page.*.
-	if paginationCtx, ok := pageCtx["_paginationCtx"]; ok {
-		ctx["pagination"] = paginationCtx
-		delete(pageCtx, "_paginationCtx")
-	}
-	if asVar, ok := pageCtx["_paginationAs"].(string); ok {
-		if data, ok := pageCtx["_paginationData"]; ok {
-			ctx[asVar] = data
-		}
-		delete(pageCtx, "_paginationAs")
-		delete(pageCtx, "_paginationData")
-	}
-
-	return ctx
+	return m
 }
 
 // loadSiteData loads data files from the configured data directory.
