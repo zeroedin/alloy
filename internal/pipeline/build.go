@@ -229,6 +229,36 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			return nil, fmt.Errorf("rendering layout %s: %w", layoutPath, err)
 		}
 		page.RenderedBody = layoutResult
+
+		// Multi-format output: render additional formats (spec §1e)
+		if len(page.Outputs) > 1 {
+			page.FormatBodies = make(map[string][]byte)
+			for _, format := range page.Outputs {
+				if format == "html" {
+					continue // primary format already rendered
+				}
+				fmtLayoutPath, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, engineName, format)
+				if err != nil {
+					// No format-specific layout — skip this format
+					continue
+				}
+				fmtContent, err := os.ReadFile(fmtLayoutPath)
+				if err != nil {
+					return nil, fmt.Errorf("reading format layout %s: %w", fmtLayoutPath, err)
+				}
+				fmtTpl, err := engine.Parse(fmtLayoutPath, fmtContent)
+				if err != nil {
+					return nil, fmt.Errorf("parsing format layout %s: %w", fmtLayoutPath, err)
+				}
+				fmtCtx := tmpl.BuildTemplateContext(page, combinedSiteData(cfg, siteData), pages, collectionsCtx, nil, "").ToMap()
+				fmtCtx["content"] = string(page.RenderedBody)
+				fmtResult, err := fmtTpl.Render(fmtCtx)
+				if err != nil {
+					return nil, fmt.Errorf("rendering format layout %s: %w", fmtLayoutPath, err)
+				}
+				page.FormatBodies[format] = fmtResult
+			}
+		}
 	}
 
 	// Generate and render taxonomy pages (virtual index + per-term pages)
@@ -300,6 +330,13 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		outputEntries = append(outputEntries, validation.OutputPathEntry{
 			Path: outPath, Source: page.RelPath,
 		})
+		// Add validation entries for additional output formats
+		for format := range page.FormatBodies {
+			fmtPath := strings.TrimSuffix(outPath, ".html") + "." + format
+			outputEntries = append(outputEntries, validation.OutputPathEntry{
+				Path: fmtPath, Source: page.RelPath + " (" + format + ")",
+			})
+		}
 		aliases, _ := permalink.ResolveAliases(page)
 		for _, alias := range aliases {
 			aliasPath := output.ComputeOutputPath(alias)
@@ -354,6 +391,13 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		outPath := output.ComputeOutputPath(page.URL)
 		if err := output.WriteFile(outputDir, outPath, page.RenderedBody); err != nil {
 			return nil, fmt.Errorf("writing output %s: %w", outPath, err)
+		}
+		// Write additional output formats (spec §1e)
+		for format, body := range page.FormatBodies {
+			fmtPath := strings.TrimSuffix(outPath, ".html") + "." + format
+			if err := output.WriteFile(outputDir, fmtPath, body); err != nil {
+				return nil, fmt.Errorf("writing %s output %s: %w", format, fmtPath, err)
+			}
 		}
 		// Write alias output paths (same content at additional URLs)
 		aliases, err := permalink.ResolveAliases(page)

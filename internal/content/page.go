@@ -19,6 +19,7 @@ type Page struct {
 	Summary      string
 	Layout       string
 	Outputs      []string
+	FormatBodies map[string][]byte // alternate format rendered bodies (e.g., "json" → rendered JSON)
 	Aliases      []string
 	Permalink    string
 	Slug         string
