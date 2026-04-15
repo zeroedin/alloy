@@ -94,18 +94,33 @@ func newServeCommand() *cobra.Command {
 				return fmt.Errorf("invalid port %q: %w", portStr, err)
 			}
 
-			if err := srv.Start(port); err != nil {
+			// Start server with port auto-increment per spec §9
+			actualPort, err := srv.StartWithPortFallback(port, 10)
+			if err != nil {
 				return err
 			}
 
 			if !cfg.Quiet {
-				fmt.Fprintf(cmd.OutOrStdout(), "Serving at http://localhost:%d\n", port)
+				fmt.Fprintf(cmd.OutOrStdout(), "Serving at http://localhost:%d\n", actualPort)
 			}
 
-			// Fire onDevServerStart plugin hook
+			// Set up plugin hooks for dev server
 			hooks := plugin.NewHookRegistry()
 			hooks.SetTimeout(cfg.Plugins.Timeout)
-			hooks.RunWithTimeout(plugin.OnDevServerStart, cfg)
+			pluginsDir := "plugins"
+			if cfg.ProjectRoot != "" {
+				pluginsDir = filepath.Join(cfg.ProjectRoot, "plugins")
+			}
+			registry := plugin.NewRegistry(pluginsDir)
+			if err := registry.DiscoverPlugins(); err != nil {
+				log.Printf("warning: plugin discovery: %v", err)
+			}
+			for _, w := range registry.LoadPlugins(hooks) {
+				log.Printf("warning: %s", w)
+			}
+			if _, err := hooks.RunWithTimeout(plugin.OnDevServerStart, cfg); err != nil {
+				log.Printf("warning: plugin hook onDevServerStart: %v", err)
+			}
 
 			// Set up file watcher for live rebuild
 			watcher, err := fsnotify.NewWatcher()
@@ -181,17 +196,15 @@ func newServeCommand() *cobra.Command {
 							events := pending
 							pending = nil
 
-							_, scope := debouncer.Debounce(events)
+							debouncer.Debounce(events)
 
 							// Fire onFileChanged plugin hook
-							hooks.RunWithTimeout(plugin.OnFileChanged, events)
+							if _, err := hooks.RunWithTimeout(plugin.OnFileChanged, events); err != nil {
+								log.Printf("warning: plugin hook onFileChanged: %v", err)
+							}
 
 							if !cfg.Quiet {
-								action := "incremental"
-								if scope == server.RebuildFull {
-									action = "full"
-								}
-								log.Printf("rebuilding (%s, %d files changed)...", action, len(events))
+								log.Printf("rebuilding (%d files changed)...", len(events))
 							}
 
 							// Trigger rebuild

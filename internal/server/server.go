@@ -168,7 +168,10 @@ func (s *Server) startOnAddr(addr string) error {
 }
 
 // serveFileWithReload serves a file, injecting the live-reload script into
-// HTML responses when running in dev mode.
+// HTML responses when running in dev mode. Non-HTML files and preview mode
+// use http.ServeFile (with ETag/Last-Modified caching). Dev mode HTML is
+// served without cache headers to ensure browsers always get fresh content
+// after a live-reload rebuild.
 func (s *Server) serveFileWithReload(w http.ResponseWriter, r *http.Request, filePath string) {
 	if s.mode != ModeDev || !strings.HasSuffix(filePath, ".html") {
 		http.ServeFile(w, r, filePath)
@@ -216,36 +219,17 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 // BroadcastReload sends a reload message to all connected WebSocket clients.
+// Failed connections are removed from the map but not closed here —
+// handleWebSocket owns the close to avoid double-close.
 func (s *Server) BroadcastReload() {
 	msg := ReloadMessage()
 	s.wsMu.Lock()
 	defer s.wsMu.Unlock()
 	for conn := range s.wsClients {
 		if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-			conn.Close()
 			delete(s.wsClients, conn)
 		}
 	}
-}
-
-// StartWithPortFallback tries to start the server on preferredPort, incrementing
-// the port number on conflict up to maxAttempts times. Returns the actual port
-// the server is listening on.
-func (s *Server) StartWithPortFallback(preferredPort, maxAttempts int) (int, error) {
-	for i := 0; i < maxAttempts; i++ {
-		port := preferredPort + i
-		err := s.startOnAddr(fmt.Sprintf(":%d", port))
-		if err == nil {
-			return s.port, nil
-		}
-	}
-	return 0, fmt.Errorf("no available port found after %d attempts starting from %d", maxAttempts, preferredPort)
-}
-
-// Port returns the actual port the server is listening on.
-// Returns 0 if the server has not been started.
-func (s *Server) Port() int {
-	return s.port
 }
 
 // Stop gracefully shuts down the server with a 5-second timeout.
