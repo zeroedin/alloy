@@ -18,12 +18,14 @@ func newBuildCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configPath, _ := cmd.Flags().GetString("config")
 
+			configLoaded := true
 			cfg, err := config.LoadWithDefaults(configPath)
 			if err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
 					// No config file — build with defaults
 					cfg = &config.Config{}
 					config.ApplyDefaults(cfg)
+					configLoaded = false
 				} else {
 					return fmt.Errorf("loading config: %w", err)
 				}
@@ -45,6 +47,13 @@ func newBuildCommand() *cobra.Command {
 			}
 			if len(flags) > 0 {
 				config.MergeFlags(cfg, flags)
+			}
+
+			// Validate config semantics when a config file was loaded
+			if configLoaded {
+				if err := config.Validate(cfg); err != nil {
+					return err
+				}
 			}
 
 			result, err := pipeline.Build(cfg)
