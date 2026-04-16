@@ -214,7 +214,12 @@ func newServeCommand() *cobra.Command {
 							// Trigger rebuild
 							if _, err := pipeline.Build(cfg); err != nil {
 								log.Printf("rebuild failed: %v", err)
+								srv.Overlay().SetErrors([]server.BuildError{
+									{Message: err.Error(), Stage: "rebuild"},
+								})
+								srv.BroadcastReload()
 							} else {
+								srv.Overlay().ClearErrors()
 								if !cfg.Quiet {
 									log.Printf("rebuild complete")
 								}
