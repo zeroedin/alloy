@@ -49,8 +49,8 @@ func DetectConflicts(entries []OutputPathEntry) ([]Conflict, error) {
 func ValidatePermalinkAliases(pages []*content.Page) []error {
 	var errs []error
 	for _, p := range pages {
-		// permalink:false is represented as empty Permalink with no output
-		if p.Permalink == "" && len(p.Aliases) > 0 {
+		// permalink:false is represented as empty URL (no resolved output path)
+		if p.URL == "" && len(p.Aliases) > 0 {
 			errs = append(errs, fmt.Errorf(
 				"%s: page with permalink:false cannot have aliases", p.RelPath))
 		}
