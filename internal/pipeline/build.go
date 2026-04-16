@@ -101,6 +101,25 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		return nil, fmt.Errorf("registering template filters: %w", err)
 	}
 
+	// Bridge plugin-discovered filters into the template engine.
+	// Each plugin filter is wrapped so template rendering delegates to
+	// QuickJSRuntime.CallFilter() for the simulated JS execution.
+	for _, rt := range registry.Runtimes() {
+		for _, filterName := range rt.RegisteredFilters() {
+			name := filterName
+			runtime := rt
+			if err := engine.AddFilter(name, func(input interface{}, args ...interface{}) interface{} {
+				result, err := runtime.CallFilter(name, input, args...)
+				if err != nil {
+					return input
+				}
+				return result
+			}); err != nil {
+				return nil, fmt.Errorf("registering plugin filter %q: %w", name, err)
+			}
+		}
+	}
+
 	// Configure include/render tag resolution from layouts directory
 	if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
 		setter.SetIncludesDir(resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts))
