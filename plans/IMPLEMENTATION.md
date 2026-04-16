@@ -264,7 +264,7 @@ Key points:
  1. config.ApplyDefaults(cfg)                           ✅ done
  2. validateOutputDir(cfg)                               ✅ done
  3. content.DiscoverWithFormats(contentDir, formats)      ✅ done
- 4. content.FilterByLifecycle(pages, now, false)          ✅ done
+ 4. content.FilterByLifecycle(pages, now, includeDrafts)  ✅ done (issue #108: must pass includeDrafts from server mode, not hardcode false)
  5. permalink.ResolveForSection(page, cfg.Permalinks)     ✅ done
  6. cascade.LoadDirectoryCascade + FindCascadeData + PageContext ✅ done
  7. data.LoadDirectory(dataDir) → siteData                ✅ done
@@ -556,6 +556,7 @@ Cross-package integration paths that should mostly pass once pipeline works:
 - External data source → fetch → site.data → template context (issue #107)
 - Plugin → HookRegistry hook bridging (issue #93)
 - Build cache → incremental build skip detection (issue #105)
+- Draft visibility → server mode → lifecycle filtering (issue #108)
 
 **Verify**: `go test ./... 2>&1 | grep -E "Passed|Failed"`
 

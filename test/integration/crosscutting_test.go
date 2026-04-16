@@ -12,6 +12,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"time"
+
 	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/collection"
 	"github.com/zeroedin/alloy/internal/config"
@@ -23,6 +25,7 @@ import (
 	"github.com/zeroedin/alloy/internal/pagination"
 	"github.com/zeroedin/alloy/internal/permalink"
 	"github.com/zeroedin/alloy/internal/plugin"
+	"github.com/zeroedin/alloy/internal/server"
 	"github.com/zeroedin/alloy/internal/template"
 )
 
@@ -529,6 +532,56 @@ var _ = Describe("Cross-Cutting Integration", func() {
 			), "template change must invalidate only pages using that template")
 			Expect(affected).NotTo(ContainElement("content/about.md"),
 				"pages using a different template must not be invalidated")
+		})
+	})
+
+	// ── Draft visibility → server mode → lifecycle filtering (issue #108) ──
+
+	Describe("Draft visibility → server mode → lifecycle filtering (issue #108)", func() {
+		It("dev mode includes draft pages in filtered output", func() {
+			// Server reports draft inclusion based on mode
+			cfg := &config.Config{Title: "Test Site"}
+			srv := server.New(cfg)
+			Expect(srv.ShouldIncludeDrafts()).To(BeTrue(),
+				"guard: dev mode must report includeDrafts=true")
+
+			// Build a page set with a draft (Draft field set by BuildPage from front matter)
+			pages := []*content.Page{
+				{RelPath: "blog/published.md", Draft: false, FrontMatter: map[string]interface{}{"title": "Published"}},
+				{RelPath: "blog/draft.md", Draft: true, FrontMatter: map[string]interface{}{"title": "Draft", "draft": true}},
+			}
+
+			// Pipeline must pass includeDrafts from server mode to FilterByLifecycle
+			filtered := content.FilterByLifecycle(pages, time.Now(), srv.ShouldIncludeDrafts())
+			Expect(filtered).To(HaveLen(2),
+				"dev mode must include draft pages in build output")
+
+			// Verify the draft page is in the result
+			var titles []string
+			for _, p := range filtered {
+				titles = append(titles, p.FrontMatter["title"].(string))
+			}
+			Expect(titles).To(ContainElement("Draft"),
+				"draft page must be present in dev mode output")
+		})
+
+		It("build mode excludes draft pages from filtered output", func() {
+			// Preview/build mode excludes drafts
+			cfg := &config.Config{Title: "Test Site"}
+			srv := server.NewWithMode(cfg, server.ModePreview)
+			Expect(srv.ShouldIncludeDrafts()).To(BeFalse(),
+				"guard: preview mode must report includeDrafts=false")
+
+			pages := []*content.Page{
+				{RelPath: "blog/published.md", Draft: false, FrontMatter: map[string]interface{}{"title": "Published"}},
+				{RelPath: "blog/draft.md", Draft: true, FrontMatter: map[string]interface{}{"title": "Draft", "draft": true}},
+			}
+
+			filtered := content.FilterByLifecycle(pages, time.Now(), srv.ShouldIncludeDrafts())
+			Expect(filtered).To(HaveLen(1),
+				"build mode must exclude draft pages")
+			Expect(filtered[0].FrontMatter["title"]).To(Equal("Published"),
+				"only published pages must appear in build output")
 		})
 	})
 })
