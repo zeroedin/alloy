@@ -21,7 +21,7 @@ type TaxonomyTerm struct {
 	Name  string
 	Slug  string
 	URL   string
-	Items []*content.Page
+	Pages []*content.Page
 }
 
 // BuildTaxonomies creates taxonomy collections from page front matter.
@@ -113,8 +113,8 @@ type TaxonomyPageContext struct {
 	Term string
 	// Terms is the list of all terms (for index pages).
 	Terms []TaxonomyTerm
-	// Items is the list of pages for the current term (for term pages).
-	Items []*content.Page
+	// Pages is the list of pages for the current term (for term pages).
+	Pages []*content.Page
 }
 
 // ToMap converts the context to a map with lowercase keys for reliable
@@ -126,31 +126,31 @@ func (ctx *TaxonomyPageContext) ToMap() map[string]interface{} {
 	if ctx.Terms != nil {
 		terms := make([]map[string]interface{}, len(ctx.Terms))
 		for i, t := range ctx.Terms {
-			items := make([]interface{}, len(t.Items))
-			for j, p := range t.Items {
-				items[j] = p.ToTemplateMap()
+			termPages := make([]interface{}, len(t.Pages))
+			for j, p := range t.Pages {
+				termPages[j] = p.ToTemplateMap()
 			}
 			terms[i] = map[string]interface{}{
 				"name":  t.Name,
 				"slug":  t.Slug,
 				"url":   t.URL,
-				"items": items,
+				"pages": termPages,
 			}
 		}
 		m["terms"] = terms
 	}
-	if ctx.Items != nil {
-		items := make([]interface{}, len(ctx.Items))
-		for i, p := range ctx.Items {
-			items[i] = p.ToTemplateMap()
+	if ctx.Pages != nil {
+		ctxPages := make([]interface{}, len(ctx.Pages))
+		for i, p := range ctx.Pages {
+			ctxPages[i] = p.ToTemplateMap()
 		}
-		m["items"] = items
+		m["pages"] = ctxPages
 	}
 	return m
 }
 
 // BuildTaxonomyPageContext creates the template context for a taxonomy page.
-// For index pages (term=""), it provides Terms. For term pages, it provides Items.
+// For index pages (term=""), it provides Terms. For term pages, it provides Pages.
 func BuildTaxonomyPageContext(taxonomy *TaxonomyCollection, term string) *TaxonomyPageContext {
 	if term == "" {
 		// Index page: provide all terms
@@ -160,7 +160,7 @@ func BuildTaxonomyPageContext(taxonomy *TaxonomyCollection, term string) *Taxono
 				Name:  termName,
 				Slug:  slugify(termName),
 				URL:   "/" + taxonomy.Name + "/" + slugify(termName) + "/",
-				Items: termPages,
+				Pages: termPages,
 			})
 		}
 		// Sort terms by name for deterministic output
@@ -173,11 +173,11 @@ func BuildTaxonomyPageContext(taxonomy *TaxonomyCollection, term string) *Taxono
 		}
 	}
 
-	// Term page: provide items for the specific term
-	items := taxonomy.Terms[term]
+	// Term page: provide pages for the specific term
+	termPages := taxonomy.Terms[term]
 	return &TaxonomyPageContext{
 		Term:  term,
-		Items: items,
+		Pages: termPages,
 	}
 }
 

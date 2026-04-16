@@ -1201,13 +1201,13 @@ The template receives a `taxonomy` object that indicates whether it's rendering 
 {% if taxonomy.term %}
   <!-- /tags/javascript/ — showing pages for a specific term -->
   <h1>{{ taxonomy.term }}</h1>
-  {% for post in taxonomy.items %}
+  {% for post in taxonomy.pages %}
     <a href="{{ post.url }}">{{ post.title }}</a>
   {% endfor %}
 {% else %}
   <!-- /tags/ — showing all terms -->
   {% for term in taxonomy.terms %}
-    <a href="{{ term.url }}">{{ term.name }} ({{ term.items | size }})</a>
+    <a href="{{ term.url }}">{{ term.name }} ({{ term.pages | size }})</a>
   {% endfor %}
 {% endif %}
 ```

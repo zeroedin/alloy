@@ -141,7 +141,7 @@ var _ = Describe("Taxonomy", func() {
 			Expect(ctx.Terms).To(HaveLen(3))
 		})
 
-		It("term page context provides term name and items", func() {
+		It("term page context provides term name and pages", func() {
 			taxonomy := &collection.TaxonomyCollection{
 				Name: "tags",
 				Terms: map[string][]*content.Page{
@@ -153,8 +153,43 @@ var _ = Describe("Taxonomy", func() {
 			Expect(ctx).NotTo(BeNil())
 			Expect(ctx.Term).To(Equal("go"),
 				"term page context must have the term name")
-			Expect(ctx.Items).To(HaveLen(2),
-				"term page context must have matching items")
+			Expect(ctx.Pages).To(HaveLen(2),
+				"term page context must have matching pages")
+		})
+
+		It("ToMap serializes term pages as 'pages' key, not 'items' (issue #96)", func() {
+			taxonomy := &collection.TaxonomyCollection{
+				Name: "tags",
+				Terms: map[string][]*content.Page{
+					"go": {pages[0], pages[1]},
+				},
+			}
+			ctx := collection.BuildTaxonomyPageContext(taxonomy, "go")
+			m := ctx.ToMap()
+			Expect(m).To(HaveKey("pages"),
+				"ToMap must serialize term pages under 'pages' key per spec")
+			Expect(m).NotTo(HaveKey("items"),
+				"ToMap must not use 'items' key for taxonomy term pages")
+		})
+
+		It("ToMap serializes each term's pages as 'pages' key in terms list (issue #96)", func() {
+			taxonomy := &collection.TaxonomyCollection{
+				Name: "tags",
+				Terms: map[string][]*content.Page{
+					"go":  {pages[0]},
+					"web": {pages[1]},
+				},
+			}
+			ctx := collection.BuildTaxonomyPageContext(taxonomy, "")
+			m := ctx.ToMap()
+			terms, ok := m["terms"].([]map[string]interface{})
+			Expect(ok).To(BeTrue(), "terms must be a slice of maps")
+			for _, term := range terms {
+				Expect(term).To(HaveKey("pages"),
+					"each term in terms list must have 'pages' key")
+				Expect(term).NotTo(HaveKey("items"),
+					"each term in terms list must not use 'items' key")
+			}
 		})
 	})
 
