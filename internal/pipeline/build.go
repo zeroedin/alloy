@@ -151,6 +151,16 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			pages = append(pages, langPages...)
 		}
 
+		// Multi-language early return: all content dirs missing → zero pages
+		if len(pages) == 0 {
+			return &BuildResult{
+				OutputDir:  cfg.Build.Output,
+				PageCount:  0,
+				Duration:   time.Since(start),
+				SSRSkipped: cfg.SSR == nil,
+			}, nil
+		}
+
 		// Link translations across language trees
 		if err := i18n.LinkTranslations(pages, langCodes); err != nil {
 			log.Printf("warning: translation linking: %v", err)
@@ -224,21 +234,39 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		return nil, fmt.Errorf("plugin hook onDataCascadeReady: %w", err)
 	}
 
-	// Build taxonomies once (used for both template context and page generation)
+	// Build collections and taxonomies — per-language when i18n is active (spec §5C:
+	// "Collections and taxonomies are per-language: collections.blog for English
+	// only contains English posts.")
 	var taxonomies map[string]*collection.TaxonomyCollection
-	if cfg.Taxonomies != nil {
-		taxonomies = collection.BuildTaxonomies(pages, cfg.Taxonomies)
-	}
+	var collectionsCtx map[string]interface{}
+	var perLangCollections map[string]map[string]interface{}
+	var perLangTaxonomies map[string]map[string]*collection.TaxonomyCollection
 
-	// Build collections and taxonomies for template context
-	collectionsCtx := buildCollectionsContext(pages, cfg, taxonomies)
+	if len(langContexts) > 0 {
+		perLangCollections = make(map[string]map[string]interface{})
+		perLangTaxonomies = make(map[string]map[string]*collection.TaxonomyCollection)
+		for _, lc := range langContexts {
+			langPages := filterPagesByLang(pages, lc.Code)
+			var langTax map[string]*collection.TaxonomyCollection
+			if cfg.Taxonomies != nil {
+				langTax = collection.BuildTaxonomies(langPages, cfg.Taxonomies)
+			}
+			perLangTaxonomies[lc.Code] = langTax
+			perLangCollections[lc.Code] = buildCollectionsContext(langPages, cfg, langTax)
+		}
+	} else {
+		if cfg.Taxonomies != nil {
+			taxonomies = collection.BuildTaxonomies(pages, cfg.Taxonomies)
+		}
+		collectionsCtx = buildCollectionsContext(pages, cfg, taxonomies)
+	}
 
 	// Process pagination: detect pages with pagination front matter,
 	// resolve data sources, and generate virtual/paginated pages.
-	pages = processPagination(pages, cfg, siteData, collectionsCtx)
+	pages = processPagination(pages, cfg, siteData, collectionsCtx, perLangCollections)
 
 	// Stage 4: Render each page (with engine for custom filter support)
-	rendered, renderErr := renderPages(pages, cfg, siteData, collectionsCtx, engine, langContexts)
+	rendered, renderErr := renderPages(pages, cfg, siteData, collectionsCtx, perLangCollections, engine, langContexts)
 	if renderErr != nil {
 		return nil, renderErr
 	}
@@ -272,7 +300,8 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			return nil, fmt.Errorf("parsing layout %s: %w", layoutPath, err)
 		}
 
-		tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, siteData, langContexts, page), pages, collectionsCtx, nil, "")
+		pageColls := collectionsForPage(page, perLangCollections, collectionsCtx)
+		tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, siteData, langContexts, page), pages, pageColls, nil, "")
 		ctx := tc.ToMap()
 		ctx["content"] = string(page.RenderedBody) // spec §6 step 14: top-level {{ content }} for layouts
 		layoutResult, err := tpl.Render(ctx)
@@ -282,60 +311,97 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		page.RenderedBody = layoutResult
 
 		// Multi-format output: render additional formats (spec §1e)
-		if err := renderPageFormats(page, layoutsDir, engineName, engine, cfg, siteData, langContexts, pages, collectionsCtx); err != nil {
+		if err := renderPageFormats(page, layoutsDir, engineName, engine, cfg, siteData, langContexts, pages, pageColls); err != nil {
 			return nil, err
 		}
 	}
 
 	// Generate and render taxonomy pages (virtual index + per-term pages)
-	if taxonomies != nil && engine != nil {
+	if engine != nil {
+		// Collect all taxonomy maps to render (per-language or single-language)
+		type taxBatch struct {
+			langCode    string
+			root        bool
+			taxonomies  map[string]*collection.TaxonomyCollection
+			collections map[string]interface{}
+		}
+		var batches []taxBatch
 
-		// Detect duplicate term slugs before generating pages
-		for taxName, tc := range taxonomies {
-			dupes := collection.DetectDuplicateTermSlugs(tc)
-			if len(dupes) > 0 {
-				return nil, fmt.Errorf("taxonomy %q has duplicate term slugs: %v", taxName, dupes)
+		if len(langContexts) > 0 {
+			for _, lc := range langContexts {
+				langTax := perLangTaxonomies[lc.Code]
+				if len(langTax) == 0 {
+					continue
+				}
+				batches = append(batches, taxBatch{
+					langCode:    lc.Code,
+					root:        lc.Root,
+					taxonomies:  langTax,
+					collections: perLangCollections[lc.Code],
+				})
 			}
+		} else if taxonomies != nil {
+			batches = append(batches, taxBatch{
+				taxonomies:  taxonomies,
+				collections: collectionsCtx,
+			})
 		}
 
-		for taxName, tc := range taxonomies {
-			taxCfg := cfg.Taxonomies[taxName]
-
-			// Resolve layout once per taxonomy (not per page)
-			layoutPath, err := tmpl.ResolveTaxonomyLayout(taxName, taxCfg.Layout, layoutsDir, engineName)
-			if err != nil {
-				return nil, fmt.Errorf("taxonomy %q layout: %w", taxName, err)
-			}
-			layoutContent, err := os.ReadFile(layoutPath)
-			if err != nil {
-				return nil, fmt.Errorf("reading taxonomy layout %s: %w", layoutPath, err)
-			}
-			tpl, err := engine.Parse(layoutPath, layoutContent)
-			if err != nil {
-				return nil, fmt.Errorf("parsing taxonomy layout %s: %w", layoutPath, err)
-			}
-
-			taxPages := collection.GenerateTaxonomyPages(tc, taxCfg)
-			for _, taxPage := range taxPages {
-				ctx := tmpl.BuildTemplateContext(taxPage, combinedSiteDataForPage(cfg, siteData, langContexts, taxPage), pages, collectionsCtx, nil, "").ToMap()
-				term := ""
-				if taxPage.Kind == "taxonomy_term" {
-					if t, ok := taxPage.FrontMatter["title"].(string); ok {
-						term = t
-					}
+		for _, batch := range batches {
+			// Detect duplicate term slugs before generating pages
+			for taxName, tc := range batch.taxonomies {
+				dupes := collection.DetectDuplicateTermSlugs(tc)
+				if len(dupes) > 0 {
+					return nil, fmt.Errorf("taxonomy %q has duplicate term slugs: %v", taxName, dupes)
 				}
-				ctx["taxonomy"] = collection.BuildTaxonomyPageContext(tc, term).ToMap()
-				ctx["content"] = ""
-				out, err := tpl.Render(ctx)
+			}
+
+			for taxName, tc := range batch.taxonomies {
+				taxCfg := cfg.Taxonomies[taxName]
+
+				// Resolve layout once per taxonomy (not per page)
+				layoutPath, err := tmpl.ResolveTaxonomyLayout(taxName, taxCfg.Layout, layoutsDir, engineName)
 				if err != nil {
-					return nil, fmt.Errorf("rendering taxonomy page %s: %w", taxPage.URL, err)
+					return nil, fmt.Errorf("taxonomy %q layout: %w", taxName, err)
 				}
-				taxPage.RenderedBody = out
-				// Multi-format output for taxonomy pages (spec §1e)
-				if err := renderPageFormats(taxPage, layoutsDir, engineName, engine, cfg, siteData, langContexts, pages, collectionsCtx); err != nil {
-					return nil, err
+				layoutContent, err := os.ReadFile(layoutPath)
+				if err != nil {
+					return nil, fmt.Errorf("reading taxonomy layout %s: %w", layoutPath, err)
 				}
-				pages = append(pages, taxPage)
+				tpl, err := engine.Parse(layoutPath, layoutContent)
+				if err != nil {
+					return nil, fmt.Errorf("parsing taxonomy layout %s: %w", layoutPath, err)
+				}
+
+				taxPages := collection.GenerateTaxonomyPages(tc, taxCfg)
+				for _, taxPage := range taxPages {
+					// Apply language prefix and front matter for multi-lang
+					if batch.langCode != "" {
+						taxPage.FrontMatter["lang"] = batch.langCode
+						prefix := i18n.OutputPrefix(batch.langCode, batch.root)
+						taxPage.URL = "/" + prefix + strings.TrimPrefix(taxPage.URL, "/")
+					}
+
+					ctx := tmpl.BuildTemplateContext(taxPage, combinedSiteDataForPage(cfg, siteData, langContexts, taxPage), pages, batch.collections, nil, "").ToMap()
+					term := ""
+					if taxPage.Kind == "taxonomy_term" {
+						if t, ok := taxPage.FrontMatter["title"].(string); ok {
+							term = t
+						}
+					}
+					ctx["taxonomy"] = collection.BuildTaxonomyPageContext(tc, term).ToMap()
+					ctx["content"] = ""
+					out, err := tpl.Render(ctx)
+					if err != nil {
+						return nil, fmt.Errorf("rendering taxonomy page %s: %w", taxPage.URL, err)
+					}
+					taxPage.RenderedBody = out
+					// Multi-format output for taxonomy pages (spec §1e)
+					if err := renderPageFormats(taxPage, layoutsDir, engineName, engine, cfg, siteData, langContexts, pages, batch.collections); err != nil {
+						return nil, err
+					}
+					pages = append(pages, taxPage)
+				}
 			}
 		}
 	}
@@ -557,7 +623,7 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildR
 	}
 
 	// Render each page (no data files, collections, or engine in injected content mode)
-	rendered, renderErr := renderPages(pages, cfg, nil, nil, nil, nil)
+	rendered, renderErr := renderPages(pages, cfg, nil, nil, nil, nil, nil)
 	if renderErr != nil {
 		return nil, renderErr
 	}
@@ -648,7 +714,7 @@ func BuildPhase2(intermediateHTML map[string]string, ssrCfg *config.SSRConfig) (
 // When engine is non-nil, it is used for template rendering (with custom filters).
 // When engine is nil (BuildWithContent path), the standalone RenderTemplate is
 // used with strict filters to catch undefined filter usage in tests.
-func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]interface{}, collectionsCtx map[string]interface{}, engine tmpl.TemplateEngine, langContexts []i18n.LanguageContext) ([]string, error) {
+func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]interface{}, collectionsCtx map[string]interface{}, perLangCollections map[string]map[string]interface{}, engine tmpl.TemplateEngine, langContexts []i18n.LanguageContext) ([]string, error) {
 	mdOpts := content.MarkdownOptions{
 		Unsafe:       cfg.Content.Markdown.Goldmark.Unsafe,
 		Typographer:  cfg.Content.Markdown.Goldmark.Typographer,
@@ -686,7 +752,8 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 
 		// Step 2: Render template tags with full page/site context.
 		if hasTemplateSyntax(html) {
-			tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, siteData, langContexts, page), pages, collectionsCtx, nil, "")
+			pageColls := collectionsForPage(page, perLangCollections, collectionsCtx)
+			tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, siteData, langContexts, page), pages, pageColls, nil, "")
 			tc.Content = string(html)
 			ctx := tc.ToMap()
 			if engine != nil {
@@ -718,7 +785,7 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 // processPagination detects pages with pagination: front matter, resolves
 // data sources, and generates virtual or paginated pages. Original paginated
 // pages are replaced by their expanded set.
-func processPagination(pages []*content.Page, cfg *config.Config, siteData map[string]interface{}, collectionsCtx map[string]interface{}) []*content.Page {
+func processPagination(pages []*content.Page, cfg *config.Config, siteData map[string]interface{}, collectionsCtx map[string]interface{}, perLangCollections map[string]map[string]interface{}) []*content.Page {
 	var result []*content.Page
 	for _, page := range pages {
 		paginationRaw, ok := page.FrontMatter["pagination"]
@@ -739,7 +806,8 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 		}
 
 		// Resolve data source — siteData is already the raw data map
-		resolved, err := pagination.ResolveDataSource(dataRef, siteData, collectionsCtx)
+		pageColls := collectionsForPage(page, perLangCollections, collectionsCtx)
+		resolved, err := pagination.ResolveDataSource(dataRef, siteData, pageColls)
 		if err != nil {
 			log.Printf("warning: pagination data source %q: %v", dataRef, err)
 			result = append(result, page)
@@ -854,9 +922,7 @@ func hasTemplateSyntax(body []byte) bool {
 
 // combinedSiteData builds the site data map expected by BuildTemplateContext,
 // combining config-level fields (title, baseURL) with data/ directory files.
-// When langContexts is provided and the page has a "lang" front matter key,
-// language-specific data is injected (site.language, site.title override).
-func combinedSiteData(cfg *config.Config, siteData map[string]interface{}, langContexts ...[]i18n.LanguageContext) map[string]interface{} {
+func combinedSiteData(cfg *config.Config, siteData map[string]interface{}) map[string]interface{} {
 	m := map[string]interface{}{
 		"title":   cfg.Title,
 		"baseURL": cfg.BaseURL,
@@ -928,6 +994,30 @@ func renderPageFormats(page *content.Page, layoutsDir, engineName string, engine
 		page.FormatBodies[format] = fmtResult
 	}
 	return nil
+}
+
+// filterPagesByLang returns only pages with the given language code in front matter.
+func filterPagesByLang(pages []*content.Page, langCode string) []*content.Page {
+	var result []*content.Page
+	for _, page := range pages {
+		if lang, _ := page.FrontMatter["lang"].(string); lang == langCode {
+			result = append(result, page)
+		}
+	}
+	return result
+}
+
+// collectionsForPage returns the per-language collections context for a page
+// when i18n is active, falling back to the default collections context.
+func collectionsForPage(page *content.Page, perLangCollections map[string]map[string]interface{}, fallback map[string]interface{}) map[string]interface{} {
+	if perLangCollections != nil {
+		if lang, _ := page.FrontMatter["lang"].(string); lang != "" {
+			if c, ok := perLangCollections[lang]; ok {
+				return c
+			}
+		}
+	}
+	return fallback
 }
 
 // loadSiteData loads data files from the configured data directory.
