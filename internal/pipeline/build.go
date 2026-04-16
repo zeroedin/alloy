@@ -108,13 +108,15 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		for _, filterName := range rt.RegisteredFilters() {
 			name := filterName
 			runtime := rt
-			engine.AddFilter(name, func(input interface{}, args ...interface{}) interface{} {
+			if err := engine.AddFilter(name, func(input interface{}, args ...interface{}) interface{} {
 				result, err := runtime.CallFilter(name, input, args...)
 				if err != nil {
 					return input
 				}
 				return result
-			})
+			}); err != nil {
+				return nil, fmt.Errorf("registering plugin filter %q: %w", name, err)
+			}
 		}
 	}
 
