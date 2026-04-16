@@ -122,12 +122,6 @@ func (r *QuickJSRuntime) EvalFile(path string) error {
 
 	src := string(content)
 
-	// Check for syntax errors (basic brace matching) before eval.
-	// This provides a fast, clear error before hitting the JS engine.
-	if hasSyntaxError(src) {
-		return fmt.Errorf("SyntaxError in %s: unexpected token", filepath.Base(path))
-	}
-
 	// Transform ES module default export to IIFE:
 	//   "export default function(alloy) { ... }" → "(function(alloy) { ... })(alloy);"
 	if moduleExportRegex.MatchString(src) {
@@ -145,25 +139,6 @@ func (r *QuickJSRuntime) EvalFile(path string) error {
 	}
 
 	return nil
-}
-
-// hasSyntaxError performs basic syntax validation on JS source.
-func hasSyntaxError(src string) bool {
-	braces := 0
-	parens := 0
-	for _, ch := range src {
-		switch ch {
-		case '{':
-			braces++
-		case '}':
-			braces--
-		case '(':
-			parens++
-		case ')':
-			parens--
-		}
-	}
-	return braces != 0 || parens != 0
 }
 
 // CallFilter calls a registered filter function by name with an input value.
@@ -195,6 +170,11 @@ func (r *QuickJSRuntime) CallFilter(name string, input interface{}, args ...inte
 	// Invoke the filter function stored in __filters
 	result, err := r.ctx.Eval("filter-call.js", qjs.Code(
 		`__filters[__callFilterName](__callInput)`))
+
+	// Clean up globals to avoid stale references between calls
+	r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewUndefined())
+	r.ctx.Global().SetPropertyStr("__callFilterName", r.ctx.NewUndefined())
+
 	if err != nil {
 		return nil, fmt.Errorf("filter %q: %w", name, err)
 	}
