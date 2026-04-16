@@ -60,11 +60,11 @@ These packages depend only on stdlib or already-defined types.
 - `BuildContext`/`BuildContextFull`: Allocate `PageContext` with shared pointers
 - `Get`: Lookup order: Computed > FrontMatter > Directory > Global. May need `PluginData` field added.
 
-### 1D: `internal/validation` — 15 tests
+### 1D: `internal/validation` — 16 tests
 **File**: `internal/validation/conflicts.go`
 
 - `DetectConflicts`: Group `OutputPathEntry` by path, return conflicts where count > 1
-- `ValidatePermalinkAliases`: Error if page has `permalink: false` AND aliases
+- `ValidatePermalinkAliases`: Error if page has no output URL (`p.URL == ""`) AND aliases. Must check the computed `URL` field (populated by `ResolveForSection`), not the front-matter `Permalink` field — pages without an explicit `permalink:` in front matter still have valid URLs from config-level `permalinks:` patterns (issue #110).
 
 ### 1E: `internal/pagination` — 22 tests
 **File**: `internal/pagination/pagination.go`
@@ -264,7 +264,7 @@ Key points:
  1. config.ApplyDefaults(cfg)                           ✅ done
  2. validateOutputDir(cfg)                               ✅ done
  3. content.DiscoverWithFormats(contentDir, formats)      ✅ done
- 4. content.FilterByLifecycle(pages, now, false)          ✅ done
+ 4. content.FilterByLifecycle(pages, now, includeDrafts)  ✅ done (issue #108: must pass includeDrafts from server mode, not hardcode false)
  5. permalink.ResolveForSection(page, cfg.Permalinks)     ✅ done
  6. cascade.LoadDirectoryCascade + FindCascadeData + PageContext ✅ done
  7. data.LoadDirectory(dataDir) → siteData                ✅ done
@@ -291,6 +291,7 @@ Key points:
 - If content directory doesn't exist or is empty, `Build()` should return a successful zero-page result (not error). This is required for `alloy init && alloy build` to work and for cmd tests to pass.
 - **i18n (issue #70)**: When `cfg.Languages` is present, the pipeline uses a two-pass per-language loop (see Phase 5C wiring). Pass 1 runs steps 3-11 (discovery through content rendering) per language. Then `LinkTranslations` runs once across all languages. Pass 2 runs steps 12-15 (layout resolution through output writing) per language — this ensures `page.Translations` is populated before templates render. Steps 1-2 (config/validation) and 16-20 (static/assets/sitemap/cache) run once outside the loop.
 - **Plugin filter bridging (issue #93)**: After `registry.LoadPlugins(hooks)` (step 0) and engine creation (step 10), bridge plugin-discovered filters to the template engine. For each filter name from `LoadPlugins()`, call `engine.AddFilter(name, wrapperFn)` where `wrapperFn` routes through `QuickJSRuntime.CallFilter()`. This must happen before content rendering (step 11) so templates can use plugin filters. Similarly, `alloy.hook()`/`alloy.on()` registrations discovered by `EvalFile()` must be wired into the `HookRegistry` during `LoadPlugins()`.
+- **Incremental build via cache (issue #105)**: Before step 3 (content discovery), load the previous build cache via `cache.LoadFrom(cacheDir)`. After discovering pages (step 3) and computing hashes, use `previousCache.ShouldSkipFile(relPath, content)` to skip unchanged pages — no re-parse, no re-render. Template changes override content-hash skipping: if a layout file changed, `previousCache.InvalidatedPages(layoutPath)` returns the affected pages, which must be rebuilt even if their content hash is unchanged. Config changes (`previousCache.IsConfigChanged(currentHash)`) trigger a full rebuild of all pages. The `BuildResult` should report the skip count (e.g., "Built 5 pages, 27 skipped (cached)").
 
 #### Cascade wiring (PR #55)
 
@@ -312,7 +313,7 @@ At this point, `alloy build` works end-to-end on test fixtures.
 
 ## Phase 5: Plugin + Fetch + I18n + CLI (~111 tests)
 
-### 5A: `internal/plugin` — 62 tests
+### 5A: `internal/plugin` — 63 tests
 **Files**: `hooks.go`, `registry.go`, `node.go`, `wasm.go`
 
 - **hooks.go**: Hook registry with timeout, chained execution, warnings. `HookFunc` signature is `func(ctx context.Context, payload interface{}) (interface{}, error)` — context carries timeout deadline for cooperative cancellation (issue #13). `Run()` passes `context.Background()`. `RunWithTimeout()` uses `context.WithTimeout()` and passes the derived context to each hook.
@@ -320,7 +321,7 @@ At this point, `alloy build` works end-to-end on test fixtures.
 - **node.go**: LSP-style message encoding/decoding, bridge state management
 - **wasm.go**: QuickJS/WASM runtime with filter/shortcode/hook registration and execution.
   - `EvalFile()` parses `alloy.filter()`, `alloy.shortcode()`, and `alloy.hook()`/`alloy.on()` registrations
-  - `CallFilter()` must execute the JS filter function and return the transformed value (not passthrough)
+  - `CallFilter()` must execute the actual JS filter function and return the transformed value — not passthrough, not pattern-matching. The current `simulateJSFilter` approach only handles known patterns (word count); arbitrary JS like `toUpperCase()` returns input unchanged. Real QuickJS execution via wazero is required (issue #103).
   - `RegisteredHooks()` returns hook names discovered during `EvalFile()`
   - `LoadPlugins()` returns discovered filter names + hook registrations so the pipeline can bridge them to the template engine and HookRegistry
 
@@ -328,6 +329,21 @@ At this point, `alloy build` works end-to-end on test fixtures.
 **File**: `internal/fetch/fetch.go`
 
 - REST/GraphQL fetching, file-based caching, XML/CSV parsing, GraphQL data unwrapping
+
+#### Source pipeline wiring (issue #107)
+
+After `loadSiteData()` loads local data files, the pipeline must iterate `cfg.Sources` and fetch/cache each source before template rendering:
+
+1. For each `SourceConfig` in `cfg.Sources`:
+   - Check cache via `fetch.GetCached(name, cacheDir, source.Cache)` — if found and TTL valid, use cached data
+   - If not cached (or `--refetch` flag set), call the appropriate fetcher based on `source.Type`:
+     - `"rest"` → `fetch.FetchREST(source.URL)`
+     - `"graphql"` → `fetch.FetchGraphQL(source.Endpoint, source.Query)`
+     - `"plugin"` → `fetch.FetchPluginSource(source.Plugin, configMap)`
+   - Save fetched data to cache via `fetch.SaveCache(name, cacheDir, data)`
+   - Merge result into `siteData` under the `source.As` key so templates access it as `site.data.<as>`
+2. Fire `onDataFetched` hook after all sources are merged (existing hook call stays in place)
+3. On fetch failure: abort build with clear error identifying the source name and URL
 
 ### 5C: `internal/i18n` — 18 tests
 **File**: `internal/i18n/i18n.go`
@@ -376,6 +392,13 @@ if cfg.Languages != nil {
         // Apply output prefix to permalinks
         prefix := i18n.OutputPrefix(langCtx.Code, langCtx.Root)
         // prefix permalinks: page.URL = prefix + page.URL
+        //
+        // IMPORTANT (issue #113): permalink resolution must use the
+        // ORIGINAL relPath (without language prefix), not the prefixed
+        // one. The language prefix is added for translation linking,
+        // but DefaultFromPath("en/index.md") returns "/en/" instead of
+        // "/", causing double-prefixing for index pages. Resolve the
+        // permalink first, then prefix RelPath for translation linking.
 
         // Inject site.language into per-language site data copy
         langSiteData := copyMap(siteData)
@@ -491,7 +514,7 @@ The flag must be applied **after** config loading but **before** pipeline execut
 
 ## Phase 6: Server + SSR (~65 tests)
 
-### 6A: `internal/server` — 45 tests
+### 6A: `internal/server` — 51 tests
 **Files**: `server.go`, `watcher.go`, `overlay.go`
 
 - HTTP server with mode-aware behavior (dev/preview)
@@ -502,6 +525,7 @@ The flag must be applied **after** config loading but **before** pipeline execut
 - `DetermineRebuildAction(changedFiles []string) RebuildScope`: Classify file changes as incremental or full rebuild. Many simultaneous changes trigger a full rebuild.
 - `StartWithPortFallback(preferredPort, maxAttempts int) (int, error)`: Try `net.Listen("tcp", ":port")` starting at `preferredPort`. On `EADDRINUSE`, increment port and retry up to `maxAttempts` times. Return the actual port on success. After exhausting all attempts, return error containing `"no available port"` and the range tried. Log a warning when skipping an occupied port. Store the actual port on the Server struct.
 - `Port() int`: Return the actual port the server is listening on. Returns 0 before the server has started.
+- `Serve404Page(outputDir string) ([]byte, error)`: Check for `404.html` at the output root. If found, return its contents (for the HTTP handler to serve with a 404 status code). If not found, return an error so the caller can fall back to Go's default `http.NotFound()`. In dev mode, the 404 page must receive the WebSocket reload script injection like any other served page (issue #109).
 
 **Test hygiene (issue #59)**: All server tests that call `Start()` must use port 0 (OS-assigned) to avoid collisions when `go test ./...` runs packages in parallel. Every successful `Start()` or `StartWithPortFallback()` must be paired with `defer srv.Stop()` to release the port promptly.
 
@@ -523,7 +547,7 @@ The flag must be applied **after** config loading but **before** pipeline execut
 
 ## Phase 7: Integration Tests + Final (~16 tests)
 
-### 7A: `test/integration/` — 25 tests
+### 7A: `test/integration/` — 32 tests
 **Files**: `build_test.go`, `crosscutting_test.go`, `plugin_template_test.go`
 
 Cross-package integration paths that should mostly pass once pipeline works:
@@ -536,7 +560,11 @@ Cross-package integration paths that should mostly pass once pipeline works:
 - i18n -> data cascade -> template
 - Filter integration with both Liquid and Go engines
 - Plugin → template engine filter bridging (issue #93)
+- External data source → fetch → site.data → template context (issue #107)
 - Plugin → HookRegistry hook bridging (issue #93)
+- Build cache → incremental build skip detection (issue #105)
+- Draft visibility → server mode → lifecycle filtering (issue #108)
+- i18n index page URL resolution without prefix doubling (issue #113)
 
 **Verify**: `go test ./... 2>&1 | grep -E "Passed|Failed"`
 

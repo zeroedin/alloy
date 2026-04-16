@@ -101,6 +101,25 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		return nil, fmt.Errorf("registering template filters: %w", err)
 	}
 
+	// Bridge plugin-discovered filters into the template engine.
+	// Each plugin filter is wrapped so template rendering delegates to
+	// QuickJSRuntime.CallFilter() for the simulated JS execution.
+	for _, rt := range registry.Runtimes() {
+		for _, filterName := range rt.RegisteredFilters() {
+			name := filterName
+			runtime := rt
+			if err := engine.AddFilter(name, func(input interface{}, args ...interface{}) interface{} {
+				result, err := runtime.CallFilter(name, input, args...)
+				if err != nil {
+					return input
+				}
+				return result
+			}); err != nil {
+				return nil, fmt.Errorf("registering plugin filter %q: %w", name, err)
+			}
+		}
+	}
+
 	// Configure include/render tag resolution from layouts directory
 	if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
 		setter.SetIncludesDir(resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts))
@@ -173,7 +192,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			}
 
 			// Step 4: Lifecycle filter
-			langPages = content.FilterByLifecycle(langPages, time.Now(), false)
+			langPages = content.FilterByLifecycle(langPages, time.Now(), cfg.IncludeDrafts)
 
 			// Step 6: Permalink resolution with language prefix
 			prefix := i18n.OutputPrefix(lc.Code, lc.Root)
@@ -358,7 +377,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		}
 
 		// Lifecycle filter + permalinks
-		pages = content.FilterByLifecycle(pages, time.Now(), false)
+		pages = content.FilterByLifecycle(pages, time.Now(), cfg.IncludeDrafts)
 		for _, page := range pages {
 			url, err := permalink.ResolveForSection(page, cfg.Permalinks)
 			if err != nil {
@@ -751,7 +770,7 @@ func BuildPhase1(cfg *config.Config) (map[string]string, error) {
 		return nil, fmt.Errorf("content discovery: %w", err)
 	}
 
-	pages = content.FilterByLifecycle(pages, time.Now(), false)
+	pages = content.FilterByLifecycle(pages, time.Now(), cfg.IncludeDrafts)
 
 	result := make(map[string]string, len(pages))
 
