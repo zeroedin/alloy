@@ -209,13 +209,24 @@ var _ = Describe("Output path conflict detection", func() {
 var _ = Describe("Permalink-alias validation", func() {
 
 	Describe("ValidatePermalinkAliases", func() {
-		It("flags permalink:false pages that also have aliases", func() {
+		It("flags pages with no output URL that also have aliases", func() {
 			pages := []*content.Page{
-				{RelPath: "data-only.md", Permalink: "", Aliases: []string{"/old/"}},
+				{RelPath: "data-only.md", Permalink: "", URL: "", Aliases: []string{"/old/"}},
 			}
 			errs := validation.ValidatePermalinkAliases(pages)
 			Expect(errs).NotTo(BeEmpty(),
-				"permalink:false + aliases must produce a validation error")
+				"page with no output URL + aliases must produce a validation error")
+		})
+
+		It("allows aliases on pages with config-pattern URL but no front-matter permalink", func() {
+			// Page has no explicit permalink in front matter, but gets its URL
+			// from the config-level permalinks: pattern (e.g., default: "/:slug/")
+			pages := []*content.Page{
+				{RelPath: "about.md", Permalink: "", URL: "/about/", Aliases: []string{"/about-us/", "/team-info/"}},
+			}
+			errs := validation.ValidatePermalinkAliases(pages)
+			Expect(errs).To(BeEmpty(),
+				"page with computed URL from config pattern must be allowed to have aliases")
 		})
 	})
 })
