@@ -248,11 +248,11 @@ Key points:
 - `CopyStatic`/`CopyPassthrough`: Walk and copy preserving structure
 - `CopyPassthroughWithValidation(mappings, projectRoot, outputDir, managedDirs)`: Same as `CopyPassthrough`, but silently skips any mapping where the `from` path resolves to a managed directory (content, layouts, assets, static, data). Prevents passthrough configs from accidentally overwriting managed content.
 
-### 4D: `internal/pipeline` — 16 tests
+### 4D: `internal/pipeline` — 18 tests
 **File**: `internal/pipeline/build.go`
 
 - `BuildWithContent`: Accept injected content, render through pipeline. Error messages must contain source file path + "template rendering" stage.
-- `BuildPhase1`/`BuildPhase2`: Phase separation. Phase 2 inserts `<template shadowrootmode="open">` markers for custom elements (minimal SSR simulation).
+- `BuildPhase1`/`BuildPhase2`: Phase separation. Phase 2 executes the external `ssr.build` command (from `config.SSRConfig.Build`) via `os/exec`. Alloy does NOT perform local SSR transforms — it shells out to the configured SSR engine (golit, lit-ssr-wasm, etc.) and lets the engine produce Declarative Shadow DOM. If the command fails or is not found, `BuildPhase2` must return an error (no silent fallback).
 - **`validateOutputDir`** (issue #9): Uses path equality + parent/child overlap detection (not substring matching). Only rejects exact matches (`output == content`) and nesting (`output = content/build` or `content` inside `output`). Names like `my_content_site` are valid output directories.
 - **Render ordering** (issue #10): Markdown renders first, then template tags — per spec §6 steps 3-4. Goldmark's TemplateTags extension preserves `{{ }}`/`{% %}` through markdown rendering. After markdown rendering and before Liquid processing, `escapeTemplateTagsInCode` converts template tags inside `<code>` elements to HTML entities so Liquid ignores them (issue #46). Markdown errors use stage name `"content transformation"`, template errors use `"template rendering"`.
 
