@@ -13,9 +13,10 @@ import (
 
 // liquidEngine adapts Notifuse/liquidgo to the TemplateEngine interface.
 type liquidEngine struct {
-	env         *liquid.Environment
-	filters     *alloyFilterBridge
-	includesDir string // layouts directory for resolving {% include %} / {% render %}
+	env            *liquid.Environment
+	filters        *alloyFilterBridge
+	includesDir    string          // layouts directory for resolving {% include %} / {% render %}
+	dynamicFilters map[string]bool // novel filter names needing template pre-processing
 }
 
 // NewLiquidEngine creates a new Liquid template engine with standard tags and filters.
@@ -28,7 +29,7 @@ func NewLiquidEngine() TemplateEngine {
 	}
 	env.RegisterFilter(bridge)
 
-	return &liquidEngine{env: env, filters: bridge}
+	return &liquidEngine{env: env, filters: bridge, dynamicFilters: make(map[string]bool)}
 }
 
 // SetIncludesDir sets the directory used to resolve {% include %} and {% render %} tags.
@@ -44,10 +45,18 @@ type liquidTemplate struct {
 }
 
 func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
+	src := string(content)
+
+	// Pre-process: rewrite novel/plugin filter references to use the
+	// plugin_filter bridge, which liquidgo can dispatch via PluginFilter().
+	for filterName := range e.dynamicFilters {
+		src = rewriteFilterToPlugin(src, filterName)
+	}
+
 	opts := &liquid.TemplateOptions{
 		Environment: e.env,
 	}
-	tpl, err := liquid.ParseTemplate(string(content), opts)
+	tpl, err := liquid.ParseTemplate(src, opts)
 	if err != nil {
 		return nil, fmt.Errorf("liquid parse error in %s: %s", name, err.Error())
 	}
@@ -55,8 +64,65 @@ func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
 	return &liquidTemplate{tpl: tpl, name: name, includesDir: e.includesDir}, nil
 }
 
+// rewriteFilterToPlugin replaces occurrences of a novel filter name in Liquid
+// templates with a plugin_filter bridge call. For example:
+//
+//	{{ x | myFilter }}           → {{ x | plugin_filter: "myFilter" }}
+//	{{ x | myFilter: arg1 }}    → {{ x | plugin_filter: "myFilter", arg1 }}
+func rewriteFilterToPlugin(src, filterName string) string {
+	// Match: | filterName optionally followed by : (with args)
+	pattern := regexp.MustCompile(`\|\s*` + regexp.QuoteMeta(filterName) + `\b(\s*:\s*)?`)
+	return pattern.ReplaceAllStringFunc(src, func(match string) string {
+		if strings.Contains(match, ":") {
+			// Has args: append filter name and comma before existing args
+			return `| plugin_filter: "` + filterName + `", `
+		}
+		// No args
+		return `| plugin_filter: "` + filterName + `"`
+	})
+}
+
+// knownLiquidFilters lists filter names that liquidgo can dispatch natively
+// via reflection — either through StandardFilters or alloyFilterBridge methods.
+// Novel/plugin filters not in this set need template pre-processing to route
+// through the PluginFilter bridge.
+var knownLiquidFilters = map[string]bool{
+	// liquidgo StandardFilters (snake_case names used in templates)
+	"size": true, "downcase": true, "upcase": true, "capitalize": true,
+	"escape": true, "h": true, "escape_once": true,
+	"url_encode": true, "url_decode": true,
+	"base64_encode": true, "base64_decode": true,
+	"base64_url_safe_encode": true, "base64_url_safe_decode": true,
+	"slice": true, "truncate": true, "truncatewords": true,
+	"split": true, "strip": true, "lstrip": true, "rstrip": true,
+	"strip_html": true, "first": true, "last": true, "join": true,
+	"date": true, "strip_newlines": true, "newline_to_br": true,
+	"replace": true, "replace_first": true, "replace_last": true,
+	"remove": true, "remove_first": true, "remove_last": true,
+	"append": true, "prepend": true,
+	"abs": true, "plus": true, "minus": true, "times": true,
+	"divided_by": true, "modulo": true, "round": true,
+	"ceil": true, "floor": true, "at_least": true, "at_most": true,
+	"default": true, "reverse": true, "sort": true, "sort_natural": true,
+	"uniq": true, "compact": true, "map": true,
+	"where": true, "reject": true, "has": true,
+	"find": true, "find_index": true, "concat": true, "sum": true,
+	// alloyFilterBridge methods
+	"slugify": true, "contains": true, "group_by": true,
+	"intersect": true, "union": true, "complement": true,
+	"absolute_url": true, "markdownify": true,
+	"findRE": true, "replaceRE": true, "json": true,
+	"fingerprint": true, "safeHTML": true, "url": true,
+}
+
 func (e *liquidEngine) AddFilter(name string, fn FilterFunc) error {
 	e.filters.funcs[name] = fn
+	// Novel filters need template pre-processing since they don't have
+	// exported methods on any registered filter struct for liquidgo's
+	// reflection-based dispatch.
+	if !knownLiquidFilters[name] {
+		e.dynamicFilters[name] = true
+	}
 	return nil
 }
 
@@ -174,6 +240,24 @@ type alloyFilterBridge struct {
 func (f *alloyFilterBridge) call(name string, input interface{}, args ...interface{}) interface{} {
 	if fn, ok := f.funcs[name]; ok {
 		return fn(input, args...)
+	}
+	return input
+}
+
+// PluginFilter dispatches novel/plugin filters that don't have their own
+// exported method on the bridge. Template pre-processing rewrites
+// {{ x | myFilter }} → {{ x | plugin_filter: "myFilter" }} so liquidgo
+// routes here via reflection. The first arg is the filter name.
+func (f *alloyFilterBridge) PluginFilter(input interface{}, args ...interface{}) interface{} {
+	if len(args) >= 1 {
+		if name, ok := args[0].(string); ok {
+			result := f.call(name, input, args[1:]...)
+			if result != nil {
+				return result
+			}
+			// Filter returned nil: fall back to input (passthrough).
+			return input
+		}
 	}
 	return input
 }
