@@ -13,6 +13,7 @@ type QuickJSRuntime struct {
 	initialized bool
 	filters     map[string]bool
 	shortcodes  map[string]bool
+	hooks       map[string]bool
 }
 
 // NewQuickJSRuntime creates a new QuickJS runtime instance.
@@ -21,6 +22,7 @@ func NewQuickJSRuntime() *QuickJSRuntime {
 	return &QuickJSRuntime{
 		filters:    make(map[string]bool),
 		shortcodes: make(map[string]bool),
+		hooks:      make(map[string]bool),
 	}
 }
 
@@ -115,6 +117,15 @@ func (r *QuickJSRuntime) RegisteredFilters() []string {
 func (r *QuickJSRuntime) RegisteredShortcodes() []string {
 	names := make([]string, 0, len(r.shortcodes))
 	for name := range r.shortcodes {
+		names = append(names, name)
+	}
+	return names
+}
+
+// RegisteredHooks returns the names of all hooks registered in the QuickJS context.
+func (r *QuickJSRuntime) RegisteredHooks() []string {
+	names := make([]string, 0, len(r.hooks))
+	for name := range r.hooks {
 		names = append(names, name)
 	}
 	return names

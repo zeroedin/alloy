@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -16,8 +17,14 @@ import (
 	"github.com/zeroedin/alloy/internal/output"
 	"github.com/zeroedin/alloy/internal/pagination"
 	"github.com/zeroedin/alloy/internal/permalink"
+	"github.com/zeroedin/alloy/internal/plugin"
 	"github.com/zeroedin/alloy/internal/template"
 )
+
+func pluginFixtureDir() string {
+	_, file, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(file), "..", "..", "internal", "plugin", "testdata", "single-files")
+}
 
 var _ = Describe("Cross-Cutting Integration", func() {
 
@@ -313,6 +320,69 @@ var _ = Describe("Cross-Cutting Integration", func() {
 			enTaxonomies := i18n.BuildTaxonomiesForLanguage("en", enPages)
 			Expect(enTaxonomies).To(HaveKey("tags"),
 				"English taxonomies must be built from English pages only")
+		})
+	})
+
+	// ── Plugin → template engine bridging (issue #93) ────────────────
+
+	Describe("Plugin → template engine bridging (issue #93)", func() {
+		It("plugin-discovered filters are bridgeable to template engine", func() {
+			// Simulate the pipeline contract: registry discovers filters,
+			// then pipeline registers them with the template engine.
+			engine := template.NewLiquidEngine()
+
+			// The bridge: for each plugin filter name, register a wrapper
+			// that routes calls through the QuickJS runtime
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(filepath.Join(pluginFixtureDir(), "plain.js"))).To(Succeed())
+
+			filters := rt.RegisteredFilters()
+			Expect(filters).NotTo(BeEmpty(),
+				"plugin must discover at least one filter")
+
+			// Bridge each discovered filter to the engine
+			for _, fname := range filters {
+				filterName := fname // capture for closure
+				err := engine.AddFilter(filterName, func(input interface{}, args ...interface{}) interface{} {
+					result, _ := rt.CallFilter(filterName, input, args...)
+					return result
+				})
+				Expect(err).NotTo(HaveOccurred(),
+					"plugin filter must register with template engine without error")
+			}
+
+			// Verify the filter is callable in a template
+			tmpl, err := engine.Parse("test", []byte("{{ content | wordCount }}"))
+			Expect(err).NotTo(HaveOccurred())
+			result, err := tmpl.Render(map[string]interface{}{"content": "one two three"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeEmpty(),
+				"plugin filter must produce output when called from template")
+		})
+
+		It("plugin-discovered hooks are registerable in HookRegistry", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(filepath.Join(pluginFixtureDir(), "hooks.js"))).To(Succeed())
+
+			hooks := rt.RegisteredHooks()
+			Expect(hooks).NotTo(BeEmpty(),
+				"plugin must discover at least one hook")
+
+			// Bridge: register each discovered hook in the HookRegistry
+			registry := plugin.NewHookRegistry()
+			for _, hookName := range hooks {
+				registry.Register(plugin.HookName(hookName), func(ctx context.Context, payload interface{}) (interface{}, error) {
+					return payload, nil // wrapper would route through runtime
+				})
+			}
+
+			// Verify the hook fires
+			result, err := registry.Run(plugin.OnContentTransformed, "test payload")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("test payload"),
+				"plugin-registered hook must execute through HookRegistry")
 		})
 	})
 })

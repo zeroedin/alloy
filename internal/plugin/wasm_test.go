@@ -63,6 +63,39 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 				"filter must return a non-nil result")
 		})
 
+		It("CallFilter returns transformed value, not passthrough", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(filepath.Join(testdataDir(), "single-files", "plain.js"))).To(Succeed())
+
+			result, err := rt.CallFilter("wordCount", "hello world foo")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(Equal("hello world foo"),
+				"CallFilter must transform the input, not return it unchanged")
+		})
+
+		It("parses alloy.hook() registrations from JS plugin", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(filepath.Join(testdataDir(), "single-files", "hooks.js"))).To(Succeed())
+
+			hooks := rt.RegisteredHooks()
+			Expect(hooks).NotTo(BeEmpty(),
+				"EvalFile must parse alloy.hook() calls and register hook names")
+			Expect(hooks).To(ContainElement("onContentTransformed"),
+				"alloy.hook('onContentTransformed', ...) must be discovered")
+		})
+
+		It("parses alloy.on() as alias for alloy.hook()", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(filepath.Join(testdataDir(), "single-files", "hooks.js"))).To(Succeed())
+
+			hooks := rt.RegisteredHooks()
+			Expect(hooks).To(ContainElement("onPageRendered"),
+				"alloy.on() must be treated as alias for alloy.hook()")
+		})
+
 		It("surfaces QuickJS error with plugin filename and line number", func() {
 			rt := plugin.NewQuickJSRuntime()
 			Expect(rt.Init()).To(Succeed())
