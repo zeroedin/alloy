@@ -392,6 +392,13 @@ if cfg.Languages != nil {
         // Apply output prefix to permalinks
         prefix := i18n.OutputPrefix(langCtx.Code, langCtx.Root)
         // prefix permalinks: page.URL = prefix + page.URL
+        //
+        // IMPORTANT (issue #113): permalink resolution must use the
+        // ORIGINAL relPath (without language prefix), not the prefixed
+        // one. The language prefix is added for translation linking,
+        // but DefaultFromPath("en/index.md") returns "/en/" instead of
+        // "/", causing double-prefixing for index pages. Resolve the
+        // permalink first, then prefix RelPath for translation linking.
 
         // Inject site.language into per-language site data copy
         langSiteData := copyMap(siteData)
@@ -540,7 +547,7 @@ The flag must be applied **after** config loading but **before** pipeline execut
 
 ## Phase 7: Integration Tests + Final (~16 tests)
 
-### 7A: `test/integration/` — 27 tests
+### 7A: `test/integration/` — 32 tests
 **Files**: `build_test.go`, `crosscutting_test.go`, `plugin_template_test.go`
 
 Cross-package integration paths that should mostly pass once pipeline works:
@@ -557,6 +564,7 @@ Cross-package integration paths that should mostly pass once pipeline works:
 - Plugin → HookRegistry hook bridging (issue #93)
 - Build cache → incremental build skip detection (issue #105)
 - Draft visibility → server mode → lifecycle filtering (issue #108)
+- i18n index page URL resolution without prefix doubling (issue #113)
 
 **Verify**: `go test ./... 2>&1 | grep -E "Passed|Failed"`
 

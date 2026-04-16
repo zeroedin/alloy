@@ -310,6 +310,34 @@ var _ = Describe("Cross-Cutting Integration", func() {
 			Expect(enTranslations[0].LangCode).To(Equal("fr"))
 		})
 
+		It("index pages get correct URL without language prefix doubling (issue #113)", func() {
+			langCfg := map[string]*config.LanguageConfig{
+				"en": {Title: "English Site", Weight: 1, Root: true},
+				"es": {Title: "Sitio Español", Weight: 2},
+			}
+			contexts, err := i18n.BuildLanguageContexts(langCfg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Simulate the pipeline's permalink resolution for index pages.
+			// The pipeline prefixes RelPath with language code for translation linking,
+			// then resolves the permalink, then adds the output prefix.
+			// Index pages must not get the language prefix doubled.
+
+			// Root language index: content/en/index.md → /
+			enPrefix := i18n.OutputPrefix("en", contexts[0].Root)
+			enIndexURL := permalink.DefaultFromPath("index.md") // resolve from ORIGINAL relPath
+			enFinalURL := "/" + enPrefix + strings.TrimPrefix(enIndexURL, "/")
+			Expect(enFinalURL).To(Equal("/"),
+				"root language index page must resolve to / (not /en/)")
+
+			// Non-root language index: content/es/index.md → /es/
+			esPrefix := i18n.OutputPrefix("es", contexts[1].Root)
+			esIndexURL := permalink.DefaultFromPath("index.md") // resolve from ORIGINAL relPath
+			esFinalURL := "/" + esPrefix + strings.TrimPrefix(esIndexURL, "/")
+			Expect(esFinalURL).To(Equal("/es/"),
+				"non-root language index page must resolve to /es/ (not /es/es/)")
+		})
+
 		It("per-language collections are scoped to language pages only", func() {
 			allPages := []*content.Page{
 				{RelPath: "en/blog/post.md", FrontMatter: map[string]interface{}{"lang": "en", "tags": []interface{}{"go"}}},
