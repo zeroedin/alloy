@@ -1948,29 +1948,44 @@ This distinction is intentional: CLI engines are external tools with their own c
 
 #### External CLI Engines (`ssr:` config)
 
-Alloy does **not** import any SSR engine as a Go dependency. External engines are CLI binaries that must be installed separately. The `ssr:` config tells Alloy what commands to run:
+Alloy does **not** import any SSR engine as a Go dependency. External engines are CLI binaries that must be installed separately. The `ssr:` config tells Alloy what render command to call:
 
 ```yaml
 # alloy.config.yaml
 ssr:
-  build: "golit transform _site/"
+  render: "golit render --defs bundles/"
+```
+
+**Per-instance rendering** — Alloy drives Phase 2 in memory. After scanning intermediate HTML for custom elements and deduplicating (see Phase 2 algorithm above), Alloy calls the `ssr.render` command **once per unique component instance**. The component's raw HTML is passed via stdin; the SSR'd HTML (with Declarative Shadow DOM) is returned via stdout:
+
+```
+echo '<ds-button variant="primary">Click Me</ds-button>' | golit render --defs bundles/
+```
+
+This is an in-memory pipeline — no files need to exist on disk for Phase 2. The render command receives a single component fragment and returns the SSR'd version. Alloy stamps the result back into the intermediate HTML, then proceeds to output writing.
+
+**`alloy build`** — For each unique component instance (after deduplication), Alloy invokes `ssr.render` and collects the SSR'd output. With ~100 unique instances across a 720-page site, this is ~100 render calls — not 720. Results are cached by component hash for incremental builds.
+
+**`alloy serve --preview`** — Same per-instance render model, but Alloy may keep the render process warm as a long-running subprocess for lower latency. The `serve` sub-config is optional and enables this:
+
+```yaml
+ssr:
+  render: "golit render --defs bundles/"
   serve:
     cmd: "golit serve --defs bundles/"
     endpoint: "http://localhost:9777/render"
 ```
 
-**`alloy build`** — Alloy runs the `ssr.build` command after Phase 1 writes `_site/`. The engine processes all HTML files in batch. Alloy waits for the process to exit before proceeding to `onBuildComplete`.
+When `ssr.serve` is configured, Alloy spawns the process at dev server launch and POSTs component fragments to the endpoint instead of invoking `ssr.render` per call. When not configured, Alloy falls back to calling `ssr.render` per instance (works, just slower).
 
-**`alloy serve --preview`** — Alloy spawns the `ssr.serve.cmd` process in the background when the dev server launches. For each page rebuilt incrementally, Alloy sends the intermediate HTML to the engine and receives SSR'd HTML back. Alloy manages the process lifecycle — starts it on launch, shuts it down on exit.
-
-The communication protocol depends on the engine:
-- **HTTP** — Alloy POSTs HTML to `ssr.serve.endpoint`, receives SSR'd HTML in the response body. Used by engines that expose an HTTP server (golit).
-- **stdio** — Alloy writes NUL-terminated HTML to the process's stdin, reads NUL-terminated SSR'd HTML from stdout. Used by engines with a stdin/stdout protocol (lit-ssr-wasm).
+The communication protocol for `serve` depends on the engine:
+- **HTTP** — Alloy POSTs the component HTML fragment to `ssr.serve.endpoint`, receives SSR'd HTML in the response body.
+- **stdio** — Alloy writes NUL-terminated component HTML to the process's stdin, reads NUL-terminated SSR'd HTML from stdout.
 
 ```yaml
 # stdio-based engine
 ssr:
-  build: "lit-ssr render --dir ./components/ _site/**/*.html"
+  render: "lit-ssr render --dir ./components/"
   serve:
     cmd: "lit-ssr --dir ./components/"
     protocol: "stdio"
@@ -1979,12 +1994,22 @@ ssr:
 If the engine binary is not found:
 
 ```
-[alloy] ERROR SSR build command failed: "golit" not found in PATH.
+[alloy] ERROR SSR render command failed: "golit" not found in PATH.
         Install golit or remove the ssr: block from alloy.config.yaml.
         Build aborted.
 ```
 
-Everything else — component discovery, ignore lists, import maps, concurrency — is configured by the engine's own config (e.g., `golit.yaml`). Alloy doesn't proxy engine settings.
+Everything else — component discovery, ignore lists, import maps, concurrency — is configured by the engine's own config (e.g., `golit.yaml`). Alloy doesn't validate or proxy engine settings — if the render command returns an error, Alloy surfaces it and aborts.
+
+#### Alternative: batch post-processing
+
+Some SSR engines also offer a batch transform mode that processes all HTML files on disk at once (e.g., `golit transform _site/`). This is **not** Alloy's Phase 2 — it bypasses deduplication, caching, and in-memory stamp-back. Users who prefer this workflow can run it as a post-build step:
+
+```bash
+alloy build && golit transform _site/
+```
+
+Or via an `onBuildComplete` plugin hook. Alloy's `ssr:` config is exclusively for the per-instance render model described above.
 
 ---
 
@@ -1996,15 +2021,15 @@ Everything else — component discovery, ignore lists, import maps, concurrency 
 
 ```yaml
 ssr:
-  build: "golit transform _site/"
+  render: "golit render --defs bundles/"
   serve:
     cmd: "golit serve --defs bundles/"
     endpoint: "http://localhost:9777/render"
 ```
 
-**`alloy build`** — shells out to `golit transform _site/`. golit reads the HTML files, discovers components, renders them with Declarative Shadow DOM, and writes the files back in-place. ~400ms cold start, processes all files in parallel via internal engine pool.
+**`alloy build`** — For each unique component instance, Alloy pipes the raw element HTML to `golit render --defs bundles/` via stdin. golit renders the component with Declarative Shadow DOM and writes the SSR'd HTML to stdout. Alloy stamps each result back into the intermediate HTML in memory.
 
-**`alloy serve --preview`** — Alloy starts `golit serve` in the background. golit keeps a warm renderer behind `POST /render`. Alloy POSTs each page's intermediate HTML and gets SSR'd HTML back — <1ms per render.
+**`alloy serve --preview`** — Alloy starts `golit serve` in the background. golit keeps a warm renderer behind `POST /render`. Alloy POSTs each component fragment and gets SSR'd HTML back — <1ms per render.
 
 **Component discovery** — golit has four modes, all managed by its own config:
 
@@ -2017,8 +2042,7 @@ ssr:
 
 ```yaml
 # golit.yaml — golit's own config, NOT part of alloy.config.yaml
-transform:
-  input: _site/              # HTML directory to process (Alloy's output)
+render:
   importmap: importmap.json  # import map for component resolution
   ignore:                    # components to skip during SSR
     - rh-tooltip
@@ -2568,13 +2592,13 @@ func BenchmarkBuild1000Pages(b *testing.B) {
 - [ ] i18n / multilingual (opt-in via `languages:` config, per-language content trees, shared layouts, translation linking)
 
 ### Phase 3 — SSR Pipeline (External Engine Integration)
-- [ ] SSR config parser (`ssr.build` and `ssr.serve` commands)
+- [ ] SSR config parser (`ssr.render` and `ssr.serve` commands)
 - [ ] Phase 2 orchestrator: scan intermediate HTML for custom elements
 - [ ] Component instance deduplication (hash by tag + attributes, slot content excluded)
 - [ ] Component dependency map (`.alloy/components.json`, scan SSR output for nested components)
 - [ ] SSR cache: skip re-SSR for unchanged component instances
 - [ ] Declarative Shadow DOM stamp-back (marker comments, insert `<template shadowrootmode>`)
-- [ ] Build mode: shell out to `ssr.build` command after Phase 1
+- [ ] Build mode: pipe component instances to `ssr.render` command via stdin/stdout (per-instance, in memory)
 - [ ] Serve mode: manage `ssr.serve.cmd` subprocess lifecycle (start on serve, kill on exit)
 - [ ] HTTP protocol support (`ssr.serve.endpoint` — POST body in, HTML out)
 - [ ] Stdio protocol support (`ssr.serve.protocol: "stdio"` — NUL-delimited)
