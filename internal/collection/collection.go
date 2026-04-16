@@ -3,6 +3,7 @@ package collection
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -43,6 +44,9 @@ func BuildCollections(pages []*content.Page, permalinkCfg map[string]string) map
 		if !dateSections[page.Section] {
 			continue
 		}
+		if isSectionIndex(page.RelPath, page.Section) {
+			continue
+		}
 		c, ok := collections[page.Section]
 		if !ok {
 			c = &Collection{Name: page.Section}
@@ -52,6 +56,16 @@ func BuildCollections(pages []*content.Page, permalinkCfg map[string]string) map
 	}
 
 	return collections
+}
+
+// isSectionIndex returns true if the page is a section-level index file
+// (e.g., blog/index.md) as opposed to a page bundle index file
+// (e.g., blog/second-post/index.md). Section indexes are containers,
+// not collection members. Page bundles ARE collection members.
+func isSectionIndex(relPath string, section string) bool {
+	base := filepath.Base(relPath)
+	name := strings.TrimSuffix(base, filepath.Ext(base))
+	return name == "index" && filepath.Dir(relPath) == section
 }
 
 // containsDateToken checks if a pattern has :year, :month, or :day.
@@ -221,6 +235,9 @@ func buildCollectionsIncludeAll(pages []*content.Page, permalinkCfg map[string]s
 	collections := make(map[string]*Collection)
 	for _, page := range pages {
 		if !dateSections[page.Section] {
+			continue
+		}
+		if isSectionIndex(page.RelPath, page.Section) {
 			continue
 		}
 		c, ok := collections[page.Section]
