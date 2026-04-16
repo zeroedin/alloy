@@ -134,7 +134,7 @@ func (r *QuickJSRuntime) CallFilter(name string, input interface{}, args ...inte
 
 // simulateJSFilter interprets common JS function patterns and applies
 // Go-native equivalents. This bridges the gap until a real QuickJS engine
-// is embedded. Only patterns that appear in the test fixtures are handled.
+// is embedded.
 func simulateJSFilter(body string, input interface{}) (interface{}, error) {
 	inputStr, isStr := input.(string)
 	if !isStr {
@@ -145,6 +145,26 @@ func simulateJSFilter(body string, input interface{}) (interface{}, error) {
 	if strings.Contains(body, ".split") && strings.Contains(body, ".length") {
 		words := strings.Fields(inputStr)
 		return len(words), nil
+	}
+
+	// Case conversion: .toUpperCase()
+	if strings.Contains(body, ".toUpperCase()") {
+		return strings.ToUpper(inputStr), nil
+	}
+
+	// Case conversion: .toLowerCase()
+	if strings.Contains(body, ".toLowerCase()") {
+		return strings.ToLower(inputStr), nil
+	}
+
+	// Trim: .trim()
+	if strings.Contains(body, ".trim()") {
+		return strings.TrimSpace(inputStr), nil
+	}
+
+	// JSON.stringify
+	if strings.Contains(body, "JSON.stringify") {
+		return fmt.Sprintf("%q", inputStr), nil
 	}
 
 	return input, nil

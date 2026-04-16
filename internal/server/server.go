@@ -358,6 +358,15 @@ func (s *Server) SetNoDrafts(noDrafts bool) {
 	s.noDrafts = noDrafts
 }
 
+// Serve404Page reads 404.html from the output root and returns its contents.
+// Returns an error if the file does not exist, allowing the caller to fall
+// back to Go's default http.NotFound() response.
+// TODO(issue #109): inject WebSocket reload script in dev mode.
+func (s *Server) Serve404Page(outputDir string) ([]byte, error) {
+	notFoundPath := filepath.Join(outputDir, "404.html")
+	return os.ReadFile(notFoundPath)
+}
+
 // InjectOverlay wraps the response HTML with the error overlay when there are
 // active build errors. Only applies in dev mode.
 func (s *Server) InjectOverlay(html []byte, overlay *OverlayState) ([]byte, error) {

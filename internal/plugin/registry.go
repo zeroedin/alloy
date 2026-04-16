@@ -45,6 +45,7 @@ type Registry struct {
 	plugins         []PluginInfo
 	filterRegistry  map[string]string // filter name → source
 	conflictWarns   []string
+	runtimes        []*QuickJSRuntime // loaded QuickJS runtimes for filter bridging
 }
 
 // NewRegistry creates a plugin registry for the given plugins directory.
@@ -119,6 +120,11 @@ func (r *Registry) RegisterFilter(name, source string) {
 			fmt.Sprintf("filter %q conflict: registered by %s and %s", name, existing, source))
 	}
 	r.filterRegistry[name] = source
+}
+
+// Runtimes returns all loaded QuickJS runtimes for filter bridging.
+func (r *Registry) Runtimes() []*QuickJSRuntime {
+	return r.runtimes
 }
 
 // ClassifyPlugin determines the tier and runtime for a plugin file based on
@@ -196,6 +202,7 @@ func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
 			for _, fname := range rt.RegisteredFilters() {
 				r.RegisterFilter(fname, "plugins/"+p.Name)
 			}
+			r.runtimes = append(r.runtimes, rt)
 		case RuntimeWASM:
 			rt := NewWASMRuntime()
 			if err := rt.LoadModule(p.Path); err != nil {

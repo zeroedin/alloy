@@ -73,22 +73,25 @@ func newServeCommand() *cobra.Command {
 				}
 			}
 
-			// Initial build per spec §9 step 2
-			if _, err := pipeline.Build(cfg); err != nil {
-				log.Printf("warning: initial build failed: %v", err)
-			}
-
-			// Determine server mode
+			// Determine server mode early — needed before initial build for draft inclusion
 			preview, _ := cmd.Flags().GetBool("preview")
 			mode := server.ModeDev
 			if preview {
 				mode = server.ModePreview
 			}
+			noDrafts, _ := cmd.Flags().GetBool("no-drafts")
+
+			// Dev mode includes drafts unless --no-drafts; preview excludes them
+			cfg.IncludeDrafts = mode == server.ModeDev && !noDrafts
+
+			// Initial build per spec §9 step 2
+			if _, err := pipeline.Build(cfg); err != nil {
+				log.Printf("warning: initial build failed: %v", err)
+			}
 
 			srv := server.NewWithMode(cfg, mode)
 
 			// Apply --no-drafts flag
-			noDrafts, _ := cmd.Flags().GetBool("no-drafts")
 			srv.SetNoDrafts(noDrafts)
 
 			// Parse port
