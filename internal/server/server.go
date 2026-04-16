@@ -39,6 +39,7 @@ type Server struct {
 	listener   net.Listener
 	done       chan struct{} // closed when the server stops
 	port       int           // actual port the server is listening on
+	overlay    *OverlayState // error overlay state for dev mode
 
 	// WebSocket live-reload clients
 	wsClients map[*websocket.Conn]struct{}
@@ -48,24 +49,31 @@ type Server struct {
 // New creates a new Server with the given config in dev mode.
 func New(cfg *config.Config) *Server {
 	return &Server{
-		config: cfg,
-		mode:   ModeDev,
-		pages:  make(map[string][]byte),
+		config:  cfg,
+		mode:    ModeDev,
+		pages:   make(map[string][]byte),
+		overlay: NewOverlayState(),
 	}
 }
 
 // NewWithMode creates a new Server with the given config and explicit mode.
 func NewWithMode(cfg *config.Config, mode ServerMode) *Server {
 	return &Server{
-		config: cfg,
-		mode:   mode,
-		pages:  make(map[string][]byte),
+		config:  cfg,
+		mode:    mode,
+		pages:   make(map[string][]byte),
+		overlay: NewOverlayState(),
 	}
 }
 
 // Mode returns the current server operating mode.
 func (s *Server) Mode() ServerMode {
 	return s.mode
+}
+
+// Overlay returns the server's error overlay state.
+func (s *Server) Overlay() *OverlayState {
+	return s.overlay
 }
 
 // ShouldRunSSR returns true if the server should execute the Phase 2 SSR
@@ -184,13 +192,22 @@ func (s *Server) serveFileWithReload(w http.ResponseWriter, r *http.Request, fil
 		return
 	}
 
-	html := string(data)
-	if idx := strings.LastIndex(html, "</body>"); idx >= 0 {
-		html = html[:idx] + liveReloadScript + html[idx:]
+	htmlStr := string(data)
+
+	// Inject error overlay if there are active build errors
+	if s.overlay.HasErrors() {
+		overlayHTML := RenderOverlay(s.overlay.Errors())
+		if idx := strings.LastIndex(htmlStr, "</body>"); idx >= 0 {
+			htmlStr = htmlStr[:idx] + overlayHTML + htmlStr[idx:]
+		}
+	}
+
+	if idx := strings.LastIndex(htmlStr, "</body>"); idx >= 0 {
+		htmlStr = htmlStr[:idx] + liveReloadScript + htmlStr[idx:]
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(html))
+	w.Write([]byte(htmlStr))
 }
 
 // handleWebSocket upgrades an HTTP connection to a WebSocket for live reload.
