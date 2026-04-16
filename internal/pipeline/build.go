@@ -18,6 +18,7 @@ import (
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/data"
+	"github.com/zeroedin/alloy/internal/i18n"
 	"github.com/zeroedin/alloy/internal/output"
 	"github.com/zeroedin/alloy/internal/pagination"
 	"github.com/zeroedin/alloy/internal/permalink"
@@ -105,37 +106,87 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		setter.SetIncludesDir(resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts))
 	}
 
-	// Discover content
+	// Discover content — i18n-aware when languages are configured (spec §1i)
 	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
-	pages, err := content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
-	if err != nil {
-		// Stage 2: Handle missing content directory gracefully
-		if errors.Is(err, fs.ErrNotExist) {
-			return &BuildResult{
-				OutputDir:  cfg.Build.Output,
-				PageCount:  0,
-				Duration:   time.Since(start),
-				SSRSkipped: cfg.SSR == nil,
-			}, nil
-		}
-		return nil, fmt.Errorf("content discovery: %w", err)
-	}
+	var langContexts []i18n.LanguageContext
+	var pages []*content.Page
 
-	// Filter by lifecycle (draft/publish/expiry)
-	pages = content.FilterByLifecycle(pages, time.Now(), false)
+	if len(cfg.Languages) > 0 {
+		// Multi-language build: discover from each language's content subtree
+		var langErr error
+		langContexts, langErr = i18n.BuildLanguageContexts(cfg.Languages)
+		if langErr != nil {
+			return nil, fmt.Errorf("i18n setup: %w", langErr)
+		}
+
+		langCodes := make([]string, len(langContexts))
+		for idx, lc := range langContexts {
+			langCodes[idx] = lc.Code
+		}
+
+		for _, lc := range langContexts {
+			langContentDir := filepath.Join(contentDir, lc.Code)
+			langPages, err := content.DiscoverWithFormats(langContentDir, cfg.Content.Formats)
+			if err != nil {
+				if errors.Is(err, fs.ErrNotExist) {
+					continue // Language content tree doesn't exist — skip
+				}
+				return nil, fmt.Errorf("content discovery (%s): %w", lc.Code, err)
+			}
+			prefix := i18n.OutputPrefix(lc.Code, lc.Root)
+			for _, page := range langPages {
+				page.FrontMatter["lang"] = lc.Code
+				// Prefix RelPath with lang code for translation linking
+				page.RelPath = lc.Code + "/" + page.RelPath
+			}
+			// Apply output prefix to URLs after permalink resolution
+			langPages = content.FilterByLifecycle(langPages, time.Now(), false)
+			for _, page := range langPages {
+				url, err := permalink.ResolveForSection(page, cfg.Permalinks)
+				if err != nil {
+					return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
+				}
+				page.URL = "/" + prefix + strings.TrimPrefix(url, "/")
+			}
+			pages = append(pages, langPages...)
+		}
+
+		// Link translations across language trees
+		if err := i18n.LinkTranslations(pages, langCodes); err != nil {
+			log.Printf("warning: translation linking: %v", err)
+		}
+	} else {
+		// Single-language build: discover from the content directory directly
+		var err error
+		pages, err = content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return &BuildResult{
+					OutputDir:  cfg.Build.Output,
+					PageCount:  0,
+					Duration:   time.Since(start),
+					SSRSkipped: cfg.SSR == nil,
+				}, nil
+			}
+			return nil, fmt.Errorf("content discovery: %w", err)
+		}
+
+		// Filter by lifecycle (draft/publish/expiry)
+		pages = content.FilterByLifecycle(pages, time.Now(), false)
+
+		// Stage 3: Resolve permalinks
+		for _, page := range pages {
+			url, err := permalink.ResolveForSection(page, cfg.Permalinks)
+			if err != nil {
+				return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
+			}
+			page.URL = url
+		}
+	}
 
 	// Fire onContentLoaded hook — plugins can inspect/modify discovered pages
 	if _, err := hooks.RunWithTimeout(plugin.OnContentLoaded, pages); err != nil {
 		return nil, fmt.Errorf("plugin hook onContentLoaded: %w", err)
-	}
-
-	// Stage 3: Resolve permalinks
-	for _, page := range pages {
-		url, err := permalink.ResolveForSection(page, cfg.Permalinks)
-		if err != nil {
-			return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
-		}
-		page.URL = url
 	}
 
 	// Load directory data cascade (_data.yaml files)
@@ -187,7 +238,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 	pages = processPagination(pages, cfg, siteData, collectionsCtx)
 
 	// Stage 4: Render each page (with engine for custom filter support)
-	rendered, renderErr := renderPages(pages, cfg, siteData, collectionsCtx, engine)
+	rendered, renderErr := renderPages(pages, cfg, siteData, collectionsCtx, engine, langContexts)
 	if renderErr != nil {
 		return nil, renderErr
 	}
@@ -221,7 +272,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			return nil, fmt.Errorf("parsing layout %s: %w", layoutPath, err)
 		}
 
-		tc := tmpl.BuildTemplateContext(page, combinedSiteData(cfg, siteData), pages, collectionsCtx, nil, "")
+		tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, siteData, langContexts, page), pages, collectionsCtx, nil, "")
 		ctx := tc.ToMap()
 		ctx["content"] = string(page.RenderedBody) // spec §6 step 14: top-level {{ content }} for layouts
 		layoutResult, err := tpl.Render(ctx)
@@ -231,7 +282,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		page.RenderedBody = layoutResult
 
 		// Multi-format output: render additional formats (spec §1e)
-		if err := renderPageFormats(page, layoutsDir, engineName, engine, cfg, siteData, pages, collectionsCtx); err != nil {
+		if err := renderPageFormats(page, layoutsDir, engineName, engine, cfg, siteData, langContexts, pages, collectionsCtx); err != nil {
 			return nil, err
 		}
 	}
@@ -266,7 +317,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 
 			taxPages := collection.GenerateTaxonomyPages(tc, taxCfg)
 			for _, taxPage := range taxPages {
-				ctx := tmpl.BuildTemplateContext(taxPage, combinedSiteData(cfg, siteData), pages, collectionsCtx, nil, "").ToMap()
+				ctx := tmpl.BuildTemplateContext(taxPage, combinedSiteDataForPage(cfg, siteData, langContexts, taxPage), pages, collectionsCtx, nil, "").ToMap()
 				term := ""
 				if taxPage.Kind == "taxonomy_term" {
 					if t, ok := taxPage.FrontMatter["title"].(string); ok {
@@ -281,7 +332,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 				}
 				taxPage.RenderedBody = out
 				// Multi-format output for taxonomy pages (spec §1e)
-				if err := renderPageFormats(taxPage, layoutsDir, engineName, engine, cfg, siteData, pages, collectionsCtx); err != nil {
+				if err := renderPageFormats(taxPage, layoutsDir, engineName, engine, cfg, siteData, langContexts, pages, collectionsCtx); err != nil {
 					return nil, err
 				}
 				pages = append(pages, taxPage)
@@ -506,7 +557,7 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildR
 	}
 
 	// Render each page (no data files, collections, or engine in injected content mode)
-	rendered, renderErr := renderPages(pages, cfg, nil, nil, nil)
+	rendered, renderErr := renderPages(pages, cfg, nil, nil, nil, nil)
 	if renderErr != nil {
 		return nil, renderErr
 	}
@@ -597,7 +648,7 @@ func BuildPhase2(intermediateHTML map[string]string, ssrCfg *config.SSRConfig) (
 // When engine is non-nil, it is used for template rendering (with custom filters).
 // When engine is nil (BuildWithContent path), the standalone RenderTemplate is
 // used with strict filters to catch undefined filter usage in tests.
-func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]interface{}, collectionsCtx map[string]interface{}, engine tmpl.TemplateEngine) ([]string, error) {
+func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]interface{}, collectionsCtx map[string]interface{}, engine tmpl.TemplateEngine, langContexts []i18n.LanguageContext) ([]string, error) {
 	mdOpts := content.MarkdownOptions{
 		Unsafe:       cfg.Content.Markdown.Goldmark.Unsafe,
 		Typographer:  cfg.Content.Markdown.Goldmark.Typographer,
@@ -635,7 +686,7 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 
 		// Step 2: Render template tags with full page/site context.
 		if hasTemplateSyntax(html) {
-			tc := tmpl.BuildTemplateContext(page, combinedSiteData(cfg, siteData), pages, collectionsCtx, nil, "")
+			tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, siteData, langContexts, page), pages, collectionsCtx, nil, "")
 			tc.Content = string(html)
 			ctx := tc.ToMap()
 			if engine != nil {
@@ -803,13 +854,36 @@ func hasTemplateSyntax(body []byte) bool {
 
 // combinedSiteData builds the site data map expected by BuildTemplateContext,
 // combining config-level fields (title, baseURL) with data/ directory files.
-func combinedSiteData(cfg *config.Config, siteData map[string]interface{}) map[string]interface{} {
+// When langContexts is provided and the page has a "lang" front matter key,
+// language-specific data is injected (site.language, site.title override).
+func combinedSiteData(cfg *config.Config, siteData map[string]interface{}, langContexts ...[]i18n.LanguageContext) map[string]interface{} {
 	m := map[string]interface{}{
 		"title":   cfg.Title,
 		"baseURL": cfg.BaseURL,
 	}
 	if siteData != nil {
 		m["data"] = siteData
+	}
+	return m
+}
+
+// combinedSiteDataForPage returns site data with language-specific overrides
+// when i18n is active. Falls back to combinedSiteData for single-language builds.
+func combinedSiteDataForPage(cfg *config.Config, siteData map[string]interface{}, langContexts []i18n.LanguageContext, page *content.Page) map[string]interface{} {
+	m := combinedSiteData(cfg, siteData)
+	if len(langContexts) == 0 || page == nil {
+		return m
+	}
+	langCode, _ := page.FrontMatter["lang"].(string)
+	if langCode == "" {
+		return m
+	}
+	for _, lc := range langContexts {
+		if lc.Code == langCode {
+			m["language"] = i18n.LanguageData(lc)
+			m["title"] = i18n.LanguageSiteTitle(cfg.Title, cfg.Languages[langCode])
+			break
+		}
 	}
 	return m
 }
@@ -824,7 +898,7 @@ func formatOutputPath(htmlPath string, format string) string {
 // For each non-HTML format in page.Outputs, resolves a format-specific layout,
 // renders through it, and stores the result in page.FormatBodies.
 // Returns a build error if a declared format has no matching layout.
-func renderPageFormats(page *content.Page, layoutsDir, engineName string, engine tmpl.TemplateEngine, cfg *config.Config, siteData map[string]interface{}, pages []*content.Page, collectionsCtx map[string]interface{}) error {
+func renderPageFormats(page *content.Page, layoutsDir, engineName string, engine tmpl.TemplateEngine, cfg *config.Config, siteData map[string]interface{}, langContexts []i18n.LanguageContext, pages []*content.Page, collectionsCtx map[string]interface{}) error {
 	if len(page.Outputs) <= 1 {
 		return nil
 	}
@@ -845,7 +919,7 @@ func renderPageFormats(page *content.Page, layoutsDir, engineName string, engine
 		if err != nil {
 			return fmt.Errorf("parsing format layout %s: %w", fmtLayoutPath, err)
 		}
-		fmtCtx := tmpl.BuildTemplateContext(page, combinedSiteData(cfg, siteData), pages, collectionsCtx, nil, "").ToMap()
+		fmtCtx := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, siteData, langContexts, page), pages, collectionsCtx, nil, "").ToMap()
 		fmtCtx["content"] = string(page.RenderedBody)
 		fmtResult, err := fmtTpl.Render(fmtCtx)
 		if err != nil {
