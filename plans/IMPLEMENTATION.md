@@ -264,7 +264,7 @@ Key points:
  1. config.ApplyDefaults(cfg)                           ✅ done
  2. validateOutputDir(cfg)                               ✅ done
  3. content.DiscoverWithFormats(contentDir, formats)      ✅ done
- 4. content.FilterByLifecycle(pages, now, false)          ✅ done
+ 4. content.FilterByLifecycle(pages, now, includeDrafts)  ✅ done (issue #108: must pass includeDrafts from server mode, not hardcode false)
  5. permalink.ResolveForSection(page, cfg.Permalinks)     ✅ done
  6. cascade.LoadDirectoryCascade + FindCascadeData + PageContext ✅ done
  7. data.LoadDirectory(dataDir) → siteData                ✅ done
@@ -523,7 +523,7 @@ The flag must be applied **after** config loading but **before** pipeline execut
 
 ## Phase 7: Integration Tests + Final (~16 tests)
 
-### 7A: `test/integration/` — 25 tests
+### 7A: `test/integration/` — 27 tests
 **Files**: `build_test.go`, `crosscutting_test.go`, `plugin_template_test.go`
 
 Cross-package integration paths that should mostly pass once pipeline works:
@@ -537,6 +537,7 @@ Cross-package integration paths that should mostly pass once pipeline works:
 - Filter integration with both Liquid and Go engines
 - Plugin → template engine filter bridging (issue #93)
 - Plugin → HookRegistry hook bridging (issue #93)
+- Draft visibility → server mode → lifecycle filtering (issue #108)
 
 **Verify**: `go test ./... 2>&1 | grep -E "Passed|Failed"`
 
