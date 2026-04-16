@@ -44,7 +44,7 @@ func BuildCollections(pages []*content.Page, permalinkCfg map[string]string) map
 		if !dateSections[page.Section] {
 			continue
 		}
-		if isIndexFile(page.RelPath) {
+		if isSectionIndex(page.RelPath, page.Section) {
 			continue
 		}
 		c, ok := collections[page.Section]
@@ -58,12 +58,14 @@ func BuildCollections(pages []*content.Page, permalinkCfg map[string]string) map
 	return collections
 }
 
-// isIndexFile returns true if the page's RelPath is a section index file
-// (e.g., blog/index.md). Section index pages are containers, not members.
-func isIndexFile(relPath string) bool {
+// isSectionIndex returns true if the page is a section-level index file
+// (e.g., blog/index.md) as opposed to a page bundle index file
+// (e.g., blog/second-post/index.md). Section indexes are containers,
+// not collection members. Page bundles ARE collection members.
+func isSectionIndex(relPath string, section string) bool {
 	base := filepath.Base(relPath)
 	name := strings.TrimSuffix(base, filepath.Ext(base))
-	return name == "index"
+	return name == "index" && filepath.Dir(relPath) == section
 }
 
 // containsDateToken checks if a pattern has :year, :month, or :day.
@@ -235,7 +237,7 @@ func buildCollectionsIncludeAll(pages []*content.Page, permalinkCfg map[string]s
 		if !dateSections[page.Section] {
 			continue
 		}
-		if isIndexFile(page.RelPath) {
+		if isSectionIndex(page.RelPath, page.Section) {
 			continue
 		}
 		c, ok := collections[page.Section]
