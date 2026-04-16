@@ -359,12 +359,26 @@ func (s *Server) SetNoDrafts(noDrafts bool) {
 }
 
 // Serve404Page reads 404.html from the output root and returns its contents.
+// In dev mode, injects the live-reload WebSocket script before </body> so
+// the 404 page auto-reloads when the user fixes a broken route.
 // Returns an error if the file does not exist, allowing the caller to fall
 // back to Go's default http.NotFound() response.
-// TODO(issue #109): inject WebSocket reload script in dev mode.
 func (s *Server) Serve404Page(outputDir string) ([]byte, error) {
 	notFoundPath := filepath.Join(outputDir, "404.html")
-	return os.ReadFile(notFoundPath)
+	data, err := os.ReadFile(notFoundPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if s.mode == ModeDev {
+		html := string(data)
+		if idx := strings.LastIndex(html, "</body>"); idx >= 0 {
+			html = html[:idx] + liveReloadScript + html[idx:]
+		}
+		return []byte(html), nil
+	}
+
+	return data, nil
 }
 
 // InjectOverlay wraps the response HTML with the error overlay when there are
