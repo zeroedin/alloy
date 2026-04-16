@@ -380,7 +380,7 @@ The user can change the segment word (`path: "p"` → `/articles/p/2/`, `path: "
 Templates with pagination receive a `pagination` object:
 
 ```liquid
-{{ pagination.pageNumber }}    -- current page (0-indexed)
+{{ pagination.pageNumber }}    -- current page (1-based)
 {{ pagination.totalPages }}    -- total page count
 {{ pagination.previousPage }}  -- URL of previous page (nil if first)
 {{ pagination.nextPage }}      -- URL of next page (nil if last)
@@ -1238,7 +1238,7 @@ Every template receives:
 Paginated pages additionally receive:
 
 ```liquid
-{{ pagination.pageNumber }}    -- current page (0-indexed)
+{{ pagination.pageNumber }}    -- current page (1-based)
 {{ pagination.totalPages }}    -- total page count
 {{ pagination.previousPage }}  -- URL of previous page (nil if first)
 {{ pagination.nextPage }}      -- URL of next page (nil if last)

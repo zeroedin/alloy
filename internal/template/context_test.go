@@ -115,7 +115,7 @@ var _ = Describe("Template Context Shape (§3)", func() {
 
 	It("{{ pagination.* }} is available on paginated pages", func() {
 		pagCtx := &pagination.PaginationContext{
-			PageNumber:   0,
+			PageNumber:   1,
 			TotalPages:   3,
 			PreviousPage: "",
 			NextPage:     "/articles/page/2/",
@@ -126,7 +126,7 @@ var _ = Describe("Template Context Shape (§3)", func() {
 		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, pagCtx, "articles")
 		Expect(ctx).NotTo(BeNil())
 		Expect(ctx.Pagination).NotTo(BeNil())
-		Expect(ctx.Pagination.PageNumber).To(Equal(0))
+		Expect(ctx.Pagination.PageNumber).To(Equal(1))
 		Expect(ctx.Pagination.TotalPages).To(Equal(3))
 		Expect(ctx.Pagination.NextPage).To(Equal("/articles/page/2/"))
 		Expect(ctx.Pagination.PreviousPage).To(BeEmpty(),
@@ -139,7 +139,7 @@ var _ = Describe("Template Context Shape (§3)", func() {
 			map[string]interface{}{"title": "Post B"},
 		}
 		pagCtx := &pagination.PaginationContext{
-			PageNumber: 0,
+			PageNumber: 1,
 			TotalPages: 1,
 			Items:      items,
 		}
@@ -163,7 +163,7 @@ var _ = Describe("Template Context Shape (§3)", func() {
 	It("pagination with per-item pages sets single-item Items", func() {
 		item := map[string]interface{}{"name": "Alice", "slug": "alice"}
 		pagCtx := &pagination.PaginationContext{
-			PageNumber: 0,
+			PageNumber: 1,
 			TotalPages: 5,
 			Items:      []interface{}{item},
 			First:      "/team/alice/",
