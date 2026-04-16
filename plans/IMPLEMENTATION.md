@@ -227,7 +227,7 @@ Key points:
 
 ---
 
-## Phase 4: Template Engines + Pipeline = Walking Skeleton (~56 tests)
+## Phase 4: Template Engines + Pipeline = Walking Skeleton (~57 tests)
 
 ### 4A: Liquid Engine (~20 tests)
 **File**: `internal/template/liquid.go`
@@ -248,11 +248,17 @@ Key points:
 - `CopyStatic`/`CopyPassthrough`: Walk and copy preserving structure
 - `CopyPassthroughWithValidation(mappings, projectRoot, outputDir, managedDirs)`: Same as `CopyPassthrough`, but silently skips any mapping where the `from` path resolves to a managed directory (content, layouts, assets, static, data). Prevents passthrough configs from accidentally overwriting managed content.
 
-### 4D: `internal/pipeline` — 18 tests
+### 4D: `internal/pipeline` — 19 tests
 **File**: `internal/pipeline/build.go`
 
 - `BuildWithContent`: Accept injected content, render through pipeline. Error messages must contain source file path + "template rendering" stage.
-- `BuildPhase1`/`BuildPhase2`: Phase separation. Phase 2 executes the external `ssr.build` command (from `config.SSRConfig.Build`) via `os/exec`. Alloy does NOT perform local SSR transforms — it shells out to the configured SSR engine (golit, lit-ssr-wasm, etc.) and lets the engine produce Declarative Shadow DOM. If the command fails or is not found, `BuildPhase2` must return an error (no silent fallback).
+- `BuildPhase1`/`BuildPhase2`: Phase separation. Phase 2 operates entirely in memory:
+  1. Scan intermediate HTML for custom element tags (anything with a hyphen)
+  2. Deduplicate instances by `hash(tag + attributes)` — slot content excluded
+  3. For each unique instance, pipe the raw element HTML to the `ssr.render` command (`config.SSRConfig.Render`) via stdin, read SSR'd HTML from stdout
+  4. Stamp SSR'd output back into intermediate HTML (insert `<template shadowrootmode>` inside element, before light DOM children)
+  - The render command is invoked per unique instance via `os/exec` — no files on disk needed. This is NOT a batch disk transform.
+  - If the render command fails or is not found, `BuildPhase2` must return an error (no silent fallback).
 - **`validateOutputDir`** (issue #9): Uses path equality + parent/child overlap detection (not substring matching). Only rejects exact matches (`output == content`) and nesting (`output = content/build` or `content` inside `output`). Names like `my_content_site` are valid output directories.
 - **Render ordering** (issue #10): Markdown renders first, then template tags — per spec §6 steps 3-4. Goldmark's TemplateTags extension preserves `{{ }}`/`{% %}` through markdown rendering. After markdown rendering and before Liquid processing, `escapeTemplateTagsInCode` converts template tags inside `<code>` elements to HTML entities so Liquid ignores them (issue #46). Markdown errors use stage name `"content transformation"`, template errors use `"template rendering"`.
 

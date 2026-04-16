@@ -131,7 +131,7 @@ This is a comprehensive TDD audit of the Alloy static site generator. The projec
 - **Missing**: Alias output (same content written to multiple paths)
 
 #### `internal/ssr/`
-- **Missing**: SSR config parsing (`ssr.build`, `ssr.serve.cmd`, `ssr.serve.endpoint`)
+- **Missing**: SSR config parsing (`ssr.render`, `ssr.serve.cmd`, `ssr.serve.endpoint`)
 - **Missing**: HTTP protocol integration (POST HTML -> receive SSR'd HTML)
 - **Missing**: stdio protocol integration (NUL-terminated HTML over stdin/stdout)
 - **Missing**: Cache key: `hash(tag + sorted_attributes + component_definition_hash)`
