@@ -127,6 +127,14 @@ func (r *Registry) Runtimes() []*QuickJSRuntime {
 	return r.runtimes
 }
 
+// Close releases resources held by all loaded QuickJS runtimes.
+func (r *Registry) Close() {
+	for _, rt := range r.runtimes {
+		rt.Close()
+	}
+	r.runtimes = nil
+}
+
 // ClassifyPlugin determines the tier and runtime for a plugin file based on
 // its extension and (for .js/.ts files) whether it exports runtime: "node".
 func ClassifyPlugin(path string) (*PluginInfo, error) {

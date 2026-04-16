@@ -6,30 +6,97 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/fastschema/qjs"
 )
 
 // QuickJSRuntime wraps a QuickJS instance for Tier 2 in-process JS plugins.
+// JavaScript is executed via QuickJS compiled to WASM, running on wazero
+// (pure Go, zero CGo). See PLAN.md §5.
 type QuickJSRuntime struct {
-	initialized  bool
-	filters      map[string]bool
-	filterBodies map[string]string // filter name → JS function body text
-	shortcodes   map[string]bool
-	hooks        map[string]bool
+	initialized bool
+	rt          *qjs.Runtime
+	ctx         *qjs.Context
+	filters     map[string]bool
+	shortcodes  map[string]bool
+	hooks       map[string]bool
 }
 
 // NewQuickJSRuntime creates a new QuickJS runtime instance.
 // Startup cost is ~10-50ms (one-time).
 func NewQuickJSRuntime() *QuickJSRuntime {
 	return &QuickJSRuntime{
-		filters:      make(map[string]bool),
-		filterBodies: make(map[string]string),
-		shortcodes:   make(map[string]bool),
-		hooks:        make(map[string]bool),
+		filters:    make(map[string]bool),
+		shortcodes: make(map[string]bool),
+		hooks:      make(map[string]bool),
 	}
 }
 
-// Init initializes the QuickJS instance.
+// Init initializes the QuickJS instance via wazero.
 func (r *QuickJSRuntime) Init() error {
+	rt, err := qjs.New()
+	if err != nil {
+		return fmt.Errorf("initializing QuickJS runtime: %w", err)
+	}
+	r.rt = rt
+	r.ctx = rt.Context()
+
+	// Register Go callbacks that the JS alloy.filter/shortcode/hook/on
+	// methods will invoke to record registrations in Go-side maps.
+	r.ctx.SetFunc("__registerFilter", func(this *qjs.This) (*qjs.Value, error) {
+		args := this.Args()
+		if len(args) >= 1 {
+			r.filters[args[0].String()] = true
+		}
+		return this.Context().NewUndefined(), nil
+	})
+
+	r.ctx.SetFunc("__registerShortcode", func(this *qjs.This) (*qjs.Value, error) {
+		args := this.Args()
+		if len(args) >= 1 {
+			r.shortcodes[args[0].String()] = true
+		}
+		return this.Context().NewUndefined(), nil
+	})
+
+	r.ctx.SetFunc("__registerHook", func(this *qjs.This) (*qjs.Value, error) {
+		args := this.Args()
+		if len(args) >= 1 {
+			r.hooks[args[0].String()] = true
+		}
+		return this.Context().NewUndefined(), nil
+	})
+
+	// Create the alloy global object with filter/shortcode/hook/on methods.
+	// Filter functions are stored in __filters for later invocation by CallFilter.
+	_, err = r.ctx.Eval("alloy-setup.js", qjs.Code(`
+		var __filters = {};
+		var __shortcodes = {};
+		var __hooks = {};
+		var alloy = {
+			filter: function(name, fn) {
+				__filters[name] = fn;
+				__registerFilter(name);
+			},
+			shortcode: function(name, fn) {
+				__shortcodes[name] = fn;
+				__registerShortcode(name);
+			},
+			hook: function(name, fn) {
+				__hooks[name] = fn;
+				__registerHook(name);
+			},
+			on: function(name, fn) {
+				__hooks[name] = fn;
+				__registerHook(name);
+			}
+		};
+	`))
+	if err != nil {
+		r.rt.Close()
+		return fmt.Errorf("setting up alloy global: %w", err)
+	}
+
 	r.initialized = true
 	return nil
 }
@@ -39,17 +106,14 @@ func (r *QuickJSRuntime) IsInitialized() bool {
 	return r.initialized
 }
 
-var filterRegex = regexp.MustCompile(`alloy\.filter\(\s*["'](\w+)["']`)
-var shortcodeRegex = regexp.MustCompile(`alloy\.shortcode\(\s*["'](\w+)["']`)
-var hookRegex = regexp.MustCompile(`alloy\.hook\(\s*["'](\w+)["']`)
-var onRegex = regexp.MustCompile(`alloy\.on\(\s*["'](\w+)["']`)
-
-// filterBodyRegex captures the filter name and function body from alloy.filter() calls.
-// Matches: alloy.filter("name", <function body>);
-var filterBodyRegex = regexp.MustCompile(`alloy\.filter\(\s*["'](\w+)["']\s*,\s*(.+?)\);`)
+// moduleExportRegex matches "export default function(alloy)" or
+// "export default function (alloy)" at the start of a plugin file.
+var moduleExportRegex = regexp.MustCompile(
+	`export\s+default\s+function\s*\(\s*alloy\s*\)`)
 
 // EvalFile evaluates a JavaScript file in the QuickJS context.
-// Used to load .js plugin files that register filters, shortcodes, and hooks.
+// Plugin files using "export default function(alloy) { ... }" module syntax
+// are transformed to an IIFE that receives the global alloy object.
 func (r *QuickJSRuntime) EvalFile(path string) error {
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -58,116 +122,87 @@ func (r *QuickJSRuntime) EvalFile(path string) error {
 
 	src := string(content)
 
-	// Check for syntax errors (basic brace matching)
-	if hasSyntaxError(src) {
-		return fmt.Errorf("SyntaxError in %s: unexpected token", filepath.Base(path))
+	// Transform ES module default export to IIFE:
+	//   "export default function(alloy) { ... }" → "(function(alloy) { ... })(alloy);"
+	if moduleExportRegex.MatchString(src) {
+		src = moduleExportRegex.ReplaceAllString(src, "(function(alloy)")
+		src = strings.TrimRight(src, "\n\r\t ")
+		src += ")(alloy);\n"
 	}
 
-	// Parse filter registrations (name only)
-	for _, match := range filterRegex.FindAllStringSubmatch(src, -1) {
-		if len(match) > 1 {
-			r.filters[match[1]] = true
-		}
+	result, err := r.ctx.Eval(filepath.Base(path), qjs.Code(src))
+	if err != nil {
+		return fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
-
-	// Parse filter function bodies for simulated execution
-	for _, match := range filterBodyRegex.FindAllStringSubmatch(src, -1) {
-		if len(match) > 2 {
-			r.filterBodies[match[1]] = match[2]
-		}
-	}
-
-	// Parse shortcode registrations
-	for _, match := range shortcodeRegex.FindAllStringSubmatch(src, -1) {
-		if len(match) > 1 {
-			r.shortcodes[match[1]] = true
-		}
-	}
-
-	// Parse hook registrations (alloy.hook())
-	for _, match := range hookRegex.FindAllStringSubmatch(src, -1) {
-		if len(match) > 1 {
-			r.hooks[match[1]] = true
-		}
-	}
-
-	// Parse on() as alias for hook() (alloy.on())
-	for _, match := range onRegex.FindAllStringSubmatch(src, -1) {
-		if len(match) > 1 {
-			r.hooks[match[1]] = true
-		}
+	if result != nil {
+		result.Free()
 	}
 
 	return nil
 }
 
-// hasSyntaxError performs basic syntax validation on JS source.
-func hasSyntaxError(src string) bool {
-	// Count braces/parens — very basic check
-	braces := 0
-	parens := 0
-	for _, ch := range src {
-		switch ch {
-		case '{':
-			braces++
-		case '}':
-			braces--
-		case '(':
-			parens++
-		case ')':
-			parens--
-		}
-	}
-	return braces != 0 || parens != 0
-}
-
-// CallFilter calls a registered filter function by name with an input value and args.
-// The simulated runtime parses the JS function body and applies Go-native
-// equivalents for recognized patterns (e.g., .split + .length → word count).
+// CallFilter calls a registered filter function by name with an input value.
+// The filter function is invoked in the QuickJS VM and the result is
+// converted back to a Go value.
 func (r *QuickJSRuntime) CallFilter(name string, input interface{}, args ...interface{}) (interface{}, error) {
-	body, ok := r.filterBodies[name]
-	if !ok {
+	if !r.filters[name] {
 		return input, nil
 	}
-	return simulateJSFilter(body, input)
+
+	// Set the input as a global variable accessible from JS
+	switch v := input.(type) {
+	case string:
+		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(v))
+	case int:
+		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewInt32(int32(v)))
+	case float64:
+		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewFloat64(v))
+	case bool:
+		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewBool(v))
+	default:
+		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(fmt.Sprint(v)))
+	}
+
+	// Set the filter name as a global to avoid JS injection from names
+	// containing special characters (e.g., quotes).
+	r.ctx.Global().SetPropertyStr("__callFilterName", r.ctx.NewString(name))
+
+	// Invoke the filter function stored in __filters
+	result, err := r.ctx.Eval("filter-call.js", qjs.Code(
+		`__filters[__callFilterName](__callInput)`))
+
+	// Clean up globals to avoid stale references between calls
+	r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewUndefined())
+	r.ctx.Global().SetPropertyStr("__callFilterName", r.ctx.NewUndefined())
+
+	if err != nil {
+		return nil, fmt.Errorf("filter %q: %w", name, err)
+	}
+	defer result.Free()
+
+	return jsValueToGo(result), nil
 }
 
-// simulateJSFilter interprets common JS function patterns and applies
-// Go-native equivalents. This bridges the gap until a real QuickJS engine
-// is embedded.
-func simulateJSFilter(body string, input interface{}) (interface{}, error) {
-	inputStr, isStr := input.(string)
-	if !isStr {
-		return input, nil
+// jsValueToGo converts a QJS Value to an appropriate Go type.
+func jsValueToGo(v *qjs.Value) interface{} {
+	if v.IsString() {
+		return v.String()
 	}
-
-	// Word count pattern: .split(/\s+/).filter(w => w.length > 0).length
-	if strings.Contains(body, ".split") && strings.Contains(body, ".length") {
-		words := strings.Fields(inputStr)
-		return len(words), nil
+	if v.IsNumber() {
+		f := v.Float64()
+		if f == float64(int(f)) && f >= -2147483648 && f <= 2147483647 {
+			return int(f)
+		}
+		return f
 	}
-
-	// Case conversion: .toUpperCase()
-	if strings.Contains(body, ".toUpperCase()") {
-		return strings.ToUpper(inputStr), nil
+	if v.IsBool() {
+		return v.Bool()
 	}
-
-	// Case conversion: .toLowerCase()
-	if strings.Contains(body, ".toLowerCase()") {
-		return strings.ToLower(inputStr), nil
+	if v.IsNull() || v.IsUndefined() {
+		return nil
 	}
-
-	// Trim: .trim()
-	if strings.Contains(body, ".trim()") {
-		return strings.TrimSpace(inputStr), nil
-	}
-
-	// JSON.stringify
-	if strings.Contains(body, "JSON.stringify") {
-		return fmt.Sprintf("%q", inputStr), nil
-	}
-
-	return input, nil
+	// Fallback: convert to string representation
+	return v.String()
 }
 
 // CallShortcode calls a registered shortcode function by name with args and inner content.
@@ -200,6 +235,14 @@ func (r *QuickJSRuntime) RegisteredHooks() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// Close releases resources held by the QuickJS runtime.
+func (r *QuickJSRuntime) Close() {
+	if r.rt != nil {
+		r.rt.Close()
+		r.rt = nil
+	}
 }
 
 // WASMRuntime wraps a wazero WASM module for Tier 2 compiled plugins.
