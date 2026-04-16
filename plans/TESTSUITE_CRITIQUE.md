@@ -89,7 +89,7 @@ This is a comprehensive TDD audit of the Alloy static site generator. The projec
 - **Missing**: Collection freezing (read-only after build)
 
 #### `internal/collection/taxonomy_test.go`
-- **Missing**: Taxonomy page template context (`taxonomy.term`, `taxonomy.terms`, `taxonomy.items`)
+- **Missing**: Taxonomy page template context (`taxonomy.term`, `taxonomy.terms`, `taxonomy.pages`)
 - **Missing**: Taxonomy index page generation at `/tags/`
 - **Missing**: Custom taxonomy permalink patterns
 - **Missing**: Layout error when no taxonomy layout found
