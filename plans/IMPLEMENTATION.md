@@ -330,6 +330,21 @@ At this point, `alloy build` works end-to-end on test fixtures.
 
 - REST/GraphQL fetching, file-based caching, XML/CSV parsing, GraphQL data unwrapping
 
+#### Source pipeline wiring (issue #107)
+
+After `loadSiteData()` loads local data files, the pipeline must iterate `cfg.Sources` and fetch/cache each source before template rendering:
+
+1. For each `SourceConfig` in `cfg.Sources`:
+   - Check cache via `fetch.GetCached(name, cacheDir, source.Cache)` — if found and TTL valid, use cached data
+   - If not cached (or `--refetch` flag set), call the appropriate fetcher based on `source.Type`:
+     - `"rest"` → `fetch.FetchREST(source.URL)`
+     - `"graphql"` → `fetch.FetchGraphQL(source.Endpoint, source.Query)`
+     - `"plugin"` → `fetch.FetchPluginSource(source.Plugin, configMap)`
+   - Save fetched data to cache via `fetch.SaveCache(name, cacheDir, data)`
+   - Merge result into `siteData` under the `source.As` key so templates access it as `site.data.<as>`
+2. Fire `onDataFetched` hook after all sources are merged (existing hook call stays in place)
+3. On fetch failure: abort build with clear error identifying the source name and URL
+
 ### 5C: `internal/i18n` — 18 tests
 **File**: `internal/i18n/i18n.go`
 
@@ -492,7 +507,7 @@ The flag must be applied **after** config loading but **before** pipeline execut
 
 ## Phase 6: Server + SSR (~65 tests)
 
-### 6A: `internal/server` — 45 tests
+### 6A: `internal/server` — 51 tests
 **Files**: `server.go`, `watcher.go`, `overlay.go`
 
 - HTTP server with mode-aware behavior (dev/preview)
@@ -503,6 +518,7 @@ The flag must be applied **after** config loading but **before** pipeline execut
 - `DetermineRebuildAction(changedFiles []string) RebuildScope`: Classify file changes as incremental or full rebuild. Many simultaneous changes trigger a full rebuild.
 - `StartWithPortFallback(preferredPort, maxAttempts int) (int, error)`: Try `net.Listen("tcp", ":port")` starting at `preferredPort`. On `EADDRINUSE`, increment port and retry up to `maxAttempts` times. Return the actual port on success. After exhausting all attempts, return error containing `"no available port"` and the range tried. Log a warning when skipping an occupied port. Store the actual port on the Server struct.
 - `Port() int`: Return the actual port the server is listening on. Returns 0 before the server has started.
+- `Serve404Page(outputDir string) ([]byte, error)`: Check for `404.html` at the output root. If found, return its contents (for the HTTP handler to serve with a 404 status code). If not found, return an error so the caller can fall back to Go's default `http.NotFound()`. In dev mode, the 404 page must receive the WebSocket reload script injection like any other served page (issue #109).
 
 **Test hygiene (issue #59)**: All server tests that call `Start()` must use port 0 (OS-assigned) to avoid collisions when `go test ./...` runs packages in parallel. Every successful `Start()` or `StartWithPortFallback()` must be paired with `defer srv.Stop()` to release the port promptly.
 
@@ -537,6 +553,7 @@ Cross-package integration paths that should mostly pass once pipeline works:
 - i18n -> data cascade -> template
 - Filter integration with both Liquid and Go engines
 - Plugin → template engine filter bridging (issue #93)
+- External data source → fetch → site.data → template context (issue #107)
 - Plugin → HookRegistry hook bridging (issue #93)
 - Build cache → incremental build skip detection (issue #105)
 

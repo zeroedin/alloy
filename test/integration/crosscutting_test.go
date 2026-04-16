@@ -2,6 +2,9 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -14,6 +17,7 @@ import (
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/data"
+	"github.com/zeroedin/alloy/internal/fetch"
 	"github.com/zeroedin/alloy/internal/i18n"
 	"github.com/zeroedin/alloy/internal/output"
 	"github.com/zeroedin/alloy/internal/pagination"
@@ -375,6 +379,87 @@ var _ = Describe("Cross-Cutting Integration", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).To(Equal("test payload"),
 				"plugin-registered hook must execute through HookRegistry")
+		})
+	})
+
+	// ── External data sources → pipeline → template (issue #107) ────
+
+	Describe("External data sources → pipeline → template (issue #107)", func() {
+		It("REST source data merges into site.data under the 'as' key", func() {
+			// Stand up a test HTTP server returning JSON
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode([]map[string]interface{}{
+					{"id": 1, "title": "First Post"},
+					{"id": 2, "title": "Second Post"},
+				})
+			}))
+			defer ts.Close()
+
+			// Simulate the pipeline contract:
+			// 1. Config defines a source with type: rest, url, as
+			sourceCfg := &config.SourceConfig{
+				Type:  "rest",
+				URL:   ts.URL + "/posts",
+				Cache: 0,
+				As:    "api_posts",
+			}
+
+			// 2. Fetch the data using the fetch package
+			fetched, err := fetch.FetchREST(sourceCfg.URL)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fetched).NotTo(BeNil())
+
+			// 3. Merge fetched data into siteData under the "as" key
+			//    (this is the pipeline wiring that build.go must do)
+			siteData := map[string]interface{}{
+				"title": "Test Site",
+				"data":  map[string]interface{}{sourceCfg.As: fetched},
+			}
+
+			// 4. Template context must see it as site.data.api_posts
+			page := &content.Page{RelPath: "index.md"}
+			ctx := template.BuildTemplateContext(page, siteData, nil, nil, nil, "")
+			Expect(ctx).NotTo(BeNil())
+			Expect(ctx.Site.Data).To(HaveKey("api_posts"),
+				"fetched REST data must be available as site.data.api_posts")
+
+			// 5. The data must be the actual fetched content, not empty
+			posts, ok := ctx.Site.Data["api_posts"]
+			Expect(ok).To(BeTrue())
+			Expect(posts).NotTo(BeNil(),
+				"site.data.api_posts must contain the fetched data")
+		})
+
+		It("cached source is used when TTL has not expired", func() {
+			cacheDir := GinkgoT().TempDir()
+			sourceName := "cached_posts"
+
+			// Pre-populate cache with known data
+			cachedData := []map[string]interface{}{
+				{"id": 1, "title": "Cached Post"},
+			}
+			err := fetch.SaveCache(sourceName, cacheDir, cachedData)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Retrieve from cache with a long TTL — must return cached data
+			// without making a network request
+			data, found := fetch.GetCached(sourceName, cacheDir, 3600)
+			Expect(found).To(BeTrue(),
+				"cached data must be found when TTL has not expired")
+			Expect(data).NotTo(BeNil())
+
+			// Merge cached data into siteData the same way the pipeline would
+			siteData := map[string]interface{}{
+				"title": "Test Site",
+				"data":  map[string]interface{}{"posts": data},
+			}
+
+			// Template context must see cached data identically to fresh-fetched data
+			page := &content.Page{RelPath: "index.md"}
+			ctx := template.BuildTemplateContext(page, siteData, nil, nil, nil, "")
+			Expect(ctx.Site.Data).To(HaveKey("posts"),
+				"cached source data must be available in site.data just like fetched data")
 		})
 	})
 
