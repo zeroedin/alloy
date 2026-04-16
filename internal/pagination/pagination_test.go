@@ -108,10 +108,10 @@ var _ = Describe("Paginate", func() {
 			Expect(contexts).To(HaveLen(3))
 		})
 
-		It("provides pageNumber (0-indexed)", func() {
-			Expect(contexts[0].PageNumber).To(Equal(0))
-			Expect(contexts[1].PageNumber).To(Equal(1))
-			Expect(contexts[2].PageNumber).To(Equal(2))
+		It("provides pageNumber (1-based)", func() {
+			Expect(contexts[0].PageNumber).To(Equal(1))
+			Expect(contexts[1].PageNumber).To(Equal(2))
+			Expect(contexts[2].PageNumber).To(Equal(3))
 		})
 
 		It("provides totalPages", func() {
