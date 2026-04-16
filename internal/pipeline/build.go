@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/zeroedin/alloy/internal/pagination"
 	"github.com/zeroedin/alloy/internal/permalink"
 	"github.com/zeroedin/alloy/internal/plugin"
+	"github.com/zeroedin/alloy/internal/ssr"
 	"github.com/zeroedin/alloy/internal/static"
 	tmpl "github.com/zeroedin/alloy/internal/template"
 	"github.com/zeroedin/alloy/internal/validation"
@@ -794,34 +796,93 @@ func BuildPhase1(cfg *config.Config) (map[string]string, error) {
 }
 
 // BuildPhase2 runs Phase 2 (SSR transform) on the intermediate HTML
-// from Phase 1. Executes the configured ssr.build command via os/exec
-// to transform custom elements into Declarative Shadow DOM output.
-// Alloy does not perform any local DSD transform — the external SSR
-// engine (golit, lit-ssr, etc.) owns all component rendering.
+// from Phase 1. For each page, scans for custom element tags, deduplicates
+// instances by hash(tag + attributes), pipes each unique instance to the
+// ssr.render command via stdin, reads SSR'd output from stdout, and stamps
+// the result back into the page HTML. Pages without custom elements pass
+// through unchanged with no render command invocations.
 func BuildPhase2(intermediateHTML map[string]string, ssrCfg *config.SSRConfig) (map[string]string, error) {
 	if ssrCfg == nil {
 		return intermediateHTML, nil
 	}
 
-	// Parse ssr.build command into executable and arguments
 	parts := strings.Fields(ssrCfg.Build)
 	if len(parts) == 0 {
-		return nil, fmt.Errorf("ssr.build command is empty")
+		return nil, fmt.Errorf("ssr.render command is empty")
 	}
 
-	// Execute the external SSR build command
-	cmd := exec.Command(parts[0], parts[1:]...)
-	var stderr bytes.Buffer
+	result := make(map[string]string, len(intermediateHTML))
+
+	for path, html := range intermediateHTML {
+		// Scan for custom elements (tags with hyphens)
+		instances := ssr.ScanComponents(html)
+		if len(instances) == 0 {
+			// No custom elements — pass through unchanged, no render invocations
+			result[path] = html
+			continue
+		}
+
+		// Deduplicate by hash(tag + attributes), slot content excluded
+		unique := ssr.DeduplicateInstances(instances)
+
+		// Insert markers around component instances for stamp-back
+		markedHTML := ssr.InsertMarkers(html, unique)
+
+		// Render each unique instance via stdin/stdout pipe
+		ssrResults := make(map[string]string, len(unique))
+		for _, inst := range unique {
+			// Build the raw element HTML to pipe to the render command
+			rawElement := buildRawElement(inst)
+
+			rendered, err := renderViaStdin(parts, rawElement)
+			if err != nil {
+				return nil, fmt.Errorf("exec ssr.render command %q for <%s>: %w", parts[0], inst.Tag, err)
+			}
+			ssrResults[inst.Hash] = rendered
+		}
+
+		// Stamp SSR'd output back into the marked HTML
+		result[path] = ssr.StampBack(markedHTML, ssrResults)
+	}
+
+	return result, nil
+}
+
+// buildRawElement reconstructs a self-closing-style element string from
+// a ComponentInstance for piping to the SSR render command.
+func buildRawElement(inst ssr.ComponentInstance) string {
+	var b strings.Builder
+	b.WriteString("<")
+	b.WriteString(inst.Tag)
+	// Sort attributes for deterministic output
+	keys := make([]string, 0, len(inst.Attrs))
+	for k := range inst.Attrs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(&b, ` %s="%s"`, k, inst.Attrs[k])
+	}
+	b.WriteString("></" + inst.Tag + ">")
+	return b.String()
+}
+
+// renderViaStdin pipes rawHTML to the render command via stdin and reads
+// SSR'd output from stdout.
+func renderViaStdin(cmdParts []string, rawHTML string) (string, error) {
+	cmd := exec.Command(cmdParts[0], cmdParts[1:]...)
+	cmd.Stdin = strings.NewReader(rawHTML)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
 		if stderr.Len() > 0 {
-			return nil, fmt.Errorf("exec ssr.build command %q: %w: %s", parts[0], err, strings.TrimSpace(stderr.String()))
+			return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
 		}
-		return nil, fmt.Errorf("exec ssr.build command %q: %w", parts[0], err)
+		return "", err
 	}
-
-	return intermediateHTML, nil
+	return stdout.String(), nil
 }
 
 // renderPages renders all pages through the markdown and template pipeline.
