@@ -313,7 +313,7 @@ At this point, `alloy build` works end-to-end on test fixtures.
 
 ## Phase 5: Plugin + Fetch + I18n + CLI (~111 tests)
 
-### 5A: `internal/plugin` — 62 tests
+### 5A: `internal/plugin` — 63 tests
 **Files**: `hooks.go`, `registry.go`, `node.go`, `wasm.go`
 
 - **hooks.go**: Hook registry with timeout, chained execution, warnings. `HookFunc` signature is `func(ctx context.Context, payload interface{}) (interface{}, error)` — context carries timeout deadline for cooperative cancellation (issue #13). `Run()` passes `context.Background()`. `RunWithTimeout()` uses `context.WithTimeout()` and passes the derived context to each hook.
@@ -321,7 +321,7 @@ At this point, `alloy build` works end-to-end on test fixtures.
 - **node.go**: LSP-style message encoding/decoding, bridge state management
 - **wasm.go**: QuickJS/WASM runtime with filter/shortcode/hook registration and execution.
   - `EvalFile()` parses `alloy.filter()`, `alloy.shortcode()`, and `alloy.hook()`/`alloy.on()` registrations
-  - `CallFilter()` must execute the JS filter function and return the transformed value (not passthrough)
+  - `CallFilter()` must execute the actual JS filter function and return the transformed value — not passthrough, not pattern-matching. The current `simulateJSFilter` approach only handles known patterns (word count); arbitrary JS like `toUpperCase()` returns input unchanged. Real QuickJS execution via wazero is required (issue #103).
   - `RegisteredHooks()` returns hook names discovered during `EvalFile()`
   - `LoadPlugins()` returns discovered filter names + hook registrations so the pipeline can bridge them to the template engine and HookRegistry
 

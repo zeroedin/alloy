@@ -74,6 +74,21 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 				"CallFilter must transform the input, not return it unchanged")
 		})
 
+		It("CallFilter executes arbitrary JS, not just recognized patterns", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(filepath.Join(testdataDir(), "single-files", "uppercase.js"))).To(Succeed())
+
+			filters := rt.RegisteredFilters()
+			Expect(filters).To(ContainElement("uppercase"),
+				"guard: uppercase filter must be discovered")
+
+			result, err := rt.CallFilter("uppercase", "hello world")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("HELLO WORLD"),
+				"CallFilter must execute the actual JS function, not return input unchanged")
+		})
+
 		It("parses alloy.hook() registrations from JS plugin", func() {
 			rt := plugin.NewQuickJSRuntime()
 			Expect(rt.Init()).To(Succeed())
