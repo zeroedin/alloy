@@ -329,6 +329,21 @@ At this point, `alloy build` works end-to-end on test fixtures.
 
 - REST/GraphQL fetching, file-based caching, XML/CSV parsing, GraphQL data unwrapping
 
+#### Source pipeline wiring (issue #107)
+
+After `loadSiteData()` loads local data files, the pipeline must iterate `cfg.Sources` and fetch/cache each source before template rendering:
+
+1. For each `SourceConfig` in `cfg.Sources`:
+   - Check cache via `fetch.GetCached(name, cacheDir, source.Cache)` — if found and TTL valid, use cached data
+   - If not cached (or `--refetch` flag set), call the appropriate fetcher based on `source.Type`:
+     - `"rest"` → `fetch.FetchREST(source.URL)`
+     - `"graphql"` → `fetch.FetchGraphQL(source.Endpoint, source.Query)`
+     - `"plugin"` → `fetch.FetchPluginSource(source.Plugin, configMap)`
+   - Save fetched data to cache via `fetch.SaveCache(name, cacheDir, data)`
+   - Merge result into `siteData` under the `source.As` key so templates access it as `site.data.<as>`
+2. Fire `onDataFetched` hook after all sources are merged (existing hook call stays in place)
+3. On fetch failure: abort build with clear error identifying the source name and URL
+
 ### 5C: `internal/i18n` — 18 tests
 **File**: `internal/i18n/i18n.go`
 
@@ -523,7 +538,7 @@ The flag must be applied **after** config loading but **before** pipeline execut
 
 ## Phase 7: Integration Tests + Final (~16 tests)
 
-### 7A: `test/integration/` — 25 tests
+### 7A: `test/integration/` — 27 tests
 **Files**: `build_test.go`, `crosscutting_test.go`, `plugin_template_test.go`
 
 Cross-package integration paths that should mostly pass once pipeline works:
@@ -536,6 +551,7 @@ Cross-package integration paths that should mostly pass once pipeline works:
 - i18n -> data cascade -> template
 - Filter integration with both Liquid and Go engines
 - Plugin → template engine filter bridging (issue #93)
+- External data source → fetch → site.data → template context (issue #107)
 - Plugin → HookRegistry hook bridging (issue #93)
 
 **Verify**: `go test ./... 2>&1 | grep -E "Passed|Failed"`
