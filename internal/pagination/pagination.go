@@ -49,7 +49,7 @@ func Paginate(data []interface{}, perPage int, basePath string, pathSegment stri
 	contexts := make([]PaginationContext, totalPages)
 	for i, chunk := range chunks {
 		ctx := PaginationContext{
-			PageNumber: i,
+			PageNumber: i + 1,
 			TotalPages: totalPages,
 			First:      paths[0],
 			Last:       paths[totalPages-1],
@@ -123,7 +123,7 @@ func PaginateWithLiquidPermalink(data []interface{}, permalinkTemplate string, a
 		rendered := renderSimpleLiquid(permalinkTemplate, as, item)
 		paths[i] = rendered
 		contexts[i] = PaginationContext{
-			PageNumber: i,
+			PageNumber: i + 1,
 			TotalPages: len(data),
 			Items:      []interface{}{item},
 		}
