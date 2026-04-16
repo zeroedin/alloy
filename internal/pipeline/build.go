@@ -1,11 +1,13 @@
 package pipeline
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -792,22 +794,34 @@ func BuildPhase1(cfg *config.Config) (map[string]string, error) {
 }
 
 // BuildPhase2 runs Phase 2 (SSR transform) on the intermediate HTML
-// from Phase 1. Replaces raw custom element tags with server-rendered
-// Declarative Shadow DOM output. Only called when SSR is configured.
+// from Phase 1. Executes the configured ssr.build command via os/exec
+// to transform custom elements into Declarative Shadow DOM output.
+// Alloy does not perform any local DSD transform — the external SSR
+// engine (golit, lit-ssr, etc.) owns all component rendering.
 func BuildPhase2(intermediateHTML map[string]string, ssrCfg *config.SSRConfig) (map[string]string, error) {
 	if ssrCfg == nil {
 		return intermediateHTML, nil
 	}
 
-	result := make(map[string]string, len(intermediateHTML))
-
-	for path, html := range intermediateHTML {
-		// Transform custom elements to Declarative Shadow DOM
-		transformed := transformCustomElements(html)
-		result[path] = transformed
+	// Parse ssr.build command into executable and arguments
+	parts := strings.Fields(ssrCfg.Build)
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("ssr.build command is empty")
 	}
 
-	return result, nil
+	// Execute the external SSR build command
+	cmd := exec.Command(parts[0], parts[1:]...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return nil, fmt.Errorf("exec ssr.build command %q: %w: %s", parts[0], err, strings.TrimSpace(stderr.String()))
+		}
+		return nil, fmt.Errorf("exec ssr.build command %q: %w", parts[0], err)
+	}
+
+	return intermediateHTML, nil
 }
 
 // renderPages renders all pages through the markdown and template pipeline.
@@ -1181,49 +1195,3 @@ func validateOutputDir(cfg *config.Config) error {
 	return nil
 }
 
-// customElementOpen matches the opening tag of a custom element (contains a hyphen).
-// Allows digits per HTML custom element spec (e.g., my-component-2).
-var customElementOpen = regexp.MustCompile(`<([a-zA-Z][a-zA-Z0-9]*-[a-zA-Z0-9-]*)([^>]*)>`)
-
-// transformCustomElements finds custom elements (tags with hyphens) and
-// wraps their content in Declarative Shadow DOM templates.
-func transformCustomElements(html string) string {
-	// Find custom elements (tags containing hyphens, e.g., <ds-card>)
-	// and add Declarative Shadow DOM template wrapping.
-	// This is a simplified implementation — real SSR would execute
-	// the component's render function.
-	// Uses iterative matching instead of backreferences (unsupported in Go RE2).
-	var out strings.Builder
-	remaining := html
-	for {
-		loc := customElementOpen.FindStringSubmatchIndex(remaining)
-		if loc == nil {
-			out.WriteString(remaining)
-			break
-		}
-		tagName := remaining[loc[2]:loc[3]]
-		attrs := remaining[loc[4]:loc[5]]
-		afterOpen := loc[1]
-
-		// Find the matching closing tag for this specific element
-		closeTag := "</" + tagName + ">"
-		closeIdx := strings.Index(remaining[afterOpen:], closeTag)
-		if closeIdx < 0 {
-			// No closing tag — write through end of opening tag and continue
-			out.WriteString(remaining[:afterOpen])
-			remaining = remaining[afterOpen:]
-			continue
-		}
-		closeIdx += afterOpen
-		inner := remaining[afterOpen:closeIdx]
-
-		// Write everything before this element, then the transformed version
-		out.WriteString(remaining[:loc[0]])
-		fmt.Fprintf(&out, `<%s%s><template shadowrootmode="open">%s</template></%s>`,
-			tagName, attrs, inner, tagName)
-
-		remaining = remaining[closeIdx+len(closeTag):]
-	}
-
-	return out.String()
-}
