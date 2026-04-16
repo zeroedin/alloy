@@ -17,20 +17,22 @@ type TemplateContext struct {
 
 // SiteContext holds site-wide data available as {{ site.* }}.
 type SiteContext struct {
-	Title    string
-	BaseURL  string
-	Language string
-	Data     map[string]interface{}
-	Pages    []*content.Page
+	Title        string
+	BaseURL      string
+	Language     string
+	LanguageData map[string]interface{} // structured language data (code, title, root, strings)
+	Data         map[string]interface{}
+	Pages        []*content.Page
 }
 
 // PageContext holds per-page data available as {{ page.* }}.
 type PageContext struct {
-	Title       string
-	URL         string
-	Date        interface{}
-	Collection  string
-	FrontMatter map[string]interface{}
+	Title        string
+	URL          string
+	Date         interface{}
+	Collection   string
+	FrontMatter  map[string]interface{}
+	Translations []map[string]interface{} // translation info: url, lang
 }
 
 // BuildTemplateContext assembles the complete template context for rendering a page.
@@ -51,6 +53,11 @@ func BuildTemplateContext(page *content.Page, siteData map[string]interface{}, a
 	}
 	if language, ok := siteData["language"].(string); ok {
 		ctx.Site.Language = language
+	} else if langData, ok := siteData["language"].(map[string]interface{}); ok {
+		ctx.Site.LanguageData = langData
+		if code, ok := langData["code"].(string); ok {
+			ctx.Site.Language = code
+		}
 	}
 	if data, ok := siteData["data"].(map[string]interface{}); ok {
 		ctx.Site.Data = data
@@ -68,6 +75,24 @@ func BuildTemplateContext(page *content.Page, siteData map[string]interface{}, a
 	ctx.Page.FrontMatter = page.FrontMatter
 	if !page.Date.IsZero() {
 		ctx.Page.Date = page.Date
+	}
+
+	// Populate translations from linked pages
+	if len(page.Translations) > 0 {
+		translations := make([]map[string]interface{}, 0, len(page.Translations))
+		for _, t := range page.Translations {
+			info := map[string]interface{}{
+				"url": t.URL,
+			}
+			if lang, ok := t.FrontMatter["lang"].(string); ok {
+				info["lang"] = lang
+			}
+			if title, ok := t.FrontMatter["title"].(string); ok {
+				info["title"] = title
+			}
+			translations = append(translations, info)
+		}
+		ctx.Page.Translations = translations
 	}
 
 	// Set content from rendered body
@@ -110,11 +135,19 @@ func (tc *TemplateContext) ToMap() map[string]interface{} {
 	if tc.Content != "" {
 		pageCtx["content"] = tc.Content
 	}
+	if tc.Page.Translations != nil {
+		pageCtx["translations"] = tc.Page.Translations
+	}
 
 	// Site context
 	site := map[string]interface{}{
 		"title":   tc.Site.Title,
 		"baseURL": tc.Site.BaseURL,
+	}
+	if tc.Site.LanguageData != nil {
+		site["language"] = tc.Site.LanguageData
+	} else if tc.Site.Language != "" {
+		site["language"] = tc.Site.Language
 	}
 	if tc.Site.Data != nil {
 		site["data"] = tc.Site.Data
