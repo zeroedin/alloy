@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/collection"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
@@ -374,6 +375,75 @@ var _ = Describe("Cross-Cutting Integration", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).To(Equal("test payload"),
 				"plugin-registered hook must execute through HookRegistry")
+		})
+	})
+
+	// ── Build cache → incremental build (issue #105) ────────────────
+
+	Describe("Build cache → incremental build (issue #105)", func() {
+		It("cache written by build is loadable and detects unchanged pages", func() {
+			// Simulate the pipeline's cache write (Stage 9) → cache read (next build)
+			cacheDir := GinkgoT().TempDir()
+
+			// First build: hash pages and save cache (mimics build.go Stage 9)
+			pageContent := []byte("---\ntitle: My Post\n---\n# Hello World")
+			pageHash := cache.HashContent(pageContent)
+
+			firstBuild := cache.New()
+			firstBuild.SetHash("content/blog/post.md", pageHash)
+			firstBuild.SetHash("content/about.md", cache.HashContent([]byte("about page")))
+			err := firstBuild.SaveTo(cacheDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second build: load previous cache and check for changes
+			restored, err := cache.LoadFrom(cacheDir)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(restored).NotTo(BeNil())
+
+			// Unchanged page must be skippable
+			Expect(restored.ShouldSkipFile("content/blog/post.md", pageContent)).To(BeTrue(),
+				"unchanged page must be detected as skippable via saved cache")
+
+			// Modified page must not be skippable
+			modifiedContent := []byte("---\ntitle: My Post (edited)\n---\n# Updated")
+			Expect(restored.ShouldSkipFile("content/blog/post.md", modifiedContent)).To(BeFalse(),
+				"modified page must not be skippable")
+
+			// New page (not in cache) must not be skippable
+			Expect(restored.ShouldSkipFile("content/new-page.md", []byte("new"))).To(BeFalse(),
+				"new page not in cache must not be skippable")
+		})
+
+		It("template change invalidates only pages using that template", func() {
+			cacheDir := GinkgoT().TempDir()
+
+			// First build: hash pages and track template usage
+			buildCache := cache.New()
+			buildCache.SetHash("content/blog/post-1.md", cache.HashContent([]byte("post 1")))
+			buildCache.SetHash("content/blog/post-2.md", cache.HashContent([]byte("post 2")))
+			buildCache.SetHash("content/about.md", cache.HashContent([]byte("about")))
+			buildCache.TrackTemplateUsage("content/blog/post-1.md", "layouts/post.liquid")
+			buildCache.TrackTemplateUsage("content/blog/post-2.md", "layouts/post.liquid")
+			buildCache.TrackTemplateUsage("content/about.md", "layouts/default.liquid")
+			err := buildCache.SaveTo(cacheDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second build: load cache, detect template change
+			restored, err := cache.LoadFrom(cacheDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Content unchanged — all pages would be skippable by content hash
+			Expect(restored.ShouldSkipFile("content/blog/post-1.md", []byte("post 1"))).To(BeTrue())
+			Expect(restored.ShouldSkipFile("content/about.md", []byte("about"))).To(BeTrue())
+
+			// But if layouts/post.liquid changed, its pages must be rebuilt
+			affected := restored.InvalidatedPages("layouts/post.liquid")
+			Expect(affected).To(ConsistOf(
+				"content/blog/post-1.md",
+				"content/blog/post-2.md",
+			), "template change must invalidate only pages using that template")
+			Expect(affected).NotTo(ContainElement("content/about.md"),
+				"pages using a different template must not be invalidated")
 		})
 	})
 })
