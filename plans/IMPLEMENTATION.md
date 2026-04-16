@@ -491,7 +491,7 @@ The flag must be applied **after** config loading but **before** pipeline execut
 
 ## Phase 6: Server + SSR (~65 tests)
 
-### 6A: `internal/server` — 45 tests
+### 6A: `internal/server` — 51 tests
 **Files**: `server.go`, `watcher.go`, `overlay.go`
 
 - HTTP server with mode-aware behavior (dev/preview)
@@ -502,6 +502,7 @@ The flag must be applied **after** config loading but **before** pipeline execut
 - `DetermineRebuildAction(changedFiles []string) RebuildScope`: Classify file changes as incremental or full rebuild. Many simultaneous changes trigger a full rebuild.
 - `StartWithPortFallback(preferredPort, maxAttempts int) (int, error)`: Try `net.Listen("tcp", ":port")` starting at `preferredPort`. On `EADDRINUSE`, increment port and retry up to `maxAttempts` times. Return the actual port on success. After exhausting all attempts, return error containing `"no available port"` and the range tried. Log a warning when skipping an occupied port. Store the actual port on the Server struct.
 - `Port() int`: Return the actual port the server is listening on. Returns 0 before the server has started.
+- `Serve404Page(outputDir string) ([]byte, error)`: Check for `404.html` at the output root. If found, return its contents (for the HTTP handler to serve with a 404 status code). If not found, return an error so the caller can fall back to Go's default `http.NotFound()`. In dev mode, the 404 page must receive the WebSocket reload script injection like any other served page (issue #109).
 
 **Test hygiene (issue #59)**: All server tests that call `Start()` must use port 0 (OS-assigned) to avoid collisions when `go test ./...` runs packages in parallel. Every successful `Start()` or `StartWithPortFallback()` must be paired with `defer srv.Stop()` to release the port promptly.
 

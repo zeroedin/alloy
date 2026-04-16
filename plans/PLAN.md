@@ -2256,6 +2256,7 @@ Without an `ssr:` config block (and no SSR plugin), `--preview` still works — 
 - **Auto-opens browser** (optional)
 - **Colored terminal output** with build timing
 - **Error overlay in browser** on build errors (file path, line number, code snippet). Disappears on next successful build.
+- **Custom 404 page**: When a request doesn't match any file in the output directory, serve `404.html` from the output root (with a 404 status code) if it exists. Falls back to Go's default plain-text response when no `404.html` is present. The build requires no special handling — users create `content/404.md` with `permalink: /404.html` and it renders through a layout into `_site/404.html`. In dev mode, the 404 page receives the WebSocket reload script like any other page. This matches the behavior of GitHub Pages, Netlify, Cloudflare Pages, and every major hosting platform.
 
 ```
 [alloy] 12:34:56 Serving at http://localhost:3000
@@ -2710,9 +2711,6 @@ v1 plugin hooks are synchronous barriers — all pages batch through each hook b
 
 A validation-only command that reuses Phase 0 logic without running a full build. Useful in CI to catch errors early. Could validate: front matter schemas, broken internal links, missing layouts, unused data files, output path conflicts, and taxonomy/collection integrity.
 
-### Dev Server Custom 404 Page
-
-When the dev server receives a request for a path that doesn't exist in the output directory, serve `404.html` from the output root if it exists, instead of Go's default plain-text response. The build itself requires no special handling — users create a 404 page like any other page (`content/404.md` with `permalink: /404.html`), and it renders through a layout into `_site/404.html`. The only gap is the dev server recognizing and serving it as the fallback for missing routes. This matches the behavior of GitHub Pages, Netlify, Cloudflare Pages, and every major hosting platform.
 
 ### `alloy serve --preview` Flag Naming
 
