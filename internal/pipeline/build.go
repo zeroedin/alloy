@@ -231,33 +231,8 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		page.RenderedBody = layoutResult
 
 		// Multi-format output: render additional formats (spec §1e)
-		if len(page.Outputs) > 1 {
-			page.FormatBodies = make(map[string][]byte)
-			for _, format := range page.Outputs {
-				if format == "html" {
-					continue // primary format already rendered
-				}
-				fmtLayoutPath, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, engineName, format)
-				if err != nil {
-					// No format-specific layout — skip this format
-					continue
-				}
-				fmtContent, err := os.ReadFile(fmtLayoutPath)
-				if err != nil {
-					return nil, fmt.Errorf("reading format layout %s: %w", fmtLayoutPath, err)
-				}
-				fmtTpl, err := engine.Parse(fmtLayoutPath, fmtContent)
-				if err != nil {
-					return nil, fmt.Errorf("parsing format layout %s: %w", fmtLayoutPath, err)
-				}
-				fmtCtx := tmpl.BuildTemplateContext(page, combinedSiteData(cfg, siteData), pages, collectionsCtx, nil, "").ToMap()
-				fmtCtx["content"] = string(page.RenderedBody)
-				fmtResult, err := fmtTpl.Render(fmtCtx)
-				if err != nil {
-					return nil, fmt.Errorf("rendering format layout %s: %w", fmtLayoutPath, err)
-				}
-				page.FormatBodies[format] = fmtResult
-			}
+		if err := renderPageFormats(page, layoutsDir, engineName, engine, cfg, siteData, pages, collectionsCtx); err != nil {
+			return nil, err
 		}
 	}
 
@@ -305,6 +280,10 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 					return nil, fmt.Errorf("rendering taxonomy page %s: %w", taxPage.URL, err)
 				}
 				taxPage.RenderedBody = out
+				// Multi-format output for taxonomy pages (spec §1e)
+				if err := renderPageFormats(taxPage, layoutsDir, engineName, engine, cfg, siteData, pages, collectionsCtx); err != nil {
+					return nil, err
+				}
 				pages = append(pages, taxPage)
 			}
 		}
@@ -332,7 +311,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		})
 		// Add validation entries for additional output formats
 		for format := range page.FormatBodies {
-			fmtPath := strings.TrimSuffix(outPath, ".html") + "." + format
+			fmtPath := formatOutputPath(outPath, format)
 			outputEntries = append(outputEntries, validation.OutputPathEntry{
 				Path: fmtPath, Source: page.RelPath + " (" + format + ")",
 			})
@@ -394,7 +373,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		}
 		// Write additional output formats (spec §1e)
 		for format, body := range page.FormatBodies {
-			fmtPath := strings.TrimSuffix(outPath, ".html") + "." + format
+			fmtPath := formatOutputPath(outPath, format)
 			if err := output.WriteFile(outputDir, fmtPath, body); err != nil {
 				return nil, fmt.Errorf("writing %s output %s: %w", format, fmtPath, err)
 			}
@@ -833,6 +812,48 @@ func combinedSiteData(cfg *config.Config, siteData map[string]interface{}) map[s
 		m["data"] = siteData
 	}
 	return m
+}
+
+// formatOutputPath computes the output path for a non-HTML format by replacing
+// the .html extension with the format extension (e.g., "blog/post/index.json").
+func formatOutputPath(htmlPath string, format string) string {
+	return strings.TrimSuffix(htmlPath, ".html") + "." + format
+}
+
+// renderPageFormats renders additional output formats for a page (spec §1e).
+// For each non-HTML format in page.Outputs, resolves a format-specific layout,
+// renders through it, and stores the result in page.FormatBodies.
+// Returns a build error if a declared format has no matching layout.
+func renderPageFormats(page *content.Page, layoutsDir, engineName string, engine tmpl.TemplateEngine, cfg *config.Config, siteData map[string]interface{}, pages []*content.Page, collectionsCtx map[string]interface{}) error {
+	if len(page.Outputs) <= 1 {
+		return nil
+	}
+	page.FormatBodies = make(map[string][]byte)
+	for _, format := range page.Outputs {
+		if format == "html" {
+			continue
+		}
+		fmtLayoutPath, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, engineName, format)
+		if err != nil {
+			return fmt.Errorf("no %s layout found for %s: %w", format, page.RelPath, err)
+		}
+		fmtContent, err := os.ReadFile(fmtLayoutPath)
+		if err != nil {
+			return fmt.Errorf("reading format layout %s: %w", fmtLayoutPath, err)
+		}
+		fmtTpl, err := engine.Parse(fmtLayoutPath, fmtContent)
+		if err != nil {
+			return fmt.Errorf("parsing format layout %s: %w", fmtLayoutPath, err)
+		}
+		fmtCtx := tmpl.BuildTemplateContext(page, combinedSiteData(cfg, siteData), pages, collectionsCtx, nil, "").ToMap()
+		fmtCtx["content"] = string(page.RenderedBody)
+		fmtResult, err := fmtTpl.Render(fmtCtx)
+		if err != nil {
+			return fmt.Errorf("rendering format layout %s: %w", fmtLayoutPath, err)
+		}
+		page.FormatBodies[format] = fmtResult
+	}
+	return nil
 }
 
 // loadSiteData loads data files from the configured data directory.
