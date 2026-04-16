@@ -291,6 +291,7 @@ Key points:
 - If content directory doesn't exist or is empty, `Build()` should return a successful zero-page result (not error). This is required for `alloy init && alloy build` to work and for cmd tests to pass.
 - **i18n (issue #70)**: When `cfg.Languages` is present, the pipeline uses a two-pass per-language loop (see Phase 5C wiring). Pass 1 runs steps 3-11 (discovery through content rendering) per language. Then `LinkTranslations` runs once across all languages. Pass 2 runs steps 12-15 (layout resolution through output writing) per language — this ensures `page.Translations` is populated before templates render. Steps 1-2 (config/validation) and 16-20 (static/assets/sitemap/cache) run once outside the loop.
 - **Plugin filter bridging (issue #93)**: After `registry.LoadPlugins(hooks)` (step 0) and engine creation (step 10), bridge plugin-discovered filters to the template engine. For each filter name from `LoadPlugins()`, call `engine.AddFilter(name, wrapperFn)` where `wrapperFn` routes through `QuickJSRuntime.CallFilter()`. This must happen before content rendering (step 11) so templates can use plugin filters. Similarly, `alloy.hook()`/`alloy.on()` registrations discovered by `EvalFile()` must be wired into the `HookRegistry` during `LoadPlugins()`.
+- **Incremental build via cache (issue #105)**: Before step 3 (content discovery), load the previous build cache via `cache.LoadFrom(cacheDir)`. After discovering pages (step 3) and computing hashes, use `previousCache.ShouldSkipFile(relPath, content)` to skip unchanged pages — no re-parse, no re-render. Template changes override content-hash skipping: if a layout file changed, `previousCache.InvalidatedPages(layoutPath)` returns the affected pages, which must be rebuilt even if their content hash is unchanged. Config changes (`previousCache.IsConfigChanged(currentHash)`) trigger a full rebuild of all pages. The `BuildResult` should report the skip count (e.g., "Built 5 pages, 27 skipped (cached)").
 
 #### Cascade wiring (PR #55)
 
@@ -554,6 +555,7 @@ Cross-package integration paths that should mostly pass once pipeline works:
 - Plugin → template engine filter bridging (issue #93)
 - External data source → fetch → site.data → template context (issue #107)
 - Plugin → HookRegistry hook bridging (issue #93)
+- Build cache → incremental build skip detection (issue #105)
 
 **Verify**: `go test ./... 2>&1 | grep -E "Passed|Failed"`
 
