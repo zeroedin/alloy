@@ -60,11 +60,11 @@ These packages depend only on stdlib or already-defined types.
 - `BuildContext`/`BuildContextFull`: Allocate `PageContext` with shared pointers
 - `Get`: Lookup order: Computed > FrontMatter > Directory > Global. May need `PluginData` field added.
 
-### 1D: `internal/validation` — 15 tests
+### 1D: `internal/validation` — 16 tests
 **File**: `internal/validation/conflicts.go`
 
 - `DetectConflicts`: Group `OutputPathEntry` by path, return conflicts where count > 1
-- `ValidatePermalinkAliases`: Error if page has `permalink: false` AND aliases
+- `ValidatePermalinkAliases`: Error if page has no output URL (`p.URL == ""`) AND aliases. Must check the computed `URL` field (populated by `ResolveForSection`), not the front-matter `Permalink` field — pages without an explicit `permalink:` in front matter still have valid URLs from config-level `permalinks:` patterns (issue #110).
 
 ### 1E: `internal/pagination` — 22 tests
 **File**: `internal/pagination/pagination.go`
