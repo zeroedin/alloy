@@ -188,9 +188,13 @@ func (r *QuickJSRuntime) CallFilter(name string, input interface{}, args ...inte
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(fmt.Sprint(v)))
 	}
 
+	// Set the filter name as a global to avoid JS injection from names
+	// containing special characters (e.g., quotes).
+	r.ctx.Global().SetPropertyStr("__callFilterName", r.ctx.NewString(name))
+
 	// Invoke the filter function stored in __filters
 	result, err := r.ctx.Eval("filter-call.js", qjs.Code(
-		fmt.Sprintf(`__filters["%s"](__callInput)`, name)))
+		`__filters[__callFilterName](__callInput)`))
 	if err != nil {
 		return nil, fmt.Errorf("filter %q: %w", name, err)
 	}
