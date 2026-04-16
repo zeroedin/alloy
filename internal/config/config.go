@@ -294,6 +294,14 @@ func MergeFlags(cfg *Config, flags map[string]interface{}) {
 			cfg.Refetch = b
 		}
 	}
+	if v, ok := flags["root"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			abs, err := filepath.Abs(s)
+			if err == nil {
+				cfg.ProjectRoot = abs
+			}
+		}
+	}
 }
 
 // Validate checks a loaded config for semantic errors: missing required

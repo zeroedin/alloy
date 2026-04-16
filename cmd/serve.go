@@ -58,6 +58,10 @@ func newServeCommand() *cobra.Command {
 				v, _ := cmd.Flags().GetBool("refetch")
 				flags["refetch"] = v
 			}
+			if cmd.Flags().Changed("root") {
+				v, _ := cmd.Flags().GetString("root")
+				flags["root"] = v
+			}
 			if len(flags) > 0 {
 				config.MergeFlags(cfg, flags)
 			}

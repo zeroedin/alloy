@@ -22,6 +22,7 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().StringP("output", "o", "_site", "Output directory")
 	root.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose output")
 	root.PersistentFlags().BoolP("quiet", "q", false, "Suppress non-error output")
+	root.PersistentFlags().StringP("root", "r", "", "Project root directory (overrides config file location)")
 
 	root.AddCommand(newBuildCommand())
 	root.AddCommand(newServeCommand())
