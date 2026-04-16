@@ -3,6 +3,8 @@ package server_test
 import (
 	"errors"
 	"net"
+	"os"
+	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -413,6 +415,57 @@ var _ = Describe("Server", func() {
 			action := srv.DetermineRebuildAction(changes)
 			Expect(action).To(Equal(server.RebuildFull),
 				"many simultaneous changes must trigger full rebuild")
+		})
+	})
+
+	// ── Custom 404 page (issue #109) ─────────────────────────────────
+
+	Describe("Custom 404 page", func() {
+		It("serves 404.html from output root when it exists", func() {
+			// Create a temp output dir with a 404.html
+			outputDir := GinkgoT().TempDir()
+			err := os.WriteFile(filepath.Join(outputDir, "404.html"),
+				[]byte("<html><body>Custom Not Found</body></html>"), 0644)
+			Expect(err).NotTo(HaveOccurred())
+
+			cfg := &config.Config{Title: "Test Site", Build: config.BuildConfig{Output: outputDir}}
+			srv := server.New(cfg)
+
+			body, err := srv.Serve404Page(outputDir)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).To(ContainSubstring("Custom Not Found"),
+				"must serve the custom 404.html content")
+		})
+
+		It("returns error when no 404.html exists in output root", func() {
+			// Empty output dir — no 404.html
+			outputDir := GinkgoT().TempDir()
+
+			cfg := &config.Config{Title: "Test Site", Build: config.BuildConfig{Output: outputDir}}
+			srv := server.New(cfg)
+
+			_, err := srv.Serve404Page(outputDir)
+			Expect(err).To(HaveOccurred(),
+				"must return error when 404.html does not exist")
+		})
+
+		It("404 page receives WebSocket reload script in dev mode", func() {
+			// Create a temp output dir with a 404.html containing </body>
+			outputDir := GinkgoT().TempDir()
+			err := os.WriteFile(filepath.Join(outputDir, "404.html"),
+				[]byte("<html><body>Not Found</body></html>"), 0644)
+			Expect(err).NotTo(HaveOccurred())
+
+			cfg := &config.Config{Title: "Test Site", Build: config.BuildConfig{Output: outputDir}}
+			srv := server.New(cfg)
+
+			body, err := srv.Serve404Page(outputDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			// In dev mode, the served content must include the reload script
+			// (same injection as any other served page)
+			Expect(string(body)).To(ContainSubstring("WebSocket"),
+				"dev mode must inject WebSocket reload script into 404 page")
 		})
 	})
 })

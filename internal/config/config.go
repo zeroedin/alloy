@@ -21,9 +21,10 @@ type Config struct {
 	Title       string                       `yaml:"title" toml:"title" json:"title"`
 	BaseURL     string                       `yaml:"baseURL" toml:"baseURL" json:"baseURL"`
 	Language    string                       `yaml:"language" toml:"language" json:"language"`
-	Verbose     bool                         `yaml:"-" toml:"-" json:"-"` // CLI-only, set via MergeFlags
-	Quiet       bool                         `yaml:"-" toml:"-" json:"-"` // CLI-only, set via MergeFlags
-	Refetch     bool                         `yaml:"-" toml:"-" json:"-"` // CLI-only: --refetch bypasses fetch cache
+	Verbose       bool                         `yaml:"-" toml:"-" json:"-"` // CLI-only, set via MergeFlags
+	Quiet         bool                         `yaml:"-" toml:"-" json:"-"` // CLI-only, set via MergeFlags
+	Refetch       bool                         `yaml:"-" toml:"-" json:"-"` // CLI-only: --refetch bypasses fetch cache
+	IncludeDrafts bool                         `yaml:"-" toml:"-" json:"-"` // CLI-only: dev server includes drafts
 	Build       BuildConfig                  `yaml:"build" toml:"build" json:"build"`
 	Content     ContentConfig                `yaml:"content" toml:"content" json:"content"`
 	Templates   TemplatesConfig              `yaml:"templates" toml:"templates" json:"templates"`

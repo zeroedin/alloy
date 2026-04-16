@@ -2,6 +2,9 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -9,15 +12,20 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"time"
+
+	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/collection"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/data"
+	"github.com/zeroedin/alloy/internal/fetch"
 	"github.com/zeroedin/alloy/internal/i18n"
 	"github.com/zeroedin/alloy/internal/output"
 	"github.com/zeroedin/alloy/internal/pagination"
 	"github.com/zeroedin/alloy/internal/permalink"
 	"github.com/zeroedin/alloy/internal/plugin"
+	"github.com/zeroedin/alloy/internal/server"
 	"github.com/zeroedin/alloy/internal/template"
 )
 
@@ -402,6 +410,206 @@ var _ = Describe("Cross-Cutting Integration", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).To(Equal("test payload"),
 				"plugin-registered hook must execute through HookRegistry")
+		})
+	})
+
+	// ── External data sources → pipeline → template (issue #107) ────
+
+	Describe("External data sources → pipeline → template (issue #107)", func() {
+		It("REST source data merges into site.data under the 'as' key", func() {
+			// Stand up a test HTTP server returning JSON
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode([]map[string]interface{}{
+					{"id": 1, "title": "First Post"},
+					{"id": 2, "title": "Second Post"},
+				})
+			}))
+			defer ts.Close()
+
+			// Simulate the pipeline contract:
+			// 1. Config defines a source with type: rest, url, as
+			sourceCfg := &config.SourceConfig{
+				Type:  "rest",
+				URL:   ts.URL + "/posts",
+				Cache: 0,
+				As:    "api_posts",
+			}
+
+			// 2. Fetch the data using the fetch package
+			fetched, err := fetch.FetchREST(sourceCfg.URL)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fetched).NotTo(BeNil())
+
+			// 3. Merge fetched data into siteData under the "as" key
+			//    (this is the pipeline wiring that build.go must do)
+			siteData := map[string]interface{}{
+				"title": "Test Site",
+				"data":  map[string]interface{}{sourceCfg.As: fetched},
+			}
+
+			// 4. Template context must see it as site.data.api_posts
+			page := &content.Page{RelPath: "index.md"}
+			ctx := template.BuildTemplateContext(page, siteData, nil, nil, nil, "")
+			Expect(ctx).NotTo(BeNil())
+			Expect(ctx.Site.Data).To(HaveKey("api_posts"),
+				"fetched REST data must be available as site.data.api_posts")
+
+			// 5. The data must be the actual fetched content, not empty
+			posts, ok := ctx.Site.Data["api_posts"]
+			Expect(ok).To(BeTrue())
+			Expect(posts).NotTo(BeNil(),
+				"site.data.api_posts must contain the fetched data")
+		})
+
+		It("cached source is used when TTL has not expired", func() {
+			cacheDir := GinkgoT().TempDir()
+			sourceName := "cached_posts"
+
+			// Pre-populate cache with known data
+			cachedData := []map[string]interface{}{
+				{"id": 1, "title": "Cached Post"},
+			}
+			err := fetch.SaveCache(sourceName, cacheDir, cachedData)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Retrieve from cache with a long TTL — must return cached data
+			// without making a network request
+			data, found := fetch.GetCached(sourceName, cacheDir, 3600)
+			Expect(found).To(BeTrue(),
+				"cached data must be found when TTL has not expired")
+			Expect(data).NotTo(BeNil())
+
+			// Merge cached data into siteData the same way the pipeline would
+			siteData := map[string]interface{}{
+				"title": "Test Site",
+				"data":  map[string]interface{}{"posts": data},
+			}
+
+			// Template context must see cached data identically to fresh-fetched data
+			page := &content.Page{RelPath: "index.md"}
+			ctx := template.BuildTemplateContext(page, siteData, nil, nil, nil, "")
+			Expect(ctx.Site.Data).To(HaveKey("posts"),
+				"cached source data must be available in site.data just like fetched data")
+		})
+	})
+
+	// ── Build cache → incremental build (issue #105) ────────────────
+
+	Describe("Build cache → incremental build (issue #105)", func() {
+		It("cache written by build is loadable and detects unchanged pages", func() {
+			// Simulate the pipeline's cache write (Stage 9) → cache read (next build)
+			cacheDir := GinkgoT().TempDir()
+
+			// First build: hash pages and save cache (mimics build.go Stage 9)
+			pageContent := []byte("---\ntitle: My Post\n---\n# Hello World")
+			pageHash := cache.HashContent(pageContent)
+
+			firstBuild := cache.New()
+			firstBuild.SetHash("content/blog/post.md", pageHash)
+			firstBuild.SetHash("content/about.md", cache.HashContent([]byte("about page")))
+			err := firstBuild.SaveTo(cacheDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second build: load previous cache and check for changes
+			restored, err := cache.LoadFrom(cacheDir)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(restored).NotTo(BeNil())
+
+			// Unchanged page must be skippable
+			Expect(restored.ShouldSkipFile("content/blog/post.md", pageContent)).To(BeTrue(),
+				"unchanged page must be detected as skippable via saved cache")
+
+			// Modified page must not be skippable
+			modifiedContent := []byte("---\ntitle: My Post (edited)\n---\n# Updated")
+			Expect(restored.ShouldSkipFile("content/blog/post.md", modifiedContent)).To(BeFalse(),
+				"modified page must not be skippable")
+
+			// New page (not in cache) must not be skippable
+			Expect(restored.ShouldSkipFile("content/new-page.md", []byte("new"))).To(BeFalse(),
+				"new page not in cache must not be skippable")
+		})
+
+		It("template change invalidates only pages using that template", func() {
+			cacheDir := GinkgoT().TempDir()
+
+			// First build: hash pages and track template usage
+			buildCache := cache.New()
+			buildCache.SetHash("content/blog/post-1.md", cache.HashContent([]byte("post 1")))
+			buildCache.SetHash("content/blog/post-2.md", cache.HashContent([]byte("post 2")))
+			buildCache.SetHash("content/about.md", cache.HashContent([]byte("about")))
+			buildCache.TrackTemplateUsage("content/blog/post-1.md", "layouts/post.liquid")
+			buildCache.TrackTemplateUsage("content/blog/post-2.md", "layouts/post.liquid")
+			buildCache.TrackTemplateUsage("content/about.md", "layouts/default.liquid")
+			err := buildCache.SaveTo(cacheDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second build: load cache, detect template change
+			restored, err := cache.LoadFrom(cacheDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Content unchanged — all pages would be skippable by content hash
+			Expect(restored.ShouldSkipFile("content/blog/post-1.md", []byte("post 1"))).To(BeTrue())
+			Expect(restored.ShouldSkipFile("content/about.md", []byte("about"))).To(BeTrue())
+
+			// But if layouts/post.liquid changed, its pages must be rebuilt
+			affected := restored.InvalidatedPages("layouts/post.liquid")
+			Expect(affected).To(ConsistOf(
+				"content/blog/post-1.md",
+				"content/blog/post-2.md",
+			), "template change must invalidate only pages using that template")
+			Expect(affected).NotTo(ContainElement("content/about.md"),
+				"pages using a different template must not be invalidated")
+		})
+	})
+
+	// ── Draft visibility → server mode → lifecycle filtering (issue #108) ──
+
+	Describe("Draft visibility → server mode → lifecycle filtering (issue #108)", func() {
+		It("dev mode includes draft pages in filtered output", func() {
+			// Server reports draft inclusion based on mode
+			cfg := &config.Config{Title: "Test Site"}
+			srv := server.New(cfg)
+			Expect(srv.ShouldIncludeDrafts()).To(BeTrue(),
+				"guard: dev mode must report includeDrafts=true")
+
+			// Build a page set with a draft (Draft field set by BuildPage from front matter)
+			pages := []*content.Page{
+				{RelPath: "blog/published.md", Draft: false, FrontMatter: map[string]interface{}{"title": "Published"}},
+				{RelPath: "blog/draft.md", Draft: true, FrontMatter: map[string]interface{}{"title": "Draft", "draft": true}},
+			}
+
+			// Pipeline must pass includeDrafts from server mode to FilterByLifecycle
+			filtered := content.FilterByLifecycle(pages, time.Now(), srv.ShouldIncludeDrafts())
+			Expect(filtered).To(HaveLen(2),
+				"dev mode must include draft pages in build output")
+
+			// Verify the draft page is in the result
+			var titles []string
+			for _, p := range filtered {
+				titles = append(titles, p.FrontMatter["title"].(string))
+			}
+			Expect(titles).To(ContainElement("Draft"),
+				"draft page must be present in dev mode output")
+		})
+
+		It("build mode excludes draft pages from filtered output", func() {
+			// Preview/build mode excludes drafts
+			cfg := &config.Config{Title: "Test Site"}
+			srv := server.NewWithMode(cfg, server.ModePreview)
+			Expect(srv.ShouldIncludeDrafts()).To(BeFalse(),
+				"guard: preview mode must report includeDrafts=false")
+
+			pages := []*content.Page{
+				{RelPath: "blog/published.md", Draft: false, FrontMatter: map[string]interface{}{"title": "Published"}},
+				{RelPath: "blog/draft.md", Draft: true, FrontMatter: map[string]interface{}{"title": "Draft", "draft": true}},
+			}
+
+			filtered := content.FilterByLifecycle(pages, time.Now(), srv.ShouldIncludeDrafts())
+			Expect(filtered).To(HaveLen(1),
+				"build mode must exclude draft pages")
+			Expect(filtered[0].FrontMatter["title"]).To(Equal("Published"),
+				"only published pages must appear in build output")
 		})
 	})
 })
