@@ -258,20 +258,26 @@ var _ = Describe("Build Pipeline", func() {
 				"guard: no SSR config must set SSRSkipped=true")
 
 			// Actual: with SSR, Build attempts Phase 2 (executes ssr.build command).
-			// The command won't exist in test env, so Build may error — but if it
-			// returns a result, SSRSkipped must be false.
+			// Use "echo ok" — a command that exists on all platforms.
 			ssrCfg := &config.Config{
 				Title: "SSR Site",
 				SSR:   &config.SSRConfig{Build: "echo ok"},
 				Build: config.BuildConfig{Output: "_site"},
 			}
 			ssrResult, err := pipeline.Build(ssrCfg)
-			if err == nil {
+			if err != nil {
+				// If Build errors, it must be because Phase 2 attempted command
+				// execution — not because of Phase 1 or config validation.
+				Expect(err.Error()).To(SatisfyAny(
+					ContainSubstring("echo"),
+					ContainSubstring("exec"),
+					ContainSubstring("ssr"),
+				), "error must come from Phase 2 command execution, not Phase 1")
+			} else {
 				Expect(ssrResult).NotTo(BeNil())
 				Expect(ssrResult.SSRSkipped).To(BeFalse(),
 					"build with ssr: config must run Phase 2")
 			}
-			// If err != nil, Phase 2 was attempted (command execution) which is correct behavior
 		})
 	})
 })
