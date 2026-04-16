@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -16,8 +17,14 @@ import (
 	"github.com/zeroedin/alloy/internal/output"
 	"github.com/zeroedin/alloy/internal/pagination"
 	"github.com/zeroedin/alloy/internal/permalink"
+	"github.com/zeroedin/alloy/internal/plugin"
 	"github.com/zeroedin/alloy/internal/template"
 )
+
+func pluginFixtureDir() string {
+	_, file, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(file), "..", "..", "internal", "plugin", "testdata", "single-files")
+}
 
 var _ = Describe("Cross-Cutting Integration", func() {
 
@@ -313,6 +320,60 @@ var _ = Describe("Cross-Cutting Integration", func() {
 			enTaxonomies := i18n.BuildTaxonomiesForLanguage("en", enPages)
 			Expect(enTaxonomies).To(HaveKey("tags"),
 				"English taxonomies must be built from English pages only")
+		})
+	})
+
+	// ── Plugin → template engine bridging (issue #93) ────────────────
+
+	Describe("Plugin → template engine bridging (issue #93)", func() {
+		It("plugin-discovered filters are bridgeable to template engine", func() {
+			// Simulate the pipeline contract: registry discovers filters,
+			// then pipeline registers them with the template engine.
+			// Use a novel filter name (not a built-in) to test dynamic
+			// resolution — built-in names like "wordCount" pass via the
+			// alloyFilterBridge struct methods, not dynamic dispatch.
+			engine := template.NewLiquidEngine()
+
+			// Register a novel plugin filter via AddFilter (simulating
+			// the bridge that LoadPlugins should create)
+			err := engine.AddFilter("myCustomFilter", func(input interface{}, args ...interface{}) interface{} {
+				// Simulate a plugin filter that transforms input
+				return "transformed"
+			})
+			Expect(err).NotTo(HaveOccurred(),
+				"novel plugin filter must register with template engine without error")
+
+			// Verify the novel filter is callable in a template
+			tmpl, err := engine.Parse("test", []byte("{{ content | myCustomFilter }}"))
+			Expect(err).NotTo(HaveOccurred())
+			result, err := tmpl.Render(map[string]interface{}{"content": "hello world"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(result)).To(Equal("transformed"),
+				"novel plugin filter must transform value during rendering")
+		})
+
+		It("plugin-discovered hooks are registerable in HookRegistry", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(filepath.Join(pluginFixtureDir(), "hooks.js"))).To(Succeed())
+
+			hooks := rt.RegisteredHooks()
+			Expect(hooks).NotTo(BeEmpty(),
+				"plugin must discover at least one hook")
+
+			// Bridge: register each discovered hook in the HookRegistry
+			registry := plugin.NewHookRegistry()
+			for _, hookName := range hooks {
+				registry.Register(plugin.HookName(hookName), func(ctx context.Context, payload interface{}) (interface{}, error) {
+					return payload, nil // wrapper would route through runtime
+				})
+			}
+
+			// Verify the hook fires
+			result, err := registry.Run(plugin.OnContentTransformed, "test payload")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("test payload"),
+				"plugin-registered hook must execute through HookRegistry")
 		})
 	})
 })

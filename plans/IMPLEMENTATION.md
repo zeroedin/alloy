@@ -290,6 +290,7 @@ Key points:
 - Steps 15-20 are post-render: write files, copy assets, generate sitemap, persist cache.
 - If content directory doesn't exist or is empty, `Build()` should return a successful zero-page result (not error). This is required for `alloy init && alloy build` to work and for cmd tests to pass.
 - **i18n (issue #70)**: When `cfg.Languages` is present, the pipeline uses a two-pass per-language loop (see Phase 5C wiring). Pass 1 runs steps 3-11 (discovery through content rendering) per language. Then `LinkTranslations` runs once across all languages. Pass 2 runs steps 12-15 (layout resolution through output writing) per language — this ensures `page.Translations` is populated before templates render. Steps 1-2 (config/validation) and 16-20 (static/assets/sitemap/cache) run once outside the loop.
+- **Plugin filter bridging (issue #93)**: After `registry.LoadPlugins(hooks)` (step 0) and engine creation (step 10), bridge plugin-discovered filters to the template engine. For each filter name from `LoadPlugins()`, call `engine.AddFilter(name, wrapperFn)` where `wrapperFn` routes through `QuickJSRuntime.CallFilter()`. This must happen before content rendering (step 11) so templates can use plugin filters. Similarly, `alloy.hook()`/`alloy.on()` registrations discovered by `EvalFile()` must be wired into the `HookRegistry` during `LoadPlugins()`.
 
 #### Cascade wiring (PR #55)
 
@@ -309,15 +310,19 @@ At this point, `alloy build` works end-to-end on test fixtures.
 
 ---
 
-## Phase 5: Plugin + Fetch + I18n + CLI (~107 tests)
+## Phase 5: Plugin + Fetch + I18n + CLI (~111 tests)
 
-### 5A: `internal/plugin` — 58 tests
+### 5A: `internal/plugin` — 62 tests
 **Files**: `hooks.go`, `registry.go`, `node.go`, `wasm.go`
 
 - **hooks.go**: Hook registry with timeout, chained execution, warnings. `HookFunc` signature is `func(ctx context.Context, payload interface{}) (interface{}, error)` — context carries timeout deadline for cooperative cancellation (issue #13). `Run()` passes `context.Background()`. `RunWithTimeout()` uses `context.WithTimeout()` and passes the derived context to each hook.
 - **registry.go**: Plugin classification by file type, discovery, filter registration, conflict warnings
 - **node.go**: LSP-style message encoding/decoding, bridge state management
-- **wasm.go**: QuickJS/WASM runtime stubs (may need `wazero` dep — defer if complex)
+- **wasm.go**: QuickJS/WASM runtime with filter/shortcode/hook registration and execution.
+  - `EvalFile()` parses `alloy.filter()`, `alloy.shortcode()`, and `alloy.hook()`/`alloy.on()` registrations
+  - `CallFilter()` must execute the JS filter function and return the transformed value (not passthrough)
+  - `RegisteredHooks()` returns hook names discovered during `EvalFile()`
+  - `LoadPlugins()` returns discovered filter names + hook registrations so the pipeline can bridge them to the template engine and HookRegistry
 
 ### 5B: `internal/fetch` — 16 tests
 **File**: `internal/fetch/fetch.go`
@@ -518,7 +523,7 @@ The flag must be applied **after** config loading but **before** pipeline execut
 
 ## Phase 7: Integration Tests + Final (~16 tests)
 
-### 7A: `test/integration/` — 16 tests
+### 7A: `test/integration/` — 25 tests
 **Files**: `build_test.go`, `crosscutting_test.go`, `plugin_template_test.go`
 
 Cross-package integration paths that should mostly pass once pipeline works:
@@ -530,6 +535,8 @@ Cross-package integration paths that should mostly pass once pipeline works:
 - Plugin hook -> content transform
 - i18n -> data cascade -> template
 - Filter integration with both Liquid and Go engines
+- Plugin → template engine filter bridging (issue #93)
+- Plugin → HookRegistry hook bridging (issue #93)
 
 **Verify**: `go test ./... 2>&1 | grep -E "Passed|Failed"`
 
@@ -544,9 +551,9 @@ Cross-package integration paths that should mostly pass once pipeline works:
 | 2 | config, content | ~119 | ~228 |
 | 3 | permalink, collection, template (context/layout/shortcodes), output, assets | ~79 | ~307 |
 | 4 | template (liquid/go engines), static, pipeline **[WALKING SKELETON]** | ~56 | ~363 |
-| 5 | plugin, fetch, i18n, cmd | ~107 | ~470 |
-| 6 | server, ssr | ~70 | ~540 |
-| 7 | integration tests + remaining | ~77 | ~617 |
+| 5 | plugin, fetch, i18n, cmd | ~111 | ~474 |
+| 6 | server, ssr | ~70 | ~544 |
+| 7 | integration tests + remaining | ~86 | ~630 |
 
 ## Key Risks
 
