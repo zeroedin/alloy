@@ -433,11 +433,21 @@ func (r *WASMRuntime) callStringFilter(fn api.Function, input string) (interface
 	return input, nil
 }
 
+// wasmRuntimeExports are well-known WASM exports that are not plugin filters.
+var wasmRuntimeExports = map[string]bool{
+	"memory": true, "_start": true, "_initialize": true,
+	"__data_end": true, "__heap_base": true, "__stack_pointer": true,
+	"__dso_handle": true, "__global_base": true,
+}
+
 // RegisteredFilters returns the names of exported functions that can be used as filters.
+// Excludes well-known WASM runtime exports (memory, _start, etc.).
 func (r *WASMRuntime) RegisteredFilters() []string {
 	names := make([]string, 0, len(r.exports))
 	for name := range r.exports {
-		names = append(names, name)
+		if !wasmRuntimeExports[name] {
+			names = append(names, name)
+		}
 	}
 	return names
 }
