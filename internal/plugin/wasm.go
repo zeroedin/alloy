@@ -339,9 +339,16 @@ func NewWASMRuntime() *WASMRuntime {
 // LoadModule loads a WASM module from the given file path.
 // Validates the binary, compiles it, and discovers exported functions.
 func (r *WASMRuntime) LoadModule(path string) error {
+	// Close any previously loaded module/runtime
+	r.Close()
+	r.exports = make(map[string]bool)
+
 	wasmBytes, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("WASM module not found: %s", path)
+		if os.IsNotExist(err) {
+			return fmt.Errorf("WASM module not found: %s", path)
+		}
+		return fmt.Errorf("reading WASM module %s: %w", path, err)
 	}
 
 	r.modulePath = path
@@ -354,18 +361,23 @@ func (r *WASMRuntime) LoadModule(path string) error {
 	compiled, err := r.rt.CompileModule(ctx, wasmBytes)
 	if err != nil {
 		r.rt.Close(ctx)
+		r.rt = nil
 		return fmt.Errorf("invalid WASM module %s: %w", filepath.Base(path), err)
 	}
+	defer compiled.Close(ctx)
 
-	// Discover exported functions
+	// Discover exported functions — iterate all export names per function
 	for _, exp := range compiled.ExportedFunctions() {
-		r.exports[exp.ExportNames()[0]] = true
+		for _, name := range exp.ExportNames() {
+			r.exports[name] = true
+		}
 	}
 
 	// Instantiate the module
 	r.mod, err = r.rt.InstantiateModule(ctx, compiled, wazero.NewModuleConfig())
 	if err != nil {
 		r.rt.Close(ctx)
+		r.rt = nil
 		return fmt.Errorf("instantiating WASM module %s: %w", filepath.Base(path), err)
 	}
 
@@ -407,14 +419,15 @@ func (r *WASMRuntime) CallExport(name string, args ...interface{}) (interface{},
 func (r *WASMRuntime) callStringFilter(fn api.Function, input string) (interface{}, error) {
 	mem := r.mod.Memory()
 	if mem == nil {
-		return input, nil
+		return nil, fmt.Errorf("WASM module has no exported memory — cannot pass string arguments")
 	}
 
-	// Write input to memory at a known offset
+	// Write input to memory at a known offset.
+	// TODO(#186): use exported alloc function instead of fixed offset.
 	inputBytes := []byte(input)
-	inputPtr := uint32(1024) // fixed offset for simplicity
+	inputPtr := uint32(1024)
 	if !mem.Write(inputPtr, inputBytes) {
-		return input, nil
+		return nil, fmt.Errorf("WASM memory write failed: input (%d bytes) at offset %d exceeds memory", len(inputBytes), inputPtr)
 	}
 
 	results, err := fn.Call(context.Background(), uint64(inputPtr), uint64(len(inputBytes)))
@@ -425,9 +438,11 @@ func (r *WASMRuntime) callStringFilter(fn api.Function, input string) (interface
 	if len(results) >= 2 {
 		resultPtr := uint32(results[0])
 		resultLen := uint32(results[1])
-		if resultData, ok := mem.Read(resultPtr, resultLen); ok {
-			return string(resultData), nil
+		resultData, ok := mem.Read(resultPtr, resultLen)
+		if !ok {
+			return nil, fmt.Errorf("WASM memory read failed: result at offset %d len %d", resultPtr, resultLen)
 		}
+		return string(resultData), nil
 	}
 
 	return input, nil
@@ -467,8 +482,14 @@ func (r *WASMRuntime) HasExport(name string) bool {
 
 // Close releases wazero resources.
 func (r *WASMRuntime) Close() {
+	ctx := context.Background()
+	if r.mod != nil {
+		r.mod.Close(ctx)
+		r.mod = nil
+	}
 	if r.rt != nil {
-		r.rt.Close(context.Background())
+		r.rt.Close(ctx)
+		r.rt = nil
 	}
 }
 
