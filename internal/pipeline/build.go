@@ -880,11 +880,15 @@ func buildPhase2Stream(intermediateHTML map[string]string, ssrCfg *config.SSRCon
 		if err != nil {
 			// Attempt restart and retry once
 			if restartErr := sr.Restart(); restartErr != nil {
-				return nil, fmt.Errorf("ssr stream restart failed: %w", restartErr)
+				log.Printf("warning: SSR stream restart failed for %s: %v", path, restartErr)
+				result[path] = html
+				continue
 			}
 			rendered, err = sr.RenderPage(html)
 			if err != nil {
-				return nil, fmt.Errorf("ssr stream render failed after restart: %w", err)
+				log.Printf("warning: SSR stream failed after restart for %s: %v", path, err)
+				result[path] = html
+				continue
 			}
 		}
 		result[path] = rendered
