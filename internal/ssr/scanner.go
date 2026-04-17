@@ -154,6 +154,58 @@ func (sr *StreamRenderer) RenderPage(html string) (string, error) {
 	return string(data), nil
 }
 
+// RenderPageWithTimeout sends HTML to the persistent process, respecting the
+// context deadline. If the read exceeds the deadline, the context error is returned.
+func (sr *StreamRenderer) RenderPageWithTimeout(ctx context.Context, html string) (string, error) {
+	// Check deadline before attempting I/O
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	type result struct {
+		html string
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		// Write HTML + NUL delimiter
+		if _, err := io.WriteString(sr.stdin, html+"\x00"); err != nil {
+			if sr.stderr.Len() > 0 {
+				ch <- result{"", fmt.Errorf("stream write: %w: %s", err, strings.TrimSpace(sr.stderr.String()))}
+			} else {
+				ch <- result{"", err}
+			}
+			return
+		}
+
+		// Read until NUL delimiter
+		data, err := sr.stdoutBr.ReadBytes('\x00')
+		if err != nil {
+			if sr.stderr.Len() > 0 {
+				ch <- result{"", fmt.Errorf("stream read: %w: %s", err, strings.TrimSpace(sr.stderr.String()))}
+			} else {
+				ch <- result{"", fmt.Errorf("stream read: %w", err)}
+			}
+			return
+		}
+		if len(data) > 0 && data[len(data)-1] == 0 {
+			data = data[:len(data)-1]
+		}
+		ch <- result{string(data), nil}
+	}()
+
+	select {
+	case <-ctx.Done():
+		// Kill the process to unblock the goroutine's read
+		if sr.cmd != nil && sr.cmd.Process != nil {
+			sr.cmd.Process.Kill()
+		}
+		return "", ctx.Err()
+	case r := <-ch:
+		return r.html, r.err
+	}
+}
+
 // Restart kills the current process and starts a new one.
 func (sr *StreamRenderer) Restart() error {
 	// Best-effort cleanup of old process
