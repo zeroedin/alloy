@@ -34,12 +34,13 @@ var ErrNotImplemented = errors.New("not implemented")
 
 // BuildResult holds the outcome of a build.
 type BuildResult struct {
-	OutputDir     string
-	PageCount     int
-	Duration      time.Duration
-	Errors        []error
-	SSRSkipped    bool     // true when Phase 2 was skipped (no ssr: config)
-	PagesRendered []string // source paths of pages that were rendered
+	OutputDir       string
+	PageCount       int
+	Duration        time.Duration
+	Errors          []error
+	SSRSkipped      bool              // true when Phase 2 was skipped (no ssr: config)
+	PagesRendered   []string          // source paths of pages that were rendered
+	RenderedContent map[string]string // source path → final rendered HTML
 }
 
 // Build runs the complete build pipeline (Phase 0 through Phase 3).
@@ -662,12 +663,20 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		}
 	}
 
+	renderedContent := make(map[string]string, len(pages))
+	for _, page := range pages {
+		if len(page.RenderedBody) > 0 {
+			renderedContent[page.RelPath] = string(page.RenderedBody)
+		}
+	}
+
 	result := &BuildResult{
-		OutputDir:     cfg.Build.Output,
-		PageCount:     len(pages),
-		Duration:      time.Since(start),
-		SSRSkipped:    ssrSkipped,
-		PagesRendered: rendered,
+		OutputDir:       cfg.Build.Output,
+		PageCount:       len(pages),
+		Duration:        time.Since(start),
+		SSRSkipped:      ssrSkipped,
+		PagesRendered:   rendered,
+		RenderedContent: renderedContent,
 	}
 
 	// Fire onBuildComplete hook — build is finished, plugins can run post-build tasks
