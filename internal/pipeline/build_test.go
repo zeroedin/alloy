@@ -362,16 +362,12 @@ var _ = Describe("Build Pipeline", func() {
 				// nonexistent command — SSR will fail for pages with components
 				Command: "nonexistent-ssr-tool",
 			}
+			// BuildPhase2 must NOT abort on SSR failure. It must collect
+			// errors and return a result containing all pages.
 			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
-			// Build must NOT abort entirely — plain.md has no components and
-			// should pass through. The error should be collected, not fatal.
-			if err != nil {
-				// If the implementation aborts on first error, this test
-				// documents that it SHOULD continue instead.
-				// The result should still contain plain.md unchanged.
-				Skip("Implementation currently aborts on first SSR error — " +
-					"this test documents the desired behavior: skip failed pages, continue")
-			}
+			Expect(err).NotTo(HaveOccurred(),
+				"BuildPhase2 must not return a fatal error when SSR fails — "+
+					"errors should be collected, not abort the build")
 			Expect(result).NotTo(BeNil())
 			Expect(result["content/plain.md"]).To(Equal(intermediate["content/plain.md"]),
 				"pages without custom elements must pass through unchanged "+
@@ -385,17 +381,15 @@ var _ = Describe("Build Pipeline", func() {
 			ssrCfg := &config.SSRConfig{
 				Command: "nonexistent-ssr-tool",
 			}
+			// When SSR fails for a page, the original (un-SSR'd) HTML must
+			// be preserved in the output — not dropped, not cause a fatal error.
 			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
-			// When SSR fails for a page, the original (un-SSR'd) HTML should
-			// be preserved in the output — not dropped entirely.
-			if err == nil {
-				Expect(result).To(HaveKey("content/page.md"),
-					"failed SSR page must be present in result with original HTML")
-				Expect(result["content/page.md"]).To(ContainSubstring("ds-card"),
-					"failed SSR page must preserve original HTML with raw custom elements")
-			}
-			// If err != nil, the build aborted — the desired behavior is to
-			// preserve the page and collect the error instead.
+			Expect(err).NotTo(HaveOccurred(),
+				"SSR failure for one page must not abort the build")
+			Expect(result).To(HaveKey("content/page.md"),
+				"failed SSR page must be present in result with original HTML")
+			Expect(result["content/page.md"]).To(ContainSubstring("ds-card"),
+				"failed SSR page must preserve original HTML with raw custom elements")
 		})
 	})
 
