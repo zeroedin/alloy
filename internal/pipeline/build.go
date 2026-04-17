@@ -849,7 +849,10 @@ func buildPhase2Exec(intermediateHTML map[string]string, ssrCfg *config.SSRConfi
 		rendered, err := ssr.RenderPageWithTimeout(ctx, ssrCfg.Command, html)
 		cancel()
 		if err != nil {
-			return nil, fmt.Errorf("exec ssr.command %q: %w", ssrCfg.Command, err)
+			// Skip failed page — preserve original HTML and continue
+			log.Printf("warning: SSR failed for %s: %v", path, err)
+			result[path] = html
+			continue
 		}
 		result[path] = rendered
 	}
