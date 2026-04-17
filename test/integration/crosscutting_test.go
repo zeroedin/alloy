@@ -441,12 +441,16 @@ var _ = Describe("Cross-Cutting Integration", func() {
 				})
 			}
 
-			// Fire the hook and verify the JS function executed
-			result, err := registry.Run(plugin.OnContentTransformed, "<p>Original content</p>")
+			// Fire the hook and verify the JS function executed.
+			// hooks.js onContentTransformed is a pass-through (returns content
+			// unchanged), so the result should equal the input.
+			input := "<p>Original content</p>"
+			result, err := registry.Run(plugin.OnContentTransformed, input)
 			Expect(err).NotTo(HaveOccurred(),
 				"hook execution through CallHook must not error")
-			Expect(result).NotTo(BeNil(),
-				"hook must return a result from the JS function")
+			Expect(result).To(Equal(input),
+				"hooks.js onContentTransformed is a pass-through — "+
+					"result must equal input, proving the JS function executed")
 		})
 	})
 

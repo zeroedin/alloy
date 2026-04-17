@@ -72,16 +72,19 @@ var _ = Describe("Full build pipeline", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 
-			// Find the leaf page rendered output (content/blog/deep/nested/leaf.md)
-			leafHTML := ""
-			for _, pagePath := range result.PagesRendered {
-				if filepath.Base(filepath.Dir(pagePath)) == "nested-leaf-post" {
-					leafHTML = result.RenderedContent[pagePath]
-					break
-				}
-			}
+			// RenderedContent is a map[string]string keyed by source path
+			// (e.g., "content/blog/deep/nested/leaf.md") containing the final
+			// rendered HTML for each page. The developer must add this field
+			// to BuildResult when implementing this test.
+			Expect(result.RenderedContent).NotTo(BeNil(),
+				"BuildResult must include RenderedContent map")
+
+			// Look up by source path — matches how the pipeline tracks pages
+			leafHTML, ok := result.RenderedContent["content/blog/deep/nested/leaf.md"]
+			Expect(ok).To(BeTrue(),
+				"leaf.md must be present in RenderedContent by source path")
 			Expect(leafHTML).NotTo(BeEmpty(),
-				"leaf.md must be rendered")
+				"leaf.md must produce rendered HTML")
 
 			// author.name from blog/deep/_data.yaml (deepest override)
 			Expect(leafHTML).To(ContainSubstring("Deep Author"),
@@ -96,9 +99,12 @@ var _ = Describe("Full build pipeline", func() {
 			Expect(leafHTML).To(ContainSubstring("deep-dive"),
 				"cascade must include category from blog/deep/_data.yaml")
 
-			// layout from blog/_data.yaml (inherited through deep/)
+			// layout value from blog/_data.yaml (inherited through deep/).
+			// Note: this tests the cascade VALUE, not layout file selection.
+			// default.liquid renders {{ page.layout }} which shows "post".
+			// A post.liquid layout is not needed for this test.
 			Expect(leafHTML).To(ContainSubstring("post"),
-				"cascade must inherit layout from blog/_data.yaml through deep/ level")
+				"cascade must inherit layout value from blog/_data.yaml through deep/ level")
 		})
 	})
 
