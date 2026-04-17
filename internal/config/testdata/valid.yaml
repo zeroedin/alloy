@@ -72,8 +72,7 @@ collections:
     order: "desc"
 
 ssr:
-  command: "golit serve --stdio"
-  mode: "stream"
+  command: "golit render --defs bundles/"
 
 languages:
   en:

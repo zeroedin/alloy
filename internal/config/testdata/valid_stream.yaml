@@ -1,0 +1,7 @@
+title: "Stream SSR Site"
+baseURL: "https://example.com"
+build:
+  output: _site
+ssr:
+  command: "golit serve --stdio"
+  mode: "stream"

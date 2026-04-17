@@ -1842,6 +1842,8 @@ echo '<html><body><ds-card>Hello</ds-card></body></html>' | golit render --defs 
 # (process stays alive until build completes or dev server stops)
 ```
 
+The NUL byte (`\0`) is used as the stream delimiter because valid HTML cannot contain it — per the HTML spec (§13.2.2), NUL characters in HTML input are parse errors replaced with U+FFFD. This makes `\0` an unambiguous, zero-overhead message boundary.
+
 The SSR engine owns all component-level concerns: element discovery, deduplication, shadow root rendering, and DSD insertion. Alloy treats it as a black box — HTML goes in, SSR'd HTML comes out.
 
 If the engine binary is not found:
