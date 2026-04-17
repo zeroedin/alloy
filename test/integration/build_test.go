@@ -53,6 +53,53 @@ var _ = Describe("Full build pipeline", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 		})
+
+		// ── Issue #141: 3-level deep cascade merge ────────────────────
+		// The cascade fixture has 3 levels of _data.yaml:
+		//   content/_data.yaml        → layout: default, author.name: Content Author
+		//   content/blog/_data.yaml   → layout: post, author: {name: Blog Author, twitter: @blogauthor}
+		//   content/blog/deep/_data.yaml → author.name: Deep Author, category: deep-dive
+		//
+		// A page at content/blog/deep/nested/leaf.md must inherit merged
+		// cascade from all 3 ancestor levels.
+
+		It("3-level deep cascade merges all ancestor values into rendered output", func() {
+			cfgPath := filepath.Join(fixtureDir("cascade"), "alloy.config.yaml")
+			cfg, err := config.Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			// Find the leaf page rendered output (content/blog/deep/nested/leaf.md)
+			leafHTML := ""
+			for _, pagePath := range result.PagesRendered {
+				if filepath.Base(filepath.Dir(pagePath)) == "nested-leaf-post" {
+					leafHTML = result.RenderedContent[pagePath]
+					break
+				}
+			}
+			Expect(leafHTML).NotTo(BeEmpty(),
+				"leaf.md must be rendered")
+
+			// author.name from blog/deep/_data.yaml (deepest override)
+			Expect(leafHTML).To(ContainSubstring("Deep Author"),
+				"cascade must include author.name from blog/deep/_data.yaml")
+
+			// author.twitter from blog/_data.yaml (inherited — not overridden by deep/)
+			Expect(leafHTML).To(ContainSubstring("@blogauthor"),
+				"cascade must deep-merge: author.twitter from blog/_data.yaml "+
+					"must survive when blog/deep/_data.yaml only overrides author.name")
+
+			// category from blog/deep/_data.yaml (new key at deep level)
+			Expect(leafHTML).To(ContainSubstring("deep-dive"),
+				"cascade must include category from blog/deep/_data.yaml")
+
+			// layout from blog/_data.yaml (inherited through deep/)
+			Expect(leafHTML).To(ContainSubstring("post"),
+				"cascade must inherit layout from blog/_data.yaml through deep/ level")
+		})
 	})
 
 	Describe("Collections site", func() {
