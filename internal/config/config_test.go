@@ -155,12 +155,10 @@ var _ = Describe("Config", func() {
 				Expect(cfg.Collections["blog"].Order).To(Equal("desc"))
 			})
 
-			It("parses SSR config with build and serve", func() {
+			It("parses SSR config with command", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(cfg.SSR).NotTo(BeNil())
-				Expect(cfg.SSR.Build).To(Equal("golit transform _site/"))
-				Expect(cfg.SSR.Serve.Cmd).To(Equal("golit serve --defs bundles/"))
-				Expect(cfg.SSR.Serve.Endpoint).To(Equal("http://localhost:9777/render"))
+				Expect(cfg.SSR.Command).To(Equal("golit render --defs bundles/"))
 			})
 
 			It("parses languages config with title, weight, root, and strings", func() {

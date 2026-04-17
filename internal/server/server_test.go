@@ -80,7 +80,7 @@ var _ = Describe("Server", func() {
 			cfg := &config.Config{
 				Title: "SSR Site",
 				SSR: &config.SSRConfig{
-					Build: "golit render _site/**/*.html",
+					Command: "golit render --defs bundles/",
 				},
 			}
 			srv := server.NewWithMode(cfg, server.ModePreview)
@@ -92,7 +92,7 @@ var _ = Describe("Server", func() {
 			// Positive-case guard: SSR config present → must be true
 			ssrCfg := &config.Config{
 				Title: "SSR Site",
-				SSR:   &config.SSRConfig{Build: "golit render _site/**/*.html"},
+				SSR:   &config.SSRConfig{Command: "golit render --defs bundles/"},
 			}
 			ssrSrv := server.NewWithMode(ssrCfg, server.ModePreview)
 			Expect(ssrSrv.ShouldRunSSR()).To(BeTrue(),

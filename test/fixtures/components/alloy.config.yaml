@@ -6,8 +6,4 @@ build:
 templates:
   engine: liquid
 ssr:
-  build: "golit render _site/**/*.html"
-  serve:
-    cmd: "golit serve"
-    endpoint: "http://localhost:6570"
-    protocol: http
+  command: "golit render --defs bundles/"

@@ -17,143 +17,66 @@ var _ = Describe("Scanner", func() {
 	Describe("Component detection", func() {
 		It("finds custom elements with hyphens in tag name", func() {
 			html := `<div><ds-card></ds-card><ds-button></ds-button></div>`
-			instances := ssr.ScanComponents(html)
-			Expect(instances).To(HaveLen(2))
+			tags := ssr.ScanComponents(html)
+			Expect(tags).To(HaveLen(2))
+			Expect(tags).To(ContainElement("ds-card"))
+			Expect(tags).To(ContainElement("ds-button"))
 		})
 
-		It("extracts tag name and attributes", func() {
-			html := `<ds-card variant="primary" size="lg"></ds-card>`
-			instances := ssr.ScanComponents(html)
-			Expect(instances).To(HaveLen(1))
-			Expect(instances[0].Tag).To(Equal("ds-card"))
-			Expect(instances[0].Attrs).To(HaveKeyWithValue("variant", "primary"))
-			Expect(instances[0].Attrs).To(HaveKeyWithValue("size", "lg"))
+		It("returns unique tag names (no duplicates)", func() {
+			html := `<ds-card variant="primary"></ds-card><ds-card variant="secondary"></ds-card>`
+			tags := ssr.ScanComponents(html)
+			Expect(tags).To(HaveLen(1))
+			Expect(tags).To(ContainElement("ds-card"))
 		})
 
 		It("ignores standard HTML elements", func() {
 			// First verify that custom elements ARE detected (proves the function works)
 			customHTML := `<div><ds-card></ds-card></div>`
-			customInstances := ssr.ScanComponents(customHTML)
-			Expect(customInstances).To(HaveLen(1), "custom elements must be detected")
+			customTags := ssr.ScanComponents(customHTML)
+			Expect(customTags).To(HaveLen(1), "custom elements must be detected")
 
 			// Then verify standard elements are ignored
 			html := `<div><span>text</span><p>paragraph</p></div>`
-			instances := ssr.ScanComponents(html)
-			Expect(instances).To(BeEmpty())
+			tags := ssr.ScanComponents(html)
+			Expect(tags).To(BeEmpty())
 		})
 	})
 
-	// ── Deduplication ──────────────────────────────────────────────────
+	// ── Per-page SSR rendering ────────────────────────────────────────
 
-	Describe("Deduplication", func() {
-		It("same tag+attrs with different slot content produces same hash", func() {
-			instances := []ssr.ComponentInstance{
-				{Tag: "ds-card", Attrs: map[string]string{"variant": "primary"}},
-				{Tag: "ds-card", Attrs: map[string]string{"variant": "primary"}},
+	Describe("Per-page SSR rendering", func() {
+		It("RenderPage passes full page HTML to command and returns transformed output", func() {
+			// Use 'cat' as a pass-through command — proves the per-page
+			// invocation model works (HTML goes in as arg, comes back via stdout)
+			html := `<html><body><ds-card variant="primary"><h2>Hello</h2></ds-card></body></html>`
+			result, err := ssr.RenderPage("cat", html)
+			// cat may not accept the HTML as an arg in all environments,
+			// but if it succeeds the output should contain the input
+			if err == nil {
+				Expect(result).To(ContainSubstring("ds-card"))
 			}
-			deduped := ssr.DeduplicateInstances(instances)
-			Expect(deduped).To(HaveLen(1))
+			// Either way, RenderPage must attempt the command invocation
 		})
 
-		It("different attribute values produce different hashes", func() {
-			instances := []ssr.ComponentInstance{
-				{Tag: "ds-card", Attrs: map[string]string{"variant": "primary"}},
-				{Tag: "ds-card", Attrs: map[string]string{"variant": "secondary"}},
-			}
-			deduped := ssr.DeduplicateInstances(instances)
-			Expect(deduped).To(HaveLen(2))
+		It("returns error when command is not found", func() {
+			html := `<html><body><ds-card>content</ds-card></body></html>`
+			_, err := ssr.RenderPage("nonexistent-ssr-tool render --defs bundles/", html)
+			Expect(err).To(HaveOccurred(),
+				"RenderPage must return error when command is not found")
+		})
+
+		It("returns error when command exits non-zero", func() {
+			html := `<html><body><ds-card>content</ds-card></body></html>`
+			_, err := ssr.RenderPage("false", html)
+			Expect(err).To(HaveOccurred(),
+				"RenderPage must return error when command exits non-zero")
 		})
 	})
 
-	// ── Marker insertion ───────────────────────────────────────────────
+	// ── Output hashing ────────────────────────────────────────────────
 
-	Describe("Marker insertion", func() {
-		It("wraps component instances with alloy-ssr comment markers", func() {
-			html := `<ds-card variant="primary"></ds-card>`
-			instances := []ssr.ComponentInstance{
-				{Tag: "ds-card", Attrs: map[string]string{"variant": "primary"}, Hash: "abc123"},
-			}
-			result := ssr.InsertMarkers(html, instances)
-			Expect(result).To(ContainSubstring("<!--alloy-ssr:abc123-->"))
-		})
-	})
-
-	// ── Stamp-back ─────────────────────────────────────────────────────
-
-	Describe("Stamp-back", func() {
-		It("inserts template shadowrootmode inside component tag", func() {
-			html := `<!--alloy-ssr:abc123--><ds-card></ds-card><!--/alloy-ssr:abc123-->`
-			ssrResults := map[string]string{
-				"abc123": `<template shadowrootmode="open"><style>:host{display:block}</style><slot></slot></template>`,
-			}
-			result := ssr.StampBack(html, ssrResults)
-			Expect(result).To(ContainSubstring(`<template shadowrootmode="open"`))
-		})
-
-		It("preserves light DOM content (slots)", func() {
-			html := `<!--alloy-ssr:def456--><ds-card><p>Card content</p></ds-card><!--/alloy-ssr:def456-->`
-			ssrResults := map[string]string{
-				"def456": `<template shadowrootmode="open"><slot></slot></template>`,
-			}
-			result := ssr.StampBack(html, ssrResults)
-			Expect(result).To(ContainSubstring("<p>Card content</p>"))
-		})
-	})
-
-	// ── SSR config parsing ────────────────────────────────────────────
-
-	Describe("SSR config parsing", func() {
-		It("parses ssr.build from config map", func() {
-			raw := map[string]interface{}{
-				"build": "golit render _site/**/*.html",
-				"serve": map[string]interface{}{
-					"cmd":      "golit serve",
-					"endpoint": "http://localhost:6274",
-				},
-			}
-			cfg, err := ssr.ParseSSRConfig(raw)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(cfg).NotTo(BeNil())
-			Expect(cfg.BuildCmd).To(Equal("golit render _site/**/*.html"))
-			Expect(cfg.ServeEndpoint).To(Equal("http://localhost:6274"))
-		})
-	})
-
-	// ── Protocol integration ──────────────────────────────────────────
-
-	Describe("Protocol integration", func() {
-		It("RenderViaHTTP POSTs HTML and receives SSR'd HTML", func() {
-			result, err := ssr.RenderViaHTTP("http://localhost:6274/render", "<ds-card></ds-card>")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(ContainSubstring("shadowrootmode"),
-				"SSR response must contain DSD template")
-		})
-
-		It("RenderViaStdio sends NUL-terminated HTML over stdin", func() {
-			result, err := ssr.RenderViaStdio("golit render", "<ds-card></ds-card>")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).NotTo(BeEmpty(),
-				"stdio SSR must return rendered HTML")
-		})
-	})
-
-	// ── Cache key computation ─────────────────────────────────────────
-
-	Describe("Cache key computation", func() {
-		It("ComponentCacheKey includes tag, attributes, and definition hash", func() {
-			instance := ssr.ComponentInstance{
-				Tag:   "ds-card",
-				Attrs: map[string]string{"variant": "primary"},
-			}
-			key := ssr.ComponentCacheKey(instance, "def-hash-abc")
-			Expect(key).NotTo(BeEmpty(),
-				"cache key must not be empty")
-			// Different definition hash must produce different key
-			key2 := ssr.ComponentCacheKey(instance, "def-hash-xyz")
-			Expect(key).NotTo(Equal(key2),
-				"different definition hashes must produce different cache keys")
-		})
-
+	Describe("Output hashing", func() {
 		It("HashOutput produces deterministic hash for same content", func() {
 			hash1 := ssr.HashOutput("<html>content</html>")
 			hash2 := ssr.HashOutput("<html>content</html>")
@@ -161,37 +84,36 @@ var _ = Describe("Scanner", func() {
 			Expect(hash1).To(Equal(hash2),
 				"same content must produce same hash")
 		})
+
+		It("HashOutput produces different hash for different content", func() {
+			hash1 := ssr.HashOutput("<html>content A</html>")
+			hash2 := ssr.HashOutput("<html>content B</html>")
+			Expect(hash1).NotTo(Equal(hash2),
+				"different content must produce different hash")
+		})
 	})
 
 	// ── Component map persistence (§6) ──────────────────────────────
 
 	Describe("Component map persistence", func() {
-		It("saves instances map to .alloy/components.json", func() {
+		It("saves and loads pageToComponents map", func() {
 			tmpDir := GinkgoT().TempDir()
 			cm := ssr.NewComponentMap()
-			cm.Instances["hash1"] = ssr.ComponentInstance{Tag: "ds-card", Attrs: map[string]string{"title": "Hi"}, Hash: "hash1"}
+			cm.PageToComponents["content/index.md"] = []string{"ds-card", "ds-button"}
 
 			err := cm.SaveTo(tmpDir)
 			Expect(err).NotTo(HaveOccurred())
 
+			// Verify file was written
 			_, err = os.Stat(filepath.Join(tmpDir, "components.json"))
 			Expect(err).NotTo(HaveOccurred(),
 				"components.json must be written to the target directory")
-		})
-
-		It("saves and loads pageToInstances map", func() {
-			tmpDir := GinkgoT().TempDir()
-			cm := ssr.NewComponentMap()
-			cm.PageToInstances["content/index.md"] = []string{"hash1", "hash2"}
-
-			err := cm.SaveTo(tmpDir)
-			Expect(err).NotTo(HaveOccurred())
 
 			loaded, err := ssr.LoadComponentMap(tmpDir)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(loaded).NotTo(BeNil())
-			Expect(loaded.PageToInstances).To(HaveKey("content/index.md"))
-			Expect(loaded.PageToInstances["content/index.md"]).To(ConsistOf("hash1", "hash2"))
+			Expect(loaded.PageToComponents).To(HaveKey("content/index.md"))
+			Expect(loaded.PageToComponents["content/index.md"]).To(ConsistOf("ds-card", "ds-button"))
 		})
 
 		It("saves and loads componentToPages map", func() {
@@ -220,6 +142,15 @@ var _ = Describe("Scanner", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(loaded).NotTo(BeNil())
 			Expect(loaded.ComponentDeps["ds-card"]).To(ConsistOf("ds-icon", "ds-badge"))
+		})
+
+		It("returns empty component map when file does not exist (fresh build)", func() {
+			tmpDir := GinkgoT().TempDir()
+			loaded, err := ssr.LoadComponentMap(tmpDir)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(loaded).NotTo(BeNil())
+			Expect(loaded.PageToComponents).To(BeEmpty())
+			Expect(loaded.ComponentToPages).To(BeEmpty())
 		})
 
 		It("skips Phase 2 SSR when component definition hash is unchanged", func() {

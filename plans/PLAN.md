@@ -953,10 +953,8 @@ Data cascade and front matter are already assembled from Phase 0 — Phase 1 sta
 
 Skipped entirely unless the project has an `ssr:` block in config. Without it, Phase 1 output is the final HTML — Web Components render client-side only.
 
-16. **Component Scan** — Parse all intermediate HTML for custom element tags
-17. **Instance Deduplication** — Hash each `(tag + attrs + slots)`, collect unique instances
-18. **SSR Execution** — Render unique instances via configured SSR engine (golit, lit-ssr-wasm, or Lit SSR Node plugin)
-19. **Stamp Back** — Replace raw component tags with SSR'd output in each page
+16. **Per-page SSR** — For each page, pass the full intermediate HTML to the configured `ssr.command` as a CLI argument. The command returns the fully transformed HTML with Declarative Shadow DOM.
+17. **Component tracking** — Scan each page's pre-SSR HTML for custom element tags (anything with a hyphen). Record which pages use which components for cache invalidation.
 
 **Phase 3 — Output**
 
@@ -1022,7 +1020,7 @@ Unlike 11ty's stage-based invalidation (where build-ordering edges cause cascadi
 
 **Template invalidation** — Template changes invalidate pages that use that specific template (tracked via the layout resolution step), not all pages in a stage.
 
-**Component invalidation** — Handled entirely in Phase 2. A component definition change re-SSRs only instances of that component, then re-stamps only pages containing those instances. Phase 1 is untouched. See Section 6.
+**Component invalidation** — Handled entirely in Phase 2. A component definition change triggers re-SSR of all pages using that component (tracked via `componentToPages` in `.alloy/components.json`). Phase 1 is untouched. See Section 6.
 
 ---
 
@@ -1216,7 +1214,7 @@ The content pages themselves are unaffected — they render with their own layou
 
 **Undeclared taxonomy keys are ignored.** If a post has `mood: ["happy"]` in front matter but `mood` is not in the `taxonomies` config, no collection is created for it. This prevents noisy collections from arbitrary front matter arrays (image lists, related links, etc.).
 
-**Phase 2 output hashing** — After Phase 1 renders intermediate HTML, the output is hashed. If the hash matches the cached hash, Phase 2 SSR is skipped entirely for that page. This prevents unnecessary SSR work when a page's content hasn't actually changed.
+**Phase 2 output hashing** — After Phase 1 renders intermediate HTML, the output is hashed. If the hash matches the cached hash, Phase 2 SSR is skipped for that page. This prevents unnecessary SSR work when a page's content hasn't actually changed.
 
 ### Template Context
 
@@ -1715,12 +1713,6 @@ Content-Length: 82\r\n
 // Node → Go: Response
 {"id": 1, "result": [...]}
 
-// Go → Node: SSR render (Lit SSR plugin)
-{"id": 2, "type": "ssr", "instances": [{"hash": "abc123", "html": "<ds-button>"}]}
-
-// Node → Go: SSR response
-{"id": 2, "result": [{"hash": "abc123", "html": "<ds-button><template shadowrootmode=\"open\">...</template></ds-button>"}]}
-
 // Go → Node: Filter call (proxy for Node-registered filters)
 {"id": 3, "type": "filter", "name": "customFilter", "input": "value"}
 
@@ -1811,372 +1803,74 @@ Phase 1 output is **intermediate HTML** — it contains raw Web Component tags (
 **This phase only runs if `ssr:` is configured.** Without it, Phase 1 output is the final HTML and Web Components render client-side only. Most sites won't need this — it's specifically for projects using Web Components that want server-side rendered Declarative Shadow DOM.
 
 ```
-Intermediate HTML → Scan for Components → Deduplicate → SSR → Stamp Back → Final HTML
+Intermediate HTML → Per-Page SSR Command → Final HTML (with DSD)
+                 → Scan for Components → Track page-to-component mapping (for cache)
 ```
 
-1. **Component scan**: Parse intermediate HTML for all custom element tags (anything with a hyphen in the tag name per the HTML spec)
-2. **Instance extraction**: For each component occurrence, extract `tag + attributes + slot content` as a component instance
-3. **Deduplication**: Hash each instance → `hash(tag + attributes)`. Slot content (innerHTML) is excluded — it lives in the light DOM and does not affect the shadow root output. Identical instances across all pages SSR once.
-4. **SSR execution**: Render each unique instance via configured SSR engine (golit, lit-ssr-wasm, or Lit SSR Node plugin)
-5. **Stamp back**: Replace raw component tags with SSR'd Declarative Shadow DOM output in each page
+1. **Per-page SSR**: For each page, pass the full intermediate HTML to the configured `ssr.command` as a CLI argument. The SSR engine (golit) handles all component discovery, rendering, and DSD injection internally. The command returns the fully transformed HTML with Declarative Shadow DOM inserted into all custom elements.
+2. **Component tracking**: Before SSR, scan each page's intermediate HTML for custom element tags (anything with a hyphen in the tag name per the HTML spec). Record which pages use which components in `.alloy/components.json` for cache invalidation.
 
-### Deduplication — Attributes Only, Not Slot Content
+### SSR Command
 
-With Declarative Shadow DOM, the SSR output is the **shadow root template**. Slot content lives in the light DOM and is projected by the browser — it does NOT affect the shadow root output.
+Alloy does **not** import any SSR engine as a Go dependency. The SSR engine is an external CLI binary that must be installed separately. The `ssr:` config tells Alloy what command to invoke:
 
-**Dedup key**: `hash(tag + attributes)` — slot content is excluded.
-
-```html
-<!-- These two produce the SAME shadow root template -->
-<ds-card variant="primary">
-  <h2 slot="title">Getting Started</h2>     <!-- different slots -->
-</ds-card>
-
-<ds-card variant="primary">
-  <h2 slot="title">API Reference</h2>       <!-- different slots -->
-</ds-card>
-
-<!-- Same tag + same attributes = ONE SSR call, stamped into both -->
+```yaml
+# alloy.config.yaml
+ssr:
+  command: "golit render --defs ./bundles"
 ```
 
-For a design system with 20 components × ~5 attribute variations each, you get ~100 unique SSR calls total, regardless of whether the site has 720 or 72,000 pages.
+**Per-page rendering** — For each page, Alloy passes the full intermediate HTML as a CLI argument to `ssr.command`. The engine transforms the entire page — discovering custom elements, rendering their shadow roots, and inserting Declarative Shadow DOM — then returns the final HTML:
 
-**Cache key per instance**: `hash(tag + sorted_attributes + component_definition_hash)`
-
-### Stamp-Back — Marker Insertion
-
-During Phase 1, each component instance is wrapped with marker comments:
-
-```html
-<!--alloy-ssr:abc123--><ds-card variant="primary">
-  <h2 slot="title">Getting Started</h2>
-</ds-card><!--/alloy-ssr:abc123-->
+```
+golit render --defs ./bundles '<html><body><ds-card variant="primary"><h2 slot="title">Hello</h2></ds-card></body></html>'
 ```
 
-After SSR, Alloy **inserts** the shadow root template inside the component tag (before light DOM children), preserving slot content:
+The SSR engine owns all component-level concerns: element discovery, deduplication, shadow root rendering, and DSD insertion. Alloy treats it as a black box — HTML goes in, SSR'd HTML comes out.
 
-```html
-<!--alloy-ssr:abc123--><ds-card variant="primary">
-  <template shadowrootmode="open">
-    <style>:host { ... }</style>
-    <div class="card card--primary">
-      <slot name="title"></slot>
-      <slot></slot>
-    </div>
-  </template>
-  <h2 slot="title">Getting Started</h2>
-</ds-card><!--/alloy-ssr:abc123-->
+If the engine binary is not found:
+
+```
+[alloy] ERROR SSR command failed: "golit" not found in PATH.
+        Install golit or remove the ssr: block from alloy.config.yaml.
+        Build aborted.
 ```
 
-The hash `abc123` maps to the shadow root template. Light DOM is untouched.
+Everything else — component discovery, ignore lists, import maps, concurrency — is configured by the engine's own config (e.g., `golit.yaml`). Alloy doesn't validate or proxy engine settings — if the command returns an error, Alloy surfaces it and aborts.
 
-### Component Dependency Graph — Nested Components
+### Component Tracking for Cache Invalidation
 
-Components can use other components inside their shadow roots (e.g., `<ds-card>` internally renders `<ds-icon>`). These nested components are invisible in Phase 1 intermediate HTML — only the SSR engine sees them.
+Before passing each page to the SSR command, Alloy scans the intermediate HTML for custom element tags and records which pages use which components. This enables targeted rebuilds when a component source file changes.
 
-**Alloy scans SSR output** to discover nested dependencies. After SSR produces the shadow root HTML, Alloy parses the `<template shadowrootmode="open">` content for custom element tags (anything with a hyphen). This builds a component dependency graph without coupling to the SSR engine:
+**Tracking map** stored in `.alloy/components.json`:
 
 ```json
 {
-  "componentDeps": {
-    "ds-card": ["ds-icon"],
-    "ds-page-layout": ["ds-sidebar", "ds-nav"],
-    "ds-sidebar": ["ds-icon", "ds-link"]
+  "pageToComponents": {
+    "content/blog/post-1.md": ["ds-card", "ds-button"],
+    "content/about.html": ["ds-card"]
+  },
+  "componentToPages": {
+    "ds-card": ["content/blog/post-1.md", "content/about.html"],
+    "ds-button": ["content/blog/post-1.md"]
+  },
+  "definitionHashes": {
+    "ds-card": "abc123",
+    "ds-button": "def456"
   }
 }
 ```
 
-When `ds-icon.js` source changes, Alloy walks the graph upward:
-```
-ds-icon changed
-  → ds-card uses ds-icon → invalidate ds-card SSR cache
-  → ds-sidebar uses ds-icon → invalidate ds-sidebar SSR cache
-    → ds-page-layout uses ds-sidebar → invalidate ds-page-layout SSR cache
-```
-
-Then re-SSR all affected instances, re-stamp all pages using any of those components.
+When a component source file changes (detected by file watcher or definition hash comparison), Alloy rebuilds all pages listed in `componentToPages` for that component. Pages not using the changed component are skipped entirely.
 
 ### Why This Matters for Incremental Builds
 
 | What changed | Phase 1 | Phase 2 | Pages rebuilt |
 |---|---|---|---|
-| A blog post's content | Re-render that post | Re-SSR only if post's component instances changed | 1 |
-| A Liquid layout | Re-render pages using that layout | Re-SSR only changed component instances | N (layout users) |
-| `<ds-button>` component def | Skip entirely | Re-SSR `<ds-button>` instances + any component using `<ds-button>` in shadow root (via dep graph) | 0 re-rendered, M re-stamped |
-| Global data file | Re-render all pages that could be affected | Re-SSR only if Phase 1 output hash changed | N (all potential readers) |
-
-### Component Dependency Map
-
-Stored in `.alloy/components.json`:
-
-```json
-{
-  "instances": {
-    "abc123": {
-      "tag": "ds-card",
-      "attrs": {"variant": "primary"},
-      "ssrOutput": "<template shadowrootmode=\"open\">...</template>",
-      "defHash": "def456"
-    }
-  },
-  "pageToInstances": {
-    "content/blog/post-1.md": ["abc123", "def789"],
-    "content/about.html": ["abc123"]
-  },
-  "componentToPages": {
-    "ds-card": ["content/blog/post-1.md", "content/about.html"],
-    "ds-icon": ["content/docs/icons.html"]
-  },
-  "componentDeps": {
-    "ds-card": ["ds-icon"],
-    "ds-sidebar": ["ds-icon", "ds-link"]
-  }
-}
-```
-
-### SSR Engine Integration
-
-There are two ways to integrate an SSR engine with Alloy:
-
-1. **External CLI engines** — configured via the `ssr:` block in `alloy.config.yaml`. Alloy manages the process lifecycle. Used by engines that ship as standalone binaries (golit, lit-ssr-wasm).
-
-2. **Node plugin engines** — no `ssr:` config needed. The plugin hooks into `onPageRendered` via Alloy's existing Tier 3 plugin system. The Node bridge subprocess is already managed by Alloy. Used by engines that are npm packages (@lit-labs/ssr).
-
-This distinction is intentional: CLI engines are external tools with their own config files and discovery mechanisms. Node plugin engines are just plugins — they use the same lifecycle hooks as any other plugin. Alloy doesn't need to know it's "doing SSR" — it's just running a plugin that transforms HTML.
-
----
-
-#### External CLI Engines (`ssr:` config)
-
-Alloy does **not** import any SSR engine as a Go dependency. External engines are CLI binaries that must be installed separately. The `ssr:` config tells Alloy what render command to call:
-
-```yaml
-# alloy.config.yaml
-ssr:
-  render: "golit render --defs bundles/"
-```
-
-**Per-instance rendering** — Alloy drives Phase 2 in memory. After scanning intermediate HTML for custom elements and deduplicating (see Phase 2 algorithm above), Alloy calls the `ssr.render` command **once per unique component instance**. The component's raw HTML is passed via stdin; the SSR'd HTML (with Declarative Shadow DOM) is returned via stdout:
-
-```
-echo '<ds-button variant="primary">Click Me</ds-button>' | golit render --defs bundles/
-```
-
-This is an in-memory pipeline — no files need to exist on disk for Phase 2. The render command receives a single component fragment and returns the SSR'd version. Alloy stamps the result back into the intermediate HTML, then proceeds to output writing.
-
-**`alloy build`** — For each unique component instance (after deduplication), Alloy invokes `ssr.render` and collects the SSR'd output. With ~100 unique instances across a 720-page site, this is ~100 render calls — not 720. Results are cached by component hash for incremental builds.
-
-**`alloy serve --preview`** — Same per-instance render model, but Alloy may keep the render process warm as a long-running subprocess for lower latency. The `serve` sub-config is optional and enables this:
-
-```yaml
-ssr:
-  render: "golit render --defs bundles/"
-  serve:
-    cmd: "golit serve --defs bundles/"
-    endpoint: "http://localhost:9777/render"
-```
-
-When `ssr.serve` is configured, Alloy spawns the process at dev server launch and POSTs component fragments to the endpoint instead of invoking `ssr.render` per call. When not configured, Alloy falls back to calling `ssr.render` per instance (works, just slower).
-
-The communication protocol for `serve` depends on the engine:
-- **HTTP** — Alloy POSTs the component HTML fragment to `ssr.serve.endpoint`, receives SSR'd HTML in the response body.
-- **stdio** — Alloy writes NUL-terminated component HTML to the process's stdin, reads NUL-terminated SSR'd HTML from stdout.
-
-```yaml
-# stdio-based engine
-ssr:
-  render: "lit-ssr render --dir ./components/"
-  serve:
-    cmd: "lit-ssr --dir ./components/"
-    protocol: "stdio"
-```
-
-If the engine binary is not found:
-
-```
-[alloy] ERROR SSR render command failed: "golit" not found in PATH.
-        Install golit or remove the ssr: block from alloy.config.yaml.
-        Build aborted.
-```
-
-Everything else — component discovery, ignore lists, import maps, concurrency — is configured by the engine's own config (e.g., `golit.yaml`). Alloy doesn't validate or proxy engine settings — if the render command returns an error, Alloy surfaces it and aborts.
-
-#### Alternative: batch post-processing
-
-Some SSR engines also offer a batch transform mode that processes all HTML files on disk at once (e.g., `golit transform _site/`). This is **not** Alloy's Phase 2 — it bypasses deduplication, caching, and in-memory stamp-back. Users who prefer this workflow can run it as a post-build step:
-
-```bash
-alloy build && golit transform _site/
-```
-
-Or via an `onBuildComplete` plugin hook. Alloy's `ssr:` config is exclusively for the per-instance render model described above.
-
----
-
-#### golit (Go-native, no Node.js)
-
-**What it is**: A pure-Go Lit SSR engine (`github.com/zeroedin/golit`) that uses QuickJS via WebAssembly (wazero) to execute component `render()` methods. Zero CGo, single binary. Produces Declarative Shadow DOM HTML.
-
-**Alloy config:**
-
-```yaml
-ssr:
-  render: "golit render --defs bundles/"
-  serve:
-    cmd: "golit serve --defs bundles/"
-    endpoint: "http://localhost:9777/render"
-```
-
-**`alloy build`** — For each unique component instance, Alloy pipes the raw element HTML to `golit render --defs bundles/` via stdin. golit renders the component with Declarative Shadow DOM and writes the SSR'd HTML to stdout. Alloy stamps each result back into the intermediate HTML in memory.
-
-**`alloy serve --preview`** — Alloy starts `golit serve` in the background. golit keeps a warm renderer behind `POST /render`. Alloy POSTs each component fragment and gets SSR'd HTML back — <1ms per render.
-
-**Component discovery** — golit has four modes, all managed by its own config:
-
-1. **Auto-discovery** (default) — reads `<script type="importmap">` and `<script type="module">` tags directly from the HTML being processed
-2. **Import map** — explicit `importmap.json` file for bare-module specifier resolution
-3. **Source directory** — points at raw `.js`/`.ts` source files, golit auto-bundles via esbuild
-4. **Pre-bundled** — directory of `.golit.bundle.js` files from `golit bundle`
-
-**Configuration** — golit's own config file in the project root:
-
-```yaml
-# golit.yaml — golit's own config, NOT part of alloy.config.yaml
-render:
-  importmap: importmap.json  # import map for component resolution
-  ignore:                    # components to skip during SSR
-    - rh-tooltip
-    - rh-dialog
-  concurrency: true          # true = use all CPUs, or set a number
-
-bundle:
-  input: src/components/     # component source directory
-  out: bundles/              # pre-bundled output
-  minify: true
-```
-
-**Performance**:
-- `golit transform`: ~400ms cold start + <1ms per component render (batch, parallel via engine pool)
-- `golit serve`: <1ms per render (warm, no cold start after initial launch)
-
----
-
-#### lit-ssr-wasm (Go-native, official Lit SSR via WASM)
-
-**What it is**: Benny Powers' `bennypowers/lit-ssr-wasm` — the official `@lit-labs/ssr` package compiled to a WASM module via Javy (Bytecode Alliance's JS-to-WASM compiler), running on QuickJS inside wazero. Full Lit SSR fidelity without Node.js.
-
-**Architecture stack**: Go → wazero (WASM) → Javy → QuickJS → `@lit-labs/ssr`
-
-**Alloy config:**
-
-```yaml
-ssr:
-  build: "lit-ssr render --dir ./components/ _site/**/*.html"
-  serve:
-    cmd: "lit-ssr --dir ./components/"
-    protocol: "stdio"
-```
-
-**`alloy build`** — shells out to `lit-ssr render` which processes HTML files in-place in batch.
-
-**`alloy serve --preview`** — Alloy starts `lit-ssr` as a long-lived subprocess. Sends NUL-terminated HTML via stdin, receives NUL-terminated SSR'd HTML via stdout. No cold start per page.
-
-**Component discovery** — explicit. You provide component source files or a source directory via CLI flags. Components must call `customElements.define()` in their source. No auto-discovery from HTML.
-
-**Ignore handling** — implicit. Don't include the component's source file. Unregistered elements pass through unchanged (same behavior as `@lit-labs/ssr`'s `FallbackRenderer`).
-
-**Performance**:
-- `lit-ssr render`: ~350ms cold start (runtime), ~150ms (bytecode) + ~0.32ms per render
-- Stdin/stdout mode: <1ms per render after initial startup
-- Bytecode pre-compilation available for 2.5x faster cold start in CI
-
----
-
-#### Node Plugin Engines (no `ssr:` config)
-
-Node-based SSR engines don't use the `ssr:` config block. They're just Alloy plugins that hook into `onPageRendered`. Alloy's existing Tier 3 Node bridge manages the subprocess lifecycle — the plugin runs inside it.
-
-This is the same pattern used by the official `@lit-labs/eleventy-plugin-lit` in 11ty: a plugin that registers a transform, imports component modules, and renders each page's HTML through `@lit-labs/ssr`.
-
-#### Lit SSR (@lit-labs/ssr on Node)
-
-**What it is**: The official `@lit-labs/ssr` package — Lit's own server-side renderer running on Node.js with full V8 engine.
-
-**Plugin:**
-
-```javascript
-// plugins/lit-ssr.js
-import {render} from '@lit-labs/ssr';
-import {unsafeHTML} from 'lit/directives/unsafe-html.js';
-import {collectResult} from '@lit-labs/ssr/lib/render-result.js';
-import {html} from 'lit';
-
-// Components imported at plugin load time — registers them
-// in the Node process's customElements registry
-import './components/ds-card.js';
-import './components/ds-button.js';
-
-export default function(alloy) {
-  alloy.on("onPageRendered", async (page) => {
-    const result = render(html`${unsafeHTML(page.content)}`);
-    page.content = await collectResult(result);
-    return page;
-  });
-}
-```
-
-No `ssr:` config — just a plugin in the `plugins/` directory. Alloy runs it like any other Tier 3 plugin. The Node bridge subprocess starts when plugins are loaded and stays alive across rebuilds in dev mode.
-
-**How Lit SSR renders**: It parses the HTML, finds registered custom elements, instantiates each component class in Node, calls its `render()` method, and wraps the shadow DOM output in `<template shadowrootmode="open">`:
-
-```html
-<!-- Input -->
-<ds-card variant="primary">
-  <h2 slot="title">Hello</h2>
-</ds-card>
-
-<!-- Output -->
-<ds-card variant="primary">
-  <template shadowroot="open" shadowrootmode="open">
-    <style>:host { display: block; }</style>
-    <!--lit-part-->
-    <div class="card card--primary">
-      <slot name="title"></slot>
-      <slot></slot>
-    </div>
-    <!--/lit-part-->
-  </template>
-  <h2 slot="title">Hello</h2>
-</ds-card>
-```
-
-**Component discovery** — explicit module imports. All component modules must be imported before rendering so `customElements.define()` runs in the Node process. Unregistered elements pass through unchanged.
-
-**Ignore handling** — don't import the component module. Unregistered elements are automatically skipped by Lit SSR's `FallbackRenderer`.
-
-**npm packages required:**
-- `@lit-labs/ssr` — core renderer
-- `@lit-labs/ssr-client` — client-side hydration support
-- `lit` — Lit framework
-- Component packages (e.g., your design system)
-
----
-
-#### Choosing Between Engines
-
-| | golit | lit-ssr-wasm | Lit SSR (Node) |
-|---|---|---|---|
-| Integration | External CLI (`ssr:` config) | External CLI (`ssr:` config) | Alloy Node plugin (no `ssr:` config) |
-| Protocol (serve) | HTTP (`POST /render`) | stdio (NUL-delimited) | IPC (Alloy's Node bridge) |
-| JS engine | QuickJS via WASM | QuickJS via WASM (Javy) | V8 (full Node.js) |
-| SSR implementation | Custom Go/QJS renderer | Official `@lit-labs/ssr` compiled to WASM | Official `@lit-labs/ssr` on Node |
-| Node.js required | No | No | Yes |
-| Component discovery | Auto from HTML, import maps, source dirs, pre-bundled | Explicit source files | Explicit module imports |
-| Config | `golit.yaml` + `ssr:` in Alloy | CLI flags in `ssr:` | Plugin JS file |
-| Ignore list | `golit.yaml` → `transform.ignore` | Don't include source file | Don't import the module |
-| Cold start (build) | ~400ms | ~350ms (runtime), ~150ms (bytecode) | ~500ms (Node spawn) |
-| Per-render (serve) | <1ms | <1ms | ~0.3ms |
-| Best for | Auto-discovery, config-driven workflows | Official Lit SSR fidelity without Node | Full Node ecosystem, existing Node workflows |
+| A blog post's content | Re-render that post | Re-SSR that page | 1 |
+| A Liquid layout | Re-render pages using that layout | Re-SSR affected pages | N (layout users) |
+| `<ds-button>` component def | Skip entirely | Re-SSR all pages using `<ds-button>` (via component tracking) | 0 re-rendered, M re-SSR'd |
+| Global data file | Re-render all pages that could be affected | Re-SSR only if Phase 1 output changed | N (all potential readers) |
 
 ### Markdown Library: goldmark
 
@@ -2246,28 +1940,13 @@ SSR only runs (in `--preview` and `build`) when explicitly configured:
 
 ```yaml
 # alloy.config.yaml
-
-# External CLI engine (golit)
 ssr:
-  build: "golit transform _site/"
-  serve:
-    cmd: "golit serve --defs bundles/"
-    endpoint: "http://localhost:9777/render"
+  command: "golit render --defs ./bundles"
 
-# External CLI engine (lit-ssr-wasm)
-ssr:
-  build: "lit-ssr render --dir ./components/ _site/**/*.html"
-  serve:
-    cmd: "lit-ssr --dir ./components/"
-    protocol: "stdio"
-
-# Node plugin engine (Lit SSR) — no ssr: config needed, just a plugin
-# See plugins/lit-ssr.js — hooks onPageRendered via Tier 3 Node bridge
-
-# No ssr: key and no SSR plugin → no SSR ever, even in --preview or build
+# No ssr: key → no SSR ever, even in --preview or build
 ```
 
-Without an `ssr:` config block (and no SSR plugin), `--preview` still works — it just serves Phase 1 output with full reload (useful for verifying templates, data cascade, and layouts without dev tooling).
+Without an `ssr:` config block, `--preview` still works — it just serves Phase 1 output with full reload (useful for verifying templates, data cascade, and layouts without dev tooling).
 
 ### Shared Server Features (both modes)
 
@@ -2591,17 +2270,13 @@ func BenchmarkBuild1000Pages(b *testing.B) {
 - [ ] Passthrough copy (config-driven external directory mapping)
 - [ ] i18n / multilingual (opt-in via `languages:` config, per-language content trees, shared layouts, translation linking)
 
-### Phase 3 — SSR Pipeline (External Engine Integration)
-- [ ] SSR config parser (`ssr.render` and `ssr.serve` commands)
-- [ ] Phase 2 orchestrator: scan intermediate HTML for custom elements
-- [ ] Component instance deduplication (hash by tag + attributes, slot content excluded)
-- [ ] Component dependency map (`.alloy/components.json`, scan SSR output for nested components)
-- [ ] SSR cache: skip re-SSR for unchanged component instances
-- [ ] Declarative Shadow DOM stamp-back (marker comments, insert `<template shadowrootmode>`)
-- [ ] Build mode: pipe component instances to `ssr.render` command via stdin/stdout (per-instance, in memory)
-- [ ] Serve mode: manage `ssr.serve.cmd` subprocess lifecycle (start on serve, kill on exit)
-- [ ] HTTP protocol support (`ssr.serve.endpoint` — POST body in, HTML out)
-- [ ] Stdio protocol support (`ssr.serve.protocol: "stdio"` — NUL-delimited)
+### Phase 3 — SSR Pipeline
+- [ ] SSR config parser (`ssr.command`)
+- [ ] Per-page SSR: pass full page HTML to `ssr.command` as CLI argument, receive transformed HTML
+- [ ] Component tracking: scan pre-SSR HTML for custom element tags, record page-to-component mapping
+- [ ] Component map persistence (`.alloy/components.json` — `pageToComponents`, `componentToPages`, `definitionHashes`)
+- [ ] SSR cache: skip re-SSR for pages whose Phase 1 output hash is unchanged
+- [ ] Component invalidation: rebuild pages using changed components (via `componentToPages` lookup)
 
 ### Phase 4 — Dev Experience
 - [ ] Dev server (`alloy serve`) with file watching (fsnotify, 50ms debounce)

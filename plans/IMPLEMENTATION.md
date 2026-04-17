@@ -253,12 +253,12 @@ Key points:
 
 - `BuildWithContent`: Accept injected content, render through pipeline. Error messages must contain source file path + "template rendering" stage.
 - `BuildPhase1`/`BuildPhase2`: Phase separation. Phase 2 operates entirely in memory:
-  1. Scan intermediate HTML for custom element tags (anything with a hyphen)
-  2. Deduplicate instances by `hash(tag + attributes)` — slot content excluded
-  3. For each unique instance, pipe the raw element HTML to the `ssr.render` command (`config.SSRConfig.Render`) via stdin, read SSR'd HTML from stdout
-  4. Stamp SSR'd output back into intermediate HTML (insert `<template shadowrootmode>` inside element, before light DOM children)
-  - The render command is invoked per unique instance via `os/exec` — no files on disk needed. This is NOT a batch disk transform.
-  - If the render command fails or is not found, `BuildPhase2` must return an error (no silent fallback).
+  1. For each page, scan intermediate HTML for custom element tags (anything with a hyphen) and record in ComponentMap for cache invalidation
+  2. For each page, pass the full intermediate HTML to `ssr.command` (`config.SSRConfig.Command`) as a CLI argument via `os/exec`, receive fully transformed HTML (with DSD) as stdout
+  3. Replace the page's rendered body with the command output
+  - The command is invoked once per page — the SSR engine handles component discovery, deduplication, and DSD injection internally.
+  - Pages without custom elements skip the SSR command invocation (pass through unchanged).
+  - If the command fails or is not found, `BuildPhase2` must return an error (no silent fallback).
 - **`validateOutputDir`** (issue #9): Uses path equality + parent/child overlap detection (not substring matching). Only rejects exact matches (`output == content`) and nesting (`output = content/build` or `content` inside `output`). Names like `my_content_site` are valid output directories.
 - **Render ordering** (issue #10): Markdown renders first, then template tags — per spec §6 steps 3-4. Goldmark's TemplateTags extension preserves `{{ }}`/`{% %}` through markdown rendering. After markdown rendering and before Liquid processing, `escapeTemplateTagsInCode` converts template tags inside `<code>` elements to HTML entities so Liquid ignores them (issue #46). Markdown errors use stage name `"content transformation"`, template errors use `"template rendering"`.
 
@@ -539,13 +539,15 @@ The flag must be applied **after** config loading but **before** pipeline execut
 
 `cmd/serve.go` should call `srv.StartWithPortFallback(port, 10)` instead of `srv.Start(port)`. The returned actual port is used in the startup message (`Serving at http://localhost:<actual-port>`). The `--port` flag remains "preferred" — it's the starting point for the search, not a hard requirement. No `--strict-port` flag needed; `alloy serve` is a dev tool and auto-increment is always the right UX.
 
-### 6B: `internal/ssr` — 25 tests
+### 6B: `internal/ssr` — 15 tests
 **Files**: `scanner.go`, `depgraph.go`, `persistence.go`
 
-- Custom element scanning and deduplication
-- Component dependency graph
-- SSR marker insertion and stamp-back
-- Component map persistence
+- `ScanComponents(html string) []string`: Parse HTML for custom element tags (anything with a hyphen), return unique tag names. Used for component tracking, not for per-instance SSR.
+- `RenderPage(command string, html string) (string, error)`: Pass full page HTML to `ssr.command` as a CLI argument via `os/exec`. Returns the fully transformed HTML with DSD. Errors when the command is not found or returns non-zero exit.
+- `HashOutput(html string) string`: Content hash for Phase 2 output comparison (skip SSR when unchanged).
+- Component dependency graph (`depgraph.go`): Tracks parent-child component relationships for future nested component invalidation. Keep as-is.
+- Component map persistence (`persistence.go`): Save/load `pageToComponents`, `componentToPages`, `definitionHashes` to `.alloy/components.json`. `ShouldSkipSSR` checks definition hash for cache invalidation.
+- **Removed**: `SSREngine` interface (`engine.go`), `DeduplicateInstances`, `InsertMarkers`, `StampBack`, `ParseSSRConfig`, `RenderViaHTTP`, `RenderViaStdio`, `ComponentCacheKey`, `ComponentInstance` struct with attrs/hash fields
 
 **Verify**: `go test ./internal/server/... ./internal/ssr/...`
 
