@@ -171,6 +171,43 @@ var _ = Describe("Scanner", func() {
 		})
 	})
 
+	// ── Stream mode timeout ──────────────────────────────────────────
+	// Stream mode must enforce ssr.timeout per page, same as exec mode.
+	// Without a timeout, a stalled SSR process blocks the build forever.
+
+	Describe("Stream mode timeout", func() {
+		It("RenderPageWithTimeout returns error when stream process stalls", func() {
+			// Use 'cat' but never send a NUL delimiter — simulates a stall.
+			// The timeout must kill the read and return an error.
+			sr, err := ssr.NewStreamRenderer("cat")
+			Expect(err).NotTo(HaveOccurred())
+			defer sr.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+
+			html := `<html><body><ds-card>content</ds-card></body></html>`
+			_, err = sr.RenderPageWithTimeout(ctx, html)
+			Expect(err).To(HaveOccurred(),
+				"stream RenderPageWithTimeout must return error when read exceeds deadline")
+		})
+
+		It("RenderPageWithTimeout succeeds within deadline", func() {
+			sr, err := ssr.NewStreamRenderer("cat")
+			Expect(err).NotTo(HaveOccurred())
+			defer sr.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			html := `<html><body><ds-card>content</ds-card></body></html>`
+			result, err := sr.RenderPageWithTimeout(ctx, html)
+			Expect(err).NotTo(HaveOccurred(),
+				"cat must complete within 5s timeout in stream mode")
+			Expect(result).To(ContainSubstring("ds-card"))
+		})
+	})
+
 	// ── Output hashing ────────────────────────────────────────────────
 
 	Describe("Output hashing", func() {
