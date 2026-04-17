@@ -146,24 +146,24 @@ var _ = Describe("Build Pipeline", func() {
 			// Intermediate HTML contains a custom element (hyphenated tag).
 			// BuildPhase2 must attempt to invoke the command for each page
 			// containing custom elements. Using a nonexistent command proves
-			// the invocation is attempted.
+			// the invocation is attempted — the page's original HTML is
+			// preserved (SSR failed, no transform applied).
 			intermediate := map[string]string{
 				"content/index.md": `<html><body><ds-card title="Hello">content</ds-card></body></html>`,
 			}
 			ssrCfg := &config.SSRConfig{
 				Command: "golit render --defs bundles/",
 			}
-			// The command won't exist in the test environment, so this
-			// must return an error referencing the command — not silently skip
-			// or fall back to a local transform.
-			_, err := pipeline.BuildPhase2(intermediate, ssrCfg)
-			Expect(err).To(HaveOccurred(),
-				"Phase 2 must attempt to invoke ssr.command (which won't exist in test env)")
-			Expect(err.Error()).To(SatisfyAny(
-				ContainSubstring("golit"),
-				ContainSubstring("exec"),
-				ContainSubstring("not found"),
-			), "error must reference the ssr.command that failed to execute")
+			// The command won't exist in the test environment. BuildPhase2
+			// must not abort — it skips failed pages and preserves original HTML.
+			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"SSR command failure must not abort the build — errors are collected")
+			Expect(result).To(HaveKey("content/index.md"),
+				"failed SSR page must be present in result")
+			Expect(result["content/index.md"]).To(ContainSubstring("ds-card"),
+				"failed SSR page must preserve original HTML — proves command was "+
+					"attempted (not silently skipped) and original HTML was kept on failure")
 		})
 
 		It("Phase 2 receives Phase 1 output as its input", func() {
@@ -218,22 +218,29 @@ var _ = Describe("Build Pipeline", func() {
 	// injection internally. Alloy treats it as a black box.
 
 	Describe("SSR per-page render", func() {
-		It("BuildPhase2 returns error when command is not found", func() {
+		It("BuildPhase2 preserves original HTML when command is not found", func() {
 			intermediate := map[string]string{
 				"content/index.md": `<html><body><ds-button>Click</ds-button></body></html>`,
 			}
 			ssrCfg := &config.SSRConfig{
 				Command: "nonexistent-ssr-tool render --defs bundles/",
 			}
-			_, err := pipeline.BuildPhase2(intermediate, ssrCfg)
-			Expect(err).To(HaveOccurred(),
-				"BuildPhase2 must return error when ssr.command is not found")
+			// Command not found is a per-page failure, not a build-aborting error.
+			// The page's original HTML must be preserved in the result.
+			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"SSR command not found must not abort the build — page is skipped")
+			Expect(result).To(HaveKey("content/index.md"),
+				"page must be present in result even when SSR command is not found")
+			Expect(result["content/index.md"]).To(ContainSubstring("ds-button"),
+				"page must preserve original HTML when SSR command is not found")
 		})
 
 		It("BuildPhase2 does not fall back to local DSD transform", func() {
 			// When the command is unavailable, BuildPhase2 must NOT
 			// silently insert <template shadowrootmode> via a local transform.
-			// SSR is the external engine's responsibility.
+			// SSR is the external engine's responsibility. The page's
+			// original HTML must be preserved unchanged.
 			intermediate := map[string]string{
 				"content/index.md": `<html><body><ds-card>content</ds-card></body></html>`,
 			}
@@ -241,15 +248,12 @@ var _ = Describe("Build Pipeline", func() {
 				Command: "nonexistent-ssr-tool render",
 			}
 			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
-			if err == nil {
-				// If no error, the HTML must NOT contain shadowrootmode —
-				// that would mean a local transform ran instead of the external tool
-				html := result["content/index.md"]
-				Expect(html).NotTo(ContainSubstring("shadowrootmode"),
-					"BuildPhase2 must not silently fall back to local DSD transform "+
-						"when the ssr.command is unavailable")
-			}
-			// If err != nil, command execution was attempted and failed — correct behavior
+			Expect(err).NotTo(HaveOccurred(),
+				"SSR command failure must not abort the build")
+			Expect(result).To(HaveKey("content/index.md"))
+			Expect(result["content/index.md"]).NotTo(ContainSubstring("shadowrootmode"),
+				"BuildPhase2 must not silently fall back to local DSD transform "+
+					"when the ssr.command is unavailable")
 		})
 
 		It("BuildPhase2 passes through HTML unchanged when no custom elements present", func() {
