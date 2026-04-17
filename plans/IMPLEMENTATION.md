@@ -254,7 +254,7 @@ Key points:
 - `BuildWithContent`: Accept injected content, render through pipeline. Error messages must contain source file path + "template rendering" stage.
 - `BuildPhase1`/`BuildPhase2`: Phase separation. Phase 2 operates entirely in memory:
   1. For each page, scan intermediate HTML for custom element tags (anything with a hyphen) and record in ComponentMap for cache invalidation
-  2. For each page, pass the full intermediate HTML to `ssr.command` (`config.SSRConfig.Command`) as a CLI argument via `os/exec`, receive fully transformed HTML (with DSD) as stdout
+  2. For each page, pipe the full intermediate HTML to `ssr.command` (`config.SSRConfig.Command`) via stdin using `os/exec`, read the fully transformed HTML (with DSD) from stdout
   3. Replace the page's rendered body with the command output
   - The command is invoked once per page — the SSR engine handles component discovery, deduplication, and DSD injection internally.
   - Pages without custom elements skip the SSR command invocation (pass through unchanged).
@@ -543,7 +543,7 @@ The flag must be applied **after** config loading but **before** pipeline execut
 **Files**: `scanner.go`, `depgraph.go`, `persistence.go`
 
 - `ScanComponents(html string) []string`: Parse HTML for custom element tags (anything with a hyphen), return unique tag names. Used for component tracking, not for per-instance SSR.
-- `RenderPage(command string, html string) (string, error)`: Pass full page HTML to `ssr.command` as a CLI argument via `os/exec`. Returns the fully transformed HTML with DSD. Errors when the command is not found or returns non-zero exit.
+- `RenderPage(command string, html string) (string, error)`: Pipe full page HTML to `ssr.command` via stdin using `os/exec`. Reads the fully transformed HTML with DSD from stdout. Errors when the command is not found or returns non-zero exit.
 - `HashOutput(html string) string`: Content hash for Phase 2 output comparison (skip SSR when unchanged).
 - Component dependency graph (`depgraph.go`): Tracks parent-child component relationships for future nested component invalidation. Keep as-is.
 - Component map persistence (`persistence.go`): Save/load `pageToComponents`, `componentToPages`, `definitionHashes` to `.alloy/components.json`. `ShouldSkipSSR` checks definition hash for cache invalidation.

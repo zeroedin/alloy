@@ -124,8 +124,8 @@ var _ = Describe("Build Pipeline", func() {
 
 	// ── Phase 1 → Phase 2 handoff (§2) ──────────────────────────────
 	// Per spec §6: Phase 2 operates in memory. For each page with custom
-	// elements, Alloy passes the full page HTML to ssr.command as a CLI
-	// argument. The SSR engine handles all component rendering internally.
+	// elements, Alloy pipes the full page HTML to ssr.command via stdin.
+	// The SSR engine handles all component rendering internally.
 
 	Describe("Phase 1 → Phase 2 handoff", func() {
 		It("Phase 1 produces intermediate HTML preserving raw custom element tags", func() {
@@ -140,7 +140,7 @@ var _ = Describe("Build Pipeline", func() {
 				"Phase 1 must produce at least one page of intermediate HTML")
 		})
 
-		It("Phase 2 invokes command per page with full HTML as argument", func() {
+		It("Phase 2 invokes command per page, piping full HTML via stdin", func() {
 			// Intermediate HTML contains a custom element (hyphenated tag).
 			// BuildPhase2 must attempt to invoke the command for each page
 			// containing custom elements. Using a nonexistent command proves
@@ -168,9 +168,9 @@ var _ = Describe("Build Pipeline", func() {
 			cfg := &config.Config{
 				Title: "SSR Site",
 				SSR: &config.SSRConfig{
-					// echo passes args to stdout — proves the per-page
-					// CLI arg model works end-to-end
-					Command: "echo",
+					// cat reads stdin, writes to stdout — proves the per-page
+					// stdio model works end-to-end
+					Command: "cat",
 				},
 				Build: config.BuildConfig{Output: "_site"},
 			}
@@ -181,8 +181,8 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(intermediate).NotTo(BeEmpty(),
 				"Phase 1 must produce intermediate output")
 
-			// Phase 2 takes Phase 1 output directly and invokes ssr.command
-			// per page via CLI argument
+			// Phase 2 takes Phase 1 output directly and pipes to ssr.command
+			// via stdin
 			_, err = pipeline.BuildPhase2(intermediate, cfg.SSR)
 			// Either succeeds or fails — either proves BuildPhase2 accepts
 			// Phase 1 output and attempts per-page rendering
@@ -204,7 +204,7 @@ var _ = Describe("Build Pipeline", func() {
 	})
 
 	// ── SSR per-page render ─────────────────────────────────────────
-	// Phase 2 passes the full page HTML to ssr.command as a CLI argument.
+	// Phase 2 pipes the full page HTML to ssr.command via stdin.
 	// The SSR engine handles component discovery, rendering, and DSD
 	// injection internally. Alloy treats it as a black box.
 
@@ -290,11 +290,11 @@ var _ = Describe("Build Pipeline", func() {
 				"guard: no SSR config must set SSRSkipped=true")
 
 			// Actual: with SSR, Build attempts Phase 2 (invokes ssr.command).
-			// Use "echo" — echoes args to stdout. Proves the per-page
-			// CLI arg model is attempted.
+			// Use "cat" — reads stdin, writes to stdout. Proves the per-page
+			// stdio model is attempted.
 			ssrCfg := &config.Config{
 				Title: "SSR Site",
-				SSR:   &config.SSRConfig{Command: "echo"},
+				SSR:   &config.SSRConfig{Command: "cat"},
 				Build: config.BuildConfig{Output: "_site"},
 			}
 			ssrResult, err := pipeline.Build(ssrCfg)

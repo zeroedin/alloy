@@ -46,17 +46,15 @@ var _ = Describe("Scanner", func() {
 	// ── Per-page SSR rendering ────────────────────────────────────────
 
 	Describe("Per-page SSR rendering", func() {
-		It("RenderPage passes full page HTML to command and returns transformed output", func() {
-			// Use 'cat' as a pass-through command — proves the per-page
-			// invocation model works (HTML goes in as arg, comes back via stdout)
+		It("RenderPage pipes full page HTML via stdin and returns stdout", func() {
+			// Use 'cat' as a pass-through command — reads stdin, writes to stdout.
+			// Proves the stdio contract works end-to-end.
 			html := `<html><body><ds-card variant="primary"><h2>Hello</h2></ds-card></body></html>`
 			result, err := ssr.RenderPage("cat", html)
-			// cat may not accept the HTML as an arg in all environments,
-			// but if it succeeds the output should contain the input
-			if err == nil {
-				Expect(result).To(ContainSubstring("ds-card"))
-			}
-			// Either way, RenderPage must attempt the command invocation
+			Expect(err).NotTo(HaveOccurred(),
+				"cat must succeed as a pass-through stdin→stdout command")
+			Expect(result).To(ContainSubstring("ds-card"),
+				"stdout must contain the HTML that was piped via stdin")
 		})
 
 		It("returns error when command is not found", func() {

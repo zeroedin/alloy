@@ -131,7 +131,7 @@ This is a comprehensive TDD audit of the Alloy static site generator. The projec
 - **Missing**: Alias output (same content written to multiple paths)
 
 #### `internal/ssr/`
-- **Missing**: Per-page SSR rendering (`RenderPage` invokes `ssr.command` with full page HTML as CLI arg)
+- **Missing**: Per-page SSR rendering (`RenderPage` pipes full page HTML to `ssr.command` via stdin, reads transformed HTML from stdout)
 - **Missing**: Component definition change invalidation
 - **Missing**: Phase 2 output hashing (skip SSR when hash matches)
 

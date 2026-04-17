@@ -953,7 +953,7 @@ Data cascade and front matter are already assembled from Phase 0 — Phase 1 sta
 
 Skipped entirely unless the project has an `ssr:` block in config. Without it, Phase 1 output is the final HTML — Web Components render client-side only.
 
-16. **Per-page SSR** — For each page, pass the full intermediate HTML to the configured `ssr.command` as a CLI argument. The command returns the fully transformed HTML with Declarative Shadow DOM.
+16. **Per-page SSR** — For each page, pipe the full intermediate HTML to the configured `ssr.command` via stdin. The command reads stdin, transforms the HTML, and writes the result to stdout with Declarative Shadow DOM.
 17. **Component tracking** — Scan each page's pre-SSR HTML for custom element tags (anything with a hyphen). Record which pages use which components for cache invalidation.
 
 **Phase 3 — Output**
@@ -1807,7 +1807,7 @@ Intermediate HTML → Per-Page SSR Command → Final HTML (with DSD)
                  → Scan for Components → Track page-to-component mapping (for cache)
 ```
 
-1. **Per-page SSR**: For each page, pass the full intermediate HTML to the configured `ssr.command` as a CLI argument. The SSR engine (golit) handles all component discovery, rendering, and DSD injection internally. The command returns the fully transformed HTML with Declarative Shadow DOM inserted into all custom elements.
+1. **Per-page SSR**: For each page, pipe the full intermediate HTML to the configured `ssr.command` via stdin. The SSR engine (golit) reads stdin, handles all component discovery, rendering, and DSD injection internally, and writes the fully transformed HTML with Declarative Shadow DOM to stdout.
 2. **Component tracking**: Before SSR, scan each page's intermediate HTML for custom element tags (anything with a hyphen in the tag name per the HTML spec). Record which pages use which components in `.alloy/components.json` for cache invalidation.
 
 ### SSR Command
@@ -1820,10 +1820,10 @@ ssr:
   command: "golit render --defs ./bundles"
 ```
 
-**Per-page rendering** — For each page, Alloy passes the full intermediate HTML as a CLI argument to `ssr.command`. The engine transforms the entire page — discovering custom elements, rendering their shadow roots, and inserting Declarative Shadow DOM — then returns the final HTML:
+**Per-page rendering** — For each page, Alloy pipes the full intermediate HTML to `ssr.command` via stdin. The engine reads stdin, transforms the entire page — discovering custom elements, rendering their shadow roots, and inserting Declarative Shadow DOM — and writes the final HTML to stdout:
 
 ```
-golit render --defs ./bundles '<html><body><ds-card variant="primary"><h2 slot="title">Hello</h2></ds-card></body></html>'
+echo '<html><body><ds-card variant="primary"><h2 slot="title">Hello</h2></ds-card></body></html>' | golit render --defs ./bundles
 ```
 
 The SSR engine owns all component-level concerns: element discovery, deduplication, shadow root rendering, and DSD insertion. Alloy treats it as a black box — HTML goes in, SSR'd HTML comes out.
@@ -2272,7 +2272,7 @@ func BenchmarkBuild1000Pages(b *testing.B) {
 
 ### Phase 3 — SSR Pipeline
 - [ ] SSR config parser (`ssr.command`)
-- [ ] Per-page SSR: pass full page HTML to `ssr.command` as CLI argument, receive transformed HTML
+- [ ] Per-page SSR: pipe full page HTML to `ssr.command` via stdin, receive transformed HTML on stdout
 - [ ] Component tracking: scan pre-SSR HTML for custom element tags, record page-to-component mapping
 - [ ] Component map persistence (`.alloy/components.json` — `pageToComponents`, `componentToPages`, `definitionHashes`)
 - [ ] SSR cache: skip re-SSR for pages whose Phase 1 output hash is unchanged
