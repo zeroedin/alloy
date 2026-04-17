@@ -130,4 +130,38 @@ var _ = Describe("Full build pipeline", func() {
 				"collections site must produce pages")
 		})
 	})
+
+	// ── Issue #171: Plugin shortcode bridging (positive test) ─────────
+	// This tests the full pipeline path: plugin discovery → LoadPlugins →
+	// RegisteredShortcodes → engine.AddTag → CallShortcode → rendered output.
+	// The fixture has a JS plugin that registers "greeting" via alloy.shortcode().
+
+	Describe("Plugin shortcode site", func() {
+		It("plugin-registered shortcode renders in page output", func() {
+			cfgPath := filepath.Join(fixtureDir("plugin-shortcodes"), "alloy.config.yaml")
+			cfg, err := config.Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"build must succeed when plugin shortcode is properly bridged")
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(BeNumerically(">", 0),
+				"plugin-shortcodes fixture must produce at least one page")
+
+			// The rendered output must contain the shortcode's HTML output,
+			// not the raw {% greeting "Alloy" %} tag.
+			Expect(result.RenderedContent).NotTo(BeNil(),
+				"BuildResult must include RenderedContent map")
+			indexHTML, ok := result.RenderedContent["index.md"]
+			Expect(ok).To(BeTrue(),
+				"index.md must be present in RenderedContent")
+			Expect(indexHTML).To(ContainSubstring(`<p class="greeting">Hello, Alloy!</p>`),
+				"plugin shortcode must render its HTML output in the page — "+
+					"proves the full pipeline: plugin discovery → LoadPlugins → "+
+					"RegisteredShortcodes → engine.AddTag → CallShortcode → rendered output")
+			Expect(indexHTML).NotTo(ContainSubstring("{% greeting"),
+				"raw shortcode tag must not appear in rendered output")
+		})
+	})
 })
