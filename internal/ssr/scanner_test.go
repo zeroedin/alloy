@@ -177,8 +177,10 @@ var _ = Describe("Scanner", func() {
 
 	Describe("Stream mode timeout", func() {
 		It("RenderPageWithTimeout returns error when stream process stalls", func() {
-			// Use 'cat' but never send a NUL delimiter — simulates a stall.
-			// The timeout must kill the read and return an error.
+			// cat echoes the NUL byte but uses full buffering on pipe stdout
+			// (~4KB buffer). The small payload sits unflushed in cat's buffer,
+			// causing the read to stall. The context timeout must interrupt
+			// the blocked read and return an error.
 			sr, err := ssr.NewStreamRenderer("cat")
 			Expect(err).NotTo(HaveOccurred())
 			defer sr.Close()
