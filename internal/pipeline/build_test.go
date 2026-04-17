@@ -302,14 +302,18 @@ var _ = Describe("Build Pipeline", func() {
 				Command: "nonexistent-ssr-tool render --defs bundles/",
 				// Mode is empty — defaults to exec
 			}
-			_, err := pipeline.BuildPhase2(intermediate, ssrCfg)
-			Expect(err).To(HaveOccurred(),
-				"BuildPhase2 must default to exec mode when mode is not set")
-			Expect(err.Error()).To(SatisfyAny(
-				ContainSubstring("nonexistent-ssr-tool"),
-				ContainSubstring("exec"),
-				ContainSubstring("not found"),
-			), "error must come from exec-mode process spawn, not stream setup")
+			// Command not found is a per-page failure — page is skipped,
+			// original HTML preserved. The test proves exec mode is used
+			// (not stream) by verifying the page is in the result with
+			// its original HTML intact.
+			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"SSR command failure must not abort the build")
+			Expect(result).To(HaveKey("content/index.md"),
+				"page must be present in result when exec mode command fails")
+			Expect(result["content/index.md"]).To(ContainSubstring("ds-card"),
+				"page must preserve original HTML — proves exec mode was used "+
+					"(not stream) and the page was skipped on failure")
 		})
 	})
 
@@ -328,11 +332,15 @@ var _ = Describe("Build Pipeline", func() {
 				Timeout: "50ms",
 			}
 			// sleep 1 takes 1 second — the 50ms timeout must kill it.
-			// Short durations avoid blocking CI while still proving
-			// the timeout mechanism works.
-			_, err := pipeline.BuildPhase2(intermediate, ssrCfg)
-			Expect(err).To(HaveOccurred(),
-				"BuildPhase2 must enforce ssr.timeout and kill the stalled command")
+			// Timeout is a per-page failure: page is skipped, original HTML
+			// preserved. The build does not abort.
+			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"SSR timeout must not abort the build — page is skipped")
+			Expect(result).To(HaveKey("content/index.md"),
+				"timed-out page must be present in result")
+			Expect(result["content/index.md"]).To(ContainSubstring("ds-card"),
+				"timed-out page must preserve original HTML")
 		})
 
 		It("BuildPhase2 uses default timeout when ssrCfg.Timeout is empty", func() {
