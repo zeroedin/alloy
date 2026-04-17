@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -826,6 +827,15 @@ func BuildPhase2(intermediateHTML map[string]string, ssrCfg *config.SSRConfig) (
 }
 
 func buildPhase2Exec(intermediateHTML map[string]string, ssrCfg *config.SSRConfig) (map[string]string, error) {
+	timeout := 30 * time.Second
+	if ssrCfg.Timeout != "" {
+		d, err := time.ParseDuration(ssrCfg.Timeout)
+		if err != nil {
+			return nil, fmt.Errorf("invalid ssr.timeout %q: %w", ssrCfg.Timeout, err)
+		}
+		timeout = d
+	}
+
 	result := make(map[string]string, len(intermediateHTML))
 
 	for path, html := range intermediateHTML {
@@ -835,7 +845,9 @@ func buildPhase2Exec(intermediateHTML map[string]string, ssrCfg *config.SSRConfi
 			continue
 		}
 
-		rendered, err := ssr.RenderPage(ssrCfg.Command, html)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		rendered, err := ssr.RenderPageWithTimeout(ctx, ssrCfg.Command, html)
+		cancel()
 		if err != nil {
 			return nil, fmt.Errorf("exec ssr.command %q: %w", ssrCfg.Command, err)
 		}
