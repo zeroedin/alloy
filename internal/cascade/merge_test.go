@@ -213,24 +213,65 @@ var _ = Describe("DeepMerge", func() {
 			Expect(ok).To(BeTrue(), "blog/ _data.yaml must be loaded")
 			Expect(blogData).NotTo(BeNil(),
 				"blog/ data must contain merged parent + blog data")
+
+			// blog/ overrides layout and author.name from root
+			Expect(blogData["layout"]).To(Equal("post"),
+				"blog/ must override layout from root")
+
+			// blog/ adds author.twitter while inheriting author as nested object
+			author, ok := blogData["author"].(map[string]interface{})
+			Expect(ok).To(BeTrue(), "author must be a map after deep merge")
+			Expect(author["name"]).To(Equal("Blog Author"),
+				"blog/ must override author.name from root")
+			Expect(author["twitter"]).To(Equal("@blogauthor"),
+				"blog/ must add author.twitter")
+
+			// blog/ replaces scripts array entirely (not concatenation)
+			Expect(blogData["scripts"]).To(Equal([]interface{}{"blog.js"}),
+				"blog/ scripts must replace root scripts, not concatenate")
 		})
 
-		It("content/blog/2024/_data.yaml merges over parent and applies only to blog/2024/", func() {
+		It("content/blog/deep/_data.yaml merges over parent chain (root + blog)", func() {
 			result, err := cascade.LoadDirectoryCascade("test/fixtures/cascade/content")
 			Expect(err).NotTo(HaveOccurred())
 
 			deepData, ok := result["content/blog/deep/"]
 			Expect(ok).To(BeTrue(), "deeply nested _data.yaml must be loaded")
 			Expect(deepData).NotTo(BeNil())
+
+			// deep/ overrides only author.name — everything else must survive
+			// from the full parent chain (root → blog → deep)
+			author, ok := deepData["author"].(map[string]interface{})
+			Expect(ok).To(BeTrue(), "author must be a map after 3-level deep merge")
+			Expect(author["name"]).To(Equal("Deep Author"),
+				"deep/ must override author.name")
+			Expect(author["twitter"]).To(Equal("@blogauthor"),
+				"deep/ must preserve author.twitter from blog/ (not replaced by deep/ override)")
+
+			// layout was set at blog/ level, not overridden at deep/ — must survive
+			Expect(deepData["layout"]).To(Equal("post"),
+				"deep/ must inherit layout from blog/ when not overridden")
+
+			// scripts was set at blog/ level, not overridden at deep/ — must survive
+			Expect(deepData["scripts"]).To(Equal([]interface{}{"blog.js"}),
+				"deep/ must inherit scripts array from blog/ when not overridden")
+
+			// category is new at deep/ level — must be present
+			Expect(deepData["category"]).To(Equal("deep-dive"),
+				"deep/ must add category key from its own _data.yaml")
 		})
 
 		It("three-level cascade produces correct merged result at each level", func() {
 			result, err := cascade.LoadDirectoryCascade("test/fixtures/cascade/content")
 			Expect(err).NotTo(HaveOccurred())
 
-			// Each level should have progressively more specific data
-			Expect(len(result)).To(BeNumerically(">=", 2),
-				"cascade must produce results for at least root and one subdirectory")
+			// Must have entries for all three levels with _data.yaml
+			Expect(result).To(HaveKey("content/"),
+				"root level must be in cascade")
+			Expect(result).To(HaveKey("content/blog/"),
+				"blog level must be in cascade")
+			Expect(result).To(HaveKey("content/blog/deep/"),
+				"deep level must be in cascade")
 		})
 	})
 })
