@@ -878,6 +878,15 @@ func buildPhase2Exec(intermediateHTML map[string]string, ssrCfg *config.SSRConfi
 }
 
 func buildPhase2Stream(intermediateHTML map[string]string, ssrCfg *config.SSRConfig) (map[string]string, error) {
+	timeout := 30 * time.Second
+	if ssrCfg.Timeout != "" {
+		d, err := time.ParseDuration(ssrCfg.Timeout)
+		if err != nil {
+			return nil, fmt.Errorf("invalid ssr.timeout %q: %w", ssrCfg.Timeout, err)
+		}
+		timeout = d
+	}
+
 	sr, err := ssr.NewStreamRenderer(ssrCfg.Command)
 	if err != nil {
 		return nil, fmt.Errorf("ssr stream start %q: %w", ssrCfg.Command, err)
@@ -893,7 +902,9 @@ func buildPhase2Stream(intermediateHTML map[string]string, ssrCfg *config.SSRCon
 			continue
 		}
 
-		rendered, err := sr.RenderPage(html)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		rendered, err := sr.RenderPageWithTimeout(ctx, html)
+		cancel()
 		if err != nil {
 			// Attempt restart and retry once
 			if restartErr := sr.Restart(); restartErr != nil {
@@ -901,7 +912,9 @@ func buildPhase2Stream(intermediateHTML map[string]string, ssrCfg *config.SSRCon
 				result[path] = html
 				continue
 			}
-			rendered, err = sr.RenderPage(html)
+			retryCtx, retryCancel := context.WithTimeout(context.Background(), timeout)
+			rendered, err = sr.RenderPageWithTimeout(retryCtx, html)
+			retryCancel()
 			if err != nil {
 				log.Printf("warning: SSR stream failed after restart for %s: %v", path, err)
 				result[path] = html

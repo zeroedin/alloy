@@ -154,6 +154,55 @@ func (sr *StreamRenderer) RenderPage(html string) (string, error) {
 	return string(data), nil
 }
 
+// RenderPageWithTimeout sends HTML to the persistent process, respecting the
+// context deadline. If the read exceeds the deadline, the context error is returned.
+func (sr *StreamRenderer) RenderPageWithTimeout(ctx context.Context, html string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	// Capture current process handles so the goroutine only touches
+	// the process that was live at call time — not a replacement from Restart().
+	stdin := sr.stdin
+	reader := sr.stdoutBr
+	proc := sr.cmd
+
+	type result struct {
+		html string
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		if _, err := io.WriteString(stdin, html+"\x00"); err != nil {
+			ch <- result{"", fmt.Errorf("stream write: %w", err)}
+			return
+		}
+
+		data, err := reader.ReadBytes('\x00')
+		if err != nil {
+			ch <- result{"", fmt.Errorf("stream read: %w", err)}
+			return
+		}
+		if len(data) > 0 && data[len(data)-1] == 0 {
+			data = data[:len(data)-1]
+		}
+		ch <- result{string(data), nil}
+	}()
+
+	select {
+	case <-ctx.Done():
+		// Kill the captured process to unblock the goroutine's read
+		if proc != nil && proc.Process != nil {
+			proc.Process.Kill()
+		}
+		// Wait for goroutine to finish before returning
+		<-ch
+		return "", ctx.Err()
+	case r := <-ch:
+		return r.html, r.err
+	}
+}
+
 // Restart kills the current process and starts a new one.
 func (sr *StreamRenderer) Restart() error {
 	// Best-effort cleanup of old process
