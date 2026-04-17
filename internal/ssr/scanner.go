@@ -157,10 +157,15 @@ func (sr *StreamRenderer) RenderPage(html string) (string, error) {
 // RenderPageWithTimeout sends HTML to the persistent process, respecting the
 // context deadline. If the read exceeds the deadline, the context error is returned.
 func (sr *StreamRenderer) RenderPageWithTimeout(ctx context.Context, html string) (string, error) {
-	// Check deadline before attempting I/O
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+
+	// Capture current process handles so the goroutine only touches
+	// the process that was live at call time — not a replacement from Restart().
+	stdin := sr.stdin
+	reader := sr.stdoutBr
+	proc := sr.cmd
 
 	type result struct {
 		html string
@@ -168,24 +173,14 @@ func (sr *StreamRenderer) RenderPageWithTimeout(ctx context.Context, html string
 	}
 	ch := make(chan result, 1)
 	go func() {
-		// Write HTML + NUL delimiter
-		if _, err := io.WriteString(sr.stdin, html+"\x00"); err != nil {
-			if sr.stderr.Len() > 0 {
-				ch <- result{"", fmt.Errorf("stream write: %w: %s", err, strings.TrimSpace(sr.stderr.String()))}
-			} else {
-				ch <- result{"", err}
-			}
+		if _, err := io.WriteString(stdin, html+"\x00"); err != nil {
+			ch <- result{"", fmt.Errorf("stream write: %w", err)}
 			return
 		}
 
-		// Read until NUL delimiter
-		data, err := sr.stdoutBr.ReadBytes('\x00')
+		data, err := reader.ReadBytes('\x00')
 		if err != nil {
-			if sr.stderr.Len() > 0 {
-				ch <- result{"", fmt.Errorf("stream read: %w: %s", err, strings.TrimSpace(sr.stderr.String()))}
-			} else {
-				ch <- result{"", fmt.Errorf("stream read: %w", err)}
-			}
+			ch <- result{"", fmt.Errorf("stream read: %w", err)}
 			return
 		}
 		if len(data) > 0 && data[len(data)-1] == 0 {
@@ -196,10 +191,12 @@ func (sr *StreamRenderer) RenderPageWithTimeout(ctx context.Context, html string
 
 	select {
 	case <-ctx.Done():
-		// Kill the process to unblock the goroutine's read
-		if sr.cmd != nil && sr.cmd.Process != nil {
-			sr.cmd.Process.Kill()
+		// Kill the captured process to unblock the goroutine's read
+		if proc != nil && proc.Process != nil {
+			proc.Process.Kill()
 		}
+		// Wait for goroutine to finish before returning
+		<-ch
 		return "", ctx.Err()
 	case r := <-ch:
 		return r.html, r.err
