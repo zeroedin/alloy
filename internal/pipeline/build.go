@@ -374,9 +374,18 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			}
 		}
 
-		// Fire onContentTransformed — both passes complete
-		if _, err := hooks.RunWithTimeout(plugin.OnContentTransformed, pages); err != nil {
-			return nil, fmt.Errorf("plugin hook onContentTransformed: %w", err)
+		// Fire onContentTransformed per page with HTML string payload
+		for _, page := range pages {
+			if len(page.RenderedBody) == 0 {
+				continue
+			}
+			result, err := hooks.RunWithTimeout(plugin.OnContentTransformed, string(page.RenderedBody))
+			if err != nil {
+				return nil, fmt.Errorf("plugin hook onContentTransformed: %w", err)
+			}
+			if modified, ok := result.(string); ok {
+				page.RenderedBody = []byte(modified)
+			}
 		}
 
 	} else {
@@ -441,8 +450,18 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			return nil, renderErr
 		}
 
-		if _, err := hooks.RunWithTimeout(plugin.OnContentTransformed, pages); err != nil {
-			return nil, fmt.Errorf("plugin hook onContentTransformed: %w", err)
+		// Fire onContentTransformed per page with HTML string payload
+		for _, page := range pages {
+			if len(page.RenderedBody) == 0 {
+				continue
+			}
+			result, err := hooks.RunWithTimeout(plugin.OnContentTransformed, string(page.RenderedBody))
+			if err != nil {
+				return nil, fmt.Errorf("plugin hook onContentTransformed: %w", err)
+			}
+			if modified, ok := result.(string); ok {
+				page.RenderedBody = []byte(modified)
+			}
 		}
 
 		// Layout resolution + rendering

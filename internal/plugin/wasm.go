@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/fastschema/qjs"
+	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/api"
 )
 
 // QuickJSRuntime wraps a QuickJS instance for Tier 2 in-process JS plugins.
@@ -321,6 +324,9 @@ type WASMRuntime struct {
 	modulePath string
 	moduleName string
 	exports    map[string]bool
+	wasmBytes  []byte
+	rt         wazero.Runtime
+	mod        api.Module
 }
 
 // NewWASMRuntime creates a new WASM runtime via wazero.
@@ -331,32 +337,129 @@ func NewWASMRuntime() *WASMRuntime {
 }
 
 // LoadModule loads a WASM module from the given file path.
+// Validates the binary, compiles it, and discovers exported functions.
 func (r *WASMRuntime) LoadModule(path string) error {
-	if _, err := os.Stat(path); err != nil {
+	wasmBytes, err := os.ReadFile(path)
+	if err != nil {
 		return fmt.Errorf("WASM module not found: %s", path)
 	}
+
 	r.modulePath = path
 	r.moduleName = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	// Register default exports that a valid WASM plugin would have
-	r.exports["filter"] = true
+	r.wasmBytes = wasmBytes
+
+	ctx := context.Background()
+	r.rt = wazero.NewRuntime(ctx)
+
+	compiled, err := r.rt.CompileModule(ctx, wasmBytes)
+	if err != nil {
+		r.rt.Close(ctx)
+		return fmt.Errorf("invalid WASM module %s: %w", filepath.Base(path), err)
+	}
+
+	// Discover exported functions
+	for _, exp := range compiled.ExportedFunctions() {
+		r.exports[exp.ExportNames()[0]] = true
+	}
+
+	// Instantiate the module
+	r.mod, err = r.rt.InstantiateModule(ctx, compiled, wazero.NewModuleConfig())
+	if err != nil {
+		r.rt.Close(ctx)
+		return fmt.Errorf("instantiating WASM module %s: %w", filepath.Base(path), err)
+	}
+
 	return nil
 }
 
 // CallExport calls an exported WASM function by name.
+// For string arguments, the input is written to the module's memory
+// and the function is called with (ptr, len). The result is read back.
 func (r *WASMRuntime) CallExport(name string, args ...interface{}) (interface{}, error) {
 	if !r.exports[name] {
 		return nil, fmt.Errorf("export %q not found in %s.wasm", name, r.moduleName)
 	}
-	// Return a passthrough result — actual WASM execution would transform it.
+
+	fn := r.mod.ExportedFunction(name)
+	if fn == nil {
+		return nil, fmt.Errorf("export %q not found in %s.wasm", name, r.moduleName)
+	}
+
+	// For string input: write to memory, call with (ptr, len), read result
 	if len(args) > 0 {
-		return args[0], nil
+		if s, ok := args[0].(string); ok {
+			return r.callStringFilter(fn, s)
+		}
+	}
+
+	results, err := fn.Call(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("WASM call %q: %w", name, err)
+	}
+	if len(results) > 0 {
+		return results[0], nil
 	}
 	return nil, nil
+}
+
+// callStringFilter writes a string to WASM memory, calls the filter function
+// with (ptr, len), and reads the result string from memory.
+func (r *WASMRuntime) callStringFilter(fn api.Function, input string) (interface{}, error) {
+	mem := r.mod.Memory()
+	if mem == nil {
+		return input, nil
+	}
+
+	// Write input to memory at a known offset
+	inputBytes := []byte(input)
+	inputPtr := uint32(1024) // fixed offset for simplicity
+	if !mem.Write(inputPtr, inputBytes) {
+		return input, nil
+	}
+
+	results, err := fn.Call(context.Background(), uint64(inputPtr), uint64(len(inputBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("WASM filter call: %w", err)
+	}
+
+	if len(results) >= 2 {
+		resultPtr := uint32(results[0])
+		resultLen := uint32(results[1])
+		if resultData, ok := mem.Read(resultPtr, resultLen); ok {
+			return string(resultData), nil
+		}
+	}
+
+	return input, nil
+}
+
+// RegisteredFilters returns the names of exported functions that can be used as filters.
+func (r *WASMRuntime) RegisteredFilters() []string {
+	names := make([]string, 0, len(r.exports))
+	for name := range r.exports {
+		names = append(names, name)
+	}
+	return names
+}
+
+// CallFilter calls a WASM-exported filter function by name.
+func (r *WASMRuntime) CallFilter(name string, input interface{}, args ...interface{}) (interface{}, error) {
+	allArgs := make([]interface{}, 0, 1+len(args))
+	allArgs = append(allArgs, input)
+	allArgs = append(allArgs, args...)
+	return r.CallExport(name, allArgs...)
 }
 
 // HasExport checks if the WASM module exports a function with the given name.
 func (r *WASMRuntime) HasExport(name string) bool {
 	return r.exports[name]
+}
+
+// Close releases wazero resources.
+func (r *WASMRuntime) Close() {
+	if r.rt != nil {
+		r.rt.Close(context.Background())
+	}
 }
 
 // SandboxViolationError represents an attempt to access a forbidden resource.
