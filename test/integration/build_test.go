@@ -72,15 +72,15 @@ var _ = Describe("Full build pipeline", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 
-			// RenderedContent is a map[string]string keyed by source path
-			// (e.g., "content/blog/deep/nested/leaf.md") containing the final
-			// rendered HTML for each page. The developer must add this field
-			// to BuildResult when implementing this test.
+			// RenderedContent is a map[string]string keyed by Page.RelPath
+			// (e.g., "blog/deep/nested/leaf.md" — relative to the content
+			// directory, no "content/" prefix). The developer must add this
+			// field to BuildResult when implementing this test.
 			Expect(result.RenderedContent).NotTo(BeNil(),
 				"BuildResult must include RenderedContent map")
 
-			// Look up by source path — matches how the pipeline tracks pages
-			leafHTML, ok := result.RenderedContent["content/blog/deep/nested/leaf.md"]
+			// Look up by RelPath — relative to content dir, no "content/" prefix
+			leafHTML, ok := result.RenderedContent["blog/deep/nested/leaf.md"]
 			Expect(ok).To(BeTrue(),
 				"leaf.md must be present in RenderedContent by source path")
 			Expect(leafHTML).NotTo(BeEmpty(),
