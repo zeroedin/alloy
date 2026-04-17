@@ -116,6 +116,13 @@ Alloy supports two built-in template engines (project-wide setting):
 {{ .content }}
 ```
 
+Set the engine in config:
+
+```yaml
+templates:
+  engine: "liquid"   # default — or "go" for html/template
+```
+
 Both engines share the same layout lookup order, data context, and built-in filters.
 
 ## Data Cascade
