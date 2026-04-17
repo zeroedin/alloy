@@ -320,10 +320,12 @@ var _ = Describe("Build Pipeline", func() {
 				"content/index.md": `<html><body><ds-card>Hello</ds-card></body></html>`,
 			}
 			ssrCfg := &config.SSRConfig{
-				Command: "sleep 60",
-				Timeout: "200ms",
+				Command: "sleep 1",
+				Timeout: "50ms",
 			}
-			// sleep 60 hangs forever — the 200ms timeout must kill it
+			// sleep 1 takes 1 second — the 50ms timeout must kill it.
+			// Short durations avoid blocking CI while still proving
+			// the timeout mechanism works.
 			_, err := pipeline.BuildPhase2(intermediate, ssrCfg)
 			Expect(err).To(HaveOccurred(),
 				"BuildPhase2 must enforce ssr.timeout and kill the stalled command")
