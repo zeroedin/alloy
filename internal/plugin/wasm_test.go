@@ -1,6 +1,7 @@
 package plugin_test
 
 import (
+	"os"
 	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -157,6 +158,65 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 				ContainSubstring("export"),
 				ContainSubstring("not found"),
 			), "WASM error must include plugin name and call context")
+		})
+	})
+
+	// ── WASM filter execution ───────────────────────────────────────
+	// Issue #181: LoadModule is a stub. These tests verify actual WASM
+	// execution — calling a filter and getting a real transformed result.
+
+	Describe("WASM filter execution", func() {
+		It("WASM filter transforms input and returns result", func() {
+			rt := plugin.NewWASMRuntime()
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+			// CallExport with "filter" must execute the WASM function
+			// and return a transformed value, not the input unchanged.
+			// A passthrough stub must not satisfy this test.
+			input := "hello world"
+			result, err := rt.CallExport("filter", input)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil(),
+				"WASM filter must return a non-nil result")
+			Expect(result).NotTo(Equal(input),
+				"WASM filter must transform the input — returning it unchanged "+
+					"proves the WASM code did not execute")
+		})
+
+		It("WASM module registers discoverable filters", func() {
+			rt := plugin.NewWASMRuntime()
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+			filters := rt.RegisteredFilters()
+			Expect(filters).NotTo(BeEmpty(),
+				"WASM module must register at least one filter via its exports")
+		})
+
+		It("WASM registered filter is callable through CallFilter", func() {
+			rt := plugin.NewWASMRuntime()
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+			filters := rt.RegisteredFilters()
+			Expect(filters).NotTo(BeEmpty())
+
+			// Call the first registered filter by name
+			result, err := rt.CallFilter(filters[0], "test input")
+			Expect(err).NotTo(HaveOccurred(),
+				"calling a WASM-registered filter by name must not error")
+			Expect(result).NotTo(BeNil(),
+				"WASM filter must return a result")
+		})
+
+		It("LoadModule returns error for invalid WASM binary", func() {
+			rt := plugin.NewWASMRuntime()
+			// Create a temp file with invalid WASM content
+			tmpDir := GinkgoT().TempDir()
+			badWasm := filepath.Join(tmpDir, "bad.wasm")
+			Expect(os.WriteFile(badWasm, []byte("not a wasm file"), 0644)).To(Succeed())
+
+			err := rt.LoadModule(badWasm)
+			Expect(err).To(HaveOccurred(),
+				"LoadModule must return error for invalid WASM binary")
 		})
 	})
 
