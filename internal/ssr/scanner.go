@@ -1,10 +1,12 @@
 package ssr
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os/exec"
 	"regexp"
@@ -46,6 +48,9 @@ func RenderPage(command string, html string) (string, error) {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		}
 		return "", err
 	}
 	return stdout.String(), nil
@@ -67,6 +72,9 @@ func RenderPageWithTimeout(ctx context.Context, command string, html string) (st
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		}
 		return "", err
 	}
 	return stdout.String(), nil
@@ -75,10 +83,11 @@ func RenderPageWithTimeout(ctx context.Context, command string, html string) (st
 // StreamRenderer manages a persistent SSR process that handles multiple
 // pages via NUL-delimited stdin/stdout messages.
 type StreamRenderer struct {
-	command string
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	stdout  io.ReadCloser
+	command  string
+	cmd      *exec.Cmd
+	stdin    io.WriteCloser
+	stdout   io.ReadCloser
+	stdoutBr *bufio.Reader
 }
 
 // NewStreamRenderer starts a persistent process for stream-mode SSR.
@@ -108,6 +117,7 @@ func (sr *StreamRenderer) start() error {
 	if err != nil {
 		return err
 	}
+	sr.stdoutBr = bufio.NewReader(sr.stdout)
 
 	if err := sr.cmd.Start(); err != nil {
 		return err
@@ -123,25 +133,16 @@ func (sr *StreamRenderer) RenderPage(html string) (string, error) {
 		return "", err
 	}
 
-	// Read until NUL delimiter
-	var buf bytes.Buffer
-	oneByte := make([]byte, 1)
-	for {
-		n, err := sr.stdout.Read(oneByte)
-		if n > 0 {
-			if oneByte[0] == 0 {
-				break
-			}
-			buf.WriteByte(oneByte[0])
-		}
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return "", err
-		}
+	// Read until NUL delimiter using buffered reader
+	data, err := sr.stdoutBr.ReadBytes('\x00')
+	if err != nil {
+		return "", fmt.Errorf("stream read: %w", err)
 	}
-	return buf.String(), nil
+	// Strip the trailing NUL delimiter
+	if len(data) > 0 && data[len(data)-1] == 0 {
+		data = data[:len(data)-1]
+	}
+	return string(data), nil
 }
 
 // Restart kills the current process and starts a new one.
