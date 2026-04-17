@@ -32,6 +32,31 @@ func ScanComponents(html string) []string {
 	return tags
 }
 
+// bodyOpenRe matches the opening <body> tag, including optional attributes.
+var bodyOpenRe = regexp.MustCompile(`<body(\s[^>]*)?>`)
+
+// ExtractBody splits an HTML document into (bodyContent, before, after).
+// before includes everything up to and including the opening <body> tag.
+// after includes the closing </body> tag and everything after.
+// If no <body> tag exists, the entire input is returned as bodyContent
+// with empty before and after.
+func ExtractBody(html string) (body, before, after string) {
+	loc := bodyOpenRe.FindStringIndex(html)
+	if loc == nil {
+		return html, "", ""
+	}
+	closeIdx := strings.LastIndex(html, "</body>")
+	if closeIdx < 0 {
+		return html, "", ""
+	}
+	return html[loc[1]:closeIdx], html[:loc[1]], html[closeIdx:]
+}
+
+// ReassembleDocument re-inserts SSR'd body content into the document skeleton.
+func ReassembleDocument(before, ssrBody, after string) string {
+	return before + ssrBody + after
+}
+
 // RenderPage pipes full page HTML to the command via stdin and returns
 // the transformed HTML from stdout. The command string is parsed into
 // executable + args via strings.Fields.

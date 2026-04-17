@@ -862,16 +862,19 @@ func buildPhase2Exec(intermediateHTML map[string]string, ssrCfg *config.SSRConfi
 			continue
 		}
 
+		// Extract body content — only pipe the body to the SSR command,
+		// preserve the document skeleton (DOCTYPE, head, scripts).
+		body, before, after := ssr.ExtractBody(html)
+
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		rendered, err := ssr.RenderPageWithTimeout(ctx, ssrCfg.Command, html)
+		rendered, err := ssr.RenderPageWithTimeout(ctx, ssrCfg.Command, body)
 		cancel()
 		if err != nil {
-			// Skip failed page — preserve original HTML and continue
 			log.Printf("warning: SSR failed for %s: %v", path, err)
 			result[path] = html
 			continue
 		}
-		result[path] = rendered
+		result[path] = ssr.ReassembleDocument(before, rendered, after)
 	}
 
 	return result, nil
@@ -902,18 +905,19 @@ func buildPhase2Stream(intermediateHTML map[string]string, ssrCfg *config.SSRCon
 			continue
 		}
 
+		body, before, after := ssr.ExtractBody(html)
+
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		rendered, err := sr.RenderPageWithTimeout(ctx, html)
+		rendered, err := sr.RenderPageWithTimeout(ctx, body)
 		cancel()
 		if err != nil {
-			// Attempt restart and retry once
 			if restartErr := sr.Restart(); restartErr != nil {
 				log.Printf("warning: SSR stream restart failed for %s: %v", path, restartErr)
 				result[path] = html
 				continue
 			}
 			retryCtx, retryCancel := context.WithTimeout(context.Background(), timeout)
-			rendered, err = sr.RenderPageWithTimeout(retryCtx, html)
+			rendered, err = sr.RenderPageWithTimeout(retryCtx, body)
 			retryCancel()
 			if err != nil {
 				log.Printf("warning: SSR stream failed after restart for %s: %v", path, err)
@@ -921,7 +925,7 @@ func buildPhase2Stream(intermediateHTML map[string]string, ssrCfg *config.SSRCon
 				continue
 			}
 		}
-		result[path] = rendered
+		result[path] = ssr.ReassembleDocument(before, rendered, after)
 	}
 
 	return result, nil
