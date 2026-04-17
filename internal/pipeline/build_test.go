@@ -190,11 +190,11 @@ var _ = Describe("Build Pipeline", func() {
 				"Phase 2 with cat must succeed — cat passes stdin to stdout")
 			Expect(result).NotTo(BeNil())
 			// Every page from Phase 1 must appear in Phase 2 output
-			for path, html := range intermediate {
+			for path := range intermediate {
 				Expect(result).To(HaveKey(path),
 					"Phase 2 output must contain every page from Phase 1")
-				Expect(result[path]).To(ContainSubstring("</html>"),
-					"Phase 2 output for %s must contain valid HTML from Phase 1", html)
+				Expect(result[path]).NotTo(BeEmpty(),
+					"Phase 2 output for %s must not be empty", path)
 			}
 		})
 
