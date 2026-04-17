@@ -127,9 +127,10 @@ func (e *liquidEngine) AddFilter(name string, fn FilterFunc) error {
 }
 
 func (e *liquidEngine) AddTag(name string, fn TagFunc) error {
+	endTag := "end" + name
 	e.env.RegisterTag(name, tags.TagConstructor(
 		func(tagName, markup string, parseContext liquid.ParseContextInterface) (interface{}, error) {
-			return newAlloyTag(tagName, markup, parseContext, fn), nil
+			return newAlloyTag(tagName, markup, parseContext, fn, endTag), nil
 		},
 	))
 	return nil
@@ -336,7 +337,8 @@ func (f *alloyFilterBridge) URL(input interface{}, args ...interface{}) interfac
 
 // ---------------------------------------------------------------------------
 // alloyTag — adapts Alloy's TagFunc to liquidgo's tag interface.
-// Handles simple inline tags like {% youtube "id" %}.
+// Handles both inline tags ({% youtube "id" %}) and block tags
+// ({% callout "warning" %}content{% endcallout %}).
 // ---------------------------------------------------------------------------
 
 // alloyTagMarkupPattern extracts quoted arguments from tag markup.
@@ -344,30 +346,49 @@ var alloyTagMarkupPattern = regexp.MustCompile(`"([^"]*)"`)
 
 type alloyTag struct {
 	*liquid.Tag
-	fn     TagFunc
-	markup string
+	fn       TagFunc
+	markup   string
+	endTag   string
+	bodyText string
 }
 
-func newAlloyTag(tagName, markup string, parseContext liquid.ParseContextInterface, fn TagFunc) *alloyTag {
+func newAlloyTag(tagName, markup string, parseContext liquid.ParseContextInterface, fn TagFunc, endTag string) *alloyTag {
 	return &alloyTag{
 		Tag:    liquid.NewTag(tagName, markup, parseContext),
 		fn:     fn,
 		markup: markup,
+		endTag: endTag,
 	}
 }
 
 func (t *alloyTag) Parse(tokenizer *liquid.Tokenizer) error {
+	// Consume tokens until the end tag to support block shortcodes.
+	// For inline tags (no matching end tag), this loop simply finds
+	// nothing and bodyText stays empty.
+	for {
+		token := tokenizer.Shift()
+		if token == "" {
+			break
+		}
+		if strings.HasPrefix(token, "{%") && strings.HasSuffix(token, "%}") {
+			content := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(token, "{%"), "%}"))
+			// Handle whitespace-control variants like {%- endcallout -%}
+			content = strings.TrimLeft(content, "- ")
+			content = strings.TrimRight(content, "- ")
+			content = strings.TrimSpace(content)
+			if content == t.endTag {
+				return nil
+			}
+		}
+		t.bodyText += token
+	}
 	return nil
 }
 
 func (t *alloyTag) Render(context liquid.TagContext) string {
 	args := parseTagArgs(t.markup)
-	result := t.fn(args, "")
+	result := t.fn(args, t.bodyText)
 	if result == "" {
-		// Shortcodes are content expansion points — a tag that produces no
-		// output renders a placeholder element identifying the tag for
-		// debugging and post-processing. This matches Hugo/11ty behavior
-		// where shortcode invocations are always visible in output.
 		return fmt.Sprintf(`<alloy-shortcode data-tag="%s"></alloy-shortcode>`, t.TagName())
 	}
 	return result
