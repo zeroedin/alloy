@@ -8,10 +8,8 @@ import (
 
 // ComponentMap holds the full component tracking state persisted to .alloy/components.json.
 type ComponentMap struct {
-	// Instances maps hash → ComponentInstance (unique component occurrences)
-	Instances map[string]ComponentInstance `json:"instances"`
-	// PageToInstances maps page source path → list of component hashes on that page
-	PageToInstances map[string][]string `json:"pageToInstances"`
+	// PageToComponents maps page source path → list of component tag names on that page
+	PageToComponents map[string][]string `json:"pageToComponents"`
 	// ComponentToPages maps component tag → list of page source paths using it
 	ComponentToPages map[string][]string `json:"componentToPages"`
 	// ComponentDeps maps component tag → list of child component tags
@@ -23,8 +21,7 @@ type ComponentMap struct {
 // NewComponentMap creates an empty component map.
 func NewComponentMap() *ComponentMap {
 	return &ComponentMap{
-		Instances:        make(map[string]ComponentInstance),
-		PageToInstances:  make(map[string][]string),
+		PageToComponents: make(map[string][]string),
 		ComponentToPages: make(map[string][]string),
 		ComponentDeps:    make(map[string][]string),
 		DefinitionHashes: make(map[string]string),

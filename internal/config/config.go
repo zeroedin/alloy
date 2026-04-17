@@ -143,15 +143,9 @@ type CollectionConfig struct {
 
 // SSRConfig holds SSR engine settings.
 type SSRConfig struct {
-	Build string         `yaml:"build" toml:"build" json:"build"`
-	Serve SSRServeConfig `yaml:"serve" toml:"serve" json:"serve"`
-}
-
-// SSRServeConfig holds SSR serve-mode settings.
-type SSRServeConfig struct {
-	Cmd      string `yaml:"cmd" toml:"cmd" json:"cmd"`
-	Endpoint string `yaml:"endpoint" toml:"endpoint" json:"endpoint"`
-	Protocol string `yaml:"protocol" toml:"protocol" json:"protocol"`
+	Command string `yaml:"command" toml:"command" json:"command"`
+	Mode    string `yaml:"mode" toml:"mode" json:"mode"`
+	Timeout string `yaml:"timeout" toml:"timeout" json:"timeout"`
 }
 
 // Load reads and parses a config file at the given path.
