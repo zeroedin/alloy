@@ -171,18 +171,16 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
 
 			// CallExport with "filter" must execute the WASM function
-			// and return a transformed value, not just the input unchanged
-			result, err := rt.CallExport("filter", "hello world")
+			// and return a transformed value, not the input unchanged.
+			// A passthrough stub must not satisfy this test.
+			input := "hello world"
+			result, err := rt.CallExport("filter", input)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil(),
 				"WASM filter must return a non-nil result")
-			// The result must be different from a passthrough — proves
-			// the WASM code actually executed
-			resultStr, ok := result.(string)
-			if ok {
-				Expect(resultStr).NotTo(BeEmpty(),
-					"WASM filter must return a non-empty string")
-			}
+			Expect(result).NotTo(Equal(input),
+				"WASM filter must transform the input — returning it unchanged "+
+					"proves the WASM code did not execute")
 		})
 
 		It("WASM module registers discoverable filters", func() {
