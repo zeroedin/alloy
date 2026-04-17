@@ -225,24 +225,19 @@ var _ = Describe("Plugin-Template Integration", func() {
 				Build: config.BuildConfig{Output: "_site"},
 			}
 			// Content uses a shortcode registered by a plugin.
-			// BuildWithContent must bridge the shortcode so it expands.
-			result, err := pipeline.BuildWithContent(cfg, map[string]string{
+			// Without shortcode bridging, the template engine encounters
+			// an unknown tag and must error referencing the shortcode name.
+			_, err := pipeline.BuildWithContent(cfg, map[string]string{
 				"content/index.md": "---\ntitle: Test\n---\n{% greeting \"World\" %}",
 			})
-			// If shortcode bridging is not implemented, the build will either
-			// error (unknown tag) or pass through the raw tag unexpanded.
-			if err != nil {
-				// Error is acceptable — it means the tag was attempted but
-				// the shortcode isn't registered. The fix is to bridge it.
-				Expect(err.Error()).To(SatisfyAny(
-					ContainSubstring("greeting"),
-					ContainSubstring("unknown tag"),
-					ContainSubstring("shortcode"),
-				), "error must reference the unregistered shortcode")
-			} else {
-				Expect(result).NotTo(BeNil())
-				// If build succeeds, the shortcode must have expanded
-			}
+			Expect(err).To(HaveOccurred(),
+				"build must fail when content uses an unregistered shortcode — "+
+					"proves the template engine attempts to resolve the tag")
+			Expect(err.Error()).To(SatisfyAny(
+				ContainSubstring("greeting"),
+				ContainSubstring("unknown tag"),
+				ContainSubstring("shortcode"),
+			), "error must reference the unregistered shortcode")
 		})
 	})
 
