@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -209,6 +210,14 @@ func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
 			// Register discovered filters with the registry for conflict detection
 			for _, fname := range rt.RegisteredFilters() {
 				r.RegisterFilter(fname, "plugins/"+p.Name)
+			}
+			// Bridge discovered hooks into the HookRegistry
+			for _, hookName := range rt.RegisteredHooks() {
+				name := hookName
+				runtime := rt
+				hooks.Register(HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {
+					return runtime.CallHook(name, payload)
+				})
 			}
 			r.runtimes = append(r.runtimes, rt)
 		case RuntimeWASM:

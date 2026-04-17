@@ -206,8 +206,79 @@ func jsValueToGo(v *qjs.Value) interface{} {
 }
 
 // CallShortcode calls a registered shortcode function by name with args and inner content.
+// The shortcode function is invoked in the QuickJS VM with an array of string arguments.
 func (r *QuickJSRuntime) CallShortcode(name string, args []string, innerContent string) (string, error) {
-	return innerContent, nil
+	if !r.shortcodes[name] {
+		return innerContent, nil
+	}
+
+	// Set args as a JS array via globals to avoid escaping issues
+	argsArray, err := r.ctx.Eval("args.js", qjs.Code(`[]`))
+	if err != nil {
+		return "", fmt.Errorf("shortcode %q: creating args array: %w", name, err)
+	}
+	for i, arg := range args {
+		v := r.ctx.NewString(arg)
+		argsArray.SetPropertyIndex(int64(i), v)
+	}
+	r.ctx.Global().SetPropertyStr("__callShortcodeArgs", argsArray)
+	r.ctx.Global().SetPropertyStr("__callShortcodeContent", r.ctx.NewString(innerContent))
+	r.ctx.Global().SetPropertyStr("__callShortcodeName", r.ctx.NewString(name))
+
+	result, err := r.ctx.Eval("shortcode-call.js", qjs.Code(
+		`__shortcodes[__callShortcodeName](__callShortcodeArgs, __callShortcodeContent)`))
+
+	r.ctx.Global().SetPropertyStr("__callShortcodeName", r.ctx.NewUndefined())
+	r.ctx.Global().SetPropertyStr("__callShortcodeArgs", r.ctx.NewUndefined())
+	r.ctx.Global().SetPropertyStr("__callShortcodeContent", r.ctx.NewUndefined())
+
+	if err != nil {
+		return "", fmt.Errorf("shortcode %q: %w", name, err)
+	}
+	defer result.Free()
+
+	if result.IsString() {
+		return result.String(), nil
+	}
+	return fmt.Sprint(jsValueToGo(result)), nil
+}
+
+// CallHook invokes a registered hook function by name with a payload.
+// The hook function is invoked in the QuickJS VM and the result is
+// converted back to a Go value.
+func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}, error) {
+	if !r.hooks[name] {
+		return payload, nil
+	}
+
+	// Set the payload as a global variable accessible from JS
+	switch v := payload.(type) {
+	case string:
+		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(v))
+	case int:
+		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewInt32(int32(v)))
+	case float64:
+		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewFloat64(v))
+	case bool:
+		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewBool(v))
+	default:
+		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(fmt.Sprint(v)))
+	}
+
+	r.ctx.Global().SetPropertyStr("__callHookName", r.ctx.NewString(name))
+
+	result, err := r.ctx.Eval("hook-call.js", qjs.Code(
+		`__hooks[__callHookName](__callInput)`))
+
+	r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewUndefined())
+	r.ctx.Global().SetPropertyStr("__callHookName", r.ctx.NewUndefined())
+
+	if err != nil {
+		return nil, fmt.Errorf("hook %q: %w", name, err)
+	}
+	defer result.Free()
+
+	return jsValueToGo(result), nil
 }
 
 // RegisteredFilters returns the names of all filters registered in the QuickJS context.

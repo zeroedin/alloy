@@ -1,16 +1,14 @@
 package pipeline
 
 import (
-	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -37,12 +35,13 @@ var ErrNotImplemented = errors.New("not implemented")
 
 // BuildResult holds the outcome of a build.
 type BuildResult struct {
-	OutputDir     string
-	PageCount     int
-	Duration      time.Duration
-	Errors        []error
-	SSRSkipped    bool     // true when Phase 2 was skipped (no ssr: config)
-	PagesRendered []string // source paths of pages that were rendered
+	OutputDir       string
+	PageCount       int
+	Duration        time.Duration
+	Errors          []error
+	SSRSkipped      bool              // true when Phase 2 was skipped (no ssr: config)
+	PagesRendered   []string          // source paths of pages that were rendered
+	RenderedContent map[string]string // source path → final rendered HTML
 }
 
 // Build runs the complete build pipeline (Phase 0 through Phase 3).
@@ -120,6 +119,23 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 				return result
 			}); err != nil {
 				return nil, fmt.Errorf("registering plugin filter %q: %w", name, err)
+			}
+		}
+	}
+
+	// Bridge plugin-discovered shortcodes into the template engine.
+	for _, rt := range registry.Runtimes() {
+		for _, scName := range rt.RegisteredShortcodes() {
+			name := scName
+			runtime := rt
+			if err := engine.AddTag(name, func(args []string, content string) string {
+				result, err := runtime.CallShortcode(name, args, content)
+				if err != nil {
+					return ""
+				}
+				return result
+			}); err != nil {
+				return nil, fmt.Errorf("registering plugin shortcode %q: %w", name, err)
 			}
 		}
 	}
@@ -665,12 +681,20 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		}
 	}
 
+	renderedContent := make(map[string]string, len(pages))
+	for _, page := range pages {
+		if len(page.RenderedBody) > 0 {
+			renderedContent[page.RelPath] = string(page.RenderedBody)
+		}
+	}
+
 	result := &BuildResult{
-		OutputDir:     cfg.Build.Output,
-		PageCount:     len(pages),
-		Duration:      time.Since(start),
-		SSRSkipped:    ssrSkipped,
-		PagesRendered: rendered,
+		OutputDir:       cfg.Build.Output,
+		PageCount:       len(pages),
+		Duration:        time.Since(start),
+		SSRSkipped:      ssrSkipped,
+		PagesRendered:   rendered,
+		RenderedContent: renderedContent,
 	}
 
 	// Fire onBuildComplete hook — build is finished, plugins can run post-build tasks
@@ -796,93 +820,98 @@ func BuildPhase1(cfg *config.Config) (map[string]string, error) {
 }
 
 // BuildPhase2 runs Phase 2 (SSR transform) on the intermediate HTML
-// from Phase 1. For each page, scans for custom element tags, deduplicates
-// instances by hash(tag + attributes), pipes each unique instance to the
-// ssr.render command via stdin, reads SSR'd output from stdout, and stamps
-// the result back into the page HTML. Pages without custom elements pass
-// through unchanged with no render command invocations.
+// from Phase 1. For each page with custom elements, pipes the full page
+// HTML to the ssr.command via stdin and reads transformed HTML from stdout.
+// Pages without custom elements pass through unchanged.
+// Mode "exec" (default): one process per page.
+// Mode "stream": persistent process with NUL-delimited messages.
 func BuildPhase2(intermediateHTML map[string]string, ssrCfg *config.SSRConfig) (map[string]string, error) {
 	if ssrCfg == nil {
 		return intermediateHTML, nil
 	}
 
-	parts := strings.Fields(ssrCfg.Build)
-	if len(parts) == 0 {
-		return nil, fmt.Errorf("ssr.render command is empty")
+	if ssrCfg.Command == "" {
+		return nil, fmt.Errorf("ssr.command is empty")
+	}
+
+	// Stream mode: use a persistent process
+	if ssrCfg.Mode == "stream" {
+		return buildPhase2Stream(intermediateHTML, ssrCfg)
+	}
+
+	// Exec mode (default): one process per page
+	return buildPhase2Exec(intermediateHTML, ssrCfg)
+}
+
+func buildPhase2Exec(intermediateHTML map[string]string, ssrCfg *config.SSRConfig) (map[string]string, error) {
+	timeout := 30 * time.Second
+	if ssrCfg.Timeout != "" {
+		d, err := time.ParseDuration(ssrCfg.Timeout)
+		if err != nil {
+			return nil, fmt.Errorf("invalid ssr.timeout %q: %w", ssrCfg.Timeout, err)
+		}
+		timeout = d
 	}
 
 	result := make(map[string]string, len(intermediateHTML))
 
 	for path, html := range intermediateHTML {
-		// Scan for custom elements (tags with hyphens)
-		instances := ssr.ScanComponents(html)
-		if len(instances) == 0 {
-			// No custom elements — pass through unchanged, no render invocations
+		tags := ssr.ScanComponents(html)
+		if len(tags) == 0 {
 			result[path] = html
 			continue
 		}
 
-		// Deduplicate by hash(tag + attributes), slot content excluded
-		unique := ssr.DeduplicateInstances(instances)
-
-		// Insert markers around component instances for stamp-back
-		markedHTML := ssr.InsertMarkers(html, unique)
-
-		// Render each unique instance via stdin/stdout pipe
-		ssrResults := make(map[string]string, len(unique))
-		for _, inst := range unique {
-			// Build the raw element HTML to pipe to the render command
-			rawElement := buildRawElement(inst)
-
-			rendered, err := renderViaStdin(parts, rawElement)
-			if err != nil {
-				return nil, fmt.Errorf("exec ssr.render command %q for <%s>: %w", parts[0], inst.Tag, err)
-			}
-			ssrResults[inst.Hash] = rendered
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		rendered, err := ssr.RenderPageWithTimeout(ctx, ssrCfg.Command, html)
+		cancel()
+		if err != nil {
+			// Skip failed page — preserve original HTML and continue
+			log.Printf("warning: SSR failed for %s: %v", path, err)
+			result[path] = html
+			continue
 		}
-
-		// Stamp SSR'd output back into the marked HTML
-		result[path] = ssr.StampBack(markedHTML, ssrResults)
+		result[path] = rendered
 	}
 
 	return result, nil
 }
 
-// buildRawElement reconstructs a self-closing-style element string from
-// a ComponentInstance for piping to the SSR render command.
-func buildRawElement(inst ssr.ComponentInstance) string {
-	var b strings.Builder
-	b.WriteString("<")
-	b.WriteString(inst.Tag)
-	// Sort attributes for deterministic output
-	keys := make([]string, 0, len(inst.Attrs))
-	for k := range inst.Attrs {
-		keys = append(keys, k)
+func buildPhase2Stream(intermediateHTML map[string]string, ssrCfg *config.SSRConfig) (map[string]string, error) {
+	sr, err := ssr.NewStreamRenderer(ssrCfg.Command)
+	if err != nil {
+		return nil, fmt.Errorf("ssr stream start %q: %w", ssrCfg.Command, err)
 	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		fmt.Fprintf(&b, ` %s="%s"`, k, inst.Attrs[k])
-	}
-	b.WriteString("></" + inst.Tag + ">")
-	return b.String()
-}
+	defer sr.Close()
 
-// renderViaStdin pipes rawHTML to the render command via stdin and reads
-// SSR'd output from stdout.
-func renderViaStdin(cmdParts []string, rawHTML string) (string, error) {
-	cmd := exec.Command(cmdParts[0], cmdParts[1:]...)
-	cmd.Stdin = strings.NewReader(rawHTML)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	result := make(map[string]string, len(intermediateHTML))
 
-	if err := cmd.Run(); err != nil {
-		if stderr.Len() > 0 {
-			return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	for path, html := range intermediateHTML {
+		tags := ssr.ScanComponents(html)
+		if len(tags) == 0 {
+			result[path] = html
+			continue
 		}
-		return "", err
+
+		rendered, err := sr.RenderPage(html)
+		if err != nil {
+			// Attempt restart and retry once
+			if restartErr := sr.Restart(); restartErr != nil {
+				log.Printf("warning: SSR stream restart failed for %s: %v", path, restartErr)
+				result[path] = html
+				continue
+			}
+			rendered, err = sr.RenderPage(html)
+			if err != nil {
+				log.Printf("warning: SSR stream failed after restart for %s: %v", path, err)
+				result[path] = html
+				continue
+			}
+		}
+		result[path] = rendered
 	}
-	return stdout.String(), nil
+
+	return result, nil
 }
 
 // renderPages renders all pages through the markdown and template pipeline.
