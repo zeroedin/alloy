@@ -77,7 +77,8 @@
     }
   },
   "ssr": {
-    "command": "golit render --defs bundles/"
+    "command": "golit serve --stdio",
+    "mode": "stream"
   },
   "languages": {
     "en": {

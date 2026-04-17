@@ -125,7 +125,9 @@ var _ = Describe("Build Pipeline", func() {
 	// ── Phase 1 → Phase 2 handoff (§2) ──────────────────────────────
 	// Per spec §6: Phase 2 operates in memory. For each page with custom
 	// elements, Alloy pipes the full page HTML to ssr.command via stdin.
-	// The SSR engine handles all component rendering internally.
+	// Mode "exec" (default): one process per page. Mode "stream": persistent
+	// process with NUL-delimited messages. The SSR engine handles all
+	// component rendering internally.
 
 	Describe("Phase 1 → Phase 2 handoff", func() {
 		It("Phase 1 produces intermediate HTML preserving raw custom element tags", func() {
@@ -259,6 +261,44 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(result).NotTo(BeNil())
 			Expect(result["content/plain.md"]).To(Equal(intermediate["content/plain.md"]),
 				"HTML without custom elements must pass through Phase 2 unchanged")
+		})
+	})
+
+	// ── SSR stream mode ────────────────────────────────────────────
+
+	Describe("SSR stream mode", func() {
+		It("BuildPhase2 uses persistent process when mode is stream", func() {
+			// With mode "stream", BuildPhase2 must start a persistent process
+			// and send NUL-delimited messages instead of spawning per page.
+			// Using a nonexistent command proves the stream startup is attempted.
+			intermediate := map[string]string{
+				"content/index.md": `<html><body><ds-card>Hello</ds-card></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				Command: "nonexistent-ssr-tool serve --stdio",
+				Mode:    "stream",
+			}
+			_, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).To(HaveOccurred(),
+				"BuildPhase2 in stream mode must attempt to start the persistent process")
+		})
+
+		It("BuildPhase2 defaults to exec mode when mode is empty", func() {
+			intermediate := map[string]string{
+				"content/index.md": `<html><body><ds-card>Hello</ds-card></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				Command: "nonexistent-ssr-tool render --defs bundles/",
+				// Mode is empty — defaults to exec
+			}
+			_, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).To(HaveOccurred(),
+				"BuildPhase2 must default to exec mode when mode is not set")
+			Expect(err.Error()).To(SatisfyAny(
+				ContainSubstring("nonexistent-ssr-tool"),
+				ContainSubstring("exec"),
+				ContainSubstring("not found"),
+			), "error must come from exec-mode process spawn, not stream setup")
 		})
 	})
 

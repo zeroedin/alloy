@@ -1812,18 +1812,34 @@ Intermediate HTML → Per-Page SSR Command → Final HTML (with DSD)
 
 ### SSR Command
 
-Alloy does **not** import any SSR engine as a Go dependency. The SSR engine is an external CLI binary that must be installed separately. The `ssr:` config tells Alloy what command to invoke:
+Alloy does **not** import any SSR engine as a Go dependency. The SSR engine is an external CLI binary that must be installed separately. The `ssr:` config tells Alloy what command to invoke and how to communicate with it:
 
 ```yaml
-# alloy.config.yaml
+# alloy.config.yaml — exec mode (default)
 ssr:
   command: "golit render --defs ./bundles"
+
+# stream mode — persistent process, NUL-delimited
+ssr:
+  command: "golit serve --stdio"
+  mode: "stream"
 ```
 
-**Per-page rendering** — For each page, Alloy pipes the full intermediate HTML to `ssr.command` via stdin. The engine reads stdin, transforms the entire page — discovering custom elements, rendering their shadow roots, and inserting Declarative Shadow DOM — and writes the final HTML to stdout:
+**`mode`** controls how Alloy communicates with the SSR engine:
+
+- **`exec`** (default, can be omitted) — Alloy spawns a new process per page. Pipes page HTML to stdin, reads transformed HTML from stdout, process exits. Simple, no state between pages.
+- **`stream`** — Alloy starts the process once and keeps it alive. For each page, writes HTML + `\0` (NUL byte) to the process's stdin, reads until `\0` on stdout. The process stays warm across all pages, amortizing startup cost. Significantly faster for sites with many pages.
+
+**Per-page rendering** — Regardless of mode, the contract is the same: full page HTML goes in via stdin, SSR'd HTML comes out via stdout. In exec mode, each page is a separate process invocation. In stream mode, pages are NUL-delimited messages on a persistent connection:
 
 ```
-echo '<html><body><ds-card variant="primary"><h2 slot="title">Hello</h2></ds-card></body></html>' | golit render --defs ./bundles
+# exec mode — one process per page
+echo '<html><body><ds-card>Hello</ds-card></body></html>' | golit render --defs ./bundles
+
+# stream mode — persistent process, NUL-delimited
+# Alloy writes: <html>...\0   reads: <html with DSD>...\0
+# Alloy writes: <html>...\0   reads: <html with DSD>...\0
+# (process stays alive until build completes or dev server stops)
 ```
 
 The SSR engine owns all component-level concerns: element discovery, deduplication, shadow root rendering, and DSD insertion. Alloy treats it as a black box — HTML goes in, SSR'd HTML comes out.
@@ -2271,8 +2287,9 @@ func BenchmarkBuild1000Pages(b *testing.B) {
 - [ ] i18n / multilingual (opt-in via `languages:` config, per-language content trees, shared layouts, translation linking)
 
 ### Phase 3 — SSR Pipeline
-- [ ] SSR config parser (`ssr.command`)
-- [ ] Per-page SSR: pipe full page HTML to `ssr.command` via stdin, receive transformed HTML on stdout
+- [ ] SSR config parser (`ssr.command`, `ssr.mode`)
+- [ ] Per-page SSR exec mode: spawn process per page, pipe HTML via stdin, read stdout
+- [ ] Per-page SSR stream mode: persistent process, NUL-delimited stdin/stdout
 - [ ] Component tracking: scan pre-SSR HTML for custom element tags, record page-to-component mapping
 - [ ] Component map persistence (`.alloy/components.json` — `pageToComponents`, `componentToPages`, `definitionHashes`)
 - [ ] SSR cache: skip re-SSR for pages whose Phase 1 output hash is unchanged

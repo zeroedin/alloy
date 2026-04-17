@@ -6,4 +6,5 @@ build:
 templates:
   engine: liquid
 ssr:
-  command: "golit render --defs bundles/"
+  command: "golit serve --stdio"
+  mode: "stream"

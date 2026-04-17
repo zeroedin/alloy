@@ -254,7 +254,9 @@ Key points:
 - `BuildWithContent`: Accept injected content, render through pipeline. Error messages must contain source file path + "template rendering" stage.
 - `BuildPhase1`/`BuildPhase2`: Phase separation. Phase 2 operates entirely in memory:
   1. For each page, scan intermediate HTML for custom element tags (anything with a hyphen) and record in ComponentMap for cache invalidation
-  2. For each page, pipe the full intermediate HTML to `ssr.command` (`config.SSRConfig.Command`) via stdin using `os/exec`, read the fully transformed HTML (with DSD) from stdout
+  2. For each page with custom elements, invoke the SSR command based on `config.SSRConfig.Mode`:
+     - **`exec`** (default): spawn a new process per page via `os/exec`, pipe HTML to stdin, read transformed HTML from stdout
+     - **`stream`**: use a persistent process (started once for the build), write HTML + `\0` to stdin, read until `\0` from stdout
   3. Replace the page's rendered body with the command output
   - The command is invoked once per page — the SSR engine handles component discovery, deduplication, and DSD injection internally.
   - Pages without custom elements skip the SSR command invocation (pass through unchanged).
@@ -539,11 +541,14 @@ The flag must be applied **after** config loading but **before** pipeline execut
 
 `cmd/serve.go` should call `srv.StartWithPortFallback(port, 10)` instead of `srv.Start(port)`. The returned actual port is used in the startup message (`Serving at http://localhost:<actual-port>`). The `--port` flag remains "preferred" — it's the starting point for the search, not a hard requirement. No `--strict-port` flag needed; `alloy serve` is a dev tool and auto-increment is always the right UX.
 
-### 6B: `internal/ssr` — 15 tests
+### 6B: `internal/ssr` — 19 tests
 **Files**: `scanner.go`, `depgraph.go`, `persistence.go`
 
 - `ScanComponents(html string) []string`: Parse HTML for custom element tags (anything with a hyphen), return unique tag names. Used for component tracking, not for per-instance SSR.
-- `RenderPage(command string, html string) (string, error)`: Pipe full page HTML to `ssr.command` via stdin using `os/exec`. Reads the fully transformed HTML with DSD from stdout. Errors when the command is not found or returns non-zero exit.
+- `RenderPage(command string, html string) (string, error)`: Exec mode — spawn process, pipe full page HTML via stdin, read transformed HTML from stdout. Errors when the command is not found or returns non-zero exit.
+- `NewStreamRenderer(command string) (*StreamRenderer, error)`: Start a persistent process for stream mode. Returns a handle for sending NUL-delimited messages.
+- `(*StreamRenderer) RenderPage(html string) (string, error)`: Stream mode — write HTML + `\0` to the persistent process's stdin, read until `\0` from stdout. Errors if the process has exited or returns malformed output.
+- `(*StreamRenderer) Close() error`: Shut down the persistent process (close stdin, wait for exit).
 - `HashOutput(html string) string`: Content hash for Phase 2 output comparison (skip SSR when unchanged).
 - Component dependency graph (`depgraph.go`): Tracks parent-child component relationships for future nested component invalidation. Keep as-is.
 - Component map persistence (`persistence.go`): Save/load `pageToComponents`, `componentToPages`, `definitionHashes` to `.alloy/components.json`. `ShouldSkipSSR` checks definition hash for cache invalidation.

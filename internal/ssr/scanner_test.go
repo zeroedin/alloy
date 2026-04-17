@@ -72,6 +72,54 @@ var _ = Describe("Scanner", func() {
 		})
 	})
 
+	// ── Stream mode SSR rendering ─────────────────────────────────────
+
+	Describe("Stream mode SSR rendering", func() {
+		It("NewStreamRenderer starts a persistent process", func() {
+			// Use 'cat' — it reads stdin and echoes to stdout, stays alive
+			// until stdin is closed. Proves the persistent process model works.
+			sr, err := ssr.NewStreamRenderer("cat")
+			Expect(err).NotTo(HaveOccurred(),
+				"NewStreamRenderer must start a persistent process")
+			Expect(sr).NotTo(BeNil())
+			Expect(sr.Close()).To(Succeed())
+		})
+
+		It("renders multiple pages on a single persistent process", func() {
+			sr, err := ssr.NewStreamRenderer("cat")
+			Expect(err).NotTo(HaveOccurred())
+			defer sr.Close()
+
+			// First page
+			html1 := `<html><body><ds-card>Page 1</ds-card></body></html>`
+			result1, err := sr.RenderPage(html1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result1).To(ContainSubstring("Page 1"),
+				"first page must be rendered via the persistent process")
+
+			// Second page — same process, no restart
+			html2 := `<html><body><ds-button>Page 2</ds-button></body></html>`
+			result2, err := sr.RenderPage(html2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result2).To(ContainSubstring("Page 2"),
+				"second page must be rendered on the same persistent process")
+		})
+
+		It("returns error when stream command is not found", func() {
+			_, err := ssr.NewStreamRenderer("nonexistent-ssr-tool serve --stdio")
+			Expect(err).To(HaveOccurred(),
+				"NewStreamRenderer must return error when command is not found")
+		})
+
+		It("Close shuts down the persistent process", func() {
+			sr, err := ssr.NewStreamRenderer("cat")
+			Expect(err).NotTo(HaveOccurred())
+			err = sr.Close()
+			Expect(err).To(Succeed(),
+				"Close must cleanly shut down the persistent process")
+		})
+	})
+
 	// ── Output hashing ────────────────────────────────────────────────
 
 	Describe("Output hashing", func() {
