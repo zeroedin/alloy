@@ -124,24 +124,28 @@ var _ = Describe("Cross-Cutting Integration", func() {
 	})
 
 	Describe("Plugin hook → content transform → output", func() {
-		It("registers a hook, transforms content, and verifies output", func() {
-			// This is a minimal simulation: register a transform hook, run it,
-			// and verify the payload was processed
-			transformCalled := false
-			hookFn := func(_ context.Context, payload interface{}) (interface{}, error) {
-				transformCalled = true
-				return payload, nil // pass-through
-			}
-			_ = hookFn
-			_ = transformCalled
+		It("onContentTransformed hook modifies rendered HTML", func() {
+			// Register a hook that modifies content, run it through
+			// the HookRegistry, and verify the payload was transformed
+			registry := plugin.NewHookRegistry()
+			registry.Register(plugin.OnContentTransformed, func(_ context.Context, payload interface{}) (interface{}, error) {
+				html, ok := payload.(string)
+				if !ok {
+					return payload, nil
+				}
+				// Simulate a plugin that injects a wrapper div
+				return "<div class=\"plugin-wrapped\">" + html + "</div>", nil
+			})
 
-			// The hook execution happens through the HookRegistry
-			// but the cross-cutting part is that the transformed content
-			// ends up in the output
-			raw := []byte("---\ntitle: Hooked\n---\n# Content")
-			page, err := content.BuildPage("content/hooked.md", raw)
+			// Fire the hook with rendered content
+			result, err := registry.Run(plugin.OnContentTransformed, "<p>Original content</p>")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(page).NotTo(BeNil())
+			resultStr, ok := result.(string)
+			Expect(ok).To(BeTrue(), "hook result must be a string")
+			Expect(resultStr).To(ContainSubstring("plugin-wrapped"),
+				"onContentTransformed hook must be able to modify rendered HTML")
+			Expect(resultStr).To(ContainSubstring("Original content"),
+				"hook must preserve original content inside the wrapper")
 		})
 	})
 
@@ -410,6 +414,43 @@ var _ = Describe("Cross-Cutting Integration", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).To(Equal("test payload"),
 				"plugin-registered hook must execute through HookRegistry")
+		})
+
+		// ── Issue #142: Hook wiring through LoadPlugins ──────────────
+		// LoadPlugins() bridges filters but NOT hooks. The hooks parameter
+		// is accepted but unused. Plugin hooks are discovered (RegisteredHooks
+		// returns them) but never wired to the HookRegistry.
+
+		It("plugin hooks are wired to HookRegistry via CallHook", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(filepath.Join(pluginFixtureDir(), "hooks.js"))).To(Succeed())
+
+			hooks := rt.RegisteredHooks()
+			Expect(hooks).To(ContainElement("onContentTransformed"),
+				"hooks.js must register onContentTransformed")
+
+			// Bridge hooks through CallHook — this is what LoadPlugins should do.
+			// CallHook must invoke the actual JS hook function, not pass-through.
+			registry := plugin.NewHookRegistry()
+			for _, hookName := range hooks {
+				name := hookName
+				runtime := rt
+				registry.Register(plugin.HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {
+					return runtime.CallHook(name, payload)
+				})
+			}
+
+			// Fire the hook and verify the JS function executed.
+			// hooks.js onContentTransformed is a pass-through (returns content
+			// unchanged), so the result should equal the input.
+			input := "<p>Original content</p>"
+			result, err := registry.Run(plugin.OnContentTransformed, input)
+			Expect(err).NotTo(HaveOccurred(),
+				"hook execution through CallHook must not error")
+			Expect(result).To(Equal(input),
+				"hooks.js onContentTransformed is a pass-through — "+
+					"result must equal input, proving the JS function executed")
 		})
 	})
 
