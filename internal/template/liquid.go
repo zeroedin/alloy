@@ -426,6 +426,7 @@ type alloyBlockTag struct {
 }
 
 func (t *alloyBlockTag) Parse(tokenizer *liquid.Tokenizer) error {
+	var body strings.Builder
 	for {
 		token := tokenizer.Shift()
 		if token == "" {
@@ -437,10 +438,11 @@ func (t *alloyBlockTag) Parse(tokenizer *liquid.Tokenizer) error {
 			content = strings.TrimRight(content, "- ")
 			content = strings.TrimSpace(content)
 			if content == t.endTag {
+				t.bodyText = body.String()
 				return nil
 			}
 		}
-		t.bodyText += token
+		body.WriteString(token)
 	}
 }
 

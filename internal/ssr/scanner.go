@@ -88,6 +88,7 @@ type StreamRenderer struct {
 	stdin    io.WriteCloser
 	stdout   io.ReadCloser
 	stdoutBr *bufio.Reader
+	stderr   bytes.Buffer
 }
 
 // NewStreamRenderer starts a persistent process for stream-mode SSR.
@@ -107,6 +108,8 @@ func (sr *StreamRenderer) start() error {
 	}
 
 	sr.cmd = exec.Command(parts[0], parts[1:]...)
+	sr.stderr.Reset()
+	sr.cmd.Stderr = &sr.stderr
 
 	var err error
 	sr.stdin, err = sr.cmd.StdinPipe()
@@ -130,12 +133,18 @@ func (sr *StreamRenderer) start() error {
 func (sr *StreamRenderer) RenderPage(html string) (string, error) {
 	// Write HTML + NUL delimiter
 	if _, err := io.WriteString(sr.stdin, html+"\x00"); err != nil {
+		if sr.stderr.Len() > 0 {
+			return "", fmt.Errorf("stream write: %w: %s", err, strings.TrimSpace(sr.stderr.String()))
+		}
 		return "", err
 	}
 
 	// Read until NUL delimiter using buffered reader
 	data, err := sr.stdoutBr.ReadBytes('\x00')
 	if err != nil {
+		if sr.stderr.Len() > 0 {
+			return "", fmt.Errorf("stream read: %w: %s", err, strings.TrimSpace(sr.stderr.String()))
+		}
 		return "", fmt.Errorf("stream read: %w", err)
 	}
 	// Strip the trailing NUL delimiter
