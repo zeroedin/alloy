@@ -18,7 +18,7 @@ Static site generators tend to make you choose between speed and extensibility. 
 - **Multiple output formats** — HTML, JSON, XML, or anything else from a single content file
 - **i18n** — Opt-in multilingual support with per-language content trees and shared layouts
 - **Incremental rebuilds** — Content-hash change detection, fine-grained template invalidation
-- **Web Component SSR** — Opt-in two-phase rendering with deduplicated Declarative Shadow DOM (golit, lit-ssr-wasm, or Lit SSR via Node)
+- **Web Component SSR** — Opt-in two-phase rendering: pipe each page to an external SSR engine via stdin/stdout for Declarative Shadow DOM
 - **Tiered plugin system** — Built-in Go filters (ns), in-process JS/WASM plugins (us), Node subprocess plugins (ms)
 - **Dev server** — File watching, WebSocket live reload, in-memory rendering, error reporting
 
@@ -148,14 +148,96 @@ export default function(alloy) {
   alloy.filter("wordCount", (content) => {
     return content.split(/\s+/).filter(w => w.length > 0).length;
   });
+
+  alloy.shortcode("youtube", (args) => {
+    return `<iframe src="https://www.youtube.com/embed/${args[0]}"></iframe>`;
+  });
+
+  alloy.hook("onContentTransformed", (content) => {
+    return content; // post-process rendered HTML
+  });
 }
 ```
 
+Plugins can register filters (`{{ value | filterName }}`), shortcodes (`{% shortcodeName "arg" %}`), and lifecycle hooks. Plugin filters override built-in filters with the same name — last loaded wins.
+
+## External Data Sources
+
+Fetch data from APIs at build time. Fetched data merges into `site.data.*` — templates can't tell the difference between local files and fetched data.
+
+```yaml
+sources:
+  posts:
+    type: "rest"
+    url: "https://api.example.com/posts.json"
+    cache: 3600
+    as: "posts"          # Available as {{ site.data.posts }}
+
+  products:
+    type: "graphql"
+    endpoint: "https://api.example.com/graphql"
+    query: "{ products { id, name, price, slug } }"
+    cache: 1800
+    as: "products"
+
+  blog:
+    type: "plugin"       # Plugin owns auth, pagination, everything
+    plugin: "cms-posts"
+    cache: 3600
+    as: "blog"
+```
+
+Cached to `.alloy/fetch-cache/` on disk. Use `--refetch` to bypass the cache.
+
+## Lifecycle Hooks
+
+Plugins can hook into 12 lifecycle events. Hooks chain in alphabetical filename order — each receives the previous hook's output.
+
+| Hook | When | Mutable? |
+|------|------|----------|
+| `onConfig` | After config load | Yes |
+| `onBeforeValidation` | Before output path conflict check | Yes (add paths) |
+| `onAfterValidation` | After validation passes | Cascade only |
+| `onDataFetched` | After external data fetch | Yes |
+| `onDataCascadeReady` | Cascade fully resolved | Yes |
+| `onContentLoaded` | After content discovery | Yes |
+| `onContentTransformed` | After Markdown rendering | Yes |
+| `onPageRendered` | After layout rendering | Yes |
+| `onAssetProcess` | Per-asset processing | Yes |
+| `onBuildComplete` | Build finished | No |
+| `onDevServerStart` | Dev server ready | No |
+| `onFileChanged` | File changed in watch mode | No |
+
 ## Web Component SSR (Opt-In)
 
-Alloy's two-phase rendering separates content rendering from component SSR. Phase 1 produces intermediate HTML with raw component tags. Phase 2 (if configured) scans for custom elements, deduplicates instances by tag + attributes, SSR's each unique instance once, and stamps Declarative Shadow DOM back into every page.
+Alloy's two-phase rendering separates content rendering from component SSR. Phase 1 produces intermediate HTML with raw component tags. Phase 2 (if configured) pipes each page's HTML to an external SSR engine that handles all component rendering internally — element discovery, deduplication, shadow root rendering, and Declarative Shadow DOM injection. Alloy treats the engine as a black box: HTML goes in via stdin, SSR'd HTML comes out via stdout.
 
-Supports golit (Go-native), lit-ssr-wasm (official Lit SSR compiled to WASM), or Lit SSR on Node as a plugin.
+Two communication modes:
+
+```yaml
+# Exec mode (default) — one process per page
+ssr:
+  command: "golit render --defs ./bundles"
+
+# Stream mode — persistent process, NUL-delimited, amortized startup
+ssr:
+  command: "golit serve --stdio"
+  mode: "stream"
+  timeout: "30s"
+```
+
+Pages without custom elements skip SSR entirely. Failed pages preserve their original HTML — one bad page doesn't abort a 500-page build.
+
+Compatible with any SSR engine that reads stdin and writes stdout. [golit](https://github.com/zeroedin/golit) is recommended.
+
+## Dev Server
+
+Two modes, same infrastructure:
+
+- **`alloy serve`** — Dev mode. Phase 1 only (Liquid + Markdown), components render client-side. Pages held in memory, no disk writes. Static files served from source.
+- **`alloy serve --preview`** — Preview mode. Full production pipeline (Phase 1 + Phase 2 SSR if configured). Writes to `_site/` and serves from disk.
+
+Both modes include WebSocket live reload, file watching with 50ms debounce, port auto-increment (tries up to 10 ports), custom 404 page support, and error overlay in the browser.
 
 ## CLI
 
@@ -170,8 +252,10 @@ alloy version               Print version
 **Flags:**
 ```
 --config, -c       Config file path (default: alloy.config.yaml)
+--root, -r         Project root directory (default: config file's directory)
 --output, -o       Output directory (default: _site)
---port, -p         Dev server port (default: 3000)
+--port, -p         Dev server port (default: 3000, auto-increments if occupied)
+--preview          Serve with production pipeline (SSR, full output)
 --verbose, -v      Verbose logging
 --quiet, -q        Suppress output
 --no-drafts        Hide drafts in dev mode
