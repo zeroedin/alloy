@@ -212,25 +212,25 @@ func (r *QuickJSRuntime) CallShortcode(name string, args []string, innerContent 
 		return innerContent, nil
 	}
 
-	// Build a JS array literal from args
-	var jsArgs strings.Builder
-	jsArgs.WriteString("[")
-	for i, arg := range args {
-		if i > 0 {
-			jsArgs.WriteString(",")
-		}
-		jsArgs.WriteString(`"`)
-		jsArgs.WriteString(strings.ReplaceAll(arg, `"`, `\"`))
-		jsArgs.WriteString(`"`)
+	// Set args as a JS array via globals to avoid escaping issues
+	argsArray, err := r.ctx.Eval("args.js", qjs.Code(`[]`))
+	if err != nil {
+		return "", fmt.Errorf("shortcode %q: creating args array: %w", name, err)
 	}
-	jsArgs.WriteString("]")
-
+	for i, arg := range args {
+		v := r.ctx.NewString(arg)
+		argsArray.SetPropertyIndex(int64(i), v)
+	}
+	r.ctx.Global().SetPropertyStr("__callShortcodeArgs", argsArray)
+	r.ctx.Global().SetPropertyStr("__callShortcodeContent", r.ctx.NewString(innerContent))
 	r.ctx.Global().SetPropertyStr("__callShortcodeName", r.ctx.NewString(name))
 
 	result, err := r.ctx.Eval("shortcode-call.js", qjs.Code(
-		`__shortcodes[__callShortcodeName](`+jsArgs.String()+`)`))
+		`__shortcodes[__callShortcodeName](__callShortcodeArgs, __callShortcodeContent)`))
 
 	r.ctx.Global().SetPropertyStr("__callShortcodeName", r.ctx.NewUndefined())
+	r.ctx.Global().SetPropertyStr("__callShortcodeArgs", r.ctx.NewUndefined())
+	r.ctx.Global().SetPropertyStr("__callShortcodeContent", r.ctx.NewUndefined())
 
 	if err != nil {
 		return "", fmt.Errorf("shortcode %q: %w", name, err)
