@@ -254,10 +254,10 @@ Key points:
 - `BuildWithContent`: Accept injected content, render through pipeline. Error messages must contain source file path + "template rendering" stage.
 - `BuildPhase1`/`BuildPhase2`: Phase separation. Phase 2 operates entirely in memory:
   1. For each page, scan intermediate HTML for custom element tags (anything with a hyphen) and record in ComponentMap for cache invalidation
-  2. For each page with custom elements, invoke the SSR command based on `config.SSRConfig.Mode`:
-     - **`exec`** (default): spawn a new process per page via `os/exec`, pipe HTML to stdin, read transformed HTML from stdout
-     - **`stream`**: use a persistent process (started once for the build), write HTML + `\0` to stdin, read until `\0` from stdout
-  3. Replace the page's rendered body with the command output
+  2. For each page with custom elements, extract the inner content of `<body>` (everything between `<body>` and `</body>`, not the tags themselves). Invoke the SSR command based on `config.SSRConfig.Mode`:
+     - **`exec`** (default): spawn a new process per page via `os/exec`, pipe body content to stdin, read transformed body content from stdout
+     - **`stream`**: use a persistent process (started once for the build), write body content + `\0` to stdin, read until `\0` from stdout
+  3. Re-insert the SSR'd body content into the original document skeleton (preserve `<!DOCTYPE>`, `<html>`, `<head>`, `<body>` tags from the intermediate HTML)
   - The command is invoked once per page — the SSR engine handles component discovery, deduplication, and DSD injection internally.
   - Pages without custom elements skip the SSR command invocation (pass through unchanged).
   - If the command is not found, `BuildPhase2` must return an error (no silent fallback).
@@ -550,7 +550,9 @@ The flag must be applied **after** config loading but **before** pipeline execut
 **Files**: `scanner.go`, `depgraph.go`, `persistence.go`
 
 - `ScanComponents(html string) []string`: Parse HTML for custom element tags (anything with a hyphen), return unique tag names. Used for component tracking, not for per-instance SSR.
-- `RenderPage(command string, html string) (string, error)`: Exec mode — spawn process, pipe full page HTML via stdin, read transformed HTML from stdout. Errors when the command is not found or returns non-zero exit.
+- `ExtractBody(html string) (body string, before string, after string)`: Extract the inner content of `<body>` from a full HTML document. Returns the body content, the document prefix (everything up to and including `<body>`), and the suffix (from `</body>` onward). Used by `BuildPhase2` to split the document before piping to the SSR command.
+- `ReassembleDocument(before string, ssrBody string, after string) string`: Re-insert SSR'd body content into the original document skeleton.
+- `RenderPage(command string, html string) (string, error)`: Exec mode — spawn process, pipe body content via stdin, read transformed body content from stdout. Errors when the command is not found or returns non-zero exit.
 - `RenderPageWithTimeout(ctx context.Context, command string, html string) (string, error)`: Exec mode with timeout — same as `RenderPage` but respects context deadline. Kills process on timeout.
 - `NewStreamRenderer(command string) (*StreamRenderer, error)`: Start a persistent process for stream mode. Returns a handle for sending NUL-delimited messages.
 - `(*StreamRenderer) RenderPage(html string) (string, error)`: Stream mode — write HTML + `\0` to the persistent process's stdin, read until `\0` from stdout. Errors if the process has exited or returns malformed output.

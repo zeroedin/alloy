@@ -213,9 +213,10 @@ var _ = Describe("Build Pipeline", func() {
 	})
 
 	// ── SSR per-page render ─────────────────────────────────────────
-	// Phase 2 pipes the full page HTML to ssr.command via stdin.
-	// The SSR engine handles component discovery, rendering, and DSD
-	// injection internally. Alloy treats it as a black box.
+	// Phase 2 extracts the inner content of <body>, pipes it to
+	// ssr.command via stdin, and re-inserts the SSR'd body content
+	// into the original document skeleton. The SSR engine never sees
+	// <!DOCTYPE>, <html>, <head>, or <body> tags.
 
 	Describe("SSR per-page render", func() {
 		It("BuildPhase2 preserves original HTML when command is not found", func() {
@@ -254,6 +255,35 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(result["content/index.md"]).NotTo(ContainSubstring("shadowrootmode"),
 				"BuildPhase2 must not silently fall back to local DSD transform "+
 					"when the ssr.command is unavailable")
+		})
+
+		It("BuildPhase2 preserves document skeleton after SSR", func() {
+			// Phase 2 must extract body content, pipe it to the SSR command,
+			// and re-insert the result into the original document skeleton.
+			// The <head>, <script>, and other document tags must survive SSR.
+			intermediate := map[string]string{
+				"content/index.md": `<!DOCTYPE html><html><head><title>Test</title><script src="app.js"></script></head><body><h1>Hello</h1><ds-card>content</ds-card></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				// cat passes body content through unchanged — proves the
+				// document skeleton is preserved by Alloy, not the SSR engine
+				Command: "cat",
+			}
+			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"BuildPhase2 with cat must succeed")
+			Expect(result).To(HaveKey("content/index.md"))
+			html := result["content/index.md"]
+			Expect(html).To(ContainSubstring("<!DOCTYPE html>"),
+				"document skeleton must preserve DOCTYPE after SSR")
+			Expect(html).To(ContainSubstring("<head>"),
+				"document skeleton must preserve <head> after SSR")
+			Expect(html).To(ContainSubstring(`<script src="app.js"></script>`),
+				"document skeleton must preserve <script> tags in <head> after SSR")
+			Expect(html).To(ContainSubstring("<ds-card>"),
+				"body content must be present after SSR")
+			Expect(html).To(ContainSubstring("</html>"),
+				"document skeleton must preserve closing </html> after SSR")
 		})
 
 		It("BuildPhase2 passes through HTML unchanged when no custom elements present", func() {
