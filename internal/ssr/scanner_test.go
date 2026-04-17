@@ -45,6 +45,63 @@ var _ = Describe("Scanner", func() {
 		})
 	})
 
+	// ── Body extraction for SSR ───────────────────────────────────────
+	// Phase 2 pipes only the inner content of <body> to the SSR command,
+	// not the full document. Alloy owns the document skeleton.
+
+	Describe("Body extraction", func() {
+		It("ExtractBody returns inner content of body tag", func() {
+			html := `<!DOCTYPE html><html><head><title>Test</title></head><body><h1>Hello</h1><ds-card>content</ds-card></body></html>`
+			body, before, after := ssr.ExtractBody(html)
+			Expect(body).To(Equal(`<h1>Hello</h1><ds-card>content</ds-card>`),
+				"body must contain only the inner content between <body> and </body>")
+			Expect(before).To(ContainSubstring("<head>"),
+				"before must contain the document head")
+			Expect(before).To(HaveSuffix("<body>"),
+				"before must end with the opening <body> tag")
+			Expect(after).To(HavePrefix("</body>"),
+				"after must start with the closing </body> tag")
+			Expect(after).To(ContainSubstring("</html>"),
+				"after must contain the closing </html> tag")
+		})
+
+		It("ExtractBody preserves body attributes", func() {
+			html := `<html><body class="dark" data-page="home"><p>Content</p></body></html>`
+			body, before, _ := ssr.ExtractBody(html)
+			Expect(body).To(Equal(`<p>Content</p>`),
+				"body content must not include body tag attributes")
+			Expect(before).To(ContainSubstring(`class="dark"`),
+				"before must preserve body tag attributes")
+		})
+
+		It("ExtractBody returns full HTML as body when no body tag exists", func() {
+			// Fragment without document structure — treat as body content
+			html := `<h1>Hello</h1><ds-card>content</ds-card>`
+			body, before, after := ssr.ExtractBody(html)
+			Expect(body).To(Equal(html),
+				"without body tag, entire input is body content")
+			Expect(before).To(BeEmpty(),
+				"without body tag, before must be empty")
+			Expect(after).To(BeEmpty(),
+				"without body tag, after must be empty")
+		})
+
+		It("ReassembleDocument re-inserts SSR'd body into document skeleton", func() {
+			before := `<!DOCTYPE html><html><head><title>Test</title><script src="app.js"></script></head><body>`
+			ssrBody := `<h1>Hello</h1><ds-card><template shadowrootmode="open"><style>:host{display:block}</style><slot></slot></template>content</ds-card>`
+			after := `</body></html>`
+			result := ssr.ReassembleDocument(before, ssrBody, after)
+			Expect(result).To(Equal(before + ssrBody + after),
+				"reassembled document must be before + SSR'd body + after")
+			Expect(result).To(ContainSubstring("<head>"),
+				"document must preserve head section")
+			Expect(result).To(ContainSubstring("shadowrootmode"),
+				"document must contain SSR'd content")
+			Expect(result).To(ContainSubstring("</html>"),
+				"document must preserve closing html tag")
+		})
+	})
+
 	// ── Per-page SSR rendering ────────────────────────────────────────
 
 	Describe("Per-page SSR rendering", func() {

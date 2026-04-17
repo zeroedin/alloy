@@ -1807,7 +1807,7 @@ Intermediate HTML → Per-Page SSR Command → Final HTML (with DSD)
                  → Scan for Components → Track page-to-component mapping (for cache)
 ```
 
-1. **Per-page SSR**: For each page, pipe the full intermediate HTML to the configured `ssr.command` via stdin. The SSR engine (golit) reads stdin, handles all component discovery, rendering, and DSD injection internally, and writes the fully transformed HTML with Declarative Shadow DOM to stdout.
+1. **Per-page SSR**: For each page, extract the inner content of `<body>` (not the tag itself) and pipe it to the configured `ssr.command` via stdin. The SSR engine (golit) reads stdin, handles all component discovery, rendering, and DSD injection internally, and writes the transformed body content with Declarative Shadow DOM to stdout. Alloy re-inserts the SSR'd body content into the original document skeleton (`<!DOCTYPE>`, `<html>`, `<head>`, `<body>`).
 2. **Component tracking**: Before SSR, scan each page's intermediate HTML for custom element tags (anything with a hyphen in the tag name per the HTML spec). Record which pages use which components in `.alloy/components.json` for cache invalidation.
 
 ### SSR Command
@@ -1830,21 +1830,26 @@ ssr:
 - **`exec`** (default, can be omitted) — Alloy spawns a new process per page. Pipes page HTML to stdin, reads transformed HTML from stdout, process exits. Simple, no state between pages.
 - **`stream`** — Alloy starts the process once and keeps it alive. For each page, writes HTML + `\0` (NUL byte) to the process's stdin, reads until `\0` on stdout. The process stays warm across all pages, amortizing startup cost. Significantly faster for sites with many pages.
 
-**Per-page rendering** — Regardless of mode, the contract is the same: full page HTML goes in via stdin, SSR'd HTML comes out via stdout. In exec mode, each page is a separate process invocation. In stream mode, pages are NUL-delimited messages on a persistent connection:
+**Per-page rendering** — Regardless of mode, the contract is the same: body inner content goes in via stdin, SSR'd body content comes out via stdout. Alloy extracts the content between `<body>` and `</body>` before piping, and re-inserts the result into the original document skeleton after receiving the response. The SSR engine never sees `<!DOCTYPE>`, `<html>`, `<head>`, or `<body>` tags — only the body's inner HTML containing the custom elements.
 
 ```
-# exec mode — one process per page
-echo '<html><body><ds-card>Hello</ds-card></body></html>' | golit render --defs ./bundles
+# exec mode — one process per page (body content only)
+echo '<h1>Hello</h1><ds-card title="Hi">content</ds-card>' | golit render --defs ./bundles
 
-# stream mode — persistent process, NUL-delimited
-# Alloy writes: <html>...\0   reads: <html with DSD>...\0
-# Alloy writes: <html>...\0   reads: <html with DSD>...\0
+# stream mode — persistent process, NUL-delimited (body content only)
+# Alloy writes: <h1>Hello</h1><ds-card>...</ds-card>\0
+# Alloy reads:  <h1>Hello</h1><ds-card><template shadowrootmode="open">...</template>...</ds-card>\0
 # (process stays alive until build completes or dev server stops)
 ```
 
+This separation ensures:
+- The document skeleton (`<head>`, `<script>`, import maps) is preserved by Alloy, not the SSR engine
+- The SSR engine only processes what it needs — body HTML with custom elements
+- SSR engine authors don't need to worry about preserving document structure
+
 The NUL byte (`\0`) is used as the stream delimiter because valid HTML cannot contain it — per the HTML spec (§13.2.2), NUL characters in HTML input are parse errors replaced with U+FFFD. This makes `\0` an unambiguous, zero-overhead message boundary.
 
-The SSR engine owns all component-level concerns: element discovery, deduplication, shadow root rendering, and DSD insertion. Alloy treats it as a black box — HTML goes in, SSR'd HTML comes out.
+The SSR engine owns all component-level concerns: element discovery, deduplication, shadow root rendering, and DSD insertion. Alloy treats it as a black box — body content goes in, SSR'd body content comes out. The document skeleton is Alloy's responsibility.
 
 If the engine binary is not found:
 
