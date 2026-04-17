@@ -149,6 +149,59 @@ var _ = Describe("Cross-Cutting Integration", func() {
 		})
 	})
 
+	// ── Issue #182: Hook payload must be per-page HTML string ────────
+	// onContentTransformed fires with the pages slice, but JS plugins
+	// need an HTML string they can modify. The pipeline must fire the
+	// hook once per page with the rendered HTML string as payload,
+	// apply the returned string back to the page.
+
+	Describe("onContentTransformed per-page HTML payload", func() {
+		It("hook receives HTML string, not pages slice", func() {
+			registry := plugin.NewHookRegistry()
+			receivedPayloads := []string{}
+			registry.Register(plugin.OnContentTransformed, func(_ context.Context, payload interface{}) (interface{}, error) {
+				html, ok := payload.(string)
+				Expect(ok).To(BeTrue(),
+					"onContentTransformed payload must be a string, not a pages slice or struct")
+				receivedPayloads = append(receivedPayloads, html)
+				return html, nil
+			})
+
+			// Simulate per-page hook firing with HTML strings
+			pages := []string{
+				"<h1>Post 1</h1><p>Content</p>",
+				"<h1>Post 2</h1><img src='photo.jpg'>",
+			}
+			for _, pageHTML := range pages {
+				_, err := registry.Run(plugin.OnContentTransformed, pageHTML)
+				Expect(err).NotTo(HaveOccurred())
+			}
+			Expect(receivedPayloads).To(HaveLen(2),
+				"hook must fire once per page")
+			Expect(receivedPayloads[0]).To(ContainSubstring("Post 1"))
+			Expect(receivedPayloads[1]).To(ContainSubstring("Post 2"))
+		})
+
+		It("hook can modify per-page HTML and return transformed result", func() {
+			registry := plugin.NewHookRegistry()
+			registry.Register(plugin.OnContentTransformed, func(_ context.Context, payload interface{}) (interface{}, error) {
+				html := payload.(string)
+				// Simulate a plugin that adds lazy loading to images
+				modified := strings.ReplaceAll(html, "<img ", `<img loading="lazy" `)
+				return modified, nil
+			})
+
+			input := `<h1>Gallery</h1><img src="a.jpg"><img src="b.jpg">`
+			result, err := registry.Run(plugin.OnContentTransformed, input)
+			Expect(err).NotTo(HaveOccurred())
+			resultStr := result.(string)
+			Expect(resultStr).To(ContainSubstring(`loading="lazy"`),
+				"hook must be able to modify per-page HTML")
+			Expect(strings.Count(resultStr, `loading="lazy"`)).To(Equal(2),
+				"hook must modify all img tags in the page")
+		})
+	})
+
 	// ── Multi-format output wiring (issue #71) ──────────────────────
 
 	Describe("Multi-format output → layout → output path", func() {

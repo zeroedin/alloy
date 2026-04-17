@@ -1729,8 +1729,8 @@ Content-Length: 82\r\n
 | `onAfterValidation` | validated output manifest (read-only) + data cascade (mutable) | Yes (cascade only) | After validation passes — plugins can inspect the manifest and inject/modify cascade data before rendering |
 | `onDataFetched` | fetched data + source metadata | Yes | After external data fetched + parsed |
 | `onContentLoaded` | raw content + front matter | Yes | After discovery + parsing |
-| `onContentTransformed` | rendered HTML + data | Yes | After Markdown→HTML |
-| `onPageRendered` | full page HTML | Yes | After template rendering |
+| `onContentTransformed` | rendered HTML string (per page) | Yes | After Markdown→HTML — fired once per page, payload is the page's rendered HTML string, return value replaces the page content |
+| `onPageRendered` | full page HTML string (per page) | Yes | After template rendering — fired once per page, payload is the complete page HTML after layout |
 | `onAssetProcess` | asset file | Yes | During asset copy (plugin-driven transforms) |
 | `onBuildComplete` | build stats | No | After output written |
 | `onDevServerStart` | server info | No | Dev server ready |
