@@ -1,8 +1,10 @@
 package ssr_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -72,6 +74,30 @@ var _ = Describe("Scanner", func() {
 		})
 	})
 
+	// ── Exec mode timeout ────────────────────────────────────────────
+
+	Describe("Exec mode timeout", func() {
+		It("RenderPageWithTimeout returns error when command exceeds deadline", func() {
+			// sleep 60 will hang — context timeout must kill it
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			html := `<html><body><ds-card>content</ds-card></body></html>`
+			_, err := ssr.RenderPageWithTimeout(ctx, "sleep 60", html)
+			Expect(err).To(HaveOccurred(),
+				"RenderPageWithTimeout must return error when command exceeds timeout")
+		})
+
+		It("RenderPageWithTimeout succeeds within deadline", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			html := `<html><body><ds-card>content</ds-card></body></html>`
+			result, err := ssr.RenderPageWithTimeout(ctx, "cat", html)
+			Expect(err).NotTo(HaveOccurred(),
+				"cat must complete within 5s timeout")
+			Expect(result).To(ContainSubstring("ds-card"))
+		})
+	})
+
 	// ── Stream mode SSR rendering ─────────────────────────────────────
 
 	Describe("Stream mode SSR rendering", func() {
@@ -117,6 +143,31 @@ var _ = Describe("Scanner", func() {
 			err = sr.Close()
 			Expect(err).To(Succeed(),
 				"Close must cleanly shut down the persistent process")
+		})
+	})
+
+	// ── Stream error recovery ─────────────────────────────────────────
+
+	Describe("Stream error recovery", func() {
+		It("Restart creates a new process after the previous one is closed", func() {
+			sr, err := ssr.NewStreamRenderer("cat")
+			Expect(err).NotTo(HaveOccurred())
+
+			// Close the process (simulates crash)
+			Expect(sr.Close()).To(Succeed())
+
+			// Restart must create a new process
+			err = sr.Restart()
+			Expect(err).NotTo(HaveOccurred(),
+				"Restart must successfully start a new process")
+
+			// The new process must work
+			html := `<html><body><ds-card>after restart</ds-card></body></html>`
+			result, err := sr.RenderPage(html)
+			Expect(err).NotTo(HaveOccurred(),
+				"RenderPage must succeed on the restarted process")
+			Expect(result).To(ContainSubstring("after restart"))
+			Expect(sr.Close()).To(Succeed())
 		})
 	})
 

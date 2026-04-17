@@ -260,7 +260,10 @@ Key points:
   3. Replace the page's rendered body with the command output
   - The command is invoked once per page — the SSR engine handles component discovery, deduplication, and DSD injection internally.
   - Pages without custom elements skip the SSR command invocation (pass through unchanged).
-  - If the command fails or is not found, `BuildPhase2` must return an error (no silent fallback).
+  - If the command is not found, `BuildPhase2` must return an error (no silent fallback).
+  - **Timeout**: Each page render is subject to `config.SSRConfig.Timeout` (default 30s). Use `context.WithTimeout` on exec, or a read deadline on stream. On timeout, kill the process.
+  - **Exec error isolation**: A failed page (timeout or non-zero exit) does not abort the build. Continue with remaining pages, collect all failures, report at the end.
+  - **Stream recovery**: On process crash, timeout, or malformed output — restart the process, retry the failed page once. If it fails again, skip the page and continue. Report all skipped pages at the end.
 - **`validateOutputDir`** (issue #9): Uses path equality + parent/child overlap detection (not substring matching). Only rejects exact matches (`output == content`) and nesting (`output = content/build` or `content` inside `output`). Names like `my_content_site` are valid output directories.
 - **Render ordering** (issue #10): Markdown renders first, then template tags — per spec §6 steps 3-4. Goldmark's TemplateTags extension preserves `{{ }}`/`{% %}` through markdown rendering. After markdown rendering and before Liquid processing, `escapeTemplateTagsInCode` converts template tags inside `<code>` elements to HTML entities so Liquid ignores them (issue #46). Markdown errors use stage name `"content transformation"`, template errors use `"template rendering"`.
 
@@ -541,13 +544,15 @@ The flag must be applied **after** config loading but **before** pipeline execut
 
 `cmd/serve.go` should call `srv.StartWithPortFallback(port, 10)` instead of `srv.Start(port)`. The returned actual port is used in the startup message (`Serving at http://localhost:<actual-port>`). The `--port` flag remains "preferred" — it's the starting point for the search, not a hard requirement. No `--strict-port` flag needed; `alloy serve` is a dev tool and auto-increment is always the right UX.
 
-### 6B: `internal/ssr` — 19 tests
+### 6B: `internal/ssr` — 23 tests
 **Files**: `scanner.go`, `depgraph.go`, `persistence.go`
 
 - `ScanComponents(html string) []string`: Parse HTML for custom element tags (anything with a hyphen), return unique tag names. Used for component tracking, not for per-instance SSR.
 - `RenderPage(command string, html string) (string, error)`: Exec mode — spawn process, pipe full page HTML via stdin, read transformed HTML from stdout. Errors when the command is not found or returns non-zero exit.
+- `RenderPageWithTimeout(ctx context.Context, command string, html string) (string, error)`: Exec mode with timeout — same as `RenderPage` but respects context deadline. Kills process on timeout.
 - `NewStreamRenderer(command string) (*StreamRenderer, error)`: Start a persistent process for stream mode. Returns a handle for sending NUL-delimited messages.
 - `(*StreamRenderer) RenderPage(html string) (string, error)`: Stream mode — write HTML + `\0` to the persistent process's stdin, read until `\0` from stdout. Errors if the process has exited or returns malformed output.
+- `(*StreamRenderer) Restart() error`: Kill and restart the persistent process. Used for recovery after crash, timeout, or malformed output.
 - `(*StreamRenderer) Close() error`: Shut down the persistent process (close stdin, wait for exit).
 - `HashOutput(html string) string`: Content hash for Phase 2 output comparison (skip SSR when unchanged).
 - Component dependency graph (`depgraph.go`): Tracks parent-child component relationships for future nested component invalidation. Keep as-is.

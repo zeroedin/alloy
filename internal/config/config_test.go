@@ -203,13 +203,14 @@ var _ = Describe("Config", func() {
 		})
 
 		Context("SSR stream mode config", func() {
-			It("parses ssr.mode field from config file", func() {
+			It("parses ssr.mode and ssr.timeout from config file", func() {
 				streamCfg, err := config.Load("testdata/valid_stream.yaml")
 				Expect(err).NotTo(HaveOccurred())
 				Expect(streamCfg).NotTo(BeNil())
 				Expect(streamCfg.SSR).NotTo(BeNil())
 				Expect(streamCfg.SSR.Command).To(Equal("golit serve --stdio"))
 				Expect(streamCfg.SSR.Mode).To(Equal("stream"))
+				Expect(streamCfg.SSR.Timeout).To(Equal("30s"))
 			})
 		})
 

@@ -5,3 +5,4 @@ build:
 ssr:
   command: "golit serve --stdio"
   mode: "stream"
+  timeout: "30s"

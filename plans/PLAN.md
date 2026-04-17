@@ -953,8 +953,8 @@ Data cascade and front matter are already assembled from Phase 0 — Phase 1 sta
 
 Skipped entirely unless the project has an `ssr:` block in config. Without it, Phase 1 output is the final HTML — Web Components render client-side only.
 
-16. **Per-page SSR** — For each page, pipe the full intermediate HTML to the configured `ssr.command` via stdin. The command reads stdin, transforms the HTML, and writes the result to stdout with Declarative Shadow DOM.
-17. **Component tracking** — Scan each page's pre-SSR HTML for custom element tags (anything with a hyphen). Record which pages use which components for cache invalidation.
+16. **Component tracking** — Scan each page's intermediate HTML for custom element tags (anything with a hyphen). Record which pages use which components for cache invalidation.
+17. **Per-page SSR** — For each page containing custom elements, pipe the full intermediate HTML to the configured `ssr.command` via stdin. The command reads stdin, transforms the HTML, and writes the result to stdout with Declarative Shadow DOM.
 
 **Phase 3 — Output**
 
@@ -1856,6 +1856,37 @@ If the engine binary is not found:
 
 Everything else — component discovery, ignore lists, import maps, concurrency — is configured by the engine's own config (e.g., `golit.yaml`). Alloy doesn't validate or proxy engine settings — if the command returns an error, Alloy surfaces it and aborts.
 
+### SSR Timeout
+
+Per-page rendering is subject to a timeout. If the SSR engine does not return a result within the timeout, Alloy kills the process and reports the failure.
+
+```yaml
+ssr:
+  command: "golit serve --stdio"
+  mode: "stream"
+  timeout: "30s"    # per-page timeout, default 30s
+```
+
+**`timeout`** is a duration string (e.g., `"30s"`, `"1m"`, `"500ms"`). Default is `30s`. Applies to both exec and stream modes. In exec mode, the process is killed on timeout. In stream mode, the process is killed and recovery is attempted (see below).
+
+### Stream Error Recovery
+
+In stream mode, the persistent process can fail in several ways: crash (unexpected exit), timeout (no response within `ssr.timeout`), or malformed output (no NUL terminator). Alloy handles all three the same way:
+
+1. **Detect**: The process exited, the read timed out, or the output is malformed.
+2. **Restart**: Start a new instance of the same command.
+3. **Retry**: Re-send the failed page to the new process.
+4. **Limit**: If the same page fails twice, skip it with an error and continue with remaining pages. One bad page should not abort a 500-page build.
+
+```
+[alloy] ERROR SSR timeout: "content/blog/huge-post.md" did not complete within 30s.
+        Restarting SSR process and retrying...
+[alloy] ERROR SSR retry failed for "content/blog/huge-post.md". Skipping page.
+        (249 of 250 pages rendered successfully)
+```
+
+In exec mode, there is no recovery — each page is an independent process. A timeout or non-zero exit fails that page. The build continues with remaining pages and reports all failures at the end.
+
 ### Component Tracking for Cache Invalidation
 
 Before passing each page to the SSR command, Alloy scans the intermediate HTML for custom element tags and records which pages use which components. This enables targeted rebuilds when a component source file changes.
@@ -2289,9 +2320,12 @@ func BenchmarkBuild1000Pages(b *testing.B) {
 - [ ] i18n / multilingual (opt-in via `languages:` config, per-language content trees, shared layouts, translation linking)
 
 ### Phase 3 — SSR Pipeline
-- [ ] SSR config parser (`ssr.command`, `ssr.mode`)
+- [ ] SSR config parser (`ssr.command`, `ssr.mode`, `ssr.timeout`)
 - [ ] Per-page SSR exec mode: spawn process per page, pipe HTML via stdin, read stdout
 - [ ] Per-page SSR stream mode: persistent process, NUL-delimited stdin/stdout
+- [ ] Per-page timeout: kill process after `ssr.timeout` (default 30s), report failing page
+- [ ] Stream error recovery: restart process on crash/timeout, retry failed page once, skip on second failure
+- [ ] Exec error isolation: failed page does not abort build, continue with remaining pages, report all failures
 - [ ] Component tracking: scan pre-SSR HTML for custom element tags, record page-to-component mapping
 - [ ] Component map persistence (`.alloy/components.json` — `pageToComponents`, `componentToPages`, `definitionHashes`)
 - [ ] SSR cache: skip re-SSR for pages whose Phase 1 output hash is unchanged

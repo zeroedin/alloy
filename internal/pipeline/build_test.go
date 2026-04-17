@@ -184,11 +184,18 @@ var _ = Describe("Build Pipeline", func() {
 				"Phase 1 must produce intermediate output")
 
 			// Phase 2 takes Phase 1 output directly and pipes to ssr.command
-			// via stdin
-			_, err = pipeline.BuildPhase2(intermediate, cfg.SSR)
-			// Either succeeds or fails — either proves BuildPhase2 accepts
-			// Phase 1 output and attempts per-page rendering
-			_ = err
+			// via stdin. cat passes HTML through unchanged.
+			result, err := pipeline.BuildPhase2(intermediate, cfg.SSR)
+			Expect(err).NotTo(HaveOccurred(),
+				"Phase 2 with cat must succeed — cat passes stdin to stdout")
+			Expect(result).NotTo(BeNil())
+			// Every page from Phase 1 must appear in Phase 2 output
+			for path, html := range intermediate {
+				Expect(result).To(HaveKey(path),
+					"Phase 2 output must contain every page from Phase 1")
+				Expect(result[path]).To(ContainSubstring("</html>"),
+					"Phase 2 output for %s must contain valid HTML from Phase 1", html)
+			}
 		})
 
 		It("without SSR config, Phase 1 output is the final HTML", func() {
@@ -342,7 +349,7 @@ var _ = Describe("Build Pipeline", func() {
 				// If Build errors, it must be because Phase 2 attempted
 				// command execution — not Phase 1 or config validation.
 				Expect(err.Error()).To(SatisfyAny(
-					ContainSubstring("echo"),
+					ContainSubstring("cat"),
 					ContainSubstring("exec"),
 					ContainSubstring("ssr"),
 					ContainSubstring("command"),
