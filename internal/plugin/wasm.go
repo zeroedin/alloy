@@ -206,8 +206,41 @@ func jsValueToGo(v *qjs.Value) interface{} {
 }
 
 // CallShortcode calls a registered shortcode function by name with args and inner content.
+// The shortcode function is invoked in the QuickJS VM with an array of string arguments.
 func (r *QuickJSRuntime) CallShortcode(name string, args []string, innerContent string) (string, error) {
-	return innerContent, nil
+	if !r.shortcodes[name] {
+		return innerContent, nil
+	}
+
+	// Build a JS array literal from args
+	var jsArgs strings.Builder
+	jsArgs.WriteString("[")
+	for i, arg := range args {
+		if i > 0 {
+			jsArgs.WriteString(",")
+		}
+		jsArgs.WriteString(`"`)
+		jsArgs.WriteString(strings.ReplaceAll(arg, `"`, `\"`))
+		jsArgs.WriteString(`"`)
+	}
+	jsArgs.WriteString("]")
+
+	r.ctx.Global().SetPropertyStr("__callShortcodeName", r.ctx.NewString(name))
+
+	result, err := r.ctx.Eval("shortcode-call.js", qjs.Code(
+		`__shortcodes[__callShortcodeName](`+jsArgs.String()+`)`))
+
+	r.ctx.Global().SetPropertyStr("__callShortcodeName", r.ctx.NewUndefined())
+
+	if err != nil {
+		return "", fmt.Errorf("shortcode %q: %w", name, err)
+	}
+	defer result.Free()
+
+	if result.IsString() {
+		return result.String(), nil
+	}
+	return fmt.Sprint(jsValueToGo(result)), nil
 }
 
 // CallHook invokes a registered hook function by name with a payload.

@@ -123,6 +123,23 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		}
 	}
 
+	// Bridge plugin-discovered shortcodes into the template engine.
+	for _, rt := range registry.Runtimes() {
+		for _, scName := range rt.RegisteredShortcodes() {
+			name := scName
+			runtime := rt
+			if err := engine.AddTag(name, func(args []string, content string) string {
+				result, err := runtime.CallShortcode(name, args, content)
+				if err != nil {
+					return ""
+				}
+				return result
+			}); err != nil {
+				return nil, fmt.Errorf("registering plugin shortcode %q: %w", name, err)
+			}
+		}
+	}
+
 	// Configure include/render tag resolution from layouts directory
 	if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
 		setter.SetIncludesDir(resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts))
