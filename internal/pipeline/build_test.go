@@ -358,6 +358,32 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Issue #173: Stream mode timeout wiring ──────────────────────
+	// Stream mode must enforce ssr.timeout per page, same as exec mode.
+
+	Describe("SSR stream mode timeout", func() {
+		It("BuildPhase2 stream mode enforces ssrCfg.Timeout", func() {
+			intermediate := map[string]string{
+				"content/index.md": `<html><body><ds-card>Hello</ds-card></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				Command: "sleep 1",
+				Mode:    "stream",
+				Timeout: "50ms",
+			}
+			// sleep 1 takes 1 second — the 50ms timeout must kill the read.
+			// Timeout is a per-page failure: page is skipped, original HTML
+			// preserved. The build does not abort.
+			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"stream mode timeout must not abort the build — page is skipped")
+			Expect(result).To(HaveKey("content/index.md"),
+				"timed-out page must be present in result")
+			Expect(result["content/index.md"]).To(ContainSubstring("ds-card"),
+				"timed-out page must preserve original HTML")
+		})
+	})
+
 	// ── Issue #164: SSR error collection (skip, don't abort) ─────────
 	// Per spec: failed pages should be skipped (original HTML preserved),
 	// errors collected, and reported at the end — not abort the build.
