@@ -426,27 +426,18 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Actual: with SSR, Build attempts Phase 2 (invokes ssr.command).
 			// Use "cat" — reads stdin, writes to stdout. Proves the per-page
-			// stdio model is attempted.
+			// stdio model works end-to-end.
 			ssrCfg := &config.Config{
 				Title: "SSR Site",
 				SSR:   &config.SSRConfig{Command: "cat"},
 				Build: config.BuildConfig{Output: "_site"},
 			}
 			ssrResult, err := pipeline.Build(ssrCfg)
-			if err != nil {
-				// If Build errors, it must be because Phase 2 attempted
-				// command execution — not Phase 1 or config validation.
-				Expect(err.Error()).To(SatisfyAny(
-					ContainSubstring("cat"),
-					ContainSubstring("exec"),
-					ContainSubstring("ssr"),
-					ContainSubstring("command"),
-				), "error must come from Phase 2 command execution, not Phase 1")
-			} else {
-				Expect(ssrResult).NotTo(BeNil())
-				Expect(ssrResult.SSRSkipped).To(BeFalse(),
-					"build with ssr: config must run Phase 2")
-			}
+			Expect(err).NotTo(HaveOccurred(),
+				"Build with cat as SSR command must succeed — cat passes stdin to stdout")
+			Expect(ssrResult).NotTo(BeNil())
+			Expect(ssrResult.SSRSkipped).To(BeFalse(),
+				"build with ssr: config must run Phase 2")
 		})
 	})
 })
