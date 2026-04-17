@@ -912,7 +912,9 @@ func buildPhase2Stream(intermediateHTML map[string]string, ssrCfg *config.SSRCon
 				result[path] = html
 				continue
 			}
-			rendered, err = sr.RenderPage(html)
+			retryCtx, retryCancel := context.WithTimeout(context.Background(), timeout)
+			rendered, err = sr.RenderPageWithTimeout(retryCtx, html)
+			retryCancel()
 			if err != nil {
 				log.Printf("warning: SSR stream failed after restart for %s: %v", path, err)
 				result[path] = html
