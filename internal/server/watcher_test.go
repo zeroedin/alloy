@@ -33,7 +33,7 @@ var _ = Describe("File Watcher", func() {
 			cfg := &config.Config{
 				Title: "SSR Site",
 				SSR: &config.SSRConfig{
-					Build: "golit render _site/**/*.html",
+					Command: "golit render --defs bundles/",
 				},
 			}
 			dirs := server.WatchDirs(cfg)

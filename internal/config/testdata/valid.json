@@ -77,11 +77,7 @@
     }
   },
   "ssr": {
-    "build": "golit transform _site/",
-    "serve": {
-      "cmd": "golit serve --defs bundles/",
-      "endpoint": "http://localhost:9777/render"
-    }
+    "command": "golit render --defs bundles/"
   },
   "languages": {
     "en": {

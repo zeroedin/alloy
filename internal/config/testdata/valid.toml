@@ -73,11 +73,7 @@ sortBy = "date"
 order = "desc"
 
 [ssr]
-build = "golit transform _site/"
-
-[ssr.serve]
-cmd = "golit serve --defs bundles/"
-endpoint = "http://localhost:9777/render"
+command = "golit render --defs bundles/"
 
 [languages.en]
 title = "Test Site"

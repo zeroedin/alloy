@@ -123,12 +123,11 @@ var _ = Describe("Build Pipeline", func() {
 	})
 
 	// ── Phase 1 → Phase 2 handoff (§2) ──────────────────────────────
-	// Per spec §6: Phase 2 operates in memory. For each unique component
-	// instance, Alloy pipes the raw element HTML to the ssr.render command
-	// via stdin and reads SSR'd HTML from stdout. No files on disk.
-	//
-	// NOTE: SSRConfig.Build maps to ssr.render in config YAML (field rename
-	// is implementation work tracked in the dev issue, not spec).
+	// Per spec §6: Phase 2 operates in memory. For each page with custom
+	// elements, Alloy pipes the full page HTML to ssr.command via stdin.
+	// Mode "exec" (default): one process per page. Mode "stream": persistent
+	// process with NUL-delimited messages. The SSR engine handles all
+	// component rendering internally.
 
 	Describe("Phase 1 → Phase 2 handoff", func() {
 		It("Phase 1 produces intermediate HTML preserving raw custom element tags", func() {
@@ -143,36 +142,37 @@ var _ = Describe("Build Pipeline", func() {
 				"Phase 1 must produce at least one page of intermediate HTML")
 		})
 
-		It("Phase 2 invokes render command per component instance via stdin/stdout", func() {
+		It("Phase 2 invokes command per page, piping full HTML via stdin", func() {
 			// Intermediate HTML contains a custom element (hyphenated tag).
-			// BuildPhase2 must attempt to invoke the render command for it.
-			// Using a nonexistent command proves the invocation is attempted.
+			// BuildPhase2 must attempt to invoke the command for each page
+			// containing custom elements. Using a nonexistent command proves
+			// the invocation is attempted.
 			intermediate := map[string]string{
 				"content/index.md": `<html><body><ds-card title="Hello">content</ds-card></body></html>`,
 			}
 			ssrCfg := &config.SSRConfig{
-				Build: "golit render --defs bundles/",
+				Command: "golit render --defs bundles/",
 			}
-			// The render command won't exist in the test environment, so this
+			// The command won't exist in the test environment, so this
 			// must return an error referencing the command — not silently skip
 			// or fall back to a local transform.
 			_, err := pipeline.BuildPhase2(intermediate, ssrCfg)
 			Expect(err).To(HaveOccurred(),
-				"Phase 2 must attempt to invoke ssr.render command (which won't exist in test env)")
+				"Phase 2 must attempt to invoke ssr.command (which won't exist in test env)")
 			Expect(err.Error()).To(SatisfyAny(
 				ContainSubstring("golit"),
 				ContainSubstring("exec"),
 				ContainSubstring("not found"),
-			), "error must reference the ssr.render command that failed to execute")
+			), "error must reference the ssr.command that failed to execute")
 		})
 
 		It("Phase 2 receives Phase 1 output as its input", func() {
 			cfg := &config.Config{
 				Title: "SSR Site",
 				SSR: &config.SSRConfig{
-					// cat reads stdin and writes to stdout — proves the
-					// per-instance pipe model works end-to-end
-					Build: "cat",
+					// cat reads stdin, writes to stdout — proves the per-page
+					// stdio model works end-to-end
+					Command: "cat",
 				},
 				Build: config.BuildConfig{Output: "_site"},
 			}
@@ -183,13 +183,19 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(intermediate).NotTo(BeEmpty(),
 				"Phase 1 must produce intermediate output")
 
-			// Phase 2 takes Phase 1 output directly and invokes ssr.render
-			// per component instance via stdin/stdout
-			_, err = pipeline.BuildPhase2(intermediate, cfg.SSR)
-			// Either succeeds (cat echoed stdin) or fails (no custom elements
-			// found) — either proves BuildPhase2 accepts Phase 1 output and
-			// attempts per-instance rendering
-			_ = err
+			// Phase 2 takes Phase 1 output directly and pipes to ssr.command
+			// via stdin. cat passes HTML through unchanged.
+			result, err := pipeline.BuildPhase2(intermediate, cfg.SSR)
+			Expect(err).NotTo(HaveOccurred(),
+				"Phase 2 with cat must succeed — cat passes stdin to stdout")
+			Expect(result).NotTo(BeNil())
+			// Every page from Phase 1 must appear in Phase 2 output
+			for path, html := range intermediate {
+				Expect(result).To(HaveKey(path),
+					"Phase 2 output must contain every page from Phase 1")
+				Expect(result[path]).To(ContainSubstring("</html>"),
+					"Phase 2 output for %s must contain valid HTML from Phase 1", html)
+			}
 		})
 
 		It("without SSR config, Phase 1 output is the final HTML", func() {
@@ -206,33 +212,33 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
-	// ── SSR per-instance render (issue #131) ────────────────────────
-	// Phase 2 pipes each unique component instance to the ssr.render
-	// command via stdin and reads SSR'd HTML from stdout. This is NOT
-	// a batch disk transform.
+	// ── SSR per-page render ─────────────────────────────────────────
+	// Phase 2 pipes the full page HTML to ssr.command via stdin.
+	// The SSR engine handles component discovery, rendering, and DSD
+	// injection internally. Alloy treats it as a black box.
 
-	Describe("SSR per-instance render", func() {
-		It("BuildPhase2 returns error when render command is not found", func() {
+	Describe("SSR per-page render", func() {
+		It("BuildPhase2 returns error when command is not found", func() {
 			intermediate := map[string]string{
 				"content/index.md": `<html><body><ds-button>Click</ds-button></body></html>`,
 			}
 			ssrCfg := &config.SSRConfig{
-				Build: "nonexistent-ssr-tool render --defs bundles/",
+				Command: "nonexistent-ssr-tool render --defs bundles/",
 			}
 			_, err := pipeline.BuildPhase2(intermediate, ssrCfg)
 			Expect(err).To(HaveOccurred(),
-				"BuildPhase2 must return error when ssr.render command is not found")
+				"BuildPhase2 must return error when ssr.command is not found")
 		})
 
 		It("BuildPhase2 does not fall back to local DSD transform", func() {
-			// When the render command is unavailable, BuildPhase2 must NOT
+			// When the command is unavailable, BuildPhase2 must NOT
 			// silently insert <template shadowrootmode> via a local transform.
 			// SSR is the external engine's responsibility.
 			intermediate := map[string]string{
 				"content/index.md": `<html><body><ds-card>content</ds-card></body></html>`,
 			}
 			ssrCfg := &config.SSRConfig{
-				Build: "nonexistent-ssr-tool render",
+				Command: "nonexistent-ssr-tool render",
 			}
 			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
 			if err == nil {
@@ -241,20 +247,20 @@ var _ = Describe("Build Pipeline", func() {
 				html := result["content/index.md"]
 				Expect(html).NotTo(ContainSubstring("shadowrootmode"),
 					"BuildPhase2 must not silently fall back to local DSD transform "+
-						"when the ssr.render command is unavailable")
+						"when the ssr.command is unavailable")
 			}
 			// If err != nil, command execution was attempted and failed — correct behavior
 		})
 
 		It("BuildPhase2 passes through HTML unchanged when no custom elements present", func() {
 			// Pages without custom elements (no hyphenated tags) should pass
-			// through Phase 2 unchanged — no render command invocations needed.
+			// through Phase 2 unchanged — no command invocations needed.
 			intermediate := map[string]string{
 				"content/plain.md": `<html><body><h1>Hello</h1><p>No components here.</p></body></html>`,
 			}
 			ssrCfg := &config.SSRConfig{
 				// Command that would fail if invoked — proves it's NOT called
-				Build: "false",
+				Command: "false",
 			}
 			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
 			Expect(err).NotTo(HaveOccurred(),
@@ -262,6 +268,44 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(result).NotTo(BeNil())
 			Expect(result["content/plain.md"]).To(Equal(intermediate["content/plain.md"]),
 				"HTML without custom elements must pass through Phase 2 unchanged")
+		})
+	})
+
+	// ── SSR stream mode ────────────────────────────────────────────
+
+	Describe("SSR stream mode", func() {
+		It("BuildPhase2 uses persistent process when mode is stream", func() {
+			// With mode "stream", BuildPhase2 must start a persistent process
+			// and send NUL-delimited messages instead of spawning per page.
+			// Using a nonexistent command proves the stream startup is attempted.
+			intermediate := map[string]string{
+				"content/index.md": `<html><body><ds-card>Hello</ds-card></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				Command: "nonexistent-ssr-tool serve --stdio",
+				Mode:    "stream",
+			}
+			_, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).To(HaveOccurred(),
+				"BuildPhase2 in stream mode must attempt to start the persistent process")
+		})
+
+		It("BuildPhase2 defaults to exec mode when mode is empty", func() {
+			intermediate := map[string]string{
+				"content/index.md": `<html><body><ds-card>Hello</ds-card></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				Command: "nonexistent-ssr-tool render --defs bundles/",
+				// Mode is empty — defaults to exec
+			}
+			_, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).To(HaveOccurred(),
+				"BuildPhase2 must default to exec mode when mode is not set")
+			Expect(err.Error()).To(SatisfyAny(
+				ContainSubstring("nonexistent-ssr-tool"),
+				ContainSubstring("exec"),
+				ContainSubstring("not found"),
+			), "error must come from exec-mode process spawn, not stream setup")
 		})
 	})
 
@@ -292,24 +336,24 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(noSSRResult.SSRSkipped).To(BeTrue(),
 				"guard: no SSR config must set SSRSkipped=true")
 
-			// Actual: with SSR, Build attempts Phase 2 (invokes ssr.render).
-			// Use "cat" — reads stdin, writes stdout. Proves the per-instance
-			// pipe model is attempted.
+			// Actual: with SSR, Build attempts Phase 2 (invokes ssr.command).
+			// Use "cat" — reads stdin, writes to stdout. Proves the per-page
+			// stdio model is attempted.
 			ssrCfg := &config.Config{
 				Title: "SSR Site",
-				SSR:   &config.SSRConfig{Build: "cat"},
+				SSR:   &config.SSRConfig{Command: "cat"},
 				Build: config.BuildConfig{Output: "_site"},
 			}
 			ssrResult, err := pipeline.Build(ssrCfg)
 			if err != nil {
 				// If Build errors, it must be because Phase 2 attempted
-				// render command execution — not Phase 1 or config validation.
+				// command execution — not Phase 1 or config validation.
 				Expect(err.Error()).To(SatisfyAny(
 					ContainSubstring("cat"),
 					ContainSubstring("exec"),
 					ContainSubstring("ssr"),
-					ContainSubstring("render"),
-				), "error must come from Phase 2 render execution, not Phase 1")
+					ContainSubstring("command"),
+				), "error must come from Phase 2 command execution, not Phase 1")
 			} else {
 				Expect(ssrResult).NotTo(BeNil())
 				Expect(ssrResult.SSRSkipped).To(BeFalse(),
