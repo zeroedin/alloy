@@ -262,6 +262,16 @@ func (f *alloyFilterBridge) PluginFilter(input interface{}, args ...interface{})
 	return input
 }
 
+// Reverse overrides liquidgo's built-in Reverse (which reverses arrays) when
+// a plugin registers a filter named "reverse". If no plugin override exists,
+// returns nil to let liquidgo's StandardFilters.Reverse handle it.
+func (f *alloyFilterBridge) Reverse(input interface{}, args ...interface{}) interface{} {
+	if fn, ok := f.funcs["reverse"]; ok {
+		return fn(input, args...)
+	}
+	return nil
+}
+
 func (f *alloyFilterBridge) Slugify(input interface{}, args ...interface{}) interface{} {
 	return f.call("slugify", input, args...)
 }
