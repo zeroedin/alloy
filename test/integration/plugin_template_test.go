@@ -70,7 +70,10 @@ var _ = Describe("Plugin-Template Integration", func() {
 		It("plugin-registered shortcode expands in content rendering", func() {
 			engine := template.NewLiquidEngine()
 			err := engine.AddTag("youtube", func(args []string, content string) string {
-				return "" // stub shortcode
+				if len(args) > 0 {
+					return `<iframe src="https://www.youtube.com/embed/` + args[0] + `"></iframe>`
+				}
+				return ""
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -80,8 +83,8 @@ var _ = Describe("Plugin-Template Integration", func() {
 
 			result, err := tmpl.Render(map[string]interface{}{})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(result)).To(ContainSubstring("youtube"),
-				"shortcode must expand to output containing the tag type")
+			Expect(string(result)).To(ContainSubstring("youtube.com/embed/dQw4w9WgXcQ"),
+				"shortcode must expand to rendered HTML with the provided argument")
 		})
 
 		It("shortcode registered once wires into both Liquid and Go engines", func() {
@@ -99,6 +102,119 @@ var _ = Describe("Plugin-Template Integration", func() {
 				"shortcode must register in Liquid engine without error")
 			Expect(errGo).NotTo(HaveOccurred(),
 				"same shortcode must register in Go engine without error")
+		})
+
+		// ── Issue #139: Plugin shortcode bridging ─────────────────────
+		// Per spec §4: shortcodes registered via alloy.shortcode() in JS
+		// plugins must be bridged to the template engine so they expand
+		// during content rendering. Currently only filters are bridged.
+
+		It("plugin shortcode renders with correct args in template output", func() {
+			engine := template.NewLiquidEngine()
+			// Simulate what the pipeline should do: bridge a plugin-discovered
+			// shortcode to the template engine via AddTag, wrapping the call
+			// to route through QuickJSRuntime.CallShortcode()
+			err := engine.AddTag("greeting", func(args []string, content string) string {
+				if len(args) > 0 {
+					return "<p>Hello, " + args[0] + "!</p>"
+				}
+				return "<p>Hello!</p>"
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			tmpl, err := engine.Parse("test", []byte(`{% greeting "World" %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := tmpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(result)).To(ContainSubstring("<p>Hello, World!</p>"),
+				"plugin shortcode must render with correct args passed from template syntax")
+		})
+
+		It("block shortcode receives inner content from template", func() {
+			engine := template.NewLiquidEngine()
+			err := engine.AddTag("callout", func(args []string, content string) string {
+				level := "info"
+				if len(args) > 0 {
+					level = args[0]
+				}
+				return `<div class="callout callout--` + level + `">` + content + `</div>`
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			tmpl, err := engine.Parse("test", []byte(`{% callout "warning" %}Watch out!{% endcallout %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := tmpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(result)).To(ContainSubstring(`callout--warning`),
+				"block shortcode must receive the level argument")
+			Expect(string(result)).To(ContainSubstring("Watch out!"),
+				"block shortcode must receive inner content between open/close tags")
+		})
+	})
+
+	// ── Issue #140: Plugin filter shadowing built-in ──────────────────
+	// Per spec §4: "If two plugins register the same filter or shortcode
+	// name, the last one loaded wins." This extends to plugin filters
+	// that shadow built-in liquidgo filters — the plugin must win.
+
+	Describe("Plugin filter shadowing built-in filters", func() {
+		It("plugin filter overrides built-in filter with same name", func() {
+			engine := template.NewLiquidEngine()
+			// Register a plugin filter named "reverse" — same as liquidgo's
+			// built-in. The plugin version reverses a string character-by-character.
+			// liquidgo's built-in reverses arrays.
+			err := engine.AddFilter("reverse", func(input interface{}, args ...interface{}) interface{} {
+				s := ""
+				switch v := input.(type) {
+				case string:
+					runes := []rune(v)
+					for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+						runes[i], runes[j] = runes[j], runes[i]
+					}
+					s = string(runes)
+				}
+				return s
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			tmpl, err := engine.Parse("test", []byte(`{{ "alloy" | reverse }}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := tmpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(result)).To(Equal("yolla"),
+				"plugin filter must override built-in liquidgo filter — "+
+					"string reversal, not array reversal")
+		})
+
+		It("plugin filter that shadows built-in returns correct type", func() {
+			engine := template.NewLiquidEngine()
+			// A plugin "reverse" filter must return a string, not an array
+			err := engine.AddFilter("reverse", func(input interface{}, args ...interface{}) interface{} {
+				s, ok := input.(string)
+				if !ok {
+					return input
+				}
+				runes := []rune(s)
+				for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+					runes[i], runes[j] = runes[j], runes[i]
+				}
+				return string(runes)
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			tmpl, err := engine.Parse("test", []byte(`{{ "hello" | reverse }}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := tmpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(result)).To(Equal("olleh"),
+				"shadowed filter must return a string, not an array representation")
+			Expect(string(result)).NotTo(ContainSubstring("["),
+				"result must not contain array brackets — that indicates "+
+					"the built-in filter ran instead of the plugin")
 		})
 	})
 })
