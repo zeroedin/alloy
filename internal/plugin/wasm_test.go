@@ -161,6 +161,38 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 		})
 	})
 
+	// ── WASM ABI error convention (#192) ─────────────────────────────
+	// Per PLAN.md §5: if a WASM export returns (0, 0), the host treats
+	// it as a plugin execution error — not an empty string.
+
+	Describe("WASM ABI error convention", func() {
+		It("CallExport returns error when WASM function returns (0, 0)", func() {
+			rt := plugin.NewWASMRuntime()
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+			// Simulate a WASM function that returns (0, 0) — this signals
+			// an execution error per the ABI contract. CallExport must
+			// return an error, not an empty string.
+			result, err := rt.CallExportRaw("filter", 0, 0)
+			Expect(err).To(HaveOccurred(),
+				"(0, 0) return from WASM must be treated as an execution error, not empty string")
+			Expect(result).To(BeEmpty(),
+				"error result must be empty")
+		})
+
+		It("CallExport does not return error for valid (ptr, len) return", func() {
+			rt := plugin.NewWASMRuntime()
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+			// A normal filter call with valid input should return a
+			// non-zero (ptr, len) and no error
+			result, err := rt.CallExport("filter", "hello")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil(),
+				"valid WASM call must return a result")
+		})
+	})
+
 	// ── WASM filter execution ───────────────────────────────────────
 	// Issue #181: LoadModule is a stub. These tests verify actual WASM
 	// execution — calling a filter and getting a real transformed result.
