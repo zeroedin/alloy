@@ -555,7 +555,9 @@ func (r *WASMRuntime) CallExportRaw(name string, ptr, length uint32) (string, er
 
 // wasmRuntimeExports are well-known WASM exports that are not plugin filters.
 var wasmRuntimeExports = map[string]bool{
-	"memory": true, "alloc": true, "_start": true, "_initialize": true,
+	"memory": true, "alloc": true, "last_error": true,
+	"hook": true, "shortcode": true,
+	"_start": true, "_initialize": true,
 	"__data_end": true, "__heap_base": true, "__stack_pointer": true,
 	"__dso_handle": true, "__global_base": true,
 }

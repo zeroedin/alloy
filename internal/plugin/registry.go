@@ -133,7 +133,7 @@ func (r *Registry) RegisterFilter(name, source string) {
 	r.filterRegistry[name] = source
 }
 
-// Runtimes returns all loaded QuickJS runtimes for filter bridging.
+// Runtimes returns all loaded plugin runtimes (QuickJS and WASM) for filter/shortcode bridging.
 func (r *Registry) Runtimes() []PluginFilterRuntime {
 	return r.runtimes
 }
