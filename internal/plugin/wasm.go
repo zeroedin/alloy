@@ -380,6 +380,13 @@ func (r *WASMRuntime) LoadModule(path string) error {
 		return fmt.Errorf("instantiating WASM module %s: %w", filepath.Base(path), err)
 	}
 
+	// Require alloc export for safe memory allocation
+	if r.mod.ExportedFunction("alloc") == nil {
+		r.Close()
+		return fmt.Errorf("WASM module %s missing required alloc export — "+
+			"alloc(size i32) -> (ptr i32) is needed for safe memory allocation", filepath.Base(path))
+	}
+
 	return nil
 }
 
@@ -424,10 +431,19 @@ func (r *WASMRuntime) callStringFilter(fn api.Function, input string) (interface
 		return nil, fmt.Errorf("WASM module has no exported memory — cannot pass string arguments")
 	}
 
-	// Write input to memory at a known offset.
-	// TODO(#186): use exported alloc function instead of fixed offset.
+	// Allocate memory via the module's exported alloc function
+	allocFn := r.mod.ExportedFunction("alloc")
+	if allocFn == nil {
+		return nil, fmt.Errorf("WASM module missing alloc export — cannot allocate memory for input")
+	}
+
 	inputBytes := []byte(input)
-	inputPtr := uint32(1024)
+	allocResult, err := allocFn.Call(context.Background(), uint64(len(inputBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("WASM alloc(%d) failed: %w", len(inputBytes), err)
+	}
+	inputPtr := uint32(allocResult[0])
+
 	if !mem.Write(inputPtr, inputBytes) {
 		return nil, fmt.Errorf("WASM memory write failed: input (%d bytes) at offset %d exceeds memory", len(inputBytes), inputPtr)
 	}
