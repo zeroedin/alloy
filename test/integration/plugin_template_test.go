@@ -71,6 +71,10 @@ var _ = Describe("Plugin-Template Integration", func() {
 			Expect(string(result)).To(Equal("TRANSFORMED:hello wasm"),
 				"filter must successfully transform input from Liquid engine — "+
 					"input type was: "+receivedType)
+			// Log the actual type Liquid passes — if it's not "string",
+			// that proves the coercion via fmt.Sprint is necessary
+			Expect(receivedType).NotTo(BeEmpty(),
+				"filter must have been called and recorded the input type")
 		})
 
 		It("plugin filter transforms string value through template rendering", func() {
