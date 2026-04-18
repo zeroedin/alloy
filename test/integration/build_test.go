@@ -1,6 +1,7 @@
 package integration_test
 
 import (
+	"fmt"
 	"path/filepath"
 	"runtime"
 
@@ -187,8 +188,8 @@ var _ = Describe("Full build pipeline", func() {
 			Expect(result.RenderedContent).NotTo(BeNil())
 			for path, html := range result.RenderedContent {
 				Expect(html).NotTo(ContainSubstring("HOOK_FIRED_AFTER_LAYOUT"),
-					"onContentTransformed in i18n mode must fire BEFORE layout rendering — "+
-						"page %s received layout HTML in hook payload", path)
+					fmt.Sprintf("onContentTransformed in i18n mode must fire BEFORE layout rendering — "+
+						"page %s received layout HTML in hook payload", path))
 			}
 		})
 	})

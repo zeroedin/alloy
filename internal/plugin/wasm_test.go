@@ -265,8 +265,14 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 				"CallExport with multiple arguments must not error")
 			Expect(result).NotTo(BeNil(),
 				"CallExport with multiple arguments must return a result")
-			// The WASM function must have received all arguments — not just the first.
-			// The exact format is a JSON array: ["hello","extra_arg1","extra_arg2"]
+
+			// Multi-arg must behave differently from single-arg — proves
+			// the extra arguments were not silently dropped.
+			singleArgResult, err := rt.CallExport("filter", "hello")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(Equal(singleArgResult),
+				"multi-arg CallExport must not behave the same as single-arg — "+
+					"proves extra arguments are passed to the WASM function")
 		})
 
 		It("CallExport returns error for non-string arguments", func() {
@@ -341,7 +347,7 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			runtimes := registry.Runtimes()
 			hasWASM := false
 			for _, rt := range runtimes {
-				if _, ok := rt.(*plugin.WASMRuntime); ok {
+				if _, ok := any(rt).(*plugin.WASMRuntime); ok {
 					hasWASM = true
 					break
 				}
