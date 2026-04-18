@@ -273,20 +273,16 @@ var _ = Describe("Full build pipeline", func() {
 			}))
 			defer ts.Close()
 
-			// Load the data-sources fixture and inject the test server URL
+			// Load the data-sources fixture — config has sources: block with
+			// placeholder URL. Patch only the URL to point at test server.
 			cfgPath := filepath.Join(fixtureDir("data-sources"), "alloy.config.yaml")
 			cfg, err := config.Load(cfgPath)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Sources).To(HaveKey("api_posts"),
+				"fixture config must have sources.api_posts defined in YAML")
 
-			// Add the source config programmatically with the test server URL
-			cfg.Sources = map[string]*config.SourceConfig{
-				"api_posts": {
-					Type:  "rest",
-					URL:   ts.URL + "/posts",
-					Cache: 0,
-					As:    "api_posts",
-				},
-			}
+			// Patch the URL to point at the test server (can't be static in YAML)
+			cfg.Sources["api_posts"].URL = ts.URL + "/posts"
 
 			result, err := pipeline.Build(cfg)
 			Expect(err).NotTo(HaveOccurred(),
@@ -296,7 +292,9 @@ var _ = Describe("Full build pipeline", func() {
 
 			// The template uses {{ site.data.api_posts }} — verify the
 			// fetched data appears in the rendered output
-			indexHTML := result.RenderedContent["index.md"]
+			indexHTML, ok := result.RenderedContent["index.md"]
+			Expect(ok).To(BeTrue(),
+				"index.md must be present in RenderedContent")
 			Expect(indexHTML).To(ContainSubstring("First Post"),
 				"REST source data must be available in template as site.data.api_posts — "+
 					"proves the pipeline fetches, merges, and renders external data")
