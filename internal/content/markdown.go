@@ -19,8 +19,9 @@ type MarkdownOptions struct {
 	TemplateTags bool
 }
 
-// templateTagPattern matches {{ ... }} and {% ... %} template expressions.
-var templateTagPattern = regexp.MustCompile(`(\{\{.*?\}\}|\{%.*?%\})`)
+// templateTagPattern matches {{ ... }} and {% ... %} template expressions,
+// including those containing newlines (e.g., {{ "hello\nworld" | filter }}).
+var templateTagPattern = regexp.MustCompile(`(?s)(\{\{.*?\}\}|\{%.*?%\})`)
 
 // RenderMarkdown converts Markdown source to HTML.
 func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
