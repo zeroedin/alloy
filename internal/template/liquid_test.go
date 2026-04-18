@@ -184,19 +184,29 @@ var _ = Describe("LiquidEngine", func() {
 
 		It("contains returns boolean usable in conditionals", func() {
 			engine := tmpl.NewLiquidEngine()
-			tpl, err := engine.Parse("test", []byte(`{% if "hello world" | contains: "world" %}FOUND{% endif %}`))
+			// Test both positive and negative cases to prove contains
+			// returns a boolean, not the input string (which would be
+			// truthy for both cases)
+			tpl, err := engine.Parse("test", []byte(
+				`{% if "hello world" | contains: "world" %}YES{% else %}NO{% endif %}`+
+					`|{% if "hello world" | contains: "nope" %}YES{% else %}NO{% endif %}`))
 			Expect(err).NotTo(HaveOccurred())
 			result, err := tpl.Render(map[string]interface{}{})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(result)).To(ContainSubstring("FOUND"),
-				"contains must return truthy value usable in Liquid conditionals")
+			Expect(string(result)).To(Equal("YES|NO"),
+				"contains must return true when substring present and false when absent — "+
+					"not return the input string unchanged")
 		})
 
 		It("newline_to_br converts newlines to br tags", func() {
 			engine := tmpl.NewLiquidEngine()
-			tpl, err := engine.Parse("test", []byte(`{{ "hello\nworld" | newline_to_br }}`))
+			// Pass the string with a real newline via render context —
+			// a backtick template literal \n is a literal backslash-n
+			tpl, err := engine.Parse("test", []byte(`{{ s | newline_to_br }}`))
 			Expect(err).NotTo(HaveOccurred())
-			result, err := tpl.Render(map[string]interface{}{})
+			result, err := tpl.Render(map[string]interface{}{
+				"s": "hello\nworld",
+			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(result)).To(ContainSubstring("<br"),
 				"newline_to_br must produce <br> tags in Liquid template")
