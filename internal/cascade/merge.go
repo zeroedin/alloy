@@ -155,7 +155,9 @@ func LoadDirectoryCascade(contentDir string) (map[string]map[string]interface{},
 // This must be used instead of exact key lookup so pages in directories without
 // _data.yaml inherit from ancestors per spec §3.
 func FindCascadeData(cascadeData map[string]map[string]interface{}, contentBase, relPath string) map[string]interface{} {
+	// Collect all ancestor _data.yaml entries from root to leaf
 	dir := filepath.Dir(relPath)
+	var ancestors []map[string]interface{}
 	for {
 		var key string
 		if dir == "." {
@@ -164,14 +166,25 @@ func FindCascadeData(cascadeData map[string]map[string]interface{}, contentBase,
 			key = contentBase + "/" + filepath.ToSlash(dir) + "/"
 		}
 		if data, ok := cascadeData[key]; ok {
-			return data
+			ancestors = append(ancestors, data)
 		}
 		if dir == "." {
 			break
 		}
 		dir = filepath.Dir(dir)
 	}
-	return nil
+
+	if len(ancestors) == 0 {
+		return nil
+	}
+
+	// Merge from root (last found) to leaf (first found) so deeper
+	// _data.yaml values override shallower ones.
+	result := ancestors[len(ancestors)-1]
+	for i := len(ancestors) - 2; i >= 0; i-- {
+		result = DeepMerge(result, ancestors[i])
+	}
+	return result
 }
 
 // findParentKey finds the parent cascade key for a given directory key.
