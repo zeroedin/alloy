@@ -408,30 +408,44 @@ func (r *WASMRuntime) CallExport(name string, args ...interface{}) (interface{},
 	}
 
 	// For string input: write to memory, call with (ptr, len), read result.
+	// Coerce input to string via fmt.Sprint when the type assertion fails —
+	// Liquid engines may pass typed wrappers instead of plain Go strings.
 	// Multiple string args are JSON-encoded as an array.
 	if len(args) > 0 {
-		if _, ok := args[0].(string); ok {
-			var input string
-			if len(args) == 1 {
-				input = args[0].(string)
-			} else {
-				// JSON-encode multiple args as array
-				strArgs := make([]string, len(args))
-				for i, a := range args {
-					if s, ok := a.(string); ok {
-						strArgs[i] = s
-					} else {
-						return nil, fmt.Errorf("WASM CallExport %q: argument %d is %T, expected string", name, i, a)
-					}
-				}
-				jsonBytes, err := json.Marshal(strArgs)
-				if err != nil {
-					return nil, fmt.Errorf("WASM CallExport %q: marshaling args: %w", name, err)
-				}
-				input = string(jsonBytes)
-			}
-			return r.callStringFilter(fn, input)
+		var input string
+		switch v := args[0].(type) {
+		case string:
+			input = v
+		case []byte:
+			input = string(v)
+		case fmt.Stringer:
+			input = v.String()
+		default:
+			return nil, fmt.Errorf("WASM CallExport %q: argument 0 is %T, expected string-like type", name, args[0])
 		}
+
+		if len(args) > 1 {
+			strArgs := make([]string, len(args))
+			strArgs[0] = input
+			for i := 1; i < len(args); i++ {
+				switch v := args[i].(type) {
+				case string:
+					strArgs[i] = v
+				case []byte:
+					strArgs[i] = string(v)
+				case fmt.Stringer:
+					strArgs[i] = v.String()
+				default:
+					return nil, fmt.Errorf("WASM CallExport %q: argument %d is %T, expected string-like type", name, i, args[i])
+				}
+			}
+			jsonBytes, err := json.Marshal(strArgs)
+			if err != nil {
+				return nil, fmt.Errorf("WASM CallExport %q: marshaling args: %w", name, err)
+			}
+			input = string(jsonBytes)
+		}
+		return r.callStringFilter(fn, input)
 	}
 
 	results, err := fn.Call(context.Background())
