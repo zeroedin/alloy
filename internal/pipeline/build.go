@@ -571,10 +571,18 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		}
 	}
 
-	// Fire onPageRendered hook per-page — plugins can post-process each page's HTML
+	// Fire onPageRendered hook per-page with HTML string payload.
+	// The hook receives a string and may return string or []byte.
 	for _, page := range pages {
-		if _, err := hooks.RunWithTimeout(plugin.OnPageRendered, page); err != nil {
+		result, err := hooks.RunWithTimeout(plugin.OnPageRendered, string(page.RenderedBody))
+		if err != nil {
 			return nil, fmt.Errorf("plugin hook onPageRendered (%s): %w", page.RelPath, err)
+		}
+		switch modified := result.(type) {
+		case string:
+			page.RenderedBody = []byte(modified)
+		case []byte:
+			page.RenderedBody = modified
 		}
 	}
 
