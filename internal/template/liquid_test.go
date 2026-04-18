@@ -156,7 +156,7 @@ var _ = Describe("LiquidEngine", func() {
 		})
 	})
 
-	// ── Issue #200: Plugin filter shadows built-in through pipeline ──
+	// ── Issue #200: Plugin filter shadows built-in in Liquid engine ──
 	// RegisterBuiltinFilters registers built-ins first. Then AddFilter
 	// registers a plugin filter with the same name. The plugin must win.
 
