@@ -1,6 +1,7 @@
 package integration_test
 
 import (
+	"fmt"
 	"path/filepath"
 	"runtime"
 
@@ -162,6 +163,34 @@ var _ = Describe("Full build pipeline", func() {
 					"RegisteredShortcodes → engine.AddTag → CallShortcode → rendered output")
 			Expect(indexHTML).NotTo(ContainSubstring("{% greeting"),
 				"raw shortcode tag must not appear in rendered output")
+		})
+	})
+
+	// ── Issue #187: Hook firing order in i18n mode ───────────────────
+	// onContentTransformed must fire BEFORE layout rendering in both
+	// single-language and i18n modes. The i18n fixture has a plugin
+	// that detects if the hook payload contains layout HTML (DOCTYPE,
+	// <head>) — which would mean it fired AFTER layout rendering.
+
+	Describe("i18n hook firing order", func() {
+		It("onContentTransformed receives pre-layout HTML in i18n mode", func() {
+			cfgPath := filepath.Join(fixtureDir("i18n-hooks"), "alloy.config.yaml")
+			cfg, err := config.Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			// The hook-checker plugin injects "HOOK_FIRED_AFTER_LAYOUT:"
+			// if it detects DOCTYPE or <head> in the payload. Check all
+			// rendered pages for this violation marker.
+			Expect(result.RenderedContent).NotTo(BeNil())
+			for path, html := range result.RenderedContent {
+				Expect(html).NotTo(ContainSubstring("HOOK_FIRED_AFTER_LAYOUT"),
+					fmt.Sprintf("onContentTransformed in i18n mode must fire BEFORE layout rendering — "+
+						"page %s received layout HTML in hook payload", path))
+			}
 		})
 	})
 })
