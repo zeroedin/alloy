@@ -1012,7 +1012,7 @@ Errors are treated differently depending on the mode. The core principle: **`all
 
 Incremental builds are exclusive to `alloy serve` (dev mode). `alloy build` always does a **full clean rebuild** — every page is rendered, every file is written. This ensures CI/CD produces deterministic, complete output.
 
-In serve mode, after the initial full build, the file watcher triggers incremental rebuilds on changes. The pipeline function `BuildIncremental(cfg, contentMap, previousCache, changedFiles)` accepts a previous build cache and only rebuilds affected pages.
+In serve mode, after the initial full build, the file watcher triggers incremental rebuilds on changes. Unlike 11ty's stage-based invalidation (where build-ordering edges cause cascading rebuilds), Alloy tracks **actual data reads** to determine the minimum set of pages to rebuild. The pipeline function `BuildIncremental(cfg, contentMap, previousCache, changedFiles)` accepts a previous build cache and only rebuilds affected pages.
 
 **Content-hash change detection** (SHA-256, stored in `.alloy/cache.json`):
 - On incremental rebuild, skip unchanged files entirely (no re-parse, no re-render)
