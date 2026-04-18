@@ -40,13 +40,23 @@ type PluginInfo struct {
 	Runtime PluginRuntime // Specific runtime within the tier
 }
 
+// PluginFilterRuntime is the interface for plugin runtimes that can provide
+// filters and shortcodes to the template engine. Both QuickJSRuntime and
+// WASMRuntime implement this interface.
+type PluginFilterRuntime interface {
+	RegisteredFilters() []string
+	CallFilter(name string, input interface{}, args ...interface{}) (interface{}, error)
+	RegisteredShortcodes() []string
+	CallShortcode(name string, args []string, innerContent string) (string, error)
+}
+
 // Registry manages plugin discovery and loading.
 type Registry struct {
 	pluginsDir      string
 	plugins         []PluginInfo
-	filterRegistry  map[string]string // filter name → source
+	filterRegistry  map[string]string      // filter name → source
 	conflictWarns   []string
-	runtimes        []*QuickJSRuntime // loaded QuickJS runtimes for filter bridging
+	runtimes        []PluginFilterRuntime   // loaded runtimes for filter/shortcode bridging
 }
 
 // NewRegistry creates a plugin registry for the given plugins directory.
@@ -124,14 +134,16 @@ func (r *Registry) RegisterFilter(name, source string) {
 }
 
 // Runtimes returns all loaded QuickJS runtimes for filter bridging.
-func (r *Registry) Runtimes() []*QuickJSRuntime {
+func (r *Registry) Runtimes() []PluginFilterRuntime {
 	return r.runtimes
 }
 
-// Close releases resources held by all loaded QuickJS runtimes.
+// Close releases resources held by all loaded runtimes.
 func (r *Registry) Close() {
 	for _, rt := range r.runtimes {
-		rt.Close()
+		if c, ok := rt.(interface{ Close() }); ok {
+			c.Close()
+		}
 	}
 	r.runtimes = nil
 }
@@ -226,6 +238,10 @@ func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
 				warnings = append(warnings, fmt.Sprintf("plugin %s: load failed: %v", p.Name, err))
 				continue
 			}
+			for _, fname := range rt.RegisteredFilters() {
+				r.RegisterFilter(fname, "plugins/"+p.Name)
+			}
+			r.runtimes = append(r.runtimes, rt)
 		case RuntimeNode:
 			if err := CheckNodeAvailable(); err != nil {
 				warnings = append(warnings, fmt.Sprintf("plugin %s: %v", p.Name, err))

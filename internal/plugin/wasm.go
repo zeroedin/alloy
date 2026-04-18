@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -406,10 +407,30 @@ func (r *WASMRuntime) CallExport(name string, args ...interface{}) (interface{},
 		return nil, fmt.Errorf("export %q not found in %s.wasm", name, r.moduleName)
 	}
 
-	// For string input: write to memory, call with (ptr, len), read result
+	// For string input: write to memory, call with (ptr, len), read result.
+	// Multiple string args are JSON-encoded as an array.
 	if len(args) > 0 {
-		if s, ok := args[0].(string); ok {
-			return r.callStringFilter(fn, s)
+		if _, ok := args[0].(string); ok {
+			var input string
+			if len(args) == 1 {
+				input = args[0].(string)
+			} else {
+				// JSON-encode multiple args as array
+				strArgs := make([]string, len(args))
+				for i, a := range args {
+					if s, ok := a.(string); ok {
+						strArgs[i] = s
+					} else {
+						return nil, fmt.Errorf("WASM CallExport %q: argument %d is %T, expected string", name, i, a)
+					}
+				}
+				jsonBytes, err := json.Marshal(strArgs)
+				if err != nil {
+					return nil, fmt.Errorf("WASM CallExport %q: marshaling args: %w", name, err)
+				}
+				input = string(jsonBytes)
+			}
+			return r.callStringFilter(fn, input)
 		}
 	}
 
@@ -557,6 +578,16 @@ func (r *WASMRuntime) CallFilter(name string, input interface{}, args ...interfa
 	allArgs = append(allArgs, input)
 	allArgs = append(allArgs, args...)
 	return r.CallExport(name, allArgs...)
+}
+
+// RegisteredShortcodes returns an empty list — WASM modules don't register shortcodes.
+func (r *WASMRuntime) RegisteredShortcodes() []string {
+	return nil
+}
+
+// CallShortcode is a no-op for WASM modules.
+func (r *WASMRuntime) CallShortcode(name string, args []string, innerContent string) (string, error) {
+	return innerContent, nil
 }
 
 // HasExport checks if the WASM module exports a function with the given name.
