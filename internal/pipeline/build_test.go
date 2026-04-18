@@ -4,6 +4,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/pipeline"
 )
@@ -153,6 +154,99 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(result2.PageCount).To(Equal(2),
 				"alloy build must always render all pages — no incremental skipping. "+
 					"Incremental rebuilds are for alloy serve only.")
+		})
+	})
+
+	// ── Incremental rebuild for serve mode (issue #225) ─────────────
+	// BuildIncremental accepts a previous cache and a list of changed
+	// files. It only rebuilds pages that changed or were invalidated.
+	// Used by alloy serve on file watcher events.
+
+	Describe("BuildIncremental", func() {
+		It("skips unchanged pages using cache", func() {
+			cfg := &config.Config{
+				Title:   "Incremental Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+				"content/about.md": "---\ntitle: About\n---\n# About",
+				"content/blog.md":  "---\ntitle: Blog\n---\n# Blog",
+			}
+
+			// Simulate: first full build populates cache from the same content
+			previousCache := cache.New()
+			for path, body := range contentMap {
+				// Strip "content/" prefix to match Page.RelPath convention
+				relPath := path[len("content/"):]
+				previousCache.SetHash(relPath, cache.HashContent([]byte(body)))
+			}
+
+			// Only about.md changed
+			contentMap["content/about.md"] = "---\ntitle: About\n---\n# About Updated"
+			changedFiles := []string{"content/about.md"}
+
+			result, err := pipeline.BuildIncremental(cfg, contentMap, previousCache, changedFiles)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(1),
+				"incremental build must only render the changed page")
+			Expect(result.PagesSkipped).To(Equal(2),
+				"unchanged pages must be skipped via cache comparison")
+		})
+
+		It("rebuilds all pages when no cache exists (first build)", func() {
+			cfg := &config.Config{
+				Title:   "Incremental Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+				"content/about.md": "---\ntitle: About\n---\n# About",
+			}
+
+			// No previous cache — all pages must be built
+			result, err := pipeline.BuildIncremental(cfg, contentMap, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(2),
+				"without cache, incremental build must render all pages (same as full build)")
+		})
+
+		It("rebuilds pages invalidated by layout change", func() {
+			cfg := &config.Config{
+				Title:   "Incremental Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+				"content/about.md": "---\ntitle: About\n---\n# About",
+				"content/blog.md":  "---\ntitle: Blog\n---\n# Blog",
+			}
+
+			// Cache has all pages + template tracking
+			previousCache := cache.New()
+			for path, body := range contentMap {
+				relPath := path[len("content/"):]
+				previousCache.SetHash(relPath, cache.HashContent([]byte(body)))
+			}
+			previousCache.TrackTemplateUsage("index.md", "layouts/default.liquid")
+			previousCache.TrackTemplateUsage("about.md", "layouts/default.liquid")
+			previousCache.TrackTemplateUsage("blog.md", "layouts/post.liquid")
+
+			// Layout changed — only pages using that layout need rebuilding
+			changedFiles := []string{"layouts/default.liquid"}
+
+			result, err := pipeline.BuildIncremental(cfg, contentMap, previousCache, changedFiles)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(2),
+				"layout change must rebuild all pages using that layout (index + about)")
+			Expect(result.PagesSkipped).To(Equal(1),
+				"pages using a different layout (blog) must be skipped")
 		})
 	})
 
