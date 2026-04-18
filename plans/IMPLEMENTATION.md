@@ -122,7 +122,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 - `DiscoverWithFormats`: Same but filter by allowed extensions.
 
 **markdown.go**:
-- `RenderMarkdown`: Configure goldmark with extensions (tables, task lists, typographer, footnotes). Handle `Unsafe` (raw HTML passthrough). Handle `TemplateTags` (preserve `{{ }}`/`{% %}` through rendering via placeholder substitution). Handle `TemplateBlocks` (issue #202): register a block-level parser that detects `{% tagname %}...{% endtagname %}` when the opening tag starts a line. Emit the opening/closing tags as raw HTML block nodes (not inline). Inner content between the tags is parsed as normal markdown. This prevents block shortcodes producing `<div>` from being wrapped in `<p>` tags.
+- `RenderMarkdown`: Configure goldmark with extensions (tables, task lists, typographer, footnotes). Handle `Unsafe` (raw HTML passthrough). Handle `TemplateTags` (preserve `{{ }}`/`{% %}` through rendering via placeholder substitution). Handle `TemplateBlocks` (issue #202): register a block-level parser that detects `{% tagname %}...{% endtagname %}` when the opening tag starts a line. Emit the opening/closing tags as custom AST block nodes with a custom renderer that outputs the tag text verbatim — do NOT use `ast.RawHTML` which is gated by the `unsafe` setting. Template tags must be preserved regardless of whether `unsafe` is true or false (same as the inline TemplateTags extension). Inner content between the tags is parsed as normal markdown. This prevents block shortcodes producing `<div>` from being wrapped in `<p>` tags.
 - `RenderText`: Wrap in `<pre>` tags.
 
 **lifecycle.go**:
