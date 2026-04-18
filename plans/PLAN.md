@@ -943,7 +943,7 @@ Data cascade and front matter are already assembled from Phase 0 — Phase 1 sta
 
 9. **Plugin Hook: `onContentLoaded`** — Plugins can inspect/modify content+data before processing
 10. **Content Transformation** — Markdown → HTML (via goldmark with template tag auto-detection), raw HTML passthrough. `{{ }}` and `{% %}` patterns survive goldmark automatically.
-11. **Plugin Hook: `onContentTransformed`** — Plugins can modify rendered HTML
+11. **Plugin Hook: `onContentTransformed`** — Plugins can modify rendered HTML. Fires once per page with the page's rendered HTML string as payload (see Lifecycle Events in §5 for payload contract). **This hook fires after Markdown→HTML but before layout rendering in all modes** — single-language and i18n pipelines must fire at the same stage. The i18n pipeline must not defer this hook to after layout rendering or taxonomy generation.
 12. **Template Resolution** — Match each content file to its layout (lookup order)
 13. **Content Template Rendering** — Content body is rendered through the template engine with page data + site data context, producing an HTML string.
 14. **Layout Rendering** — The rendered content HTML is injected into the resolved layout as `{{ content }}` (Liquid) or `{{ .content }}` (Go), then the layout is rendered. Content and layout have isolated scopes — variables defined in content do not leak into layout or vice versa.
@@ -1634,14 +1634,39 @@ For maximum performance, plugin authors can compile to native WASM instructions.
 | Rust | wasm-pack | `wasm-pack build --target bundler -d ../plugins/` |
 | Go | TinyGo | `tinygo build -o plugins/word-count.wasm -target wasi .` |
 
-WASM plugins export a standard set of functions:
+#### WASM Calling Convention (ABI)
+
+WASM modules operate on linear memory — they cannot access Go's heap directly. All data exchange happens through the module's own memory via a pointer/length convention:
+
+**Required exports:**
 
 ```
-Exports:
-  init(alloy)                                              → called once at startup, registers filters/shortcodes/hooks
-  filter(name: string, input: any)                         → returns transformed value
-  shortcode(name: string, args: []string, content: string) → returns rendered HTML
-  hook(name: string, payload: any)                         → returns modified payload
+alloc(size i32) -> ptr i32              # Allocate memory for host to write input
+filter(ptr i32, len i32) -> (ptr i32, len i32)   # String filter: read input at ptr, return result ptr+len
+```
+
+**Calling sequence (host → WASM):**
+
+1. Host calls `alloc(inputLen)` to get a safe write offset in WASM memory
+2. Host writes input bytes to WASM memory at the returned pointer
+3. Host calls `filter(ptr, len)` — WASM reads input, processes, writes result
+4. WASM returns `(resultPtr, resultLen)` — host reads result bytes from WASM memory
+
+The `alloc` export is required to avoid writing at hardcoded memory offsets that could collide with the module's data section, stack, or heap. Modules compiled with Rust (wasm-bindgen), TinyGo, or AssemblyScript can implement `alloc` as a simple bump allocator or delegate to their runtime's allocator.
+
+**Data format per export:**
+- **`filter`**: Input and output are raw UTF-8 strings. The filter receives the value to transform and returns the transformed value.
+- **`shortcode`**: Input is a JSON object: `{ "name": "youtube", "args": ["abc123"], "content": "" }`. Output is a UTF-8 HTML string.
+- **`hook`**: Input is a JSON payload (shape depends on the hook — see Lifecycle Events). Output is the modified JSON payload.
+
+**Error handling:** If any export returns `(0, 0)`, the host treats it as a plugin execution error and propagates the failure according to the normal pipeline error policy (build aborts in `alloy build`, error overlay in `alloy serve`). If the module exports `last_error()`, the host reads and surfaces the error details. No silent fallback to original input — consistent with the error handling policy in §2.
+
+**Optional exports:**
+
+```
+shortcode(ptr i32, len i32) -> (ptr i32, len i32)   # Shortcode: input is JSON { name, args, content }
+hook(ptr i32, len i32) -> (ptr i32, len i32)         # Hook: input is JSON payload, returns modified payload
+last_error() -> (ptr i32, len i32)                   # Error details; host calls after any export returns (0, 0)
 ```
 
 #### Sandboxing
@@ -2427,6 +2452,7 @@ func BenchmarkBuild1000Pages(b *testing.B) {
 - [ ] CI/CD pipeline
 - [ ] Release versioning via [changesets](https://github.com/changesets/changesets) (semver, changelogs, `THIRD_PARTY_LICENSES` generation)
 - [ ] Documentation site (built with Alloy)
+- [ ] WASM plugin authoring guide — complete examples in Rust, TinyGo, and AssemblyScript showing the `alloc`/`filter` ABI contract, compile commands, and working plugin tests
 
 ---
 

@@ -218,6 +218,51 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(err).To(HaveOccurred(),
 				"LoadModule must return error for invalid WASM binary")
 		})
+
+		It("LoadModule rejects WASM module missing alloc export", func() {
+			// A valid WASM binary without an alloc export must fail LoadModule.
+			// alloc is required for safe memory allocation — without it,
+			// the host has no safe way to write input to WASM memory.
+			tmpDir := GinkgoT().TempDir()
+			noAllocWasm := filepath.Join(tmpDir, "no-alloc.wasm")
+
+			// Minimal valid WASM module: magic number + version, no exports
+			Expect(os.WriteFile(noAllocWasm, []byte{
+				0x00, 0x61, 0x73, 0x6d,
+				0x01, 0x00, 0x00, 0x00,
+			}, 0644)).To(Succeed())
+
+			rt := plugin.NewWASMRuntime()
+			err := rt.LoadModule(noAllocWasm)
+			Expect(err).To(HaveOccurred(),
+				"LoadModule must reject a valid WASM module that does not export alloc(size)")
+			Expect(err.Error()).To(ContainSubstring("alloc"),
+				"error must specifically mention the missing alloc export")
+		})
+	})
+
+	// ── WASM pipeline bridging (#189) ───────────────────────────────
+	// Registry.Runtimes() must include WASM runtimes so the pipeline
+	// can bridge their filters into the template engine.
+
+	Describe("WASM pipeline bridging", func() {
+		It("WASMRuntime implements the same filter interface as QuickJSRuntime", func() {
+			rt := plugin.NewWASMRuntime()
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+			// WASMRuntime must have RegisteredFilters and CallFilter
+			// so the pipeline bridging loop can treat it like QuickJSRuntime
+			filters := rt.RegisteredFilters()
+			Expect(filters).NotTo(BeNil(),
+				"WASMRuntime must implement RegisteredFilters()")
+
+			if len(filters) > 0 {
+				result, err := rt.CallFilter(filters[0], "test")
+				Expect(err).NotTo(HaveOccurred(),
+					"WASMRuntime must implement CallFilter()")
+				Expect(result).NotTo(BeNil())
+			}
+		})
 	})
 
 	// ── Sandbox enforcement ──────────────────────────────────────────

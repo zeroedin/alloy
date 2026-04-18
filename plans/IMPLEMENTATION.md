@@ -310,7 +310,17 @@ Key points:
   - **Per-asset hook** (`onAssetProcess`): fire once per asset with `map[string]interface{}{"path": relPath, "content": fileContent}`. Return value's `"content"` key replaces the asset content.
   - **Per-build hooks** (`onConfig`, `onBeforeValidation`, `onAfterValidation`, `onDataFetched`): convert Go structs to `map[string]interface{}` before passing to `CallHook`. Deserialize returned map and apply changes back. Requires enhancing the QuickJS/WASM hook bridge so structured Go values are marshaled as real JSON objects (not stringified) — encode the map to JSON, parse in JS, then deserialize returned JS objects back into Go maps.
   - **Read-only hooks** (`onBuildComplete`, `onDevServerStart`, `onFileChanged`): serialize to JSON for observation, return value ignored. The runtime bridge must still preserve object payloads at the JS boundary for observation hooks.
-- **WASM runtime (issue #181)**: `WASMRuntime.LoadModule()` is a stub. Must use wazero to compile and instantiate the WASM binary, discover exported functions (`filter`, `shortcode`, `hook`), and register them. `CallExport(name, args...)` must invoke the actual WASM function and return the result. `RegisteredFilters()` must return filter names from the module's exports. `LoadModule` must return an error for invalid WASM binaries.
+- **WASM runtime (issue #181)**: `WASMRuntime.LoadModule()` is a stub. Must use wazero to compile and instantiate the WASM binary, discover exported functions (`alloc`, `filter`, `shortcode`, `hook`), and register them. `alloc` export is required — used by the host to get a safe write offset in WASM linear memory (issue #186). `CallExport(name, args...)` must call `alloc(inputLen)`, write input bytes at the returned pointer, call the export with `(ptr, len)`, and read the result from the returned `(resultPtr, resultLen)` (issue #190). `RegisteredFilters()` must return filter names from the module's exports. `LoadModule` must return an error for invalid WASM binaries. See PLAN.md §5 WASM Calling Convention for full ABI.
+- **WASM pipeline bridging (issue #189)**: `Registry.Runtimes()` returns `[]*QuickJSRuntime` only — WASM runtimes are not retained or bridged. The pipeline filter/shortcode bridging loop only iterates QuickJS runtimes. Fix: define a shared `Runtime` interface (note: `PluginRuntime` is already used as a string enum type in the plugin package) with canonical signatures matching the pipeline APIs:
+  ```go
+  type Runtime interface {
+      RegisteredFilters() []string
+      CallFilter(name string, input interface{}, args ...interface{}) (interface{}, error)
+      RegisteredShortcodes() []string
+      CallShortcode(name string, args []string, content string) (string, error)
+  }
+  ```
+  Then `Runtimes()` returns `[]Runtime` and the bridging loop in `build.go` works for both QuickJS and WASM runtimes without code duplication.
 - **Incremental build via cache (issue #105)**: Before step 3 (content discovery), load the previous build cache via `cache.LoadFrom(cacheDir)`. After discovering pages (step 3) and computing hashes, use `previousCache.ShouldSkipFile(relPath, content)` to skip unchanged pages — no re-parse, no re-render. Template changes override content-hash skipping: if a layout file changed, `previousCache.InvalidatedPages(layoutPath)` returns the affected pages, which must be rebuilt even if their content hash is unchanged. Config changes (`previousCache.IsConfigChanged(currentHash)`) trigger a full rebuild of all pages. The `BuildResult` should report the skip count (e.g., "Built 5 pages, 27 skipped (cached)").
 
 #### Cascade wiring (PR #55)

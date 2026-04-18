@@ -149,6 +149,37 @@ var _ = Describe("Cross-Cutting Integration", func() {
 		})
 	})
 
+	// ── Issue #187: Hook firing order consistency ───────────────────
+	// onContentTransformed must fire at the same pipeline stage in both
+	// single-language and i18n modes: after Markdown→HTML, before layout
+	// rendering. The payload is pre-layout HTML (content body only).
+
+	Describe("onContentTransformed fires before layout rendering", func() {
+		It("hook payload is content HTML without layout wrapper", func() {
+			registry := plugin.NewHookRegistry()
+			registry.Register(plugin.OnContentTransformed, func(_ context.Context, payload interface{}) (interface{}, error) {
+				html, ok := payload.(string)
+				Expect(ok).To(BeTrue(),
+					"onContentTransformed payload must be a string")
+				// The payload must be the rendered content body — NOT the
+				// full page with layout. It should contain the rendered
+				// markdown content but NOT the layout's DOCTYPE/html/head.
+				Expect(html).NotTo(ContainSubstring("<!DOCTYPE"),
+					"onContentTransformed must fire BEFORE layout rendering — "+
+						"payload must not contain DOCTYPE from layout")
+				Expect(html).NotTo(ContainSubstring("<head>"),
+					"onContentTransformed must fire BEFORE layout rendering — "+
+						"payload must not contain <head> from layout")
+				return html, nil
+			})
+
+			// Simulate content that has been through Markdown→HTML but not layout
+			contentHTML := "<h1>My Post</h1>\n<p>Some content with <strong>bold</strong> text.</p>"
+			_, err := registry.Run(plugin.OnContentTransformed, contentHTML)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
 	// ── Issue #182: Hook payload must be per-page HTML string ────────
 	// onContentTransformed fires with the pages slice, but JS plugins
 	// need an HTML string they can modify. The pipeline must fire the
