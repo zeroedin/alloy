@@ -122,6 +122,40 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Build is always full rebuild (§2, issue #221) ───────────────
+	// alloy build always renders all pages — no incremental skipping.
+	// It is intended for CI/CD where a clean, complete output is required.
+	// Incremental rebuilds (cache-based skipping) are only for alloy serve
+	// (dev mode file watcher). The cache is written for dev mode's use
+	// but alloy build does not read it.
+
+	Describe("Build always renders all pages", func() {
+		It("consecutive builds with same content render all pages each time", func() {
+			cfg := &config.Config{
+				Title:   "Build Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			content := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+				"content/about.md": "---\ntitle: About\n---\n# About",
+			}
+
+			// First build
+			result1, err := pipeline.BuildWithContent(cfg, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result1.PageCount).To(Equal(2),
+				"first build must render all pages")
+
+			// Second build — same content, must still render all pages
+			result2, err := pipeline.BuildWithContent(cfg, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result2.PageCount).To(Equal(2),
+				"alloy build must always render all pages — no incremental skipping. "+
+					"Incremental rebuilds are for alloy serve only.")
+		})
+	})
+
 	// ── Phase 1 → Phase 2 handoff (§2) ──────────────────────────────
 	// Per spec §6: Phase 2 operates in memory. For each page with custom
 	// elements, Alloy pipes the full page HTML to ssr.command via stdin.

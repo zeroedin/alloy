@@ -17,7 +17,7 @@ Static site generators tend to make you choose between speed and extensibility. 
 - **Permalinks** — Fast token replacement with Liquid fallback for complex patterns
 - **Multiple output formats** — HTML, JSON, XML, or anything else from a single content file
 - **i18n** — Opt-in multilingual support with per-language content trees and shared layouts
-- **Incremental rebuilds** — Content-hash change detection, fine-grained template invalidation
+- **Incremental rebuilds (dev mode)** — Content-hash change detection in `alloy serve` for fast rebuilds on file changes. `alloy build` always does a full clean rebuild for CI/CD reliability.
 - **Web Component SSR** — Opt-in two-phase rendering: pipe each page to an external SSR engine via stdin/stdout for Declarative Shadow DOM
 - **Tiered plugin system** — Built-in Go filters (ns), in-process JS/WASM plugins (us), Node subprocess plugins (ms)
 - **Dev server** — File watching, WebSocket live reload, in-memory rendering, error reporting
@@ -250,8 +250,8 @@ Both modes include WebSocket live reload, file watching with 50ms debounce, port
 
 ```
 alloy init                  Create a new project config
-alloy build                 Build the site to _site/
-alloy serve                 Dev server with live reload
+alloy build                 Full clean build to _site/ (always rebuilds all pages)
+alloy serve                 Dev server with live reload (incremental rebuilds)
 alloy serve --preview       Production pipeline served locally
 alloy version               Print version
 ```
