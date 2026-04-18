@@ -283,6 +283,11 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			log.Printf("warning: translation linking: %v", err)
 		}
 
+		// Fire onContentTransformed BEFORE layout rendering
+		if err := fireContentTransformedHooks(pages, hooks); err != nil {
+			return nil, err
+		}
+
 		// ── Pass 2: layout resolution + rendering per language (steps 12-15) ──
 		// page.Translations is now populated, so templates can render
 		// {% for trans in page.translations %} for hreflang tags.
@@ -372,10 +377,6 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 					}
 				}
 			}
-		}
-
-		if err := fireContentTransformedHooks(pages, hooks); err != nil {
-			return nil, err
 		}
 
 	} else {
