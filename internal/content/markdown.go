@@ -76,29 +76,29 @@ func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
 // It handles both inline code and fenced code blocks by processing
 // the entire source — tags inside code spans/blocks get placeholders too,
 // which goldmark will render inside <code> elements, and then we restore them.
-// blockShortcodeLineRe matches a line that contains only a {% %} tag
-// (with optional leading/trailing whitespace). These are block shortcodes
-// and must be treated as block-level elements by goldmark.
-var blockShortcodeLineRe = regexp.MustCompile(`(?m)^[ \t]*(\{%-?[\s\S]*?-?%\})[ \t]*$`)
+// blockShortcodeLineRe matches a line that contains exactly one {% %} tag
+// (with optional leading/trailing whitespace). Only single-line tags qualify
+// as block shortcodes — multi-tag lines and control-flow lines are left inline.
+var blockShortcodeLineRe = regexp.MustCompile(`(?m)^([ \t]*)(\{%-?[^\n]*?-?%\})[ \t]*$`)
 
 func protectTemplateTags(src []byte) ([]byte, []string) {
 	var placeholders []string
 
 	// First pass: replace block-level {% %} tags with placeholders surrounded
 	// by blank lines so goldmark treats them as separate blocks.
+	// Preserve leading indentation for list/blockquote context.
 	result := blockShortcodeLineRe.ReplaceAllFunc(src, func(match []byte) []byte {
 		trimmed := bytes.TrimSpace(match)
+		// Detect leading indentation
+		indent := match[:bytes.Index(match, []byte("{%"))]
 		idx := len(placeholders)
 		placeholders = append(placeholders, string(trimmed))
-		placeholder := fmt.Sprintf("\n\nALLOY_TPL_%d_ELPMT\n\n", idx)
+		placeholder := fmt.Sprintf("\n\n%sALLOY_TPL_%d_ELPMT\n\n", string(indent), idx)
 		return []byte(placeholder)
 	})
 
 	// Second pass: replace remaining inline template tags with text placeholders
 	result = templateTagPattern.ReplaceAllFunc(result, func(match []byte) []byte {
-		if bytes.Contains(match, []byte("ALLOY_TPL_")) {
-			return match
-		}
 		idx := len(placeholders)
 		placeholders = append(placeholders, string(match))
 		placeholder := fmt.Sprintf("ALLOY_TPL_%d_ELPMT", idx)
@@ -106,7 +106,6 @@ func protectTemplateTags(src []byte) ([]byte, []string) {
 	})
 	return result, placeholders
 }
-
 
 
 // restoreTemplateTags replaces placeholders back with the original template tags.
