@@ -139,7 +139,7 @@ var knownLiquidFilters = map[string]bool{
 	"slice": true, "truncate": true, "truncatewords": true,
 	"split": true, "strip": true, "lstrip": true, "rstrip": true,
 	"strip_html": true, "first": true, "last": true, "join": true,
-	"date": true, "strip_newlines": true, "newline_to_br": true,
+	"date": true, "strip_newlines": true,
 	"replace": true, "replace_first": true, "replace_last": true,
 	"remove": true, "remove_first": true, "remove_last": true,
 	"append": true, "prepend": true,
