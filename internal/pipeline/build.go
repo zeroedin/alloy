@@ -857,8 +857,10 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 
 	if len(contentMap) == 0 {
 		return &BuildResult{
-			OutputDir: cfg.Build.Output,
-			Duration:  time.Since(start),
+			OutputDir:  cfg.Build.Output,
+			PageCount:  0,
+			SSRSkipped: true,
+			Duration:   time.Since(start),
 		}, nil
 	}
 
@@ -893,11 +895,16 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		// No cache — render everything
 		pagesToRender = allPages
 	} else {
-		// Check for layout/data changes in changedFiles
+		// Check for layout changes in changedFiles
+		layoutsDir := cfg.Structure.Layouts
+		if layoutsDir == "" {
+			layoutsDir = "layouts"
+		}
+		layoutPrefix := filepath.ToSlash(layoutsDir) + "/"
 		var layoutChanges []string
 		for _, f := range changedFiles {
-			if strings.HasPrefix(f, "layouts/") {
-				layoutChanges = append(layoutChanges, f)
+			if strings.HasPrefix(filepath.ToSlash(f), layoutPrefix) {
+				layoutChanges = append(layoutChanges, filepath.ToSlash(f))
 			}
 		}
 
@@ -916,7 +923,11 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				continue
 			}
 			// Content changed?
-			contentBody := contentMap["content/"+page.RelPath]
+			contentPrefix := cfg.Structure.Content
+			if contentPrefix == "" {
+				contentPrefix = "content"
+			}
+			contentBody := contentMap[filepath.ToSlash(filepath.Join(contentPrefix, page.RelPath))]
 			if !previousCache.ShouldSkipFile(page.RelPath, []byte(contentBody)) {
 				pagesToRender = append(pagesToRender, page)
 				continue
@@ -944,7 +955,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		PageCount:       len(pagesToRender),
 		PagesSkipped:    skipped,
 		Duration:        time.Since(start),
-		SSRSkipped:      cfg.SSR == nil,
+		SSRSkipped:      true, // incremental builds do not run Phase 2 SSR
 		PagesRendered:   rendered,
 		RenderedContent: renderedContent,
 	}, nil
