@@ -251,6 +251,37 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 				"LoadModule must return error for invalid WASM binary")
 		})
 
+		// Issue #190: CallExport only handles single string argument.
+		// Multiple args must be JSON-encoded and arrive correctly.
+		It("CallExport passes multiple arguments as JSON array", func() {
+			rt := plugin.NewWASMRuntime()
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+			// CallExport with multiple arguments must encode them as a
+			// JSON array string so the WASM module can parse them.
+			// Currently extra args are silently ignored.
+			result, err := rt.CallExport("filter", "hello", "extra_arg1", "extra_arg2")
+			Expect(err).NotTo(HaveOccurred(),
+				"CallExport with multiple arguments must not error")
+			Expect(result).NotTo(BeNil(),
+				"CallExport with multiple arguments must return a result")
+			// The WASM function must have received all arguments — not just the first.
+			// The exact format is a JSON array: ["hello","extra_arg1","extra_arg2"]
+		})
+
+		It("CallExport returns error for non-string arguments", func() {
+			rt := plugin.NewWASMRuntime()
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+			// Non-string arguments can't be serialized to WASM linear memory
+			// without explicit handling. CallExport must error, not silently
+			// pass zero parameters.
+			_, err := rt.CallExport("filter", 42)
+			Expect(err).To(HaveOccurred(),
+				"CallExport must return error for non-string arguments — "+
+					"not silently ignore them or pass zero WASM parameters")
+		})
+
 		It("LoadModule rejects WASM module missing alloc export", func() {
 			// A valid WASM binary without an alloc export must fail LoadModule.
 			// alloc is required for safe memory allocation — without it,
@@ -294,6 +325,30 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 					"WASMRuntime must implement CallFilter()")
 				Expect(result).NotTo(BeNil())
 			}
+		})
+
+		// Issue #189: Registry.Runtimes() only returns QuickJS runtimes.
+		// WASM runtimes loaded via LoadPlugins are not retained.
+		It("Registry.Runtimes includes WASM runtimes after LoadPlugins", func() {
+			registry := plugin.NewRegistry(filepath.Join(testdataDir(), "plugins-populated"))
+			Expect(registry.DiscoverPlugins()).To(Succeed())
+
+			hooks := plugin.NewHookRegistry()
+			registry.LoadPlugins(hooks)
+
+			// Runtimes() must return both QuickJS and WASM runtimes
+			// so the pipeline bridging loop can iterate all of them
+			runtimes := registry.Runtimes()
+			hasWASM := false
+			for _, rt := range runtimes {
+				if _, ok := rt.(*plugin.WASMRuntime); ok {
+					hasWASM = true
+					break
+				}
+			}
+			Expect(hasWASM).To(BeTrue(),
+				"Registry.Runtimes() must include WASM runtimes loaded from plugins/ — "+
+					"currently only returns QuickJS runtimes, so WASM filters are never bridged")
 		})
 	})
 

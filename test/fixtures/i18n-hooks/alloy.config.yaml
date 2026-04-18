@@ -1,0 +1,12 @@
+title: "i18n Hook Test"
+baseURL: "https://example.com"
+build:
+  output: _site
+languages:
+  en:
+    title: "English"
+    weight: 1
+    root: true
+  fr:
+    title: "French"
+    weight: 2
