@@ -324,7 +324,6 @@ type WASMRuntime struct {
 	modulePath string
 	moduleName string
 	exports    map[string]bool
-	wasmBytes  []byte
 	rt         wazero.Runtime
 	mod        api.Module
 }
@@ -353,7 +352,6 @@ func (r *WASMRuntime) LoadModule(path string) error {
 
 	r.modulePath = path
 	r.moduleName = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	r.wasmBytes = wasmBytes
 
 	ctx := context.Background()
 	r.rt = wazero.NewRuntime(ctx)
@@ -376,6 +374,7 @@ func (r *WASMRuntime) LoadModule(path string) error {
 	// Instantiate the module
 	r.mod, err = r.rt.InstantiateModule(ctx, compiled, wazero.NewModuleConfig())
 	if err != nil {
+		r.exports = make(map[string]bool)
 		r.rt.Close(ctx)
 		r.rt = nil
 		return fmt.Errorf("instantiating WASM module %s: %w", filepath.Base(path), err)
@@ -388,6 +387,9 @@ func (r *WASMRuntime) LoadModule(path string) error {
 // For string arguments, the input is written to the module's memory
 // and the function is called with (ptr, len). The result is read back.
 func (r *WASMRuntime) CallExport(name string, args ...interface{}) (interface{}, error) {
+	if r.mod == nil {
+		return nil, fmt.Errorf("WASM module not loaded — call LoadModule first")
+	}
 	if !r.exports[name] {
 		return nil, fmt.Errorf("export %q not found in %s.wasm", name, r.moduleName)
 	}
