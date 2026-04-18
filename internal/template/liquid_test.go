@@ -153,4 +153,76 @@ var _ = Describe("LiquidEngine", func() {
 				"render tag must produce output from partial template")
 		})
 	})
+
+	// ── Issue #199: Built-in filters through Liquid rendering ────────
+	// Filter functions pass unit tests but may fail through the Liquid
+	// engine due to type mismatches, registration issues, or dispatch.
+
+	Context("Built-in filters through Liquid rendering", func() {
+		// RegisterBuiltinFilters must be called so the Liquid engine
+		// has access to Alloy's built-in filters (findRE, replaceRE, etc.)
+		// Without it, the filter bridge has nothing to dispatch to.
+
+		It("findRE returns matches in template", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+			tpl, err := engine.Parse("test", []byte(`{{ "hello world 123" | findRE: "[0-9]+" }}`))
+			Expect(err).NotTo(HaveOccurred())
+			result, err := tpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			rendered := string(result)
+			// Assert the output is NOT the original input — proves the
+			// filter actually ran, not just passed through
+			Expect(rendered).NotTo(Equal("hello world 123"),
+				"findRE must transform the input, not pass it through")
+			Expect(rendered).To(ContainSubstring("123"),
+				"findRE must return matches when used in Liquid template")
+		})
+
+		It("replaceRE performs substitution in template", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+			tpl, err := engine.Parse("test", []byte(`{{ "hello world" | replaceRE: "world", "alloy" }}`))
+			Expect(err).NotTo(HaveOccurred())
+			result, err := tpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			rendered := string(result)
+			Expect(rendered).To(ContainSubstring("hello alloy"),
+				"replaceRE must perform regex replacement in Liquid template")
+			Expect(rendered).NotTo(Equal("world"),
+				"replaceRE must not return the replacement argument as the entire output")
+		})
+
+		It("contains returns boolean usable in conditionals", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+			// Test both positive and negative cases to prove contains
+			// returns a boolean, not the input string (which would be
+			// truthy for both cases)
+			tpl, err := engine.Parse("test", []byte(
+				`{% if "hello world" | contains: "world" %}YES{% else %}NO{% endif %}`+
+					`|{% if "hello world" | contains: "nope" %}YES{% else %}NO{% endif %}`))
+			Expect(err).NotTo(HaveOccurred())
+			result, err := tpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(result)).To(Equal("YES|NO"),
+				"contains must return true when substring present and false when absent — "+
+					"not return the input string unchanged")
+		})
+
+		It("newline_to_br converts newlines to br tags", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+			// Pass the string with a real newline via render context —
+			// a backtick template literal \n is a literal backslash-n
+			tpl, err := engine.Parse("test", []byte(`{{ s | newline_to_br }}`))
+			Expect(err).NotTo(HaveOccurred())
+			result, err := tpl.Render(map[string]interface{}{
+				"s": "hello\nworld",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(result)).To(ContainSubstring("<br"),
+				"newline_to_br must produce <br> tags in Liquid template")
+		})
+	})
 })
