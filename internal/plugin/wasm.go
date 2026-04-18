@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/fastschema/qjs"
+	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/api"
 )
 
 // QuickJSRuntime wraps a QuickJS instance for Tier 2 in-process JS plugins.
@@ -321,6 +324,8 @@ type WASMRuntime struct {
 	modulePath string
 	moduleName string
 	exports    map[string]bool
+	rt         wazero.Runtime
+	mod        api.Module
 }
 
 // NewWASMRuntime creates a new WASM runtime via wazero.
@@ -331,32 +336,245 @@ func NewWASMRuntime() *WASMRuntime {
 }
 
 // LoadModule loads a WASM module from the given file path.
+// Validates the binary, compiles it, and discovers exported functions.
 func (r *WASMRuntime) LoadModule(path string) error {
-	if _, err := os.Stat(path); err != nil {
-		return fmt.Errorf("WASM module not found: %s", path)
+	// Close any previously loaded module/runtime
+	r.Close()
+	r.exports = make(map[string]bool)
+
+	wasmBytes, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("WASM module not found: %s", path)
+		}
+		return fmt.Errorf("reading WASM module %s: %w", path, err)
 	}
+
 	r.modulePath = path
 	r.moduleName = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	// Register default exports that a valid WASM plugin would have
-	r.exports["filter"] = true
+
+	ctx := context.Background()
+	r.rt = wazero.NewRuntime(ctx)
+
+	compiled, err := r.rt.CompileModule(ctx, wasmBytes)
+	if err != nil {
+		r.rt.Close(ctx)
+		r.rt = nil
+		return fmt.Errorf("invalid WASM module %s: %w", filepath.Base(path), err)
+	}
+	defer compiled.Close(ctx)
+
+	// Discover exported functions — iterate all export names per function
+	for _, exp := range compiled.ExportedFunctions() {
+		for _, name := range exp.ExportNames() {
+			r.exports[name] = true
+		}
+	}
+
+	// Instantiate the module
+	r.mod, err = r.rt.InstantiateModule(ctx, compiled, wazero.NewModuleConfig())
+	if err != nil {
+		r.exports = make(map[string]bool)
+		r.rt.Close(ctx)
+		r.rt = nil
+		return fmt.Errorf("instantiating WASM module %s: %w", filepath.Base(path), err)
+	}
+
+	// Require alloc export for safe memory allocation
+	if r.mod.ExportedFunction("alloc") == nil {
+		r.Close()
+		return fmt.Errorf("WASM module %s missing required alloc export — "+
+			"alloc(size i32) -> (ptr i32) is needed for safe memory allocation", filepath.Base(path))
+	}
+
 	return nil
 }
 
 // CallExport calls an exported WASM function by name.
+// For string arguments, the input is written to the module's memory
+// and the function is called with (ptr, len). The result is read back.
 func (r *WASMRuntime) CallExport(name string, args ...interface{}) (interface{}, error) {
+	if r.mod == nil {
+		return nil, fmt.Errorf("WASM module not loaded — call LoadModule first")
+	}
 	if !r.exports[name] {
 		return nil, fmt.Errorf("export %q not found in %s.wasm", name, r.moduleName)
 	}
-	// Return a passthrough result — actual WASM execution would transform it.
+
+	fn := r.mod.ExportedFunction(name)
+	if fn == nil {
+		return nil, fmt.Errorf("export %q not found in %s.wasm", name, r.moduleName)
+	}
+
+	// For string input: write to memory, call with (ptr, len), read result
 	if len(args) > 0 {
-		return args[0], nil
+		if s, ok := args[0].(string); ok {
+			return r.callStringFilter(fn, s)
+		}
+	}
+
+	results, err := fn.Call(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("WASM call %q: %w", name, err)
+	}
+	if len(results) > 0 {
+		return results[0], nil
 	}
 	return nil, nil
+}
+
+// callStringFilter writes a string to WASM memory, calls the filter function
+// with (ptr, len), and reads the result string from memory.
+func (r *WASMRuntime) callStringFilter(fn api.Function, input string) (interface{}, error) {
+	mem := r.mod.Memory()
+	if mem == nil {
+		return nil, fmt.Errorf("WASM module has no exported memory — cannot pass string arguments")
+	}
+
+	// Allocate memory via the module's exported alloc function
+	allocFn := r.mod.ExportedFunction("alloc")
+	if allocFn == nil {
+		return nil, fmt.Errorf("WASM module missing alloc export — cannot allocate memory for input")
+	}
+
+	inputBytes := []byte(input)
+	allocResult, err := allocFn.Call(context.Background(), uint64(len(inputBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("WASM alloc(%d) failed: %w", len(inputBytes), err)
+	}
+	inputPtr := uint32(allocResult[0])
+
+	if !mem.Write(inputPtr, inputBytes) {
+		return nil, fmt.Errorf("WASM memory write failed: input (%d bytes) at offset %d exceeds memory", len(inputBytes), inputPtr)
+	}
+
+	results, err := fn.Call(context.Background(), uint64(inputPtr), uint64(len(inputBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("WASM filter call: %w", err)
+	}
+
+	if len(results) >= 2 {
+		resultPtr := uint32(results[0])
+		resultLen := uint32(results[1])
+		// ABI error convention: (0, 0) signals a plugin execution error
+		if resultPtr == 0 && resultLen == 0 {
+			// Check for optional last_error() export for detailed message
+			if lastErrFn := r.mod.ExportedFunction("last_error"); lastErrFn != nil {
+				if errResults, err := lastErrFn.Call(context.Background()); err == nil && len(errResults) >= 2 {
+					errPtr, errLen := uint32(errResults[0]), uint32(errResults[1])
+					if errPtr != 0 && errLen != 0 {
+						if errMsg, ok := mem.Read(errPtr, errLen); ok {
+							return nil, fmt.Errorf("WASM filter error: %s", string(errMsg))
+						}
+					}
+				}
+			}
+			return nil, fmt.Errorf("WASM filter returned (0, 0) — plugin execution error")
+		}
+		resultData, ok := mem.Read(resultPtr, resultLen)
+		if !ok {
+			return nil, fmt.Errorf("WASM memory read failed: result at offset %d len %d", resultPtr, resultLen)
+		}
+		return string(resultData), nil
+	}
+
+	return nil, fmt.Errorf("WASM filter ABI mismatch: expected 2 return values (ptr, len), got %d", len(results))
+}
+
+// CallExportRaw invokes a WASM function with raw i32 arguments and reads
+// the result from memory. Returns error if the function returns (0, 0)
+// per the ABI error convention.
+func (r *WASMRuntime) CallExportRaw(name string, ptr, length uint32) (string, error) {
+	if r.mod == nil {
+		return "", fmt.Errorf("WASM module not loaded — call LoadModule first")
+	}
+
+	fn := r.mod.ExportedFunction(name)
+	if fn == nil {
+		return "", fmt.Errorf("export %q not found in %s.wasm", name, r.moduleName)
+	}
+
+	results, err := fn.Call(context.Background(), uint64(ptr), uint64(length))
+	if err != nil {
+		return "", fmt.Errorf("WASM call %q: %w", name, err)
+	}
+
+	if len(results) >= 2 {
+		resultPtr := uint32(results[0])
+		resultLen := uint32(results[1])
+		if resultPtr == 0 && resultLen == 0 {
+			if lastErrFn := r.mod.ExportedFunction("last_error"); lastErrFn != nil {
+				if errResults, err := lastErrFn.Call(context.Background()); err == nil && len(errResults) >= 2 {
+					errPtr, errLen := uint32(errResults[0]), uint32(errResults[1])
+					if errPtr != 0 && errLen != 0 {
+						mem := r.mod.Memory()
+						if mem != nil {
+							if errMsg, ok := mem.Read(errPtr, errLen); ok {
+								return "", fmt.Errorf("WASM function %q error: %s", name, string(errMsg))
+							}
+						}
+					}
+				}
+			}
+			return "", fmt.Errorf("WASM function %q returned (0, 0) — plugin execution error", name)
+		}
+		mem := r.mod.Memory()
+		if mem == nil {
+			return "", fmt.Errorf("WASM module has no exported memory")
+		}
+		resultData, ok := mem.Read(resultPtr, resultLen)
+		if !ok {
+			return "", fmt.Errorf("WASM memory read failed: result at offset %d len %d", resultPtr, resultLen)
+		}
+		return string(resultData), nil
+	}
+
+	return "", fmt.Errorf("WASM function %q returned fewer than 2 values", name)
+}
+
+// wasmRuntimeExports are well-known WASM exports that are not plugin filters.
+var wasmRuntimeExports = map[string]bool{
+	"memory": true, "alloc": true, "_start": true, "_initialize": true,
+	"__data_end": true, "__heap_base": true, "__stack_pointer": true,
+	"__dso_handle": true, "__global_base": true,
+}
+
+// RegisteredFilters returns the names of exported functions that can be used as filters.
+// Excludes well-known WASM runtime exports (memory, _start, etc.).
+func (r *WASMRuntime) RegisteredFilters() []string {
+	names := make([]string, 0, len(r.exports))
+	for name := range r.exports {
+		if !wasmRuntimeExports[name] {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// CallFilter calls a WASM-exported filter function by name.
+func (r *WASMRuntime) CallFilter(name string, input interface{}, args ...interface{}) (interface{}, error) {
+	allArgs := make([]interface{}, 0, 1+len(args))
+	allArgs = append(allArgs, input)
+	allArgs = append(allArgs, args...)
+	return r.CallExport(name, allArgs...)
 }
 
 // HasExport checks if the WASM module exports a function with the given name.
 func (r *WASMRuntime) HasExport(name string) bool {
 	return r.exports[name]
+}
+
+// Close releases wazero resources.
+func (r *WASMRuntime) Close() {
+	ctx := context.Background()
+	if r.mod != nil {
+		r.mod.Close(ctx)
+		r.mod = nil
+	}
+	if r.rt != nil {
+		r.rt.Close(ctx)
+		r.rt = nil
+	}
 }
 
 // SandboxViolationError represents an attempt to access a forbidden resource.
