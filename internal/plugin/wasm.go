@@ -456,6 +456,10 @@ func (r *WASMRuntime) callStringFilter(fn api.Function, input string) (interface
 	if len(results) >= 2 {
 		resultPtr := uint32(results[0])
 		resultLen := uint32(results[1])
+		// ABI error convention: (0, 0) signals a plugin execution error
+		if resultPtr == 0 && resultLen == 0 {
+			return nil, fmt.Errorf("WASM filter returned (0, 0) — plugin execution error")
+		}
 		resultData, ok := mem.Read(resultPtr, resultLen)
 		if !ok {
 			return nil, fmt.Errorf("WASM memory read failed: result at offset %d len %d", resultPtr, resultLen)
@@ -464,6 +468,44 @@ func (r *WASMRuntime) callStringFilter(fn api.Function, input string) (interface
 	}
 
 	return input, nil
+}
+
+// CallExportRaw invokes a WASM function with raw i32 arguments and reads
+// the result from memory. Returns error if the function returns (0, 0)
+// per the ABI error convention.
+func (r *WASMRuntime) CallExportRaw(name string, ptr, length uint32) (string, error) {
+	if r.mod == nil {
+		return "", fmt.Errorf("WASM module not loaded — call LoadModule first")
+	}
+
+	fn := r.mod.ExportedFunction(name)
+	if fn == nil {
+		return "", fmt.Errorf("export %q not found in %s.wasm", name, r.moduleName)
+	}
+
+	results, err := fn.Call(context.Background(), uint64(ptr), uint64(length))
+	if err != nil {
+		return "", fmt.Errorf("WASM call %q: %w", name, err)
+	}
+
+	if len(results) >= 2 {
+		resultPtr := uint32(results[0])
+		resultLen := uint32(results[1])
+		if resultPtr == 0 && resultLen == 0 {
+			return "", fmt.Errorf("WASM function %q returned (0, 0) — plugin execution error", name)
+		}
+		mem := r.mod.Memory()
+		if mem == nil {
+			return "", fmt.Errorf("WASM module has no exported memory")
+		}
+		resultData, ok := mem.Read(resultPtr, resultLen)
+		if !ok {
+			return "", fmt.Errorf("WASM memory read failed: result at offset %d len %d", resultPtr, resultLen)
+		}
+		return string(resultData), nil
+	}
+
+	return "", fmt.Errorf("WASM function %q returned fewer than 2 values", name)
 }
 
 // wasmRuntimeExports are well-known WASM exports that are not plugin filters.
