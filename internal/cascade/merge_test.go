@@ -177,6 +177,51 @@ var _ = Describe("DeepMerge", func() {
 			Expect(result["layout"]).To(Equal("default"))
 		})
 
+		It("deep-merges nested maps across 3+ directory levels", func() {
+			// 3 levels of _data.yaml with nested map keys:
+			//   content/           → theme: { color: "blue", font: "sans-serif" }
+			//   content/blog/      → theme: { color: "green" }  (overrides color, font inherited)
+			//   content/blog/deep/ → theme: { size: "large" }   (adds size, color+font inherited)
+			cascadeData := map[string]map[string]interface{}{
+				"content/": {
+					"theme": map[string]interface{}{
+						"color": "blue",
+						"font":  "sans-serif",
+					},
+				},
+				"content/blog/": {
+					"theme": map[string]interface{}{
+						"color": "green",
+					},
+				},
+				"content/blog/deep/": {
+					"theme": map[string]interface{}{
+						"size": "large",
+					},
+				},
+			}
+
+			result := cascade.FindCascadeData(cascadeData, "content", "blog/deep/post.md")
+			Expect(result).NotTo(BeNil())
+
+			theme, ok := result["theme"].(map[string]interface{})
+			Expect(ok).To(BeTrue(),
+				"theme must be a nested map after cascade merge")
+
+			// color: "green" from blog/ (overrides root "blue")
+			Expect(theme["color"]).To(Equal("green"),
+				"nested key theme.color must be overridden by blog/_data.yaml")
+
+			// font: "sans-serif" from content/ (inherited — blog/ didn't override it)
+			Expect(theme["font"]).To(Equal("sans-serif"),
+				"nested key theme.font must be inherited from root — "+
+					"deep merge must preserve keys not overridden by descendants")
+
+			// size: "large" from blog/deep/ (new key at deepest level)
+			Expect(theme["size"]).To(Equal("large"),
+				"nested key theme.size must be added from blog/deep/_data.yaml")
+		})
+
 		It("works with LoadDirectoryCascade output for directories without _data.yaml", func() {
 			result, err := cascade.LoadDirectoryCascade("test/fixtures/cascade/content")
 			Expect(err).NotTo(HaveOccurred())

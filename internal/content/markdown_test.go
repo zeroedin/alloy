@@ -159,6 +159,22 @@ var _ = Describe("RenderMarkdown", func() {
 			Expect(html).To(ContainSubstring("{% for item in items %}"))
 		})
 
+		It("preserves template tags containing newlines through Markdown", func() {
+			// PR #217 added (?s) to templateTagPattern so tags spanning
+			// multiple lines are matched as a single unit. Without this,
+			// goldmark splits the tag across lines and breaks it.
+			source := []byte("{{ \"hello\nworld\" | newline_to_br }}\n")
+			out, err := content.RenderMarkdown(source, defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("newline_to_br"),
+				"multiline template tag must survive goldmark processing intact")
+			Expect(html).To(ContainSubstring("{{"),
+				"opening {{ must be preserved")
+			Expect(html).To(ContainSubstring("}}"),
+				"closing }} must be preserved")
+		})
+
 		It("disables template tag preservation when templateTags is false", func() {
 			source := []byte("Hello {{ name }}!\n")
 			opts := content.MarkdownOptions{Unsafe: true, Typographer: true, TemplateTags: false}
