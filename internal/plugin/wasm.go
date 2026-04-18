@@ -407,10 +407,11 @@ func (r *WASMRuntime) CallExport(name string, args ...interface{}) (interface{},
 		return nil, fmt.Errorf("export %q not found in %s.wasm", name, r.moduleName)
 	}
 
-	// For string input: write to memory, call with (ptr, len), read result.
-	// Coerce input to string via fmt.Sprint when the type assertion fails —
-	// Liquid engines may pass typed wrappers instead of plain Go strings.
-	// Multiple string args are JSON-encoded as an array.
+	// For string-like input: write to memory, call with (ptr, len), read result.
+	// Supported argument types are string, []byte, and fmt.Stringer;
+	// other argument types return an error. Liquid engines may pass typed
+	// wrappers instead of plain Go strings. Multiple string-like args are
+	// JSON-encoded as an array.
 	if len(args) > 0 {
 		var input string
 		switch v := args[0].(type) {
