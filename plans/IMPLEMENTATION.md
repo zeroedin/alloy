@@ -251,7 +251,9 @@ Key points:
 ### 4D: `internal/pipeline` — 19 tests
 **File**: `internal/pipeline/build.go`
 
-- `BuildWithContent`: Accept injected content, render through pipeline. Error messages must contain source file path + "template rendering" stage.
+- `BuildWithContent`: Accept injected content, render through pipeline. Error messages must contain source file path + "template rendering" stage. Always renders all pages (no cache-based skipping — same as `alloy build`).
+- `BuildIncremental(cfg, contentMap, previousCache, changedFiles)`: Serve-mode incremental rebuild. Accepts a previous `*cache.Cache` (loaded by the caller, not by this function) and list of changed file paths. Discovers all pages, skips pages where `cache.ShouldSkipFile` returns true (unchanged), and renders pages where it returns false (changed) or that were invalidated via `cache.InvalidatedPages` for layout changes. Returns `BuildResult` with `PagesSkipped` count. When `previousCache` is nil, renders all pages (equivalent to full build).
+- `BuildResult.PagesSkipped int`: Number of pages skipped via cache comparison during incremental rebuild. Always 0 for `Build` and `BuildWithContent` (full rebuild).
 - `BuildPhase1`/`BuildPhase2`: Phase separation. Phase 2 operates entirely in memory:
   1. For each page, scan intermediate HTML for custom element tags (anything with a hyphen) and record in ComponentMap for cache invalidation
   2. For each page with custom elements, extract the inner content of `<body>` (everything between `<body>` and `</body>`, not the tags themselves). Invoke the SSR command based on `config.SSRConfig.Mode`:
@@ -321,7 +323,7 @@ Key points:
   }
   ```
   Then `Runtimes()` returns `[]Runtime` and the bridging loop in `build.go` works for both QuickJS and WASM runtimes without code duplication.
-- **Incremental build via cache (issue #105)**: Before step 3 (content discovery), load the previous build cache via `cache.LoadFrom(cacheDir)`. After discovering pages (step 3) and computing hashes, use `previousCache.ShouldSkipFile(relPath, content)` to skip unchanged pages — no re-parse, no re-render. Template changes override content-hash skipping: if a layout file changed, `previousCache.InvalidatedPages(layoutPath)` returns the affected pages, which must be rebuilt even if their content hash is unchanged. Config changes (`previousCache.IsConfigChanged(currentHash)`) trigger a full rebuild of all pages. The `BuildResult` should report the skip count (e.g., "Built 5 pages, 27 skipped (cached)").
+- **Incremental build via cache (issue #105, #225)**: This applies to `BuildIncremental` only (serve mode). `Build()` and `BuildWithContent()` always do full rebuilds — they do not read the cache. **Cache ownership is caller-side**: the serve-mode loop in `cmd/serve.go` loads the previous build cache from disk via `cache.LoadFrom(cacheDir)`, passes it into `BuildIncremental` as `previousCache`, and persists the updated cache after the build. `BuildIncremental` itself does not own disk I/O for the cache. After discovering pages, use `previousCache.ShouldSkipFile(relPath, content)` to skip unchanged pages — no re-parse, no re-render. Template changes override content-hash skipping: if a layout file changed, `previousCache.InvalidatedPages(layoutPath)` returns the affected pages, which must be rebuilt even if their content hash is unchanged. Config changes (`previousCache.IsConfigChanged(currentHash)`) trigger a full rebuild. The `BuildResult.PagesSkipped` field reports the skip count (e.g., "Rebuilt 5 pages, 27 skipped (cached)").
 
 #### Cascade wiring (PR #55)
 
