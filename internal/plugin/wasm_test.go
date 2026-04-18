@@ -166,12 +166,12 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 	// it as a plugin execution error — not an empty string.
 
 	Describe("WASM ABI error convention", func() {
-		It("CallExport returns error when WASM function returns (0, 0)", func() {
+		It("CallExportRaw returns error when WASM function returns (0, 0)", func() {
 			rt := plugin.NewWASMRuntime()
 			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
 
 			// Simulate a WASM function that returns (0, 0) — this signals
-			// an execution error per the ABI contract. CallExport must
+			// an execution error per the ABI contract. CallExportRaw must
 			// return an error, not an empty string.
 			result, err := rt.CallExportRaw("filter", 0, 0)
 			Expect(err).To(HaveOccurred(),
