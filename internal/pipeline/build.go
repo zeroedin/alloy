@@ -38,6 +38,7 @@ var ErrNotImplemented = errors.New("not implemented")
 type BuildResult struct {
 	OutputDir       string
 	PageCount       int
+	PagesSkipped    int               // pages skipped via cache (incremental only)
 	Duration        time.Duration
 	Errors          []error
 	SSRSkipped      bool              // true when Phase 2 was skipped (no ssr: config)
@@ -843,6 +844,109 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildR
 		Duration:      time.Since(start),
 		SSRSkipped:    ssrSkipped,
 		PagesRendered: rendered,
+	}, nil
+}
+
+// BuildIncremental renders only pages that have changed since the previous
+// build (per the cache) or were invalidated by a layout/data change.
+// Used by alloy serve for incremental rebuilds on file watcher events.
+// If previousCache is nil, all pages are rendered (equivalent to full build).
+func BuildIncremental(cfg *config.Config, contentMap map[string]string, previousCache *cache.Cache, changedFiles []string) (*BuildResult, error) {
+	start := time.Now()
+	config.ApplyDefaults(cfg)
+
+	if len(contentMap) == 0 {
+		return &BuildResult{
+			OutputDir: cfg.Build.Output,
+			Duration:  time.Since(start),
+		}, nil
+	}
+
+	// Create temp directory with content files
+	tmpDir, err := os.MkdirTemp("", "alloy-incremental-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for path, body := range contentMap {
+		fullPath := filepath.Join(tmpDir, path)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			return nil, fmt.Errorf("failed to create dir for %s: %w", path, err)
+		}
+		if err := os.WriteFile(fullPath, []byte(body), 0644); err != nil {
+			return nil, fmt.Errorf("failed to write %s: %w", path, err)
+		}
+	}
+
+	contentDir := filepath.Join(tmpDir, "content")
+	allPages, err := content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
+	if err != nil {
+		return nil, fmt.Errorf("content discovery: %w", err)
+	}
+
+	// Determine which pages need rebuilding
+	var pagesToRender []*content.Page
+	skipped := 0
+
+	if previousCache == nil {
+		// No cache — render everything
+		pagesToRender = allPages
+	} else {
+		// Check for layout/data changes in changedFiles
+		var layoutChanges []string
+		for _, f := range changedFiles {
+			if strings.HasPrefix(f, "layouts/") {
+				layoutChanges = append(layoutChanges, f)
+			}
+		}
+
+		// Find pages invalidated by layout changes
+		layoutInvalidated := make(map[string]bool)
+		for _, layoutPath := range layoutChanges {
+			for _, p := range previousCache.InvalidatedPages(layoutPath) {
+				layoutInvalidated[p] = true
+			}
+		}
+
+		for _, page := range allPages {
+			// Page invalidated by layout change?
+			if layoutInvalidated[page.RelPath] {
+				pagesToRender = append(pagesToRender, page)
+				continue
+			}
+			// Content changed?
+			contentBody := contentMap["content/"+page.RelPath]
+			if !previousCache.ShouldSkipFile(page.RelPath, []byte(contentBody)) {
+				pagesToRender = append(pagesToRender, page)
+				continue
+			}
+			// Unchanged — skip
+			skipped++
+		}
+	}
+
+	// Render only the pages that need it
+	rendered, renderErr := renderPages(pagesToRender, cfg, nil, nil, nil, nil)
+	if renderErr != nil {
+		return nil, renderErr
+	}
+
+	renderedContent := make(map[string]string, len(pagesToRender))
+	for _, page := range pagesToRender {
+		if len(page.RenderedBody) > 0 {
+			renderedContent[page.RelPath] = string(page.RenderedBody)
+		}
+	}
+
+	return &BuildResult{
+		OutputDir:       cfg.Build.Output,
+		PageCount:       len(pagesToRender),
+		PagesSkipped:    skipped,
+		Duration:        time.Since(start),
+		SSRSkipped:      cfg.SSR == nil,
+		PagesRendered:   rendered,
+		RenderedContent: renderedContent,
 	}, nil
 }
 
