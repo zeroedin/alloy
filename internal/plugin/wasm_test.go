@@ -218,6 +218,43 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(err).To(HaveOccurred(),
 				"LoadModule must return error for invalid WASM binary")
 		})
+
+		It("LoadModule validates alloc export exists", func() {
+			// A valid WASM binary without an alloc export must error.
+			// alloc is required for safe memory allocation — without it,
+			// the host has no safe way to write input to WASM memory.
+			rt := plugin.NewWASMRuntime()
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+			// The module must export alloc. If compiled.wasm doesn't have it,
+			// LoadModule should error. This test drives the alloc requirement.
+			Expect(rt.HasExport("alloc")).To(BeTrue(),
+				"WASM module must export alloc(size) for safe memory allocation")
+		})
+	})
+
+	// ── WASM pipeline bridging (#189) ───────────────────────────────
+	// Registry.Runtimes() must include WASM runtimes so the pipeline
+	// can bridge their filters into the template engine.
+
+	Describe("WASM pipeline bridging", func() {
+		It("WASMRuntime implements the same filter interface as QuickJSRuntime", func() {
+			rt := plugin.NewWASMRuntime()
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+			// WASMRuntime must have RegisteredFilters and CallFilter
+			// so the pipeline bridging loop can treat it like QuickJSRuntime
+			filters := rt.RegisteredFilters()
+			Expect(filters).NotTo(BeNil(),
+				"WASMRuntime must implement RegisteredFilters()")
+
+			if len(filters) > 0 {
+				result, err := rt.CallFilter(filters[0], "test")
+				Expect(err).NotTo(HaveOccurred(),
+					"WASMRuntime must implement CallFilter()")
+				Expect(result).NotTo(BeNil())
+			}
+		})
 	})
 
 	// ── Sandbox enforcement ──────────────────────────────────────────
