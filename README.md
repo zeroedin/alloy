@@ -217,7 +217,7 @@ Plugins can hook into 12 lifecycle events. Hooks chain in alphabetical filename 
 
 ## Web Component SSR (Opt-In)
 
-Alloy's two-phase rendering separates content rendering from component SSR. Phase 1 produces intermediate HTML with raw component tags. Phase 2 (if configured) pipes each page's HTML to an external SSR engine that handles all component rendering internally — element discovery, deduplication, shadow root rendering, and Declarative Shadow DOM injection. Alloy treats the engine as a black box: HTML goes in via stdin, SSR'd HTML comes out via stdout.
+Alloy's two-phase rendering separates content rendering from component SSR. Phase 1 produces intermediate HTML with raw component tags. Phase 2 (if configured) extracts the `<body>` inner content and pipes it to an external SSR engine via stdin. The engine handles all component rendering internally — element discovery, deduplication, shadow root rendering, and Declarative Shadow DOM injection — and returns the transformed body content via stdout. Alloy re-inserts the result into the original document skeleton, preserving `<head>`, `<script>` tags, and other document structure.
 
 Two communication modes:
 
