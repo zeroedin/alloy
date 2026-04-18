@@ -1,6 +1,8 @@
 package integration_test
 
 import (
+	"fmt"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -45,6 +47,60 @@ var _ = Describe("Plugin-Template Integration", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(result)).To(Equal("HELLO"),
 				"built-in filter must transform value during Go template rendering")
+		})
+
+		// Issue #196: WASM filter input type assertion fails when Liquid
+		// engine passes a typed wrapper instead of plain Go string.
+		// The filter must coerce input to string regardless of concrete type.
+		It("plugin filter receives coerced string input from Liquid engine", func() {
+			engine := template.NewLiquidEngine()
+			var receivedType string
+			err := engine.AddFilter("typecheck", func(input interface{}, args ...interface{}) interface{} {
+				receivedType = fmt.Sprintf("%T", input)
+				// Coerce to string the way CallExport should
+				s := fmt.Sprint(input)
+				return "TRANSFORMED:" + s
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			tmpl, err := engine.Parse("test", []byte(`{{ "hello wasm" | typecheck }}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := tmpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(result)).To(Equal("TRANSFORMED:hello wasm"),
+				"filter must successfully transform input from Liquid engine — "+
+					"input type was: "+receivedType)
+			// Log the actual type Liquid passes — if it's not "string",
+			// that proves the coercion via fmt.Sprint is necessary
+			Expect(receivedType).NotTo(BeEmpty(),
+				"filter must have been called and recorded the input type")
+		})
+
+		It("plugin filter transforms string value through template rendering", func() {
+			engine := template.NewLiquidEngine()
+			err := engine.AddFilter("shout", func(input interface{}, args ...interface{}) interface{} {
+				// Must handle any input type — Liquid may pass typed wrappers
+				s := fmt.Sprint(input)
+				result := ""
+				for _, r := range s {
+					if r >= 'a' && r <= 'z' {
+						result += string(r - 32)
+					} else {
+						result += string(r)
+					}
+				}
+				return result
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			tmpl, err := engine.Parse("test", []byte(`{{ "hello wasm" | shout }}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := tmpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(result)).To(Equal("HELLO WASM"),
+				"plugin filter must transform string value end-to-end through Liquid rendering")
 		})
 
 		It("plugin-registered filter is accessible during template render", func() {
