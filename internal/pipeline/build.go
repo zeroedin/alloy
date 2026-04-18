@@ -249,10 +249,22 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			// Step 4: Lifecycle filter
 			langPages = content.FilterByLifecycle(langPages, time.Now(), cfg.IncludeDrafts)
 
-			// Step 6: Permalink resolution with language prefix
+			// Step 5: Permalink resolution with language prefix.
+			// Temporarily strip the language prefix from RelPath so the
+			// permalink resolver doesn't see it — prevents URL doubling
+			// (e.g., /es/es/about/ when RelPath is es/about.md).
 			prefix := i18n.OutputPrefix(lc.Code, lc.Root)
+			langPrefix := lc.Code + "/"
 			for _, page := range langPages {
+				// Strip lang prefix from RelPath for resolution.
+				origRelPath := page.RelPath
+				page.RelPath = strings.TrimPrefix(page.RelPath, langPrefix)
+
 				url, err := permalink.ResolveForSection(page, cfg.Permalinks)
+
+				// Restore original RelPath.
+				page.RelPath = origRelPath
+
 				if err != nil {
 					return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
 				}
@@ -261,12 +273,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 					page.URL = url
 					continue
 				}
-				// Strip language code from resolved URL — RelPath includes
-				// the lang prefix (e.g., "fr/index.md", "en/index.md")
-				// which ResolveForSection includes in the URL.
-				resolved := strings.TrimPrefix(url, "/")
-				resolved = strings.TrimPrefix(resolved, lc.Code+"/")
-				page.URL = "/" + prefix + resolved
+				page.URL = "/" + prefix + strings.TrimPrefix(url, "/")
 			}
 
 			// Step 5: Cascade resolution
