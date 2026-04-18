@@ -1,0 +1,11 @@
+title: "Data Source Test Site"
+baseURL: "https://example.com"
+build:
+  output: _site
+
+sources:
+  api_posts:
+    type: "rest"
+    url: "http://localhost:9999/posts"
+    cache: 0
+    as: "api_posts"

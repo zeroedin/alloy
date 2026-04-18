@@ -1,7 +1,10 @@
 package integration_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"runtime"
 
@@ -191,6 +194,148 @@ var _ = Describe("Full build pipeline", func() {
 					fmt.Sprintf("onContentTransformed in i18n mode must fire BEFORE layout rendering — "+
 						"page %s received layout HTML in hook payload", path))
 			}
+		})
+	})
+
+	// ── Issue #113: i18n index page URL doubling ─────────────────────
+	// Index pages in i18n mode must not get the language prefix doubled.
+	// Root language (en, root:true): content/en/index.md → /
+	// Non-root language (fr): content/fr/index.md → /fr/
+	// Bug: index pages get /en/ or /fr/fr/ instead.
+
+	Describe("i18n index page URLs", func() {
+		It("root language index page resolves to / not /en/", func() {
+			cfgPath := filepath.Join(fixtureDir("i18n-basic"), "alloy.config.yaml")
+			cfg, err := config.Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.RenderedContent).NotTo(BeNil())
+
+			// Find the English index page — should be at / not /en/
+			found := false
+			for path, html := range result.RenderedContent {
+				if path == "index.md" || path == "en/index.md" {
+					found = true
+					Expect(html).To(ContainSubstring(`<div class="url">/</div>`),
+						fmt.Sprintf("root language index page (%s) must have URL / not /en/ — "+
+							"language prefix must not be added for root language", path))
+					break
+				}
+			}
+			Expect(found).To(BeTrue(),
+				"English index page must be present in RenderedContent")
+		})
+
+		It("non-root language index page resolves to /fr/ not /fr/fr/", func() {
+			cfgPath := filepath.Join(fixtureDir("i18n-basic"), "alloy.config.yaml")
+			cfg, err := config.Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.RenderedContent).NotTo(BeNil())
+
+			// Find the French index page — should be at /fr/ not /fr/fr/
+			found := false
+			for path, html := range result.RenderedContent {
+				if path == "fr/index.md" {
+					found = true
+					Expect(html).To(ContainSubstring(`<div class="url">/fr/</div>`),
+						fmt.Sprintf("non-root language index page (%s) must have URL /fr/ not /fr/fr/ — "+
+							"language prefix must not be doubled", path))
+					Expect(html).NotTo(ContainSubstring(`/fr/fr/`),
+						"language prefix must not be doubled for index pages")
+					break
+				}
+			}
+			Expect(found).To(BeTrue(),
+				"French index page must be present in RenderedContent")
+		})
+	})
+
+	// ── Issue #107: External data sources through pipeline ───────────
+	// The pipeline must read sources: config, fetch data, and merge
+	// into site.data so templates can access it.
+
+	Describe("External data sources through pipeline", func() {
+		It("REST source data is available in template rendering", func() {
+			// Start a test HTTP server that returns JSON
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode([]map[string]interface{}{
+					{"title": "First Post"},
+					{"title": "Second Post"},
+				})
+			}))
+			defer ts.Close()
+
+			// Load the data-sources fixture — config has sources: block with
+			// placeholder URL. Patch only the URL to point at test server.
+			cfgPath := filepath.Join(fixtureDir("data-sources"), "alloy.config.yaml")
+			cfg, err := config.Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Sources).To(HaveKey("api_posts"),
+				"fixture config must have sources.api_posts defined in YAML")
+
+			// Patch the URL to point at the test server (can't be static in YAML)
+			cfg.Sources["api_posts"].URL = ts.URL + "/posts"
+
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"Build with sources: config must succeed")
+			Expect(result).NotTo(BeNil())
+			Expect(result.RenderedContent).NotTo(BeNil())
+
+			// The template uses {{ site.data.api_posts }} — verify the
+			// fetched data appears in the rendered output
+			indexHTML, ok := result.RenderedContent["index.md"]
+			Expect(ok).To(BeTrue(),
+				"index.md must be present in RenderedContent")
+			Expect(indexHTML).To(ContainSubstring("First Post"),
+				"REST source data must be available in template as site.data.api_posts — "+
+					"proves the pipeline fetches, merges, and renders external data")
+			Expect(indexHTML).To(ContainSubstring("Second Post"),
+				"all fetched records must be available in template")
+		})
+	})
+
+	// ── Issue #141: Cascade through pipeline (verification) ──────────
+	// The existing cascade test passes. This additional test verifies
+	// the cascade works specifically for the bug scenario: a page in a
+	// subdirectory WITHOUT its own _data.yaml inherits from ancestors.
+
+	Describe("Cascade inheritance without own _data.yaml", func() {
+		It("page in nested dir without _data.yaml inherits from all ancestors", func() {
+			cfgPath := filepath.Join(fixtureDir("cascade"), "alloy.config.yaml")
+			cfg, err := config.Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.RenderedContent).NotTo(BeNil())
+
+			// leaf.md is in content/blog/deep/nested/ which has NO _data.yaml.
+			// It must inherit from blog/deep/_data.yaml AND blog/_data.yaml
+			// AND content/_data.yaml through the cascade chain.
+			leafHTML, ok := result.RenderedContent["blog/deep/nested/leaf.md"]
+			Expect(ok).To(BeTrue(),
+				"leaf.md must be in RenderedContent")
+
+			// These values come from DIFFERENT ancestor levels — proves
+			// cascade walks the full chain, not just nearest parent.
+			Expect(leafHTML).To(ContainSubstring("Deep Author"),
+				"must inherit author.name from blog/deep/_data.yaml")
+			Expect(leafHTML).To(ContainSubstring("@blogauthor"),
+				"must inherit author.twitter from blog/_data.yaml (deep merge)")
+			Expect(leafHTML).To(ContainSubstring("deep-dive"),
+				"must inherit category from blog/deep/_data.yaml")
+			Expect(leafHTML).To(ContainSubstring("post"),
+				"must inherit layout from blog/_data.yaml")
 		})
 	})
 })
