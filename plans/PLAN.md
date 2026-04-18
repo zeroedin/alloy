@@ -943,7 +943,7 @@ Data cascade and front matter are already assembled from Phase 0 — Phase 1 sta
 
 9. **Plugin Hook: `onContentLoaded`** — Plugins can inspect/modify content+data before processing
 10. **Content Transformation** — Markdown → HTML (via goldmark with template tag auto-detection), raw HTML passthrough. `{{ }}` and `{% %}` patterns survive goldmark automatically.
-11. **Plugin Hook: `onContentTransformed`** — Plugins can modify rendered HTML. Fires once per page with the page's rendered HTML string as payload (see §5 hook payload contract). **This hook fires after Markdown→HTML but before layout rendering in all modes** — single-language and i18n pipelines must fire at the same stage. The i18n pipeline must not defer this hook to after layout rendering or taxonomy generation.
+11. **Plugin Hook: `onContentTransformed`** — Plugins can modify rendered HTML. Fires once per page with the page's rendered HTML string as payload (see Lifecycle Events in §5 for payload contract). **This hook fires after Markdown→HTML but before layout rendering in all modes** — single-language and i18n pipelines must fire at the same stage. The i18n pipeline must not defer this hook to after layout rendering or taxonomy generation.
 12. **Template Resolution** — Match each content file to its layout (lookup order)
 13. **Content Template Rendering** — Content body is rendered through the template engine with page data + site data context, producing an HTML string.
 14. **Layout Rendering** — The rendered content HTML is injected into the resolved layout as `{{ content }}` (Liquid) or `{{ .content }}` (Go), then the layout is rendered. Content and layout have isolated scopes — variables defined in content do not leak into layout or vice versa.
@@ -1656,7 +1656,7 @@ The `alloc` export is required to avoid writing at hardcoded memory offsets that
 
 **Data format:** All values are passed as UTF-8 encoded strings. For filters, the input is the string to transform and the output is the transformed string. For multi-argument functions, arguments are JSON-encoded as an array string (e.g., `["arg1","arg2"]`). The WASM module parses the JSON array internally.
 
-**Error handling:** If `filter` returns `(0, 0)`, the host treats it as an error and falls back to the original input. The module should write error details to a well-known memory location or export a `last_error() -> (ptr, len)` function.
+**Error handling:** If `filter` returns `(0, 0)`, the host treats it as a plugin execution error and propagates the failure according to the normal pipeline error policy (build aborts in `alloy build`, error overlay in `alloy serve`). If the module exports `last_error() -> (ptr, len)`, the host reads and surfaces the error details in the error message. No silent fallback to original input — consistent with the error handling policy in §2.
 
 **Optional exports:**
 
