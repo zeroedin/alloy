@@ -468,7 +468,7 @@ func (r *WASMRuntime) callStringFilter(fn api.Function, input string) (interface
 
 // wasmRuntimeExports are well-known WASM exports that are not plugin filters.
 var wasmRuntimeExports = map[string]bool{
-	"memory": true, "_start": true, "_initialize": true,
+	"memory": true, "alloc": true, "_start": true, "_initialize": true,
 	"__data_end": true, "__heap_base": true, "__stack_pointer": true,
 	"__dso_handle": true, "__global_base": true,
 }

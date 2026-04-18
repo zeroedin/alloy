@@ -374,18 +374,8 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			}
 		}
 
-		// Fire onContentTransformed per page with HTML string payload
-		for _, page := range pages {
-			if len(page.RenderedBody) == 0 {
-				continue
-			}
-			result, err := hooks.RunWithTimeout(plugin.OnContentTransformed, string(page.RenderedBody))
-			if err != nil {
-				return nil, fmt.Errorf("plugin hook onContentTransformed: %w", err)
-			}
-			if modified, ok := result.(string); ok {
-				page.RenderedBody = []byte(modified)
-			}
+		if err := fireContentTransformedHooks(pages, hooks); err != nil {
+			return nil, err
 		}
 
 	} else {
@@ -450,18 +440,8 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			return nil, renderErr
 		}
 
-		// Fire onContentTransformed per page with HTML string payload
-		for _, page := range pages {
-			if len(page.RenderedBody) == 0 {
-				continue
-			}
-			result, err := hooks.RunWithTimeout(plugin.OnContentTransformed, string(page.RenderedBody))
-			if err != nil {
-				return nil, fmt.Errorf("plugin hook onContentTransformed: %w", err)
-			}
-			if modified, ok := result.(string); ok {
-				page.RenderedBody = []byte(modified)
-			}
+		if err := fireContentTransformedHooks(pages, hooks); err != nil {
+			return nil, err
 		}
 
 		// Layout resolution + rendering
@@ -1277,6 +1257,25 @@ func buildCollectionsContext(pages []*content.Page, cfg *config.Config, taxonomi
 		return nil
 	}
 	return result
+}
+
+// fireContentTransformedHooks fires onContentTransformed once per page
+// with the rendered HTML string as payload. Applies returned modifications
+// back to page.RenderedBody.
+func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegistry) error {
+	for _, page := range pages {
+		result, err := hooks.RunWithTimeout(plugin.OnContentTransformed, string(page.RenderedBody))
+		if err != nil {
+			return fmt.Errorf("plugin hook onContentTransformed: %w", err)
+		}
+		switch modified := result.(type) {
+		case string:
+			page.RenderedBody = []byte(modified)
+		case []byte:
+			page.RenderedBody = modified
+		}
+	}
+	return nil
 }
 
 // resolveDir resolves a relative directory against the project root.
