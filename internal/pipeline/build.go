@@ -526,8 +526,8 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		}
 	}
 
-	// Fire onPageRendered hook per-page with HTML string payload —
-	// same contract as onContentTransformed: string in, string out.
+	// Fire onPageRendered hook per-page with HTML string payload.
+	// The hook receives a string and may return string or []byte.
 	for _, page := range pages {
 		result, err := hooks.RunWithTimeout(plugin.OnPageRendered, string(page.RenderedBody))
 		if err != nil {
