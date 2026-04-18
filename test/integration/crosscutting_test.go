@@ -202,6 +202,152 @@ var _ = Describe("Cross-Cutting Integration", func() {
 		})
 	})
 
+	// ── onPageRendered per-page HTML payload ─────────────────────────
+	// Same contract as onContentTransformed: per-page HTML string.
+	// Fires after layout rendering — plugin receives the complete page.
+
+	Describe("onPageRendered per-page HTML payload", func() {
+		It("hook receives complete page HTML string per page", func() {
+			registry := plugin.NewHookRegistry()
+			receivedPayloads := []string{}
+			registry.Register(plugin.OnPageRendered, func(_ context.Context, payload interface{}) (interface{}, error) {
+				html, ok := payload.(string)
+				Expect(ok).To(BeTrue(),
+					"onPageRendered payload must be a string — the complete page HTML after layout")
+				receivedPayloads = append(receivedPayloads, html)
+				return html, nil
+			})
+
+			pages := []string{
+				`<!DOCTYPE html><html><body><h1>Page 1</h1></body></html>`,
+				`<!DOCTYPE html><html><body><h1>Page 2</h1></body></html>`,
+			}
+			for _, pageHTML := range pages {
+				_, err := registry.Run(plugin.OnPageRendered, pageHTML)
+				Expect(err).NotTo(HaveOccurred())
+			}
+			Expect(receivedPayloads).To(HaveLen(2),
+				"onPageRendered must fire once per page")
+		})
+
+		It("hook can minify final page HTML", func() {
+			registry := plugin.NewHookRegistry()
+			registry.Register(plugin.OnPageRendered, func(_ context.Context, payload interface{}) (interface{}, error) {
+				html := payload.(string)
+				// Simulate a minifier that collapses whitespace
+				return strings.Join(strings.Fields(html), " "), nil
+			})
+
+			input := `<!DOCTYPE html>
+<html>
+  <body>
+    <h1>Hello</h1>
+  </body>
+</html>`
+			result, err := registry.Run(plugin.OnPageRendered, input)
+			Expect(err).NotTo(HaveOccurred())
+			resultStr := result.(string)
+			Expect(resultStr).NotTo(ContainSubstring("\n"),
+				"minifier hook must remove newlines from final page HTML")
+			Expect(resultStr).To(ContainSubstring("Hello"),
+				"minifier hook must preserve content")
+		})
+	})
+
+	// ── onAssetProcess payload contract ──────────────────────────────
+	// Fires once per asset with { path, content }. Return value's
+	// "content" key replaces the asset content.
+
+	Describe("onAssetProcess payload contract", func() {
+		It("hook receives path and content as JSON object", func() {
+			registry := plugin.NewHookRegistry()
+			registry.Register(plugin.OnAssetProcess, func(_ context.Context, payload interface{}) (interface{}, error) {
+				asset, ok := payload.(map[string]interface{})
+				Expect(ok).To(BeTrue(),
+					"onAssetProcess payload must be a map with path and content keys")
+				Expect(asset).To(HaveKey("path"),
+					"asset payload must include path")
+				Expect(asset).To(HaveKey("content"),
+					"asset payload must include content")
+				return asset, nil
+			})
+
+			asset := map[string]interface{}{
+				"path":    "css/main.css",
+				"content": "body { color: red; }",
+			}
+			_, err := registry.Run(plugin.OnAssetProcess, asset)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("hook can transform asset content", func() {
+			registry := plugin.NewHookRegistry()
+			registry.Register(plugin.OnAssetProcess, func(_ context.Context, payload interface{}) (interface{}, error) {
+				asset := payload.(map[string]interface{})
+				path := asset["path"].(string)
+				if strings.HasSuffix(path, ".css") {
+					// Simulate CSS minification
+					css := asset["content"].(string)
+					asset["content"] = strings.ReplaceAll(css, " ", "")
+				}
+				return asset, nil
+			})
+
+			asset := map[string]interface{}{
+				"path":    "css/main.css",
+				"content": "body { color: red; }",
+			}
+			result, err := registry.Run(plugin.OnAssetProcess, asset)
+			Expect(err).NotTo(HaveOccurred())
+			resultMap := result.(map[string]interface{})
+			Expect(resultMap["content"]).To(Equal("body{color:red;}"),
+				"hook must be able to transform asset content")
+		})
+	})
+
+	// ── Read-only hook payload contract ──────────────────────────────
+
+	Describe("Read-only hook payload contract", func() {
+		It("onBuildComplete receives stats and passes payload through", func() {
+			registry := plugin.NewHookRegistry()
+			var receivedStats map[string]interface{}
+			registry.Register(plugin.OnBuildComplete, func(_ context.Context, payload interface{}) (interface{}, error) {
+				stats, ok := payload.(map[string]interface{})
+				Expect(ok).To(BeTrue(),
+					"onBuildComplete payload must be a JSON-serializable map")
+				receivedStats = stats
+				// Read-only hooks pass payload through unchanged so chained
+				// handlers still receive the original stats
+				return payload, nil
+			})
+
+			stats := map[string]interface{}{
+				"pageCount": 42,
+				"duration":  "127ms",
+			}
+			_, err := registry.Run(plugin.OnBuildComplete, stats)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(receivedStats).To(HaveKeyWithValue("pageCount", 42))
+			Expect(receivedStats).To(HaveKeyWithValue("duration", "127ms"))
+		})
+
+		It("onFileChanged receives file path as string", func() {
+			registry := plugin.NewHookRegistry()
+			var receivedPath string
+			registry.Register(plugin.OnFileChanged, func(_ context.Context, payload interface{}) (interface{}, error) {
+				path, ok := payload.(string)
+				Expect(ok).To(BeTrue(),
+					"onFileChanged payload must be a string file path")
+				receivedPath = path
+				return nil, nil
+			})
+
+			_, err := registry.Run(plugin.OnFileChanged, "content/blog/post.md")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(receivedPath).To(Equal("content/blog/post.md"))
+		})
+	})
+
 	// ── Multi-format output wiring (issue #71) ──────────────────────
 
 	Describe("Multi-format output → layout → output path", func() {
