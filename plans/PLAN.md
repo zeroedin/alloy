@@ -1654,15 +1654,19 @@ filter(ptr i32, len i32) -> (ptr i32, len i32)   # String filter: read input at 
 
 The `alloc` export is required to avoid writing at hardcoded memory offsets that could collide with the module's data section, stack, or heap. Modules compiled with Rust (wasm-bindgen), TinyGo, or AssemblyScript can implement `alloc` as a simple bump allocator or delegate to their runtime's allocator.
 
-**Data format:** All values are passed as UTF-8 encoded strings. For filters, the input is the string to transform and the output is the transformed string. For multi-argument functions, arguments are JSON-encoded as an array string (e.g., `["arg1","arg2"]`). The WASM module parses the JSON array internally.
+**Data format per export:**
+- **`filter`**: Input and output are raw UTF-8 strings. The filter receives the value to transform and returns the transformed value.
+- **`shortcode`**: Input is a JSON object: `{ "name": "youtube", "args": ["abc123"], "content": "" }`. Output is a UTF-8 HTML string.
+- **`hook`**: Input is a JSON payload (shape depends on the hook — see Lifecycle Events). Output is the modified JSON payload.
 
-**Error handling:** If `filter` returns `(0, 0)`, the host treats it as a plugin execution error and propagates the failure according to the normal pipeline error policy (build aborts in `alloy build`, error overlay in `alloy serve`). If the module exports `last_error() -> (ptr, len)`, the host reads and surfaces the error details in the error message. No silent fallback to original input — consistent with the error handling policy in §2.
+**Error handling:** If any export returns `(0, 0)`, the host treats it as a plugin execution error and propagates the failure according to the normal pipeline error policy (build aborts in `alloy build`, error overlay in `alloy serve`). If the module exports `last_error()`, the host reads and surfaces the error details. No silent fallback to original input — consistent with the error handling policy in §2.
 
 **Optional exports:**
 
 ```
 shortcode(ptr i32, len i32) -> (ptr i32, len i32)   # Shortcode: input is JSON { name, args, content }
 hook(ptr i32, len i32) -> (ptr i32, len i32)         # Hook: input is JSON payload, returns modified payload
+last_error() -> (ptr i32, len i32)                   # Error details; host calls after any export returns (0, 0)
 ```
 
 #### Sandboxing
@@ -1743,19 +1747,76 @@ Content-Length: 82\r\n
 
 ### Lifecycle Events (all tiers)
 
-| Event | Payload | Can Modify? | When |
+Hooks receive JSON-serializable payloads so they work across all plugin tiers (Go built-in, QuickJS, WASM, Node). Go struct pointers are not visible to JS or WASM — the pipeline must serialize before calling and deserialize the return value.
+
+#### Per-page hooks (HTML string)
+
+These fire **once per page**. Payload is a string, return value replaces the page content. No complex serialization — the simplest and most useful hook type.
+
+| Event | Payload | Returns | When |
 |---|---|---|---|
-| `onConfig` | config object | Yes | After config loaded |
-| `onBeforeValidation` | output path map | Yes (add-only) | Before pre-build conflict detection — plugins register output paths for non-content files |
-| `onAfterValidation` | validated output manifest (read-only) + data cascade (mutable) | Yes (cascade only) | After validation passes — plugins can inspect the manifest and inject/modify cascade data before rendering |
-| `onDataFetched` | fetched data + source metadata | Yes | After external data fetched + parsed |
-| `onContentLoaded` | raw content + front matter | Yes | After discovery + parsing |
-| `onContentTransformed` | rendered HTML string (per page) | Yes | After Markdown→HTML — fired once per page, payload is the page's rendered HTML string, return value replaces the page content |
-| `onPageRendered` | full page HTML string (per page) | Yes | After template rendering — fired once per page, payload is the complete page HTML after layout |
-| `onAssetProcess` | asset file | Yes | During asset copy (plugin-driven transforms) |
-| `onBuildComplete` | build stats | No | After output written |
-| `onDevServerStart` | server info | No | Dev server ready |
-| `onFileChanged` | changed file path | No | File watch trigger |
+| `onContentTransformed` | HTML string (rendered page body) | HTML string | After Markdown→HTML. Plugin modifies rendered content before layout. |
+| `onPageRendered` | HTML string (complete page after layout) | HTML string | After template rendering. Plugin modifies final page output. |
+
+```javascript
+// Example: add lazy loading to all images
+alloy.hook("onContentTransformed", (html) => {
+  return html.replace(/<img /g, '<img loading="lazy" ');
+});
+
+// Example: minify final HTML
+alloy.hook("onPageRendered", (html) => {
+  return html.replace(/\s+/g, ' ').trim();
+});
+```
+
+#### Per-asset hook (path + content object)
+
+Fires **once per asset file**. Payload is a JSON object with `path` and `content`. Return value replaces the asset content.
+
+| Event | Payload | Returns | When |
+|---|---|---|---|
+| `onAssetProcess` | `{ path: string, content: string }` | `{ content: string }` | During asset copy. Plugin transforms asset content. |
+
+```javascript
+// Example: CSS minification
+alloy.hook("onAssetProcess", (asset) => {
+  if (asset.path.endsWith('.css')) {
+    return { content: minifyCSS(asset.content) };
+  }
+  return asset;
+});
+```
+
+#### Per-page hooks (JSON objects)
+
+Fire **once per page**. Payload is a JSON-serializable representation of page-scoped data. The pipeline converts Go structs to `map[string]interface{}` before calling, and applies returned changes back.
+
+| Event | Payload | Returns | When |
+|---|---|---|---|
+| `onContentLoaded` | `{ path, frontMatter: { ... }, body: "..." }` | Same shape | After discovery. Plugin modifies page metadata. |
+| `onDataCascadeReady` | `{ path, data: { ... } }` | Same shape | After cascade resolved. Plugin enriches cascade data. |
+
+#### Per-build hooks (JSON objects)
+
+Fire **once per build**. Payload is a JSON-serializable representation of the Go type. The pipeline converts Go structs to `map[string]interface{}` before calling, and applies returned changes back.
+
+| Event | Payload | Returns | When |
+|---|---|---|---|
+| `onConfig` | `{ title, baseURL, build: { output, clean }, ... }` | Same shape | After config loaded. Plugin mutates config. |
+| `onBeforeValidation` | `{ paths: ["/about/", "/blog/", ...] }` | Same + additions | Before conflict detection. Plugin adds output paths. |
+| `onAfterValidation` | `{ paths: [...], cascade: { ... } }` | Cascade portion only | After validation. Plugin injects cascade data. |
+| `onDataFetched` | `{ <sourceName>: <data>, ... }` | Same shape | After external data fetched. Plugin modifies fetched data. |
+
+#### Read-only hooks (return value ignored)
+
+Fire **once per event**. Plugins observe but cannot modify.
+
+| Event | Payload | When |
+|---|---|---|
+| `onBuildComplete` | `{ pageCount: 42, duration: "127ms", errors: [] }` | After output written. |
+| `onDevServerStart` | `{ port: 3000, url: "http://localhost:3000" }` | Dev server ready. |
+| `onFileChanged` | `"content/blog/post.md"` (string) | File changed in watch mode. |
 
 ### Performance Safeguards
 

@@ -236,6 +236,8 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			err := rt.LoadModule(noAllocWasm)
 			Expect(err).To(HaveOccurred(),
 				"LoadModule must reject a valid WASM module that does not export alloc(size)")
+			Expect(err.Error()).To(ContainSubstring("alloc"),
+				"error must specifically mention the missing alloc export")
 		})
 	})
 
