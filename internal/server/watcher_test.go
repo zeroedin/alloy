@@ -157,7 +157,7 @@ var _ = Describe("File Watcher", func() {
 				"incremental rebuild must know which file changed")
 		})
 
-		It("layout change triggers incremental rebuild of pages using that layout", func() {
+		It("layout change event is classified as incremental with LayoutChange type", func() {
 			debouncer := server.NewDebouncer(50*time.Millisecond, 20)
 
 			events := []server.ChangeEvent{
@@ -185,14 +185,15 @@ var _ = Describe("File Watcher", func() {
 				"data change must be classified correctly for targeted rebuild")
 		})
 
-		It("config file change triggers full rebuild", func() {
+		It("config file change is classified as ContentChange (triggers full rebuild via watcher)", func() {
 			cfg := &config.Config{Title: "Test Site"}
 			changeType := server.ClassifyChange("alloy.config.yaml", cfg)
-			// Config changes affect everything — must trigger full rebuild
-			// The file watcher should detect this and signal RebuildFull
-			_ = changeType
-			// Config changes should result in a full rebuild when processed
-			// by DetermineRebuildAction or similar logic
+			// Config file doesn't match any watched directory (content/,
+			// layouts/, data/, assets/, static/), so ClassifyChange returns
+			// ContentChange as the default. The file watcher layer detects
+			// config changes separately and triggers a full rebuild.
+			Expect(changeType).To(Equal(server.ContentChange),
+				"config file must be classified (not silently ignored)")
 		})
 	})
 
