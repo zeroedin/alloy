@@ -1,6 +1,8 @@
 package template_test
 
 import (
+	"fmt"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -151,6 +153,31 @@ var _ = Describe("LiquidEngine", func() {
 			// The render tag must produce some output (not empty from stub)
 			Expect(string(out)).NotTo(BeEmpty(),
 				"render tag must produce output from partial template")
+		})
+	})
+
+	// ── Issue #200: Plugin filter shadows built-in through pipeline ──
+	// RegisterBuiltinFilters registers built-ins first. Then AddFilter
+	// registers a plugin filter with the same name. The plugin must win.
+
+	Context("Plugin filter shadows built-in", func() {
+		It("AddFilter after RegisterBuiltinFilters overrides the built-in", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+
+			// Override "upcase" with a plugin version
+			err := engine.AddFilter("upcase", func(input interface{}, args ...interface{}) interface{} {
+				return "SHADOWED:" + fmt.Sprint(input)
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			tpl, err := engine.Parse("test", []byte(`{{ "hello" | upcase }}`))
+			Expect(err).NotTo(HaveOccurred())
+			result, err := tpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(result)).To(Equal("SHADOWED:hello"),
+				"plugin filter registered via AddFilter after RegisterBuiltinFilters "+
+					"must override the built-in — last loaded wins per spec §4")
 		})
 	})
 
