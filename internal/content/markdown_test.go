@@ -185,6 +185,57 @@ var _ = Describe("RenderMarkdown", func() {
 		})
 	})
 
+	// ── Block shortcode boundaries (§6 TemplateBlocks, issue #202) ──
+
+	Context("Block shortcode boundaries", func() {
+		It("block shortcode tags are not wrapped in <p>", func() {
+			source := []byte("# Title\n\n{% callout \"warning\" %}\nThis has **bold** text.\n{% endcallout %}\n\nAfter.\n")
+			out, err := content.RenderMarkdown(source, defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			// The opening {% callout %} must NOT be inside a <p> tag
+			Expect(html).NotTo(ContainSubstring("<p>{% callout"),
+				"block shortcode opening tag must not be wrapped in <p> — "+
+					"goldmark must treat it as a block-level boundary")
+			// The closing {% endcallout %} must NOT be inside a <p> tag
+			Expect(html).NotTo(ContainSubstring("<p>{% endcallout"),
+				"block shortcode closing tag must not be wrapped in <p>")
+			// The opening and closing tags must be preserved
+			Expect(html).To(ContainSubstring("{% callout"),
+				"block shortcode opening tag must be preserved through markdown")
+			Expect(html).To(ContainSubstring("{% endcallout %}"),
+				"block shortcode closing tag must be preserved through markdown")
+			// Inner content must be processed as markdown
+			Expect(html).To(ContainSubstring("<strong>bold</strong>"),
+				"markdown inside block shortcode must be rendered")
+		})
+
+		It("inline shortcode on same line as text stays inline", func() {
+			source := []byte("Watch this: {% youtube \"abc123\" %} and more text.\n")
+			out, err := content.RenderMarkdown(source, defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			// Inline shortcode should be inside a <p> — that's correct
+			Expect(html).To(ContainSubstring("<p>Watch this: {% youtube"),
+				"inline shortcode mixed with text must stay in <p> context")
+		})
+
+		It("block shortcode with list content renders correctly", func() {
+			source := []byte("{% callout \"info\" %}\n\n- Item one\n- Item two\n\n{% endcallout %}\n")
+			out, err := content.RenderMarkdown(source, defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			// List must be a proper <ul> not mangled by <p> wrapping
+			Expect(html).To(ContainSubstring("<ul>"),
+				"list inside block shortcode must render as <ul>")
+			Expect(html).To(ContainSubstring("<li>Item one</li>"),
+				"list items must render correctly inside block shortcode")
+			// The shortcode tags must not interfere with list rendering
+			Expect(html).NotTo(ContainSubstring("<p>{% callout"),
+				"block shortcode must not wrap list content in <p>")
+		})
+	})
+
 	// ── Goldmark extensions (§6 footnotes, typographer) ──────────────
 
 	Context("Goldmark extensions", func() {
