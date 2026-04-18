@@ -1,0 +1,12 @@
+title: "i18n Test Site"
+baseURL: "https://example.com"
+build:
+  output: _site
+languages:
+  en:
+    title: "English Site"
+    weight: 1
+    root: true
+  fr:
+    title: "Site Français"
+    weight: 2
