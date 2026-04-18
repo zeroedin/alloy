@@ -1763,6 +1763,15 @@ alloy.hook("onAssetProcess", (asset) => {
 });
 ```
 
+#### Per-page hooks (JSON objects)
+
+Fire **once per page**. Payload is a JSON-serializable representation of page-scoped data. The pipeline converts Go structs to `map[string]interface{}` before calling, and applies returned changes back.
+
+| Event | Payload | Returns | When |
+|---|---|---|---|
+| `onContentLoaded` | `{ path, frontMatter: { ... }, body: "..." }` | Same shape | After discovery. Plugin modifies page metadata. |
+| `onDataCascadeReady` | `{ path, data: { ... } }` | Same shape | After cascade resolved. Plugin enriches cascade data. |
+
 #### Per-build hooks (JSON objects)
 
 Fire **once per build**. Payload is a JSON-serializable representation of the Go type. The pipeline converts Go structs to `map[string]interface{}` before calling, and applies returned changes back.
@@ -1773,8 +1782,6 @@ Fire **once per build**. Payload is a JSON-serializable representation of the Go
 | `onBeforeValidation` | `{ paths: ["/about/", "/blog/", ...] }` | Same + additions | Before conflict detection. Plugin adds output paths. |
 | `onAfterValidation` | `{ paths: [...], cascade: { ... } }` | Cascade portion only | After validation. Plugin injects cascade data. |
 | `onDataFetched` | `{ <sourceName>: <data>, ... }` | Same shape | After external data fetched. Plugin modifies fetched data. |
-| `onContentLoaded` | `{ path, frontMatter: { ... }, body: "..." }` | Same shape | After discovery. Plugin modifies page metadata. Fired per page. |
-| `onDataCascadeReady` | `{ path, data: { ... } }` | Same shape | After cascade resolved. Plugin enriches cascade data. Fired per page. |
 
 #### Read-only hooks (return value ignored)
 

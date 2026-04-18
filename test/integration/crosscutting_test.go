@@ -308,7 +308,7 @@ var _ = Describe("Cross-Cutting Integration", func() {
 	// ── Read-only hook payload contract ──────────────────────────────
 
 	Describe("Read-only hook payload contract", func() {
-		It("onBuildComplete receives stats and return is ignored", func() {
+		It("onBuildComplete receives stats and passes payload through", func() {
 			registry := plugin.NewHookRegistry()
 			var receivedStats map[string]interface{}
 			registry.Register(plugin.OnBuildComplete, func(_ context.Context, payload interface{}) (interface{}, error) {
@@ -316,7 +316,9 @@ var _ = Describe("Cross-Cutting Integration", func() {
 				Expect(ok).To(BeTrue(),
 					"onBuildComplete payload must be a JSON-serializable map")
 				receivedStats = stats
-				return nil, nil // return ignored
+				// Read-only hooks pass payload through unchanged so chained
+				// handlers still receive the original stats
+				return payload, nil
 			})
 
 			stats := map[string]interface{}{
