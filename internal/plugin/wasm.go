@@ -458,6 +458,17 @@ func (r *WASMRuntime) callStringFilter(fn api.Function, input string) (interface
 		resultLen := uint32(results[1])
 		// ABI error convention: (0, 0) signals a plugin execution error
 		if resultPtr == 0 && resultLen == 0 {
+			// Check for optional last_error() export for detailed message
+			if lastErrFn := r.mod.ExportedFunction("last_error"); lastErrFn != nil {
+				if errResults, err := lastErrFn.Call(context.Background()); err == nil && len(errResults) >= 2 {
+					errPtr, errLen := uint32(errResults[0]), uint32(errResults[1])
+					if errPtr != 0 && errLen != 0 {
+						if errMsg, ok := mem.Read(errPtr, errLen); ok {
+							return nil, fmt.Errorf("WASM filter error: %s", string(errMsg))
+						}
+					}
+				}
+			}
 			return nil, fmt.Errorf("WASM filter returned (0, 0) — plugin execution error")
 		}
 		resultData, ok := mem.Read(resultPtr, resultLen)
@@ -467,7 +478,7 @@ func (r *WASMRuntime) callStringFilter(fn api.Function, input string) (interface
 		return string(resultData), nil
 	}
 
-	return input, nil
+	return nil, fmt.Errorf("WASM filter ABI mismatch: expected 2 return values (ptr, len), got %d", len(results))
 }
 
 // CallExportRaw invokes a WASM function with raw i32 arguments and reads
@@ -492,6 +503,19 @@ func (r *WASMRuntime) CallExportRaw(name string, ptr, length uint32) (string, er
 		resultPtr := uint32(results[0])
 		resultLen := uint32(results[1])
 		if resultPtr == 0 && resultLen == 0 {
+			if lastErrFn := r.mod.ExportedFunction("last_error"); lastErrFn != nil {
+				if errResults, err := lastErrFn.Call(context.Background()); err == nil && len(errResults) >= 2 {
+					errPtr, errLen := uint32(errResults[0]), uint32(errResults[1])
+					if errPtr != 0 && errLen != 0 {
+						mem := r.mod.Memory()
+						if mem != nil {
+							if errMsg, ok := mem.Read(errPtr, errLen); ok {
+								return "", fmt.Errorf("WASM function %q error: %s", name, string(errMsg))
+							}
+						}
+					}
+				}
+			}
 			return "", fmt.Errorf("WASM function %q returned (0, 0) — plugin execution error", name)
 		}
 		mem := r.mod.Memory()
