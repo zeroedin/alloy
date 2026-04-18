@@ -164,12 +164,13 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		if siteData == nil {
 			siteData = make(map[string]interface{})
 		}
+		cacheDir := resolveDir(cfg.ProjectRoot, ".alloy/fetch-cache")
 		for name, src := range cfg.Sources {
 			var fetched interface{}
 			var fetchErr error
 			switch src.Type {
 			case "rest":
-				fetched, fetchErr = fetch.FetchREST(src.URL)
+				fetched, fetchErr = fetch.FetchRESTWithRefetch(src.URL, cacheDir, cfg.Refetch)
 			case "graphql":
 				fetched, fetchErr = fetch.FetchGraphQL(src.Endpoint, src.Query)
 			default:
@@ -183,6 +184,9 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			key := src.As
 			if key == "" {
 				key = name
+			}
+			if _, exists := siteData[key]; exists {
+				log.Printf("warning: source %q overwrites existing data key %q", name, key)
 			}
 			siteData[key] = fetched
 		}
@@ -251,6 +255,11 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 				url, err := permalink.ResolveForSection(page, cfg.Permalinks)
 				if err != nil {
 					return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
+				}
+				// Skip prefixing for permalink:false (empty URL) and absolute URLs
+				if url == "" || strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "//") {
+					page.URL = url
+					continue
 				}
 				// Strip language code from resolved URL — RelPath includes
 				// the lang prefix (e.g., "fr/index.md", "en/index.md")
