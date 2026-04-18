@@ -65,8 +65,22 @@ func RegisterBuiltinFilters(engine TemplateEngine) error {
 		"round":          Round,
 		"abs":            Abs,
 		"markdownify":    Markdownify,
-		"findRE":         FindRE,
-		"replaceRE":      ReplaceRE,
+		"findRE": func(input interface{}, args ...interface{}) interface{} {
+			// Liquid convention: input=text, args[0]=pattern
+			// Go function: input=pattern, args[0]=text
+			if len(args) == 0 {
+				return []string{}
+			}
+			return FindRE(args[0], input)
+		},
+		"replaceRE": func(input interface{}, args ...interface{}) interface{} {
+			// Liquid: input=text, args[0]=pattern, args[1]=replacement
+			// Go: input=pattern, args[0]=text, args[1]=replacement
+			if len(args) < 2 {
+				return toString(input)
+			}
+			return ReplaceRE(args[0], input, args[1])
+		},
 		"json":           JSONFilter,
 		"default":        Default,
 		"fingerprint":    Fingerprint,

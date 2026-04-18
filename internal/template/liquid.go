@@ -150,22 +150,26 @@ var knownLiquidFilters = map[string]bool{
 	"uniq": true, "compact": true, "map": true,
 	"where": true, "reject": true, "has": true,
 	"find": true, "find_index": true, "concat": true, "sum": true,
-	// alloyFilterBridge methods
-	"slugify": true, "contains": true, "group_by": true,
+	// alloyFilterBridge methods (excluding contains, findRE, replaceRE
+	// which need the plugin_filter bridge for correct Liquid behavior)
+	"slugify": true, "group_by": true,
 	"intersect": true, "union": true, "complement": true,
 	"absolute_url": true, "markdownify": true,
-	"findRE": true, "replaceRE": true, "json": true,
-	"fingerprint": true, "safeHTML": true, "url": true,
+	"json": true, "fingerprint": true, "safeHTML": true, "url": true,
 }
 
 func (e *liquidEngine) AddFilter(name string, fn FilterFunc) error {
-	e.filters.funcs[name] = fn
-	// Novel filters need template pre-processing since they don't have
-	// exported methods on any registered filter struct for liquidgo's
-	// reflection-based dispatch.
-	if !knownLiquidFilters[name] {
+	// If this filter was already registered (e.g., by RegisterBuiltinFilters),
+	// mark it as dynamic so the override routes through plugin_filter bridge
+	// instead of liquidgo's built-in reflection dispatch. This ensures
+	// "last loaded wins" per spec §4.
+	if _, exists := e.filters.funcs[name]; exists {
+		e.dynamicFilters[name] = true
+	} else if !knownLiquidFilters[name] {
+		// Novel filters always need the bridge
 		e.dynamicFilters[name] = true
 	}
+	e.filters.funcs[name] = fn
 	return nil
 }
 
