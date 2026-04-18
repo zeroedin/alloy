@@ -175,11 +175,13 @@ var _ = Describe("Build Pipeline", func() {
 				"content/blog.md":  "---\ntitle: Blog\n---\n# Blog",
 			}
 
-			// Simulate: first full build populates cache
+			// Simulate: first full build populates cache from the same content
 			previousCache := cache.New()
-			previousCache.SetHash("index.md", cache.HashContent([]byte("---\ntitle: Home\n---\n# Home")))
-			previousCache.SetHash("about.md", cache.HashContent([]byte("---\ntitle: About\n---\n# About")))
-			previousCache.SetHash("blog.md", cache.HashContent([]byte("---\ntitle: Blog\n---\n# Blog")))
+			for path, body := range contentMap {
+				// Strip "content/" prefix to match Page.RelPath convention
+				relPath := path[len("content/"):]
+				previousCache.SetHash(relPath, cache.HashContent([]byte(body)))
+			}
 
 			// Only about.md changed
 			contentMap["content/about.md"] = "---\ntitle: About\n---\n# About Updated"
@@ -227,9 +229,10 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Cache has all pages + template tracking
 			previousCache := cache.New()
-			previousCache.SetHash("index.md", cache.HashContent([]byte("---\ntitle: Home\n---\n# Home")))
-			previousCache.SetHash("about.md", cache.HashContent([]byte("---\ntitle: About\n---\n# About")))
-			previousCache.SetHash("blog.md", cache.HashContent([]byte("---\ntitle: Blog\n---\n# Blog")))
+			for path, body := range contentMap {
+				relPath := path[len("content/"):]
+				previousCache.SetHash(relPath, cache.HashContent([]byte(body)))
+			}
 			previousCache.TrackTemplateUsage("index.md", "layouts/default.liquid")
 			previousCache.TrackTemplateUsage("about.md", "layouts/default.liquid")
 			previousCache.TrackTemplateUsage("blog.md", "layouts/post.liquid")
