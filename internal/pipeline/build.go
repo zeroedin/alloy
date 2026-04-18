@@ -19,6 +19,7 @@ import (
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/data"
+	"github.com/zeroedin/alloy/internal/fetch"
 	"github.com/zeroedin/alloy/internal/i18n"
 	"github.com/zeroedin/alloy/internal/output"
 	"github.com/zeroedin/alloy/internal/pagination"
@@ -157,6 +158,40 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		log.Printf("warning: loading cascade data: %v", cascadeErr)
 	}
 	siteData := loadSiteData(cfg)
+
+	// Fetch external data sources and merge into siteData
+	if len(cfg.Sources) > 0 {
+		if siteData == nil {
+			siteData = make(map[string]interface{})
+		}
+		cacheDir := resolveDir(cfg.ProjectRoot, ".alloy/fetch-cache")
+		for name, src := range cfg.Sources {
+			var fetched interface{}
+			var fetchErr error
+			switch src.Type {
+			case "rest":
+				fetched, fetchErr = fetch.FetchRESTWithRefetch(src.URL, cacheDir, cfg.Refetch)
+			case "graphql":
+				fetched, fetchErr = fetch.FetchGraphQL(src.Endpoint, src.Query)
+			default:
+				log.Printf("warning: unknown source type %q for %s", src.Type, name)
+				continue
+			}
+			if fetchErr != nil {
+				log.Printf("warning: fetching source %s: %v", name, fetchErr)
+				continue
+			}
+			key := src.As
+			if key == "" {
+				key = name
+			}
+			if _, exists := siteData[key]; exists {
+				log.Printf("warning: source %q overwrites existing data key %q", name, key)
+			}
+			siteData[key] = fetched
+		}
+	}
+
 	if _, err := hooks.RunWithTimeout(plugin.OnDataFetched, siteData); err != nil {
 		return nil, fmt.Errorf("plugin hook onDataFetched: %w", err)
 	}
@@ -221,7 +256,17 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 				if err != nil {
 					return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
 				}
-				page.URL = "/" + prefix + strings.TrimPrefix(url, "/")
+				// Skip prefixing for permalink:false (empty URL) and absolute URLs
+				if url == "" || strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "//") {
+					page.URL = url
+					continue
+				}
+				// Strip language code from resolved URL — RelPath includes
+				// the lang prefix (e.g., "fr/index.md", "en/index.md")
+				// which ResolveForSection includes in the URL.
+				resolved := strings.TrimPrefix(url, "/")
+				resolved = strings.TrimPrefix(resolved, lc.Code+"/")
+				page.URL = "/" + prefix + resolved
 			}
 
 			// Step 5: Cascade resolution
