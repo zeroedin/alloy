@@ -159,18 +159,29 @@ var _ = Describe("LiquidEngine", func() {
 	// engine due to type mismatches, registration issues, or dispatch.
 
 	Context("Built-in filters through Liquid rendering", func() {
+		// RegisterBuiltinFilters must be called so the Liquid engine
+		// has access to Alloy's built-in filters (findRE, replaceRE, etc.)
+		// Without it, the filter bridge has nothing to dispatch to.
+
 		It("findRE returns matches in template", func() {
 			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
 			tpl, err := engine.Parse("test", []byte(`{{ "hello world 123" | findRE: "[0-9]+" }}`))
 			Expect(err).NotTo(HaveOccurred())
 			result, err := tpl.Render(map[string]interface{}{})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(result)).To(ContainSubstring("123"),
+			rendered := string(result)
+			// Assert the output is NOT the original input — proves the
+			// filter actually ran, not just passed through
+			Expect(rendered).NotTo(Equal("hello world 123"),
+				"findRE must transform the input, not pass it through")
+			Expect(rendered).To(ContainSubstring("123"),
 				"findRE must return matches when used in Liquid template")
 		})
 
 		It("replaceRE performs substitution in template", func() {
 			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
 			tpl, err := engine.Parse("test", []byte(`{{ "hello world" | replaceRE: "world", "alloy" }}`))
 			Expect(err).NotTo(HaveOccurred())
 			result, err := tpl.Render(map[string]interface{}{})
@@ -184,6 +195,7 @@ var _ = Describe("LiquidEngine", func() {
 
 		It("contains returns boolean usable in conditionals", func() {
 			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
 			// Test both positive and negative cases to prove contains
 			// returns a boolean, not the input string (which would be
 			// truthy for both cases)
@@ -200,6 +212,7 @@ var _ = Describe("LiquidEngine", func() {
 
 		It("newline_to_br converts newlines to br tags", func() {
 			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
 			// Pass the string with a real newline via render context —
 			// a backtick template literal \n is a literal backslash-n
 			tpl, err := engine.Parse("test", []byte(`{{ s | newline_to_br }}`))
