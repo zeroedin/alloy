@@ -76,9 +76,29 @@ func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
 // It handles both inline code and fenced code blocks by processing
 // the entire source — tags inside code spans/blocks get placeholders too,
 // which goldmark will render inside <code> elements, and then we restore them.
+// blockShortcodeLineRe matches a line that contains exactly one {% %} tag
+// (with optional leading/trailing whitespace). Only single-line tags qualify
+// as block shortcodes — multi-tag lines and control-flow lines are left inline.
+var blockShortcodeLineRe = regexp.MustCompile(`(?m)^([ \t]*)(\{%-?[^\n]*?-?%\})[ \t]*$`)
+
 func protectTemplateTags(src []byte) ([]byte, []string) {
 	var placeholders []string
-	result := templateTagPattern.ReplaceAllFunc(src, func(match []byte) []byte {
+
+	// First pass: replace block-level {% %} tags with placeholders surrounded
+	// by blank lines so goldmark treats them as separate blocks.
+	// Preserve leading indentation for list/blockquote context.
+	result := blockShortcodeLineRe.ReplaceAllFunc(src, func(match []byte) []byte {
+		trimmed := bytes.TrimSpace(match)
+		// Detect leading indentation
+		indent := match[:bytes.Index(match, []byte("{%"))]
+		idx := len(placeholders)
+		placeholders = append(placeholders, string(trimmed))
+		placeholder := fmt.Sprintf("\n\n%sALLOY_TPL_%d_ELPMT\n\n", string(indent), idx)
+		return []byte(placeholder)
+	})
+
+	// Second pass: replace remaining inline template tags with text placeholders
+	result = templateTagPattern.ReplaceAllFunc(result, func(match []byte) []byte {
 		idx := len(placeholders)
 		placeholders = append(placeholders, string(match))
 		placeholder := fmt.Sprintf("ALLOY_TPL_%d_ELPMT", idx)
@@ -87,12 +107,21 @@ func protectTemplateTags(src []byte) ([]byte, []string) {
 	return result, placeholders
 }
 
+
 // restoreTemplateTags replaces placeholders back with the original template tags.
+// Block-level placeholders end up in their own <p> tags from goldmark — strip
+// the <p> wrapper to leave the raw template tag at block level.
 func restoreTemplateTags(html []byte, placeholders []string) []byte {
 	result := string(html)
 	for i, original := range placeholders {
 		placeholder := fmt.Sprintf("ALLOY_TPL_%d_ELPMT", i)
-		result = strings.ReplaceAll(result, placeholder, original)
+		// Strip <p> wrapper if the placeholder is the sole content of a paragraph
+		wrapped := "<p>" + placeholder + "</p>"
+		if strings.Contains(result, wrapped) {
+			result = strings.ReplaceAll(result, wrapped, original)
+		} else {
+			result = strings.ReplaceAll(result, placeholder, original)
+		}
 	}
 	return []byte(result)
 }
