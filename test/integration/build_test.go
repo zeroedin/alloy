@@ -11,6 +11,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/pipeline"
 )
@@ -336,6 +337,43 @@ var _ = Describe("Full build pipeline", func() {
 				"must inherit category from blog/deep/_data.yaml")
 			Expect(leafHTML).To(ContainSubstring("post"),
 				"must inherit layout from blog/_data.yaml")
+		})
+	})
+
+	// ── Issue #229: Template usage tracking in cache ─────────────────
+	// Build() must call cache.TrackTemplateUsage during layout resolution
+	// so that layout changes can invalidate affected pages via
+	// cache.InvalidatedPages. Without tracking, layout changes rebuild
+	// nothing in incremental mode.
+
+	Describe("Template usage tracking in build cache", func() {
+		It("Build persists template usage so layout changes invalidate pages", func() {
+			cfgPath := filepath.Join(fixtureDir("minimal"), "alloy.config.yaml")
+			cfg, err := config.Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(BeNumerically(">", 0))
+
+			// Load the cache that Build() wrote
+			cacheDir := filepath.Join(cfg.ProjectRoot, ".alloy")
+			savedCache, err := cache.LoadFrom(cacheDir)
+			Expect(err).NotTo(HaveOccurred(),
+				"Build must write cache to .alloy/cache.json")
+			Expect(savedCache).NotTo(BeNil())
+
+			// The cache must have template tracking data so that
+			// InvalidatedPages returns pages using a given layout.
+			// The minimal fixture uses default.liquid for at least one page.
+			invalidated := savedCache.InvalidatedPages("layouts/default.liquid")
+			Expect(invalidated).NotTo(BeEmpty(),
+				"cache must track which pages use each layout — "+
+					"InvalidatedPages('layouts/default.liquid') must return pages "+
+					"that were resolved to default.liquid during Build(). "+
+					"Without TrackTemplateUsage during layout resolution, "+
+					"layout changes cannot invalidate cached pages.")
 		})
 	})
 })

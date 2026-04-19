@@ -286,6 +286,7 @@ Key points:
 10. template.RegisterBuiltinFilters(engine)               ✅ done
 11. renderPages (markdown → template tags)                ✅ done
 12. template.ResolveLayout(page, layoutsDir, engine)      ✅ done
+12b. cache.TrackTemplateUsage(page.RelPath, layoutPath)   ← MISSING (issue #229)
 13. Render page through layout ({{ content }} injection)  ✅ done
 14. output.ComputeOutputPath(page) → output path          ✅ done
 15. output.WriteFile(outputPath, html)                    ✅ done
