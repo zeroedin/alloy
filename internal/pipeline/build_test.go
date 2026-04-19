@@ -250,6 +250,111 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Incremental rebuild with SSR (issue #231) ──────────────────
+	// alloy serve --preview runs the full pipeline including SSR.
+	// Incremental rebuilds must run Phase 2 on rebuilt pages that
+	// have custom elements, and handle component definition changes.
+
+	Describe("BuildIncremental with SSR", func() {
+		It("runs Phase 2 SSR on incrementally rebuilt pages with custom elements", func() {
+			cfg := &config.Config{
+				Title:   "SSR Incremental Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				SSR:     &config.SSRConfig{Command: "cat"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":      "---\ntitle: Home\n---\n<h1>Home</h1>",
+				"content/components.md": "---\ntitle: Components\n---\n<ds-card>Hello</ds-card>",
+			}
+
+			// Cache from previous build
+			previousCache := cache.New()
+			for path, body := range contentMap {
+				relPath := path[len("content/"):]
+				previousCache.SetHash(relPath, cache.HashContent([]byte(body)))
+			}
+
+			// components.md changed — has custom elements, needs SSR
+			contentMap["content/components.md"] = "---\ntitle: Components\n---\n<ds-card>Updated</ds-card>"
+			changedFiles := []string{"content/components.md"}
+
+			result, err := pipeline.BuildIncremental(cfg, contentMap, previousCache, changedFiles)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(1),
+				"only the changed page must be rebuilt")
+			Expect(result.SSRSkipped).To(BeFalse(),
+				"SSR must run in preview mode — Phase 2 must not be skipped "+
+					"when SSR config is present")
+		})
+
+		It("component definition change triggers re-SSR without Phase 1 rebuild", func() {
+			cfg := &config.Config{
+				Title:   "SSR Incremental Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				SSR:     &config.SSRConfig{Command: "cat"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":    "---\ntitle: Home\n---\n<h1>Home</h1>",
+				"content/page-a.md":   "---\ntitle: Page A\n---\n<ds-card>A</ds-card>",
+				"content/page-b.md":   "---\ntitle: Page B\n---\n<ds-button>B</ds-button>",
+			}
+
+			// Cache from previous build — all pages unchanged
+			previousCache := cache.New()
+			for path, body := range contentMap {
+				relPath := path[len("content/"):]
+				previousCache.SetHash(relPath, cache.HashContent([]byte(body)))
+			}
+
+			// A component source file changed (not a content file).
+			// Pages using ds-card must be re-SSR'd even though their
+			// content hasn't changed.
+			changedFiles := []string{"components/ds-card/ds-card.js"}
+
+			result, err := pipeline.BuildIncremental(cfg, contentMap, previousCache, changedFiles)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			// page-a.md uses ds-card — must be re-SSR'd
+			// page-b.md uses ds-button — not affected
+			// index.md has no components — not affected
+			Expect(result.SSRSkipped).To(BeFalse(),
+				"SSR must run when component source files changed")
+		})
+
+		It("skips SSR for pages whose Phase 1 output is unchanged", func() {
+			cfg := &config.Config{
+				Title:   "SSR Incremental Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				SSR:     &config.SSRConfig{Command: "cat"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":      "---\ntitle: Home\n---\n<h1>Home</h1>",
+				"content/components.md": "---\ntitle: Components\n---\n<ds-card>Hello</ds-card>",
+			}
+
+			// Cache from previous build — nothing changed
+			previousCache := cache.New()
+			for path, body := range contentMap {
+				relPath := path[len("content/"):]
+				previousCache.SetHash(relPath, cache.HashContent([]byte(body)))
+			}
+
+			// No files changed — incremental rebuild should skip everything
+			result, err := pipeline.BuildIncremental(cfg, contentMap, previousCache, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(0),
+				"no pages changed — nothing to rebuild")
+			Expect(result.PagesSkipped).To(Equal(2),
+				"all pages must be skipped when nothing changed — "+
+					"SSR should not run on unchanged pages")
+		})
+	})
+
 	// ── Phase 1 → Phase 2 handoff (§2) ──────────────────────────────
 	// Per spec §6: Phase 2 operates in memory. For each page with custom
 	// elements, Alloy pipes the full page HTML to ssr.command via stdin.
