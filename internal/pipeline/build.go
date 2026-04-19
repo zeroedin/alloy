@@ -881,7 +881,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		return &BuildResult{
 			OutputDir:  cfg.Build.Output,
 			PageCount:  0,
-			SSRSkipped: true,
+			SSRSkipped: cfg.SSR == nil,
 			Duration:   time.Since(start),
 		}, nil
 	}
@@ -997,9 +997,10 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		// Also check for component definition changes — re-SSR pages
 		// using changed components even if Phase 1 skipped them
 		for _, f := range changedFiles {
-			if strings.HasPrefix(f, "components/") {
+			normalized := filepath.ToSlash(f)
+			if strings.HasPrefix(normalized, "components/") {
 				// Extract component name from path (e.g., "components/ds-card/ds-card.js" → "ds-card")
-				parts := strings.SplitN(strings.TrimPrefix(f, "components/"), "/", 2)
+				parts := strings.SplitN(strings.TrimPrefix(normalized, "components/"), "/", 2)
 				componentTag := parts[0]
 				// Find all pages that use this component (from their content)
 				contentPrefix := cfg.Structure.Content
@@ -1014,7 +1015,12 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 					if tags := ssr.ScanComponents(body); len(tags) > 0 {
 						for _, tag := range tags {
 							if tag == componentTag {
-								ssrHTML[relPath] = body
+								// Use rendered HTML if available, fall back to raw content
+								if html := renderedContent[relPath]; html != "" {
+									ssrHTML[relPath] = html
+								} else {
+									ssrHTML[relPath] = body
+								}
 								break
 							}
 						}
@@ -1031,7 +1037,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				for relPath, html := range ssrResult {
 					renderedContent[relPath] = html
 				}
-				ssrPagesRendered = len(ssrHTML)
+				ssrPagesRendered = len(ssrResult)
 			}
 		}
 	}
