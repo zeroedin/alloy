@@ -36,14 +36,15 @@ var ErrNotImplemented = errors.New("not implemented")
 
 // BuildResult holds the outcome of a build.
 type BuildResult struct {
-	OutputDir       string
-	PageCount       int
-	PagesSkipped    int               // pages skipped via cache (incremental only)
-	Duration        time.Duration
-	Errors          []error
-	SSRSkipped      bool              // true when Phase 2 was skipped (no ssr: config)
-	PagesRendered   []string          // source paths of pages that were rendered
-	RenderedContent map[string]string // source path → final rendered HTML
+	OutputDir        string
+	PageCount        int
+	PagesSkipped     int               // pages skipped via cache (incremental only)
+	SSRPagesRendered int               // pages that went through Phase 2 SSR
+	Duration         time.Duration
+	Errors           []error
+	SSRSkipped       bool              // true when Phase 2 was skipped (no ssr: config)
+	PagesRendered    []string          // source paths of pages that were rendered
+	RenderedContent  map[string]string // source path → final rendered HTML
 }
 
 // Build runs the complete build pipeline (Phase 0 through Phase 3).
@@ -880,7 +881,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		return &BuildResult{
 			OutputDir:  cfg.Build.Output,
 			PageCount:  0,
-			SSRSkipped: true,
+			SSRSkipped: cfg.SSR == nil,
 			Duration:   time.Since(start),
 		}, nil
 	}
@@ -971,14 +972,93 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
+	// Phase 2: SSR for incremental rebuilds (preview mode)
+	ssrSkipped := cfg.SSR == nil
+	ssrPagesRendered := 0
+
+	if cfg.SSR != nil {
+		// Collect pages needing SSR: rebuilt pages with custom elements.
+		// Scan raw content (not rendered) since goldmark may strip raw HTML.
+		contentPrefix := cfg.Structure.Content
+		if contentPrefix == "" {
+			contentPrefix = "content"
+		}
+		ssrHTML := make(map[string]string)
+		for _, page := range pagesToRender {
+			rawContent := contentMap[filepath.ToSlash(filepath.Join(contentPrefix, page.RelPath))]
+			if tags := ssr.ScanComponents(rawContent); len(tags) > 0 {
+				html := renderedContent[page.RelPath]
+				if html != "" {
+					ssrHTML[page.RelPath] = html
+				}
+			}
+		}
+
+		// Also check for component definition changes — re-SSR pages
+		// using changed components even if Phase 1 skipped them
+		for _, f := range changedFiles {
+			normalized := filepath.ToSlash(f)
+			if strings.HasPrefix(normalized, "components/") {
+				// Extract component name from path (e.g., "components/ds-card/ds-card.js" → "ds-card")
+				parts := strings.SplitN(strings.TrimPrefix(normalized, "components/"), "/", 2)
+				componentTag := parts[0]
+				// Find all pages that use this component (from their content)
+				contentPrefix := cfg.Structure.Content
+				if contentPrefix == "" {
+					contentPrefix = "content"
+				}
+				for path, body := range contentMap {
+					relPath := strings.TrimPrefix(path, contentPrefix+"/")
+					if _, alreadyQueued := ssrHTML[relPath]; alreadyQueued {
+						continue
+					}
+					if tags := ssr.ScanComponents(body); len(tags) > 0 {
+						for _, tag := range tags {
+							if tag == componentTag {
+								if html := renderedContent[relPath]; html != "" {
+									ssrHTML[relPath] = html
+								} else {
+									// Page was skipped in Phase 1 — render on-demand for SSR
+									for _, p := range allPages {
+										if p.RelPath == relPath {
+											onDemand, renderErr := renderPages([]*content.Page{p}, cfg, nil, nil, nil, nil)
+											if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
+												ssrHTML[relPath] = string(p.RenderedBody)
+											}
+											break
+										}
+									}
+								}
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if len(ssrHTML) > 0 {
+			ssrResult, err := BuildPhase2(ssrHTML, cfg.SSR)
+			if err != nil {
+				log.Printf("warning: incremental SSR failed: %v", err)
+			} else {
+				for relPath, html := range ssrResult {
+					renderedContent[relPath] = html
+				}
+				ssrPagesRendered = len(ssrResult)
+			}
+		}
+	}
+
 	return &BuildResult{
-		OutputDir:       cfg.Build.Output,
-		PageCount:       len(pagesToRender),
-		PagesSkipped:    skipped,
-		Duration:        time.Since(start),
-		SSRSkipped:      true, // incremental builds do not run Phase 2 SSR
-		PagesRendered:   rendered,
-		RenderedContent: renderedContent,
+		OutputDir:        cfg.Build.Output,
+		PageCount:        len(pagesToRender),
+		PagesSkipped:     skipped,
+		SSRPagesRendered: ssrPagesRendered,
+		Duration:         time.Since(start),
+		SSRSkipped:       ssrSkipped,
+		PagesRendered:    rendered,
+		RenderedContent:  renderedContent,
 	}, nil
 }
 
