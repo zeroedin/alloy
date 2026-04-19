@@ -52,6 +52,9 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 
 	config.ApplyDefaults(cfg)
 
+	// Track which pages use which layouts for cache invalidation
+	templateUsage := make(map[string]string) // page.RelPath → layoutPath (relative)
+
 	// Plugin system: discover plugins and set up hook registry
 	hooks := plugin.NewHookRegistry()
 	hooks.SetTimeout(cfg.Plugins.Timeout)
@@ -355,6 +358,11 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 					continue // layout: false — skip
 				}
 
+				// Track template usage for cache invalidation
+				if relLayout, relErr := filepath.Rel(cfg.ProjectRoot, layoutPath); relErr == nil {
+					templateUsage[page.RelPath] = filepath.ToSlash(relLayout)
+				}
+
 				layoutContent, err := os.ReadFile(layoutPath)
 				if err != nil {
 					return nil, fmt.Errorf("reading layout %s: %w", layoutPath, err)
@@ -506,6 +514,11 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			}
 			if layoutPath == "" {
 				continue
+			}
+
+			// Track template usage for cache invalidation
+			if relLayout, relErr := filepath.Rel(cfg.ProjectRoot, layoutPath); relErr == nil {
+				templateUsage[page.RelPath] = filepath.ToSlash(relLayout)
 			}
 
 			layoutContent, err := os.ReadFile(layoutPath)
@@ -735,6 +748,10 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		buildCache := cache.New()
 		for _, page := range pages {
 			buildCache.SetHash(page.RelPath, cache.HashContent(page.Content))
+		}
+		// Track template usage for incremental rebuild invalidation
+		for pagePath, layoutPath := range templateUsage {
+			buildCache.TrackTemplateUsage(pagePath, layoutPath)
 		}
 		cacheDir := resolveDir(cfg.ProjectRoot, ".alloy")
 		if err := buildCache.SaveTo(cacheDir); err != nil {
