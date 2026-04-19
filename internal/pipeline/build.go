@@ -359,9 +359,11 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 				}
 
 				// Track template usage for cache invalidation
+				trackedLayout := filepath.ToSlash(filepath.Clean(layoutPath))
 				if relLayout, relErr := filepath.Rel(cfg.ProjectRoot, layoutPath); relErr == nil {
-					templateUsage[page.RelPath] = filepath.ToSlash(relLayout)
+					trackedLayout = filepath.ToSlash(relLayout)
 				}
+				templateUsage[page.RelPath] = trackedLayout
 
 				layoutContent, err := os.ReadFile(layoutPath)
 				if err != nil {
@@ -517,9 +519,11 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 			}
 
 			// Track template usage for cache invalidation
+			trackedLayout := filepath.ToSlash(filepath.Clean(layoutPath))
 			if relLayout, relErr := filepath.Rel(cfg.ProjectRoot, layoutPath); relErr == nil {
-				templateUsage[page.RelPath] = filepath.ToSlash(relLayout)
+				trackedLayout = filepath.ToSlash(relLayout)
 			}
+			templateUsage[page.RelPath] = trackedLayout
 
 			layoutContent, err := os.ReadFile(layoutPath)
 			if err != nil {
