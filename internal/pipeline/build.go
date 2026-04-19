@@ -1015,11 +1015,19 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 					if tags := ssr.ScanComponents(body); len(tags) > 0 {
 						for _, tag := range tags {
 							if tag == componentTag {
-								// Use rendered HTML if available, fall back to raw content
 								if html := renderedContent[relPath]; html != "" {
 									ssrHTML[relPath] = html
 								} else {
-									ssrHTML[relPath] = body
+									// Page was skipped in Phase 1 — render on-demand for SSR
+									for _, p := range allPages {
+										if p.RelPath == relPath {
+											onDemand, renderErr := renderPages([]*content.Page{p}, cfg, nil, nil, nil, nil)
+											if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
+												ssrHTML[relPath] = string(p.RenderedBody)
+											}
+											break
+										}
+									}
 								}
 								break
 							}
