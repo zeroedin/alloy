@@ -96,7 +96,7 @@ draft: false
 Published on {{ page.date | date: "%B %d, %Y" }}.
 ```
 
-Template tags (`{{ }}` and `{% %}`) work directly in Markdown — no special syntax needed. A goldmark extension preserves them through Markdown processing automatically.
+Template tags (`{{ }}` and `{% %}`) work directly in Markdown — no special syntax needed. Two goldmark extensions handle them: inline tags are preserved as-is, and block shortcodes (`{% tag %}...{% endtag %}` on their own lines) are treated as block-level boundaries so they don't get wrapped in `<p>` tags.
 
 ## Templates
 
@@ -208,9 +208,9 @@ Plugins can hook into 12 lifecycle events. Hooks chain in alphabetical filename 
 | `onDataFetched` | After external data fetch | Yes |
 | `onDataCascadeReady` | Cascade fully resolved | Yes |
 | `onContentLoaded` | After content discovery | Yes |
-| `onContentTransformed` | After Markdown rendering | Yes |
-| `onPageRendered` | After layout rendering | Yes |
-| `onAssetProcess` | Per-asset processing | Yes |
+| `onContentTransformed` | After Markdown rendering (per page, receives HTML string) | Yes |
+| `onPageRendered` | After layout rendering (per page, receives HTML string) | Yes |
+| `onAssetProcess` | Per-asset processing (receives `{ path, content }`) | Yes |
 | `onBuildComplete` | Build finished | No |
 | `onDevServerStart` | Dev server ready | No |
 | `onFileChanged` | File changed in watch mode | No |
@@ -241,10 +241,10 @@ Compatible with any SSR engine that reads stdin and writes stdout. [golit](https
 
 Two modes, same infrastructure:
 
-- **`alloy serve`** — Dev mode. Phase 1 only (Liquid + Markdown), components render client-side. Pages held in memory, no disk writes. Static files served from source.
-- **`alloy serve --preview`** — Preview mode. Full production pipeline (Phase 1 + Phase 2 SSR if configured). Writes to `_site/` and serves from disk.
+- **`alloy serve`** — Dev mode. Phase 1 only (Liquid + Markdown), components render client-side. Pages held in memory, no disk writes. Static files served from source. On file changes, only affected pages are rebuilt (incremental via content-hash cache).
+- **`alloy serve --preview`** — Preview mode. Full production pipeline (Phase 1 + Phase 2 SSR if configured). Writes to `_site/` and serves from disk. Incremental rebuilds include SSR for pages with custom elements. Component definition changes trigger re-SSR of affected pages.
 
-Both modes include WebSocket live reload, file watching with 50ms debounce, port auto-increment (tries up to 10 ports), custom 404 page support, and error overlay in the browser.
+Both modes include WebSocket live reload, file watching with 50ms debounce, port auto-increment (tries up to 10 ports), custom 404 page support, and error overlay in the browser. Layout changes invalidate all pages using that layout. Config changes trigger a full rebuild.
 
 ## CLI
 
