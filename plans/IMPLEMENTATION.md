@@ -286,7 +286,9 @@ Key points:
 10. template.RegisterBuiltinFilters(engine)               ✅ done
 11. renderPages (markdown → template tags)                ✅ done
 12. template.ResolveLayout(page, layoutsDir, engine)      ✅ done
-12b. cache.TrackTemplateUsage(page.RelPath, layoutPath)   ← MISSING (issue #229)
+12b. cache.TrackTemplateUsage(page.RelPath, normalizedLayoutPath)   ← MISSING (issue #229)
+     layoutPath must be relative to project root and slash-normalized (filepath.ToSlash),
+     e.g. "layouts/default.liquid" — not an absolute filesystem path.
 13. Render page through layout ({{ content }} injection)  ✅ done
 14. output.ComputeOutputPath(page) → output path          ✅ done
 15. output.WriteFile(outputPath, html)                    ✅ done

@@ -357,23 +357,28 @@ var _ = Describe("Full build pipeline", func() {
 			Expect(result).NotTo(BeNil())
 			Expect(result.PageCount).To(BeNumerically(">", 0))
 
-			// Load the cache that Build() wrote
+			// Verify cache file was actually written to disk
 			cacheDir := filepath.Join(cfg.ProjectRoot, ".alloy")
-			savedCache, err := cache.LoadFrom(cacheDir)
-			Expect(err).NotTo(HaveOccurred(),
+			cacheFile := filepath.Join(cacheDir, "cache.json")
+			Expect(cacheFile).To(BeAnExistingFile(),
 				"Build must write cache to .alloy/cache.json")
+
+			// Load the cache that Build() wrote
+			savedCache, err := cache.LoadFrom(cacheDir)
+			Expect(err).NotTo(HaveOccurred())
 			Expect(savedCache).NotTo(BeNil())
 
 			// The cache must have template tracking data so that
 			// InvalidatedPages returns pages using a given layout.
-			// The minimal fixture uses default.liquid for at least one page.
-			invalidated := savedCache.InvalidatedPages("layouts/default.liquid")
+			// Use slash-normalized relative path as the template key.
+			templateKey := filepath.ToSlash(filepath.Join("layouts", "default.liquid"))
+			invalidated := savedCache.InvalidatedPages(templateKey)
 			Expect(invalidated).NotTo(BeEmpty(),
-				"cache must track which pages use each layout — "+
-					"InvalidatedPages('layouts/default.liquid') must return pages "+
+				fmt.Sprintf("cache must track which pages use each layout — "+
+					"InvalidatedPages(%q) must return pages "+
 					"that were resolved to default.liquid during Build(). "+
 					"Without TrackTemplateUsage during layout resolution, "+
-					"layout changes cannot invalidate cached pages.")
+					"layout changes cannot invalidate cached pages.", templateKey))
 		})
 	})
 })
