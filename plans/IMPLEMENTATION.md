@@ -549,23 +549,33 @@ The pipeline needs a `ProgressReporter` interface that `Build()` and `BuildIncre
 
 ```go
 type ProgressReporter interface {
-    StartStage(name string, total int)           // "Rendering", 420
-    Update(current int, filePath string)          // 142, "content/blog/my-post.md"
+    StartStage(name string, total int)                          // "Rendering", 420. total=0 for unknown (discovery).
+    Message(text string)                                        // "42 pages found" — for stages without progress bar
+    Update(current int, filePath string, elapsed time.Duration) // 142, "content/blog/my-post.md", 12ms
     EndStage()
     Summary(pageCount int, duration time.Duration, pagesSkipped int)
 }
 ```
 
+`total=0` in `StartStage` means the total is unknown (e.g., discovery stage). The implementation should show a message-style output instead of a progress bar. `Message` is for one-off status lines within a stage.
+
 Two implementations:
-- `TTYProgress` — progress bar with carriage return, adapts to terminal width. Uses `os.Stdout` + `term.IsTerminal()` check.
-- `VerboseProgress` — per-file line output with timing.
+- `TTYProgress` — progress bar with carriage return, adapts to terminal width. TTY detection: `term.IsTerminal(int(os.Stdout.Fd()))` (from `golang.org/x/term`).
+- `VerboseProgress` — per-file line output with timing. Replaces the progress bar (not combined — mixing per-file lines with carriage-return progress produces messy output).
 
 `cmd/build.go` creates the reporter based on flags:
 - `--quiet` → nil (no progress)
 - `--verbose` → `VerboseProgress`
 - default → `TTYProgress` if terminal, nil if piped
 
-The pipeline calls `reporter.StartStage("Rendering", len(pages))` before each stage, `reporter.Update(i, page.RelPath)` per page, and `reporter.EndStage()` after. The final `reporter.Summary(...)` prints the build summary.
+The pipeline must nil-guard every progress call since the reporter may be nil:
+```go
+if reporter != nil { reporter.StartStage("Rendering", len(pages)) }
+// per page:
+if reporter != nil { reporter.Update(i, page.RelPath, elapsed) }
+if reporter != nil { reporter.EndStage() }
+if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.PagesSkipped) }
+```
 
 **Verify**: `go test ./internal/plugin/... ./internal/fetch/... ./internal/i18n/... ./cmd/...`
 

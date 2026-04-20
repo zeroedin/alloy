@@ -2126,7 +2126,7 @@ Without an `ssr:` config block, `--preview` still works — it just serves Phase
 
 ```
 [alloy] 12:34:56 Serving at http://localhost:3000
-[alloy] 12:34:58 Build complete in 47ms (3 pages rebuilt)
+[alloy] 12:34:58 Rebuilt 3 pages in 47ms (417 cached)
 [alloy] 12:35:02 ERROR in layouts/blog/single.liquid:14
          Unknown filter "formattDate" — did you mean "formatDate"?
 ```
@@ -2241,26 +2241,26 @@ A progress bar showing the current pipeline stage, percentage, page count, and t
 ```
 
 Pipeline stages shown in order:
-1. **Discovering** — content discovery + front matter extraction
+1. **Discovering** — content discovery + front matter extraction. Total is unknown at start (discovery produces the count). Shown as a message, not a progress bar.
 2. **Rendering** — Markdown → HTML + template rendering + layout
 3. **SSR** — Phase 2 SSR (only shown when `ssr:` is configured and pages have custom elements)
 4. **Writing** — output files + static copy + sitemap
 
-Each stage shows `[stageName] [progress bar] percentage (current/total) currentFile`. The progress bar width adapts to terminal width. The current file name is truncated if it would exceed the terminal width.
+For stages with a known total, each shows `[stageName] [progress bar] percentage (current/total) currentFile`. For stages where the total is unknown (discovery), a message-style output is used instead. The progress bar width adapts to terminal width. The current file name is truncated if it would exceed the terminal width.
 
 **Default (non-TTY — piped output, CI/CD):**
 
 No progress bar, no carriage returns. Only the final summary line:
 
 ```
-Built 420 pages in 1.8s
+[alloy] Built 420 pages in 1.8s
 ```
 
 This keeps CI logs clean. Errors still print normally.
 
 **`--verbose` flag:**
 
-Per-file output in addition to the progress bar (TTY) or as standalone lines (non-TTY):
+Per-file output replaces the progress bar. Each line shows the stage, file path, and per-file timing:
 
 ```
 [alloy] render content/index.md (12ms)
@@ -2272,7 +2272,7 @@ Per-file output in addition to the progress bar (TTY) or as standalone lines (no
 [alloy] Built 420 pages in 1.8s
 ```
 
-Each line shows the stage, file path, and per-file timing. Useful for identifying slow pages or debugging build issues.
+Useful for identifying slow pages or debugging build issues. No progress bar — per-file lines and carriage-return progress bars would produce messy output.
 
 **`--quiet` flag:**
 
