@@ -543,6 +543,30 @@ if cmd.Flags().Changed("root") {
 
 The flag must be applied **after** config loading but **before** pipeline execution, since all `structure:` paths resolve against `ProjectRoot`.
 
+#### Build progress output
+
+The pipeline needs a `ProgressReporter` interface that `Build()` and `BuildIncremental()` accept (or nil for no progress):
+
+```go
+type ProgressReporter interface {
+    StartStage(name string, total int)           // "Rendering", 420
+    Update(current int, filePath string)          // 142, "content/blog/my-post.md"
+    EndStage()
+    Summary(pageCount int, duration time.Duration, pagesSkipped int)
+}
+```
+
+Two implementations:
+- `TTYProgress` — progress bar with carriage return, adapts to terminal width. Uses `os.Stdout` + `term.IsTerminal()` check.
+- `VerboseProgress` — per-file line output with timing.
+
+`cmd/build.go` creates the reporter based on flags:
+- `--quiet` → nil (no progress)
+- `--verbose` → `VerboseProgress`
+- default → `TTYProgress` if terminal, nil if piped
+
+The pipeline calls `reporter.StartStage("Rendering", len(pages))` before each stage, `reporter.Update(i, page.RelPath)` per page, and `reporter.EndStage()` after. The final `reporter.Summary(...)` prints the build summary.
+
 **Verify**: `go test ./internal/plugin/... ./internal/fetch/... ./internal/i18n/... ./cmd/...`
 
 ---
