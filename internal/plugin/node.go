@@ -71,9 +71,10 @@ func DecodeMessage(data []byte) (*Message, error) {
 	return &msg, nil
 }
 
-// NodeRuntime wraps a Node.js subprocess for Tier 3 plugins.
-// Implements PluginFilterRuntime so the pipeline bridging loop can
-// treat it the same as QuickJSRuntime and WASMRuntime.
+// NodeRuntime is a placeholder runtime for Tier 3 Node plugins.
+// It currently tracks registered filter, shortcode, and hook names so the
+// pipeline can treat it the same as QuickJSRuntime and WASMRuntime.
+// Subprocess/bridge management is not yet stored on this type.
 type NodeRuntime struct {
 	filters    []string
 	shortcodes []string

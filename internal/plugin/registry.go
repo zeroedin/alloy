@@ -208,6 +208,8 @@ func hasNodeRuntimeExport(src string) bool {
 // Returns warnings for plugins that fail to load (non-fatal).
 func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
 	var warnings []string
+	var nodeChecked bool
+	var nodeAvailableErr error
 	for _, p := range r.plugins {
 		switch p.Runtime {
 		case RuntimeQuickJS:
@@ -244,8 +246,12 @@ func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
 			}
 			r.runtimes = append(r.runtimes, rt)
 		case RuntimeNode:
-			if err := CheckNodeAvailable(); err != nil {
-				warnings = append(warnings, fmt.Sprintf("plugin %s: %v", p.Name, err))
+			if !nodeChecked {
+				nodeAvailableErr = CheckNodeAvailable()
+				nodeChecked = true
+			}
+			if nodeAvailableErr != nil {
+				warnings = append(warnings, fmt.Sprintf("plugin %s: %v", p.Name, nodeAvailableErr))
 				continue
 			}
 			rt := NewNodeRuntime()
