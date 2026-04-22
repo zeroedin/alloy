@@ -2126,7 +2126,7 @@ Without an `ssr:` config block, `--preview` still works — it just serves Phase
 
 ```
 [alloy] 12:34:56 Serving at http://localhost:3000
-[alloy] 12:34:58 Build complete in 47ms (3 pages rebuilt)
+[alloy] 12:34:58 Rebuilt 3 pages in 47ms (417 cached)
 [alloy] 12:35:02 ERROR in layouts/blog/single.liquid:14
          Unknown filter "formattDate" — did you mean "formatDate"?
 ```
@@ -2223,6 +2223,70 @@ Starts the development server with live reload.
 --no-drafts        Hide draft content in dev mode (alloy serve only, drafts visible by default)
 --refetch          Bypass source cache TTL, fetch fresh data on startup
 ```
+
+### Build Progress Output
+
+Build progress is displayed differently based on the output context and verbosity flags:
+
+**Default (TTY — interactive terminal):**
+
+A progress bar showing the current pipeline stage, percentage, page count, and the file being processed. The progress line overwrites itself (carriage return) for a clean single-line display. The final summary line persists after the build completes.
+
+```
+[alloy] Discovering content... 42 pages found
+[alloy] Rendering  [========>                ] 34% (142/420) content/blog/my-post.md
+[alloy] SSR        [=============>           ] 55% (66/120)  content/components/card.md
+[alloy] Writing    [=====================>   ] 88% (370/420)
+[alloy] Built 420 pages in 1.8s
+```
+
+Pipeline stages shown in order:
+1. **Discovering** — content discovery + front matter extraction. Total is unknown at start (discovery produces the count). Shown as a single-line message: `[alloy] Discovering content... 42 pages found` — not a progress bar.
+2. **Rendering** — Markdown → HTML + template rendering + layout
+3. **SSR** — Phase 2 SSR (only shown when `ssr:` is configured and pages have custom elements)
+4. **Writing** — output files + static copy + sitemap
+
+For stages with a known total, each shows `[stageName] [progress bar] percentage (current/total) currentFile`. For stages where the total is unknown (discovery), a message-style output is used instead. The progress bar width adapts to terminal width. The current file name is truncated if it would exceed the terminal width.
+
+**Default (non-TTY — piped output, CI/CD):**
+
+No progress bar, no carriage returns. Only the final summary line:
+
+```
+[alloy] Built 420 pages in 1.8s
+```
+
+This keeps CI logs clean. Errors still print normally.
+
+**`--verbose` flag:**
+
+Per-file output replaces the progress bar. Each line shows the stage, file path, and per-file timing:
+
+```
+[alloy] render content/index.md (12ms)
+[alloy] render content/blog/first-post.md (8ms)
+[alloy] render content/blog/second-post.md (6ms)
+[alloy] ssr    content/components/card.md (45ms)
+[alloy] write  _site/index.html
+[alloy] write  _site/blog/first-post/index.html
+[alloy] Built 420 pages in 1.8s
+```
+
+Useful for identifying slow pages or debugging build issues. No progress bar — per-file lines and carriage-return progress bars would produce messy output.
+
+**`--quiet` flag:**
+
+No output at all except errors. Not even the summary line. Exit code communicates success/failure.
+
+**Serve mode rebuilds:**
+
+Incremental rebuilds in `alloy serve` show a compact one-line summary:
+
+```
+[alloy] 12:34:58 Rebuilt 3 pages in 47ms (417 cached)
+```
+
+Full rebuilds (triggered by config changes or bulk file changes) show the full progress bar.
 
 #### `--root` flag behavior
 

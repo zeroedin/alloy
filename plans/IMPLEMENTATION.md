@@ -543,6 +543,43 @@ if cmd.Flags().Changed("root") {
 
 The flag must be applied **after** config loading but **before** pipeline execution, since all `structure:` paths resolve against `ProjectRoot`.
 
+#### Build progress output
+
+The pipeline needs a `ProgressReporter` interface that `Build()` and `BuildIncremental()` accept (or nil for no progress):
+
+```go
+type ProgressReporter interface {
+    StartStage(name string, total int)                          // "Rendering", 420. total=-1 for unknown (discovery).
+    Message(text string)                                        // "42 pages found" — inline with current stage
+    Update(current int, filePath string, elapsed time.Duration) // 1-based: 142, "content/blog/my-post.md", 12ms
+    EndStage()
+    Summary(pageCount int, duration time.Duration, pagesSkipped int)
+}
+```
+
+`total=-1` in `StartStage` means the total is unknown (e.g., discovery stage). The implementation shows a message-style output instead of a progress bar. `total=0` is a valid known total (empty stage — zero-page builds are supported). `Message` renders inline with the current stage context (e.g., `[alloy] Discovering content... 42 pages found` is produced by `StartStage("Discovering", -1)` followed by `Message("42 pages found")`). `Update` uses 1-based `current` (first item = 1, not 0).
+
+Two implementations:
+- `TTYProgress` — progress bar with carriage return, adapts to terminal width. TTY detection: `term.IsTerminal(int(os.Stdout.Fd()))` (from `golang.org/x/term`).
+- `VerboseProgress` — per-file line output with timing. Replaces the progress bar (not combined — mixing per-file lines with carriage-return progress produces messy output).
+
+`cmd/build.go` creates the reporter based on flags:
+- `--quiet` → nil (no progress)
+- `--verbose` → `VerboseProgress`
+- default → `TTYProgress` if terminal, nil if piped
+
+The pipeline must nil-guard every progress call since the reporter may be nil:
+```go
+if reporter != nil { reporter.StartStage("Rendering", len(pages)) }
+// per page (1-based current):
+if reporter != nil { reporter.Update(i+1, page.RelPath, elapsed) }
+if reporter != nil { reporter.EndStage() }
+if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.PagesSkipped) }
+```
+
+**Summary ownership**: The build summary line is emitted by `reporter.Summary()`, not by `cmd/build.go` directly. When `reporter` is nil (`--quiet` or piped non-TTY), no summary is printed. Remove the `fmt.Printf("Built %d pages...")` from `cmd/build.go` — the reporter is the single source of truth for build output.
+```
+
 **Verify**: `go test ./internal/plugin/... ./internal/fetch/... ./internal/i18n/... ./cmd/...`
 
 ---
