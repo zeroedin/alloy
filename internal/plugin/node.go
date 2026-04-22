@@ -71,6 +71,51 @@ func DecodeMessage(data []byte) (*Message, error) {
 	return &msg, nil
 }
 
+// NodeRuntime is a placeholder runtime for Tier 3 Node plugins.
+// It currently tracks registered filter, shortcode, and hook names so the
+// pipeline can treat it the same as QuickJSRuntime and WASMRuntime.
+// Subprocess/bridge management is not yet stored on this type.
+type NodeRuntime struct {
+	filters    []string
+	shortcodes []string
+	hooks      []string
+}
+
+// NewNodeRuntime creates a new Node.js plugin runtime.
+func NewNodeRuntime() *NodeRuntime {
+	return &NodeRuntime{}
+}
+
+// RegisteredFilters returns the names of filters registered by the Node plugin.
+func (r *NodeRuntime) RegisteredFilters() []string {
+	return r.filters
+}
+
+// CallFilter calls a filter registered by the Node plugin.
+func (r *NodeRuntime) CallFilter(name string, input interface{}, args ...interface{}) (interface{}, error) {
+	return input, nil
+}
+
+// RegisteredShortcodes returns the names of shortcodes registered by the Node plugin.
+func (r *NodeRuntime) RegisteredShortcodes() []string {
+	return r.shortcodes
+}
+
+// CallShortcode calls a shortcode registered by the Node plugin.
+func (r *NodeRuntime) CallShortcode(name string, args []string, innerContent string) (string, error) {
+	return innerContent, nil
+}
+
+// RegisteredHooks returns the names of hooks registered by the Node plugin.
+func (r *NodeRuntime) RegisteredHooks() []string {
+	return r.hooks
+}
+
+// CallHook calls a hook registered by the Node plugin.
+func (r *NodeRuntime) CallHook(name string, payload interface{}) (interface{}, error) {
+	return payload, nil
+}
+
 // NodeBridge manages the lifecycle of the Node subprocess used for Tier 3 plugins.
 // Communication uses length-prefixed JSON-RPC over stdin/stdout.
 // Plugin stderr is redirected to .alloy/plugin.log.

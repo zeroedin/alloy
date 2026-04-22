@@ -41,13 +41,14 @@ type PluginInfo struct {
 }
 
 // PluginFilterRuntime is the interface for plugin runtimes that can provide
-// filters and shortcodes to the template engine. Both QuickJSRuntime and
-// WASMRuntime implement this interface.
+// filters, shortcodes, and hooks to the template engine and hook registry.
+// QuickJSRuntime, WASMRuntime, and NodeRuntime all implement this interface.
 type PluginFilterRuntime interface {
 	RegisteredFilters() []string
 	CallFilter(name string, input interface{}, args ...interface{}) (interface{}, error)
 	RegisteredShortcodes() []string
 	CallShortcode(name string, args []string, innerContent string) (string, error)
+	RegisteredHooks() []string
 }
 
 // Registry manages plugin discovery and loading.
@@ -207,6 +208,8 @@ func hasNodeRuntimeExport(src string) bool {
 // Returns warnings for plugins that fail to load (non-fatal).
 func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
 	var warnings []string
+	var nodeChecked bool
+	var nodeAvailableErr error
 	for _, p := range r.plugins {
 		switch p.Runtime {
 		case RuntimeQuickJS:
@@ -243,12 +246,16 @@ func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
 			}
 			r.runtimes = append(r.runtimes, rt)
 		case RuntimeNode:
-			if err := CheckNodeAvailable(); err != nil {
-				warnings = append(warnings, fmt.Sprintf("plugin %s: %v", p.Name, err))
+			if !nodeChecked {
+				nodeAvailableErr = CheckNodeAvailable()
+				nodeChecked = true
+			}
+			if nodeAvailableErr != nil {
+				warnings = append(warnings, fmt.Sprintf("plugin %s: %v", p.Name, nodeAvailableErr))
 				continue
 			}
-			// Node plugins are loaded via the NodeBridge at runtime.
-			// Hook registration happens through the JSON-RPC protocol.
+			rt := NewNodeRuntime()
+			r.runtimes = append(r.runtimes, rt)
 		}
 	}
 	return warnings
