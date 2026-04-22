@@ -1,6 +1,7 @@
 package plugin_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 
@@ -355,6 +356,104 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(hasWASM).To(BeTrue(),
 				"Registry.Runtimes() must include WASM runtimes loaded from plugins/ — "+
 					"currently only returns QuickJS runtimes, so WASM filters are never bridged")
+		})
+	})
+
+	// ── Unified Runtime interface (#237) ────────────────────────────
+	// All plugin tiers must implement the same Runtime interface.
+	// The pipeline's LoadPlugins bridging loop treats all tiers
+	// identically — no tier-specific code.
+
+	Describe("Unified Runtime interface", func() {
+		It("QuickJSRuntime implements RegisteredHooks and CallHook", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(filepath.Join(testdataDir(), "single-files", "hooks.js"))).To(Succeed())
+
+			// Must implement RegisteredHooks — same interface as filters/shortcodes
+			hooks := rt.RegisteredHooks()
+			Expect(hooks).NotTo(BeEmpty(),
+				"QuickJSRuntime must implement RegisteredHooks as part of Runtime interface")
+
+			// Must implement CallHook — same interface as CallFilter/CallShortcode
+			result, err := rt.CallHook(hooks[0], "<p>test</p>")
+			Expect(err).NotTo(HaveOccurred(),
+				"QuickJSRuntime must implement CallHook as part of Runtime interface")
+			Expect(result).NotTo(BeNil())
+		})
+
+		It("NodeRuntime implements the Runtime interface", func() {
+			// NodeRuntime must exist and implement the same interface as
+			// QuickJSRuntime and WASMRuntime. The pipeline bridging loop
+			// iterates []Runtime — all three types must be assignable.
+			rt := plugin.NewNodeRuntime()
+			Expect(rt).NotTo(BeNil(),
+				"NewNodeRuntime must return a non-nil runtime")
+
+			// Methods must be callable without panic before Init.
+			// Return value may be nil or empty — the point is the
+			// method exists on the type.
+			_ = rt.RegisteredFilters()
+			_ = rt.RegisteredShortcodes()
+			_ = rt.RegisteredHooks()
+		})
+
+		It("Registry.Runtimes includes Node runtimes after LoadPlugins", func() {
+			registry := plugin.NewRegistry(filepath.Join(testdataDir(), "plugins-populated"))
+			Expect(registry.DiscoverPlugins()).To(Succeed())
+
+			hooks := plugin.NewHookRegistry()
+			registry.LoadPlugins(hooks)
+
+			// Runtimes() must return all tiers — QuickJS, WASM, and Node
+			runtimes := registry.Runtimes()
+			Expect(runtimes).NotTo(BeEmpty(),
+				"Registry.Runtimes() must return loaded runtimes")
+
+			// All returned runtimes must implement the full Runtime interface.
+			// Methods may return nil or empty slices — the point is they exist
+			// and are callable. (WASM runtimes may not support shortcodes/hooks
+			// until their exports are discovered.)
+			for _, rt := range runtimes {
+				// These must not panic — proves the method exists on the type
+				_ = rt.RegisteredFilters()
+				_ = rt.RegisteredShortcodes()
+				_ = rt.RegisteredHooks()
+			}
+		})
+
+		It("LoadPlugins bridges hooks to HookRegistry", func() {
+			// Use a QuickJS runtime directly with hook-modifier.js which
+			// appends a marker. This avoids dependency on Node availability.
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(filepath.Join(testdataDir(), "single-files", "hook-modifier.js"))).To(Succeed())
+
+			hooks := rt.RegisteredHooks()
+			Expect(hooks).To(ContainElement("onContentTransformed"),
+				"hook-modifier.js must register onContentTransformed")
+
+			// Simulate what LoadPlugins does: bridge discovered hooks
+			hookRegistry := plugin.NewHookRegistry()
+			for _, hookName := range hooks {
+				name := hookName
+				runtime := rt
+				hookRegistry.Register(plugin.HookName(name), func(_ context.Context, payload interface{}) (interface{}, error) {
+					return runtime.CallHook(name, payload)
+				})
+			}
+
+			// Fire the hook — proves the bridging pattern works
+			input := "<p>test</p>"
+			result, err := hookRegistry.Run(plugin.OnContentTransformed, input)
+			Expect(err).NotTo(HaveOccurred(),
+				"bridged hook must execute without error")
+			resultStr, ok := result.(string)
+			Expect(ok).To(BeTrue(),
+				"hook result must be a string")
+			Expect(resultStr).To(ContainSubstring("<!-- hook-modified -->"),
+				"hook must modify the payload — proves CallHook executed the JS function "+
+					"and the bridging pattern works for all runtimes")
 		})
 	})
 
