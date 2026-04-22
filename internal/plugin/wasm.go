@@ -607,6 +607,11 @@ func (r *WASMRuntime) CallShortcode(name string, args []string, innerContent str
 	return innerContent, nil
 }
 
+// RegisteredHooks returns an empty list — WASM modules don't register hooks.
+func (r *WASMRuntime) RegisteredHooks() []string {
+	return nil
+}
+
 // HasExport checks if the WASM module exports a function with the given name.
 func (r *WASMRuntime) HasExport(name string) bool {
 	return r.exports[name]

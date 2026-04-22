@@ -41,13 +41,14 @@ type PluginInfo struct {
 }
 
 // PluginFilterRuntime is the interface for plugin runtimes that can provide
-// filters and shortcodes to the template engine. Both QuickJSRuntime and
-// WASMRuntime implement this interface.
+// filters, shortcodes, and hooks to the template engine and hook registry.
+// QuickJSRuntime, WASMRuntime, and NodeRuntime all implement this interface.
 type PluginFilterRuntime interface {
 	RegisteredFilters() []string
 	CallFilter(name string, input interface{}, args ...interface{}) (interface{}, error)
 	RegisteredShortcodes() []string
 	CallShortcode(name string, args []string, innerContent string) (string, error)
+	RegisteredHooks() []string
 }
 
 // Registry manages plugin discovery and loading.
@@ -247,8 +248,8 @@ func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
 				warnings = append(warnings, fmt.Sprintf("plugin %s: %v", p.Name, err))
 				continue
 			}
-			// Node plugins are loaded via the NodeBridge at runtime.
-			// Hook registration happens through the JSON-RPC protocol.
+			rt := NewNodeRuntime()
+			r.runtimes = append(r.runtimes, rt)
 		}
 	}
 	return warnings
