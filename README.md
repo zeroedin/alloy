@@ -289,6 +289,76 @@ alloy version               Print version
 | [wazero](https://github.com/tetratelabs/wazero) | WASM runtime (plugins) | Apache-2.0 |
 | [gorilla/websocket](https://github.com/gorilla/websocket) | Live reload | BSD-3 |
 
+## Development
+
+### Prerequisites
+
+- **Go 1.25+** — `go version`
+- **Node.js** (optional) — only needed for Tier 3 plugins. Not required to build or test Alloy itself.
+
+### Build
+
+```bash
+# Clone and build
+git clone https://github.com/zeroedin/alloy.git
+cd alloy
+go build -o alloy .
+
+# Verify
+./alloy version
+```
+
+### Test
+
+```bash
+# Run all tests
+go test ./...
+
+# Run a specific package
+go test ./internal/template/...
+go test ./internal/pipeline/...
+go test ./test/integration/...
+
+# Verbose output
+go test ./... -v
+```
+
+Tests use [Ginkgo](https://onsi.github.io/ginkgo/) + [Gomega](https://onsi.github.io/gomega/). Tests are spec-derived and immutable — they define expected behavior. If a test fails, the implementation must change, not the test.
+
+### Project Layout
+
+```
+cmd/                    CLI commands (init, build, serve)
+internal/
+  cache/                Build cache for incremental rebuilds
+  cascade/              Data cascade (5-level merge)
+  collection/           Collections and taxonomies
+  config/               Config loading (YAML, TOML, JSON)
+  content/              Content discovery, front matter, markdown
+  i18n/                 Multilingual support
+  output/               Output writing, sitemap, feeds
+  pagination/           Pagination and virtual pages
+  permalink/            URL generation
+  pipeline/             Build pipeline orchestration
+  plugin/               Plugin system (QuickJS, WASM, Node)
+  server/               Dev server, file watcher, WebSocket
+  ssr/                  Web Component SSR (Phase 2)
+  static/               Static file and passthrough copy
+  template/             Liquid + Go template engines, filters
+test/
+  fixtures/             Test site fixtures
+  integration/          Cross-package integration tests
+plans/
+  PLAN.md               Specification
+  IMPLEMENTATION.md     Implementation guide
+```
+
+### Architecture
+
+The spec lives in `plans/PLAN.md`. The implementation guide is `plans/IMPLEMENTATION.md`. Both are the source of truth — tests encode the spec, implementation must conform to tests.
+
+**Workflow**: Spec changes → tests → implementation. Tests are written first (red), implementation makes them green. Tests are never modified to pass.
+
 ## License
 
 [MIT](LICENSE)
