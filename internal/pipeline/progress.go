@@ -8,7 +8,8 @@ import (
 )
 
 // ProgressReporter receives pipeline stage updates for build progress output.
-// Pass nil to Build/BuildIncremental to suppress progress output.
+// Set via SetReporter(). Nil means no progress output. Currently wired into
+// Build() only; BuildIncremental() does not yet call the reporter.
 type ProgressReporter interface {
 	StartStage(name string, total int)
 	Message(text string)
@@ -66,8 +67,14 @@ func (p *TTYProgress) Update(current int, filePath string, elapsed time.Duration
 		p.stageName, bar, pct, current, p.total)
 	maxPath := p.width - len(prefix)
 	display := filePath
-	if maxPath > 0 && len(display) > maxPath {
-		display = "..." + display[len(display)-maxPath+3:]
+	if maxPath <= 0 {
+		display = ""
+	} else if len(display) > maxPath {
+		if maxPath > 4 {
+			display = "..." + display[len(display)-maxPath+3:]
+		} else {
+			display = display[:maxPath]
+		}
 	}
 
 	fmt.Fprintf(p.w, "\r%s%s", prefix, display)

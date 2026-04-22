@@ -1267,7 +1267,10 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 	var rendered []string
 
 	for i, page := range pages {
-		pageStart := time.Now()
+		var pageStart time.Time
+		if activeReporter != nil {
+			pageStart = time.Now()
+		}
 		body := page.Body
 
 		// Step 1: Render markdown first per spec §6 Phase 1 steps 3–4.

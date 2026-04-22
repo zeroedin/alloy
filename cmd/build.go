@@ -4,11 +4,27 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/pipeline"
 )
+
+// isTTY returns true if stdout is an interactive terminal.
+func isTTY() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// termWidth returns the terminal width, defaulting to 80.
+func termWidth() int {
+	// TODO: use golang.org/x/term for actual terminal width
+	return 80
+}
 
 func newBuildCommand() *cobra.Command {
 	return &cobra.Command{
@@ -59,13 +75,14 @@ func newBuildCommand() *cobra.Command {
 				}
 			}
 
-			// Set up progress reporter based on flags
+			// Set up progress reporter based on flags + TTY detection
 			if !cfg.Quiet {
 				if cfg.Verbose {
 					pipeline.SetReporter(pipeline.NewVerboseProgress(cmd.OutOrStdout()))
-				} else {
-					pipeline.SetReporter(pipeline.NewTTYProgress(cmd.OutOrStdout(), 80))
+				} else if isTTY() {
+					pipeline.SetReporter(pipeline.NewTTYProgress(cmd.OutOrStdout(), termWidth()))
 				}
+				// Non-TTY without --verbose: no reporter (summary only via Build output)
 			}
 			defer pipeline.SetReporter(nil)
 
