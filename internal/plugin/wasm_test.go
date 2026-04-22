@@ -358,6 +358,89 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 		})
 	})
 
+	// ── Unified Runtime interface (#237) ────────────────────────────
+	// All plugin tiers must implement the same Runtime interface.
+	// The pipeline's LoadPlugins bridging loop treats all tiers
+	// identically — no tier-specific code.
+
+	Describe("Unified Runtime interface", func() {
+		It("QuickJSRuntime implements RegisteredHooks and CallHook", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(filepath.Join(testdataDir(), "single-files", "hooks.js"))).To(Succeed())
+
+			// Must implement RegisteredHooks — same interface as filters/shortcodes
+			hooks := rt.RegisteredHooks()
+			Expect(hooks).NotTo(BeEmpty(),
+				"QuickJSRuntime must implement RegisteredHooks as part of Runtime interface")
+
+			// Must implement CallHook — same interface as CallFilter/CallShortcode
+			result, err := rt.CallHook(hooks[0], "<p>test</p>")
+			Expect(err).NotTo(HaveOccurred(),
+				"QuickJSRuntime must implement CallHook as part of Runtime interface")
+			Expect(result).NotTo(BeNil())
+		})
+
+		It("NodeRuntime implements the Runtime interface", func() {
+			// NodeRuntime must exist and implement the same interface as
+			// QuickJSRuntime and WASMRuntime. The pipeline bridging loop
+			// iterates []Runtime — all three types must be assignable.
+			rt := plugin.NewNodeRuntime()
+			Expect(rt).NotTo(BeNil(),
+				"NewNodeRuntime must return a non-nil runtime")
+
+			// RegisteredFilters/RegisteredShortcodes/RegisteredHooks must
+			// be callable (even if they return empty before Init)
+			Expect(rt.RegisteredFilters()).NotTo(BeNil(),
+				"NodeRuntime must implement RegisteredFilters")
+			Expect(rt.RegisteredShortcodes()).NotTo(BeNil(),
+				"NodeRuntime must implement RegisteredShortcodes")
+			Expect(rt.RegisteredHooks()).NotTo(BeNil(),
+				"NodeRuntime must implement RegisteredHooks")
+		})
+
+		It("Registry.Runtimes includes Node runtimes after LoadPlugins", func() {
+			registry := plugin.NewRegistry(filepath.Join(testdataDir(), "plugins-populated"))
+			Expect(registry.DiscoverPlugins()).To(Succeed())
+
+			hooks := plugin.NewHookRegistry()
+			registry.LoadPlugins(hooks)
+
+			// Runtimes() must return all tiers — QuickJS, WASM, and Node
+			runtimes := registry.Runtimes()
+			Expect(runtimes).NotTo(BeEmpty(),
+				"Registry.Runtimes() must return loaded runtimes")
+
+			// All returned runtimes must implement the full Runtime interface
+			// including hooks (not just filters/shortcodes)
+			for _, rt := range runtimes {
+				Expect(rt.RegisteredFilters()).NotTo(BeNil(),
+					"every runtime must implement RegisteredFilters")
+				Expect(rt.RegisteredShortcodes()).NotTo(BeNil(),
+					"every runtime must implement RegisteredShortcodes")
+				Expect(rt.RegisteredHooks()).NotTo(BeNil(),
+					"every runtime must implement RegisteredHooks")
+			}
+		})
+
+		It("LoadPlugins bridges hooks from all runtimes to HookRegistry", func() {
+			registry := plugin.NewRegistry(filepath.Join(testdataDir(), "plugins-populated"))
+			Expect(registry.DiscoverPlugins()).To(Succeed())
+
+			hookRegistry := plugin.NewHookRegistry()
+			registry.LoadPlugins(hookRegistry)
+
+			// After LoadPlugins, hooks discovered from ANY plugin tier
+			// must be registered in the HookRegistry. Fire onContentTransformed
+			// and verify it runs (hooks.js registers this hook).
+			result, err := hookRegistry.Run(plugin.OnContentTransformed, "<p>test</p>")
+			Expect(err).NotTo(HaveOccurred(),
+				"hooks from all plugin tiers must be wired to HookRegistry via LoadPlugins")
+			Expect(result).NotTo(BeNil(),
+				"hook must return a result — proves it was registered and executed")
+		})
+	})
+
 	// ── Sandbox enforcement ──────────────────────────────────────────
 
 	Describe("Sandbox enforcement", func() {

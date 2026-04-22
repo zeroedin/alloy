@@ -316,16 +316,51 @@ Key points:
   - **Per-build hooks** (`onConfig`, `onBeforeValidation`, `onAfterValidation`, `onDataFetched`): convert Go structs to `map[string]interface{}` before passing to `CallHook`. Deserialize returned map and apply changes back. Requires enhancing the QuickJS/WASM hook bridge so structured Go values are marshaled as real JSON objects (not stringified) — encode the map to JSON, parse in JS, then deserialize returned JS objects back into Go maps.
   - **Read-only hooks** (`onBuildComplete`, `onDevServerStart`, `onFileChanged`): serialize to JSON for observation, return value ignored. The runtime bridge must still preserve object payloads at the JS boundary for observation hooks.
 - **WASM runtime (issue #181)**: `WASMRuntime.LoadModule()` is a stub. Must use wazero to compile and instantiate the WASM binary, discover exported functions (`alloc`, `filter`, `shortcode`, `hook`), and register them. `alloc` export is required — used by the host to get a safe write offset in WASM linear memory (issue #186). `CallExport(name, args...)` must call `alloc(inputLen)`, write input bytes at the returned pointer, call the export with `(ptr, len)`, and read the result from the returned `(resultPtr, resultLen)` (issue #190). `RegisteredFilters()` must return filter names from the module's exports. `LoadModule` must return an error for invalid WASM binaries. See PLAN.md §5 WASM Calling Convention for full ABI.
-- **WASM pipeline bridging (issue #189)**: `Registry.Runtimes()` returns `[]*QuickJSRuntime` only — WASM runtimes are not retained or bridged. The pipeline filter/shortcode bridging loop only iterates QuickJS runtimes. Fix: define a shared `Runtime` interface (note: `PluginRuntime` is already used as a string enum type in the plugin package) with canonical signatures matching the pipeline APIs:
+- **Unified plugin bridge (issues #189, #237)**: All plugin tiers (Tier 2 QuickJS, Tier 2 WASM, Tier 3 Node) must implement the same `Runtime` interface. `Registry.Runtimes()` returns `[]Runtime` and the bridging loop in `build.go` works identically for all tiers — no tier-specific code in the pipeline.
+
   ```go
   type Runtime interface {
       RegisteredFilters() []string
       CallFilter(name string, input interface{}, args ...interface{}) (interface{}, error)
       RegisteredShortcodes() []string
       CallShortcode(name string, args []string, content string) (string, error)
+      RegisteredHooks() []string
+      CallHook(name string, payload interface{}) (interface{}, error)
   }
   ```
-  Then `Runtimes()` returns `[]Runtime` and the bridging loop in `build.go` works for both QuickJS and WASM runtimes without code duplication.
+
+  Three implementations:
+  - **`QuickJSRuntime`** — in-process JS execution via embedded QuickJS. Already implements most methods.
+  - **`WASMRuntime`** — in-process WASM execution via wazero with alloc/ptr/len ABI.
+  - **`NodeRuntime`** — subprocess execution via JSON-RPC over stdin/stdout (length-prefixed, LSP-style framing). Spawned once per build, reused for all hook/filter/shortcode calls. Stderr redirected to `.alloy/plugin.log`.
+
+  `LoadPlugins()` does the same bridging for all runtimes:
+  ```
+  for _, rt := range registry.Runtimes() {
+      // Bridge filters
+      for _, name := range rt.RegisteredFilters() {
+          engine.AddFilter(name, wrap(rt.CallFilter))
+      }
+      // Bridge shortcodes
+      for _, name := range rt.RegisteredShortcodes() {
+          engine.AddTag(name, wrap(rt.CallShortcode))
+      }
+      // Bridge hooks
+      for _, name := range rt.RegisteredHooks() {
+          hooks.Register(HookName(name), wrap(rt.CallHook))
+      }
+  }
+  ```
+
+  The pipeline never knows or cares which tier a plugin is. The `Runtime` interface is the only integration point.
+
+  **NodeRuntime specifics:**
+  - `Init()` spawns the Node subprocess, sends all Tier 3 plugin source files for evaluation via JSON-RPC `eval` messages
+  - The subprocess reports back which filters/shortcodes/hooks were registered via JSON-RPC `registered` response
+  - `CallFilter`/`CallShortcode`/`CallHook` send a JSON-RPC request with the payload, wait for response, return the result
+  - Payload serialization: Go `interface{}` → JSON → Node subprocess → JS function → JSON → Go `interface{}`. Same JSON-serializable contract as the hook payload spec (per-page HTML strings, `{path, content}` objects, etc.)
+  - Timeout: each call respects `cfg.Plugins.Timeout` (default 5s). Node subprocess crash → error, not silent failure
+  - Process lifecycle: spawned once at startup, kept alive for the build duration (or serve session). Killed on shutdown.
 - **Incremental build via cache (issue #105, #225)**: This applies to `BuildIncremental` only (serve mode). `Build()` and `BuildWithContent()` always do full rebuilds — they do not read the cache. **Cache ownership is caller-side**: the serve-mode loop in `cmd/serve.go` loads the previous build cache from disk via `cache.LoadFrom(cacheDir)`, passes it into `BuildIncremental` as `previousCache`, and persists the updated cache after the build. `BuildIncremental` itself does not own disk I/O for the cache. After discovering pages, use `previousCache.ShouldSkipFile(relPath, content)` to skip unchanged pages — no re-parse, no re-render. Template changes override content-hash skipping: if a layout file changed, `previousCache.InvalidatedPages(layoutPath)` returns the affected pages, which must be rebuilt even if their content hash is unchanged. Config changes (`previousCache.IsConfigChanged(currentHash)`) trigger a full rebuild. The `BuildResult.PagesSkipped` field reports the skip count (e.g., "Rebuilt 5 pages, 27 skipped (cached)").
 
 #### Cascade wiring (PR #55)

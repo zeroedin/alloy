@@ -1697,6 +1697,8 @@ For plugins that need Node-specific capabilities:
 
 Alloy scans `plugins/` for `.js` and `.ts` files that export `runtime: "node"`. If any are found, it spawns a single Node subprocess that loads all of them. If none are found, no Node process is started — zero overhead. Communicates via stdin/stdout using length-prefixed JSON-RPC (LSP-style framing). Plugin stderr is redirected to `.alloy/plugin.log`.
 
+**Unified Runtime interface**: Node plugins implement the same `Runtime` interface as Tier 2 plugins (QuickJS and WASM). The pipeline's `LoadPlugins()` bridging loop treats all tiers identically — it iterates `RegisteredFilters`, `RegisteredShortcodes`, and `RegisteredHooks` and bridges them to the template engine and `HookRegistry`. The `NodeRuntime` implementation routes these calls over JSON-RPC to the subprocess. The pipeline never knows whether a filter, shortcode, or hook is running in-process or in a subprocess.
+
 ```
 ┌──────────┐  Length-prefixed JSON / stdin+stdout  ┌──────────────┐
 │  Alloy   │ ◄───────────────────────────────────► │  Node Runner  │
