@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/zeroedin/alloy/internal/config"
@@ -86,9 +87,15 @@ func newBuildCommand() *cobra.Command {
 			}
 			defer pipeline.SetReporter(nil)
 
-			_, err = pipeline.Build(cfg)
+			result, err := pipeline.Build(cfg)
 			if err != nil {
 				return err
+			}
+
+			// Non-TTY without --verbose: print summary line for CI/piped output
+			if !cfg.Quiet && !cfg.Verbose && !isTTY() {
+				fmt.Fprintf(cmd.OutOrStdout(), "[alloy] Built %d pages in %s\n",
+					result.PageCount, result.Duration.Round(time.Millisecond))
 			}
 
 			return nil

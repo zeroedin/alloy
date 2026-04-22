@@ -713,7 +713,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 	}
 
 	// Stage 6: Output writing
-	reportStartStage("Writing", len(pages))
+	reportStartStage("Writing", -1)
 	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
 	if cfg.Build.Clean {
 		if _, statErr := os.Stat(outputDir); statErr == nil {
@@ -1323,7 +1323,9 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 
 		page.RenderedBody = html
 		rendered = append(rendered, page.RelPath)
-		reportUpdate(i+1, page.RelPath, time.Since(pageStart))
+		if activeReporter != nil {
+			reportUpdate(i+1, page.RelPath, time.Since(pageStart))
+		}
 	}
 
 	return rendered, nil
