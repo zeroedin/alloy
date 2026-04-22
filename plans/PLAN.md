@@ -2241,7 +2241,7 @@ A progress bar showing the current pipeline stage, percentage, page count, and t
 ```
 
 Pipeline stages shown in order:
-1. **Discovering** — content discovery + front matter extraction. Total is unknown at start (discovery produces the count). Shown as a message, not a progress bar.
+1. **Discovering** — content discovery + front matter extraction. Total is unknown at start (discovery produces the count). Shown as a single-line message: `[alloy] Discovering content... 42 pages found` — not a progress bar.
 2. **Rendering** — Markdown → HTML + template rendering + layout
 3. **SSR** — Phase 2 SSR (only shown when `ssr:` is configured and pages have custom elements)
 4. **Writing** — output files + static copy + sitemap
