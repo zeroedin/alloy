@@ -34,6 +34,44 @@ import (
 // ErrNotImplemented is returned by all stub functions.
 var ErrNotImplemented = errors.New("not implemented")
 
+// activeReporter is the current progress reporter, set via SetReporter.
+// Nil means no progress output. Safe for concurrent use since Build is
+// single-threaded.
+var activeReporter ProgressReporter
+
+// SetReporter sets the progress reporter for subsequent Build/BuildIncremental calls.
+// Pass nil to suppress progress output.
+func SetReporter(r ProgressReporter) {
+	activeReporter = r
+}
+
+// report calls a ProgressReporter method if a reporter is active.
+func reportStartStage(name string, total int) {
+	if activeReporter != nil {
+		activeReporter.StartStage(name, total)
+	}
+}
+func reportMessage(text string) {
+	if activeReporter != nil {
+		activeReporter.Message(text)
+	}
+}
+func reportUpdate(current int, filePath string, elapsed time.Duration) {
+	if activeReporter != nil {
+		activeReporter.Update(current, filePath, elapsed)
+	}
+}
+func reportEndStage() {
+	if activeReporter != nil {
+		activeReporter.EndStage()
+	}
+}
+func reportSummary(pageCount int, duration time.Duration, pagesSkipped int) {
+	if activeReporter != nil {
+		activeReporter.Summary(pageCount, duration, pagesSkipped)
+	}
+}
+
 // BuildResult holds the outcome of a build.
 type BuildResult struct {
 	OutputDir        string
@@ -447,6 +485,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		// ═══ Single-language pipeline (no batches) ═══
 
 		var err error
+		reportStartStage("Discovering", -1)
 		pages, err = content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
@@ -499,8 +538,11 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		pages = processPagination(pages, cfg, siteData, collectionsCtx)
 
 		// Content rendering
+		reportMessage(fmt.Sprintf("%d pages found", len(pages)))
+		reportStartStage("Rendering", len(pages))
 		var renderErr error
 		rendered, renderErr = renderPages(pages, cfg, siteData, collectionsCtx, engine, nil)
+		reportEndStage()
 		if renderErr != nil {
 			return nil, renderErr
 		}
@@ -671,6 +713,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 	}
 
 	// Stage 6: Output writing
+	reportStartStage("Writing", len(pages))
 	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
 	if cfg.Build.Clean {
 		if _, statErr := os.Stat(outputDir); statErr == nil {
@@ -779,6 +822,9 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 		PagesRendered:   rendered,
 		RenderedContent: renderedContent,
 	}
+
+	reportEndStage()
+	reportSummary(result.PageCount, result.Duration, 0)
 
 	// Fire onBuildComplete hook — build is finished, plugins can run post-build tasks
 	if _, err := hooks.RunWithTimeout(plugin.OnBuildComplete, result); err != nil {
@@ -1220,7 +1266,8 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 
 	var rendered []string
 
-	for _, page := range pages {
+	for i, page := range pages {
+		pageStart := time.Now()
 		body := page.Body
 
 		// Step 1: Render markdown first per spec §6 Phase 1 steps 3–4.
@@ -1273,6 +1320,7 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 
 		page.RenderedBody = html
 		rendered = append(rendered, page.RelPath)
+		reportUpdate(i+1, page.RelPath, time.Since(pageStart))
 	}
 
 	return rendered, nil

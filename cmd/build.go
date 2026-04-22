@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/zeroedin/alloy/internal/config"
@@ -60,14 +59,19 @@ func newBuildCommand() *cobra.Command {
 				}
 			}
 
-			result, err := pipeline.Build(cfg)
+			// Set up progress reporter based on flags
+			if !cfg.Quiet {
+				if cfg.Verbose {
+					pipeline.SetReporter(pipeline.NewVerboseProgress(cmd.OutOrStdout()))
+				} else {
+					pipeline.SetReporter(pipeline.NewTTYProgress(cmd.OutOrStdout(), 80))
+				}
+			}
+			defer pipeline.SetReporter(nil)
+
+			_, err = pipeline.Build(cfg)
 			if err != nil {
 				return err
-			}
-
-			if !cfg.Quiet {
-				fmt.Fprintf(cmd.OutOrStdout(), "Built %d pages in %s\n",
-					result.PageCount, result.Duration.Round(time.Millisecond))
 			}
 
 			return nil
