@@ -56,7 +56,7 @@ passthrough:
     to: "elements"
 
 ssr:
-  command: "golit render --defs ./bundles"
+  command: "your-ssr-engine render"
   mode: "stream"          # "exec" (default) or "stream"
   timeout: "30s"
 

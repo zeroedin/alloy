@@ -5,7 +5,7 @@ layout: "landing"
 
 <div class="hero">
   <h1>Fast. Extensible. Go-powered.</h1>
-  <p class="hero-subtitle">Alloy is a static site generator that combines Hugo's raw speed with 11ty's extensibility. Thousands of pages in seconds, Liquid templates, and a tiered plugin system — from in-process WASM to a full Node.js bridge.</p>
+  <p class="hero-subtitle">Alloy is a fast, extensible static site generator built in Go. Thousands of pages in seconds, Liquid templates, and a tiered plugin system — from in-process WASM to a full Node.js bridge.</p>
   <div class="hero-actions">
     <a href="/getting-started/" class="btn btn-primary">Get Started</a>
     <a href="https://github.com/zeroedin/alloy" class="btn btn-secondary" target="_blank" rel="noopener">GitHub</a>
@@ -19,7 +19,7 @@ layout: "landing"
   </div>
   <div class="feature">
     <h3>Liquid Templates</h3>
-    <p>Familiar syntax for 11ty, Jekyll, and Shopify users. Go html/template as an alternative for Hugo users.</p>
+    <p>Liquid as the default template engine with familiar syntax. Go html/template available as an alternative.</p>
   </div>
   <div class="feature">
     <h3>Tiered Plugins</h3>
@@ -27,7 +27,7 @@ layout: "landing"
   </div>
   <div class="feature">
     <h3>Web Component SSR</h3>
-    <p>Opt-in two-phase rendering. Pipe page HTML to an external SSR engine for Declarative Shadow DOM. Works with golit.</p>
+    <p>Opt-in two-phase rendering. Pipe page HTML to an external SSR engine for Declarative Shadow DOM.</p>
   </div>
   <div class="feature">
     <h3>Data Cascade</h3>
