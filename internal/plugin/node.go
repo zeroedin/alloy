@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"bufio"
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 //go:embed bridge.js
@@ -44,6 +46,7 @@ type Message struct {
 	Name      string        `json:"name,omitempty"`      // hook/filter name
 	Payload   interface{}   `json:"payload,omitempty"`   // hook/filter payload
 	Result    interface{}   `json:"result,omitempty"`    // response result
+	Error     string        `json:"error,omitempty"`     // error message from bridge
 	Instances []SSRInstance `json:"instances,omitempty"` // SSR render instances
 }
 
@@ -112,7 +115,6 @@ func (r *NodeRuntime) EvalFile(path string) error {
 	}
 
 	resp, err := r.bridge.Send(&Message{
-		ID:      1,
 		Type:    "eval",
 		Payload: string(src),
 	})
@@ -158,11 +160,14 @@ func (r *NodeRuntime) CallFilter(name string, input interface{}, args ...interfa
 	if r.bridge == nil {
 		return input, nil
 	}
+	payload := map[string]interface{}{
+		"input": input,
+		"args":  args,
+	}
 	resp, err := r.bridge.Send(&Message{
-		ID:      0,
 		Type:    "filter",
 		Name:    name,
-		Payload: input,
+		Payload: payload,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("node filter %q: %w", name, err)
@@ -177,7 +182,24 @@ func (r *NodeRuntime) RegisteredShortcodes() []string {
 
 // CallShortcode routes a shortcode call through the Node subprocess.
 func (r *NodeRuntime) CallShortcode(name string, args []string, innerContent string) (string, error) {
-	return innerContent, nil
+	if r.bridge == nil {
+		return innerContent, nil
+	}
+	resp, err := r.bridge.Send(&Message{
+		Type: "shortcode",
+		Name: name,
+		Payload: map[string]interface{}{
+			"args":    args,
+			"content": innerContent,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("node shortcode %q: %w", name, err)
+	}
+	if result, ok := resp.Result.(string); ok {
+		return result, nil
+	}
+	return fmt.Sprint(resp.Result), nil
 }
 
 // RegisteredHooks returns the names of hooks registered by the Node plugin.
@@ -191,7 +213,6 @@ func (r *NodeRuntime) CallHook(name string, payload interface{}) (interface{}, e
 		return payload, nil
 	}
 	resp, err := r.bridge.Send(&Message{
-		ID:      0,
 		Type:    "hook",
 		Name:    name,
 		Payload: payload,
@@ -219,6 +240,7 @@ type NodeBridge struct {
 	stdout      *bufio.Reader
 	mu          sync.Mutex
 	nextID      int
+	scriptPath  string
 }
 
 // NewNodeBridge creates a Node bridge for the given project root.
@@ -244,29 +266,40 @@ func (b *NodeBridge) PID() int {
 
 // Start spawns the Node subprocess with the embedded bridge script.
 func (b *NodeBridge) Start() error {
-	// Write bridge script to a temp file
 	tmpFile, err := os.CreateTemp("", "alloy-bridge-*.js")
 	if err != nil {
 		return fmt.Errorf("creating bridge script: %w", err)
 	}
 	if _, err := tmpFile.WriteString(bridgeScript); err != nil {
 		tmpFile.Close()
+		os.Remove(tmpFile.Name())
 		return fmt.Errorf("writing bridge script: %w", err)
 	}
 	tmpFile.Close()
+	b.scriptPath = tmpFile.Name()
 
-	b.cmd = exec.Command("node", tmpFile.Name())
+	b.cmd = exec.Command("node", b.scriptPath)
+	if b.projectRoot != "" {
+		if info, err := os.Stat(b.projectRoot); err == nil && info.IsDir() {
+			b.cmd.Dir = b.projectRoot
+		}
+	}
+	b.cmd.Stderr = os.Stderr
+
 	b.stdin, err = b.cmd.StdinPipe()
 	if err != nil {
+		os.Remove(b.scriptPath)
 		return fmt.Errorf("stdin pipe: %w", err)
 	}
 	stdoutPipe, err := b.cmd.StdoutPipe()
 	if err != nil {
+		os.Remove(b.scriptPath)
 		return fmt.Errorf("stdout pipe: %w", err)
 	}
 	b.stdout = bufio.NewReader(stdoutPipe)
 
 	if err := b.cmd.Start(); err != nil {
+		os.Remove(b.scriptPath)
 		return fmt.Errorf("starting node: %w", err)
 	}
 
@@ -322,8 +355,12 @@ func (b *NodeBridge) Send(msg *Message) (*Message, error) {
 		return nil, fmt.Errorf("decoding response: %w", err)
 	}
 
-	if errMsg, ok := resp.Result.(string); ok && resp.Type == "error" {
-		return nil, fmt.Errorf("node error: %s", errMsg)
+	if resp.Error != "" {
+		return nil, fmt.Errorf("node error: %s", resp.Error)
+	}
+
+	if resp.ID != msg.ID {
+		return nil, fmt.Errorf("response ID mismatch: sent %d, got %d", msg.ID, resp.ID)
 	}
 
 	return &resp, nil
@@ -334,8 +371,20 @@ func (b *NodeBridge) Stop() error {
 	if b.stdin != nil {
 		b.stdin.Close()
 	}
-	if b.cmd != nil {
-		b.cmd.Wait()
+	if b.cmd != nil && b.cmd.Process != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- b.cmd.Wait() }()
+		select {
+		case <-done:
+		case <-ctx.Done():
+			b.cmd.Process.Kill()
+			<-done
+		}
+	}
+	if b.scriptPath != "" {
+		os.Remove(b.scriptPath)
 	}
 	b.state = BridgeStopped
 	return nil
