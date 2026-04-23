@@ -286,28 +286,20 @@ func (b *NodeBridge) PID() int {
 }
 
 // Start spawns the Node subprocess with the embedded bridge script.
+// When a project root is available, the bridge script is written under
+// .alloy/ so Node's module resolution can find node_modules/ via
+// normal ancestor directory traversal.
 func (b *NodeBridge) Start() error {
-	tmpFile, err := os.CreateTemp("", "alloy-bridge-*.js")
+	scriptPath, err := b.writeBridgeScript()
 	if err != nil {
-		return fmt.Errorf("creating bridge script: %w", err)
+		return err
 	}
-	if _, err := tmpFile.WriteString(bridgeScript); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpFile.Name())
-		return fmt.Errorf("writing bridge script: %w", err)
-	}
-	tmpFile.Close()
-	b.scriptPath = tmpFile.Name()
+	b.scriptPath = scriptPath
 
 	b.cmd = exec.Command("node", b.scriptPath)
 	if b.projectRoot != "" {
 		if info, err := os.Stat(b.projectRoot); err == nil && info.IsDir() {
 			b.cmd.Dir = b.projectRoot
-			// Set NODE_PATH so require()/import() can find packages in the
-			// project's node_modules/, since the bridge script runs from a
-			// temp file whose __dirname is outside the project tree.
-			b.cmd.Env = append(os.Environ(),
-				"NODE_PATH="+filepath.Join(b.projectRoot, "node_modules"))
 		}
 	}
 	b.cmd.Stderr = os.Stderr
@@ -331,6 +323,32 @@ func (b *NodeBridge) Start() error {
 
 	b.state = BridgeRunning
 	return nil
+}
+
+// writeBridgeScript writes the embedded bridge script to disk.
+// Prefers projectRoot/.alloy/ so Node can resolve node_modules/ via
+// ancestor traversal. Falls back to OS temp dir.
+func (b *NodeBridge) writeBridgeScript() (string, error) {
+	if b.projectRoot != "" {
+		alloyDir := filepath.Join(b.projectRoot, ".alloy")
+		if err := os.MkdirAll(alloyDir, 0755); err == nil {
+			scriptPath := filepath.Join(alloyDir, "bridge.js")
+			if err := os.WriteFile(scriptPath, []byte(bridgeScript), 0644); err == nil {
+				return scriptPath, nil
+			}
+		}
+	}
+	tmpFile, err := os.CreateTemp("", "alloy-bridge-*.js")
+	if err != nil {
+		return "", fmt.Errorf("creating bridge script: %w", err)
+	}
+	if _, err := tmpFile.WriteString(bridgeScript); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+		return "", fmt.Errorf("writing bridge script: %w", err)
+	}
+	tmpFile.Close()
+	return tmpFile.Name(), nil
 }
 
 // Send sends a JSON-RPC message and reads the response.
