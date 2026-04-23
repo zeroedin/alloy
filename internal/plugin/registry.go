@@ -134,6 +134,12 @@ func (r *Registry) RegisterFilter(name, source string) {
 	r.filterRegistry[name] = source
 }
 
+// HasFilter reports whether a filter with the given name has been registered.
+func (r *Registry) HasFilter(name string) bool {
+	_, ok := r.filterRegistry[name]
+	return ok
+}
+
 // Runtimes returns all loaded plugin runtimes (QuickJS and WASM) for filter/shortcode bridging.
 func (r *Registry) Runtimes() []PluginFilterRuntime {
 	return r.runtimes
