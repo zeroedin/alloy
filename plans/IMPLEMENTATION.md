@@ -333,6 +333,11 @@ Key points:
   - **`QuickJSRuntime`** — in-process JS execution via embedded QuickJS. Already implements most methods.
   - **`WASMRuntime`** — in-process WASM execution via wazero with alloc/ptr/len ABI.
   - **`NodeRuntime`** — subprocess execution via JSON-RPC over stdin/stdout (length-prefixed, LSP-style framing). Spawned once per build, reused for all hook/filter/shortcode calls. Stderr redirected to `.alloy/plugin.log`.
+    - `EvalFile(path)`: Send the plugin JS source to the Node subprocess for evaluation. The subprocess executes `export default function(alloy) { ... }`, intercepting `alloy.filter()`, `alloy.hook()`, `alloy.shortcode()` calls. Returns discovered registration names via JSON-RPC `registered` response. NodeRuntime stores them for `RegisteredFilters()`/`RegisteredHooks()`/`RegisteredShortcodes()`.
+    - `CallFilter(name, input, args...)`: Send JSON-RPC `{"type": "filter", "name": "...", "input": "...", "args": [...]}` to subprocess. Wait for response `{"result": "..."}`. Return result.
+    - `CallHook(name, payload)`: Send JSON-RPC `{"type": "hook", "name": "...", "payload": "..."}` to subprocess. Wait for response. Return modified payload.
+    - `CallShortcode(name, args, content)`: Send JSON-RPC `{"type": "shortcode", "name": "...", "args": [...], "content": "..."}`. Wait for response. Return rendered HTML.
+    - **Bridge script**: `NodeBridge.Start()` spawns `node` with a built-in bridge script (embedded in the Go binary or written to a temp file) that implements the `alloy` API object and the JSON-RPC message loop. The bridge script is NOT a user file — it's Alloy's Node-side runtime.
 
   `LoadPlugins()` does the same bridging for all runtimes:
   ```
