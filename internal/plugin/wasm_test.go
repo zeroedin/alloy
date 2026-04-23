@@ -491,6 +491,62 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			}
 		})
 
+		// ── Issue #244/#245: LoadPlugins Node wiring ────────────────
+		// LoadPlugins must call EvalFile on Node plugins, register
+		// discovered filters, and bridge hooks to HookRegistry.
+
+		It("LoadPlugins evaluates Node plugins and registers their filters", func() {
+			// Create a registry with single-files which has node-simple.js
+			registry := plugin.NewRegistry(filepath.Join(testdataDir(), "single-files"))
+			Expect(registry.DiscoverPlugins()).To(Succeed())
+
+			hooks := plugin.NewHookRegistry()
+			registry.LoadPlugins(hooks)
+
+			// node-simple.js registers filter "nodeUpper" via alloy.filter().
+			// LoadPlugins must call EvalFile to discover this registration
+			// and add it to the registry's filter list.
+			Expect(registry.HasFilter("nodeUpper")).To(BeTrue(),
+				"LoadPlugins must call EvalFile on Node plugins and register "+
+					"discovered filters — nodeUpper from node-simple.js must be registered")
+		})
+
+		It("LoadPlugins bridges Node hooks to HookRegistry", func() {
+			registry := plugin.NewRegistry(filepath.Join(testdataDir(), "single-files"))
+			Expect(registry.DiscoverPlugins()).To(Succeed())
+
+			hookRegistry := plugin.NewHookRegistry()
+			registry.LoadPlugins(hookRegistry)
+
+			// node-simple.js hooks onContentTransformed and appends a marker.
+			// LoadPlugins must bridge this hook to the HookRegistry.
+			input := "<p>test</p>"
+			result, err := hookRegistry.Run(plugin.OnContentTransformed, input)
+			Expect(err).NotTo(HaveOccurred(),
+				"LoadPlugins must bridge Node hooks to HookRegistry")
+			resultStr, ok := result.(string)
+			Expect(ok).To(BeTrue())
+			Expect(resultStr).To(ContainSubstring("<!-- node-plugin -->"),
+				"Node hook must fire via HookRegistry and modify the payload — "+
+					"proves LoadPlugins called EvalFile AND bridged the hook")
+		})
+
+		It("LoadPlugins continues with warning when Node plugin EvalFile fails", func() {
+			// Create a temp directory with a broken Node plugin
+			tmpDir := GinkgoT().TempDir()
+			brokenPlugin := filepath.Join(tmpDir, "broken-node.js")
+			Expect(os.WriteFile(brokenPlugin, []byte(`export const runtime = "node";\n{{{ invalid js`), 0644)).To(Succeed())
+
+			registry := plugin.NewRegistry(tmpDir)
+			Expect(registry.DiscoverPlugins()).To(Succeed())
+
+			hooks := plugin.NewHookRegistry()
+			warnings := registry.LoadPlugins(hooks)
+			Expect(warnings).NotTo(BeEmpty(),
+				"LoadPlugins must return a warning when Node plugin EvalFile fails — "+
+					"not abort the entire plugin loading process")
+		})
+
 		It("LoadPlugins bridges hooks to HookRegistry", func() {
 			// Use a QuickJS runtime directly with hook-modifier.js which
 			// appends a marker. This avoids dependency on Node availability.

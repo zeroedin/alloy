@@ -360,6 +360,8 @@ Key points:
 
   The pipeline never knows or cares which tier a plugin is. The `Runtime` interface is the only integration point.
 
+  **LoadPlugins Node wiring (issue #244)**: The `case RuntimeNode:` block in `LoadPlugins` must follow the same pattern as QuickJS: (1) create `NodeRuntime`, (2) call `rt.EvalFile(p.Path)` to discover registrations, (3) iterate `RegisteredFilters` and register each, (4) iterate `RegisteredHooks` and bridge to HookRegistry. On `EvalFile` failure, append a warning and `continue` — do not abort plugin loading for other plugins.
+
   **NodeRuntime specifics:**
   - `Init()` spawns the Node subprocess, sends all Tier 3 plugin source files for evaluation via JSON-RPC `eval` messages
   - The subprocess reports back which filters/shortcodes/hooks were registered via JSON-RPC `registered` response
