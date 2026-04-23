@@ -134,7 +134,13 @@ func (r *Registry) RegisterFilter(name, source string) {
 	r.filterRegistry[name] = source
 }
 
-// Runtimes returns all loaded plugin runtimes (QuickJS and WASM) for filter/shortcode bridging.
+// HasFilter reports whether a filter with the given name has been registered.
+func (r *Registry) HasFilter(name string) bool {
+	_, ok := r.filterRegistry[name]
+	return ok
+}
+
+// Runtimes returns all loaded plugin runtimes for filter/shortcode bridging.
 func (r *Registry) Runtimes() []PluginFilterRuntime {
 	return r.runtimes
 }
@@ -255,6 +261,21 @@ func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
 				continue
 			}
 			rt := NewNodeRuntime()
+			if err := rt.EvalFile(p.Path); err != nil {
+				rt.Close()
+				warnings = append(warnings, fmt.Sprintf("plugin %s: eval failed: %v", p.Name, err))
+				continue
+			}
+			for _, fname := range rt.RegisteredFilters() {
+				r.RegisterFilter(fname, "plugins/"+p.Name)
+			}
+			for _, hookName := range rt.RegisteredHooks() {
+				name := hookName
+				runtime := rt
+				hooks.Register(HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {
+					return runtime.CallHook(name, payload)
+				})
+			}
 			r.runtimes = append(r.runtimes, rt)
 		}
 	}
