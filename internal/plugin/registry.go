@@ -140,7 +140,7 @@ func (r *Registry) HasFilter(name string) bool {
 	return ok
 }
 
-// Runtimes returns all loaded plugin runtimes (QuickJS and WASM) for filter/shortcode bridging.
+// Runtimes returns all loaded plugin runtimes for filter/shortcode bridging.
 func (r *Registry) Runtimes() []PluginFilterRuntime {
 	return r.runtimes
 }
