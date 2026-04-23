@@ -255,6 +255,20 @@ func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
 				continue
 			}
 			rt := NewNodeRuntime()
+			if err := rt.EvalFile(p.Path); err != nil {
+				warnings = append(warnings, fmt.Sprintf("plugin %s: eval failed: %v", p.Name, err))
+				continue
+			}
+			for _, fname := range rt.RegisteredFilters() {
+				r.RegisterFilter(fname, "plugins/"+p.Name)
+			}
+			for _, hookName := range rt.RegisteredHooks() {
+				name := hookName
+				runtime := rt
+				hooks.Register(HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {
+					return runtime.CallHook(name, payload)
+				})
+			}
 			r.runtimes = append(r.runtimes, rt)
 		}
 	}
