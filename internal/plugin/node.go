@@ -271,7 +271,7 @@ func (b *NodeBridge) State() BridgeState {
 
 // WorkingDir returns the working directory of the Node subprocess.
 func (b *NodeBridge) WorkingDir() string {
-	if b.cmd != nil {
+	if b.cmd != nil && b.cmd.Dir != "" {
 		return b.cmd.Dir
 	}
 	return b.projectRoot
@@ -303,6 +303,11 @@ func (b *NodeBridge) Start() error {
 	if b.projectRoot != "" {
 		if info, err := os.Stat(b.projectRoot); err == nil && info.IsDir() {
 			b.cmd.Dir = b.projectRoot
+			// Set NODE_PATH so require()/import() can find packages in the
+			// project's node_modules/, since the bridge script runs from a
+			// temp file whose __dirname is outside the project tree.
+			b.cmd.Env = append(os.Environ(),
+				"NODE_PATH="+filepath.Join(b.projectRoot, "node_modules"))
 		}
 	}
 	b.cmd.Stderr = os.Stderr
