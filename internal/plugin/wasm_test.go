@@ -496,12 +496,19 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 		// discovered filters, and bridge hooks to HookRegistry.
 
 		It("LoadPlugins evaluates Node plugins and registers their filters", func() {
-			// Create a registry with single-files which has node-simple.js
-			registry := plugin.NewRegistry(filepath.Join(testdataDir(), "single-files"))
+			// Use a dedicated temp dir with just node-simple.js to avoid
+			// noise from other fixtures in single-files/
+			tmpDir := GinkgoT().TempDir()
+			src, err := os.ReadFile(filepath.Join(testdataDir(), "single-files", "node-simple.js"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(os.WriteFile(filepath.Join(tmpDir, "node-simple.js"), src, 0644)).To(Succeed())
+
+			registry := plugin.NewRegistry(tmpDir)
 			Expect(registry.DiscoverPlugins()).To(Succeed())
 
 			hooks := plugin.NewHookRegistry()
 			registry.LoadPlugins(hooks)
+			DeferCleanup(registry.Close)
 
 			// node-simple.js registers filter "nodeUpper" via alloy.filter().
 			// LoadPlugins must call EvalFile to discover this registration
@@ -512,11 +519,17 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 		})
 
 		It("LoadPlugins bridges Node hooks to HookRegistry", func() {
-			registry := plugin.NewRegistry(filepath.Join(testdataDir(), "single-files"))
+			tmpDir := GinkgoT().TempDir()
+			src, err := os.ReadFile(filepath.Join(testdataDir(), "single-files", "node-simple.js"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(os.WriteFile(filepath.Join(tmpDir, "node-simple.js"), src, 0644)).To(Succeed())
+
+			registry := plugin.NewRegistry(tmpDir)
 			Expect(registry.DiscoverPlugins()).To(Succeed())
 
 			hookRegistry := plugin.NewHookRegistry()
 			registry.LoadPlugins(hookRegistry)
+			DeferCleanup(registry.Close)
 
 			// node-simple.js hooks onContentTransformed and appends a marker.
 			// LoadPlugins must bridge this hook to the HookRegistry.
