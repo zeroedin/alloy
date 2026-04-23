@@ -1,7 +1,6 @@
 [build]
-  base = "docs"
-  publish = "docs/_site"
-  command = "cd .. && go build -o alloy . && cd docs && ../alloy build && npx pagefind --site _site"
+  publish = "_site"
+  command = "go build -o alloy . && ./alloy build && npx pagefind --site _site"
 
 [build.environment]
   GO_VERSION = "1.25"
@@ -26,7 +25,7 @@
 
 # Deploy previews — only build current version (fast)
 [context.deploy-preview]
-  command = "cd .. && go build -o alloy . && cd docs && ../alloy build && npx pagefind --site _site"
+  command = "go build -o alloy . && ./alloy build && npx pagefind --site _site"
 
 [context.deploy-preview.environment]
   GO_VERSION = "1.25"

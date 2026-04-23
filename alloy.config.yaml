@@ -16,5 +16,11 @@ content:
 templates:
   engine: "liquid"
 
+structure:
+  content: "docs/content"
+  layouts: "docs/layouts"
+  static: "docs/static"
+  data: "docs/data"
+
 permalinks:
   default: "/:slug/"
