@@ -360,6 +360,8 @@ Key points:
 
   The pipeline never knows or cares which tier a plugin is. The `Runtime` interface is the only integration point.
 
+  **LoadPlugins Node wiring (issue #244)**: Node plugins must be evaluated and bridged the same way as QuickJS plugins. For each Node plugin: (1) evaluate the plugin JS to discover registrations, (2) register discovered filters, (3) bridge discovered hooks to HookRegistry. On evaluation failure, produce a warning and continue loading other plugins — do not abort.
+
   **NodeRuntime specifics:**
   - `Init()` spawns the Node subprocess, sends all Tier 3 plugin source files for evaluation via JSON-RPC `eval` messages
   - The subprocess reports back which filters/shortcodes/hooks were registered via JSON-RPC `registered` response
