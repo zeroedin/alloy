@@ -87,15 +87,28 @@ func DecodeMessage(data []byte) (*Message, error) {
 // NodeRuntime runs Tier 3 Node plugins via a persistent subprocess.
 // Communicates via JSON-RPC over stdin/stdout using the embedded bridge.js.
 type NodeRuntime struct {
-	bridge     *NodeBridge
-	filters    []string
-	shortcodes []string
-	hooks      []string
+	bridge      *NodeBridge
+	projectRoot string
+	filters     []string
+	shortcodes  []string
+	hooks       []string
 }
 
 // NewNodeRuntime creates a new Node.js plugin runtime with its own bridge.
+// Defaults to the current working directory as the project root for module resolution.
 func NewNodeRuntime() *NodeRuntime {
-	return &NodeRuntime{}
+	cwd, _ := os.Getwd()
+	return &NodeRuntime{projectRoot: cwd}
+}
+
+// ProjectRoot returns the project root used for Node module resolution.
+func (r *NodeRuntime) ProjectRoot() string {
+	return r.projectRoot
+}
+
+// SetProjectRoot sets the project root used for Node module resolution.
+func (r *NodeRuntime) SetProjectRoot(root string) {
+	r.projectRoot = root
 }
 
 // EvalFile evaluates a JS plugin file in the Node subprocess.
@@ -108,7 +121,7 @@ func (r *NodeRuntime) EvalFile(path string) error {
 
 	// Start bridge if not running
 	if r.bridge == nil {
-		r.bridge = NewNodeBridge("")
+		r.bridge = NewNodeBridge(r.projectRoot)
 		if err := r.bridge.Start(); err != nil {
 			return fmt.Errorf("starting Node bridge: %w", err)
 		}
@@ -256,6 +269,14 @@ func (b *NodeBridge) State() BridgeState {
 	return b.state
 }
 
+// WorkingDir returns the working directory of the Node subprocess.
+func (b *NodeBridge) WorkingDir() string {
+	if b.cmd != nil && b.cmd.Dir != "" {
+		return b.cmd.Dir
+	}
+	return b.projectRoot
+}
+
 // PID returns the process ID of the Node subprocess, or 0 if not running.
 func (b *NodeBridge) PID() int {
 	if b.cmd != nil && b.cmd.Process != nil {
@@ -265,18 +286,15 @@ func (b *NodeBridge) PID() int {
 }
 
 // Start spawns the Node subprocess with the embedded bridge script.
+// When a project root is available, the bridge script is written under
+// .alloy/ so Node's module resolution can find node_modules/ via
+// normal ancestor directory traversal.
 func (b *NodeBridge) Start() error {
-	tmpFile, err := os.CreateTemp("", "alloy-bridge-*.js")
+	scriptPath, err := b.writeBridgeScript()
 	if err != nil {
-		return fmt.Errorf("creating bridge script: %w", err)
+		return err
 	}
-	if _, err := tmpFile.WriteString(bridgeScript); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpFile.Name())
-		return fmt.Errorf("writing bridge script: %w", err)
-	}
-	tmpFile.Close()
-	b.scriptPath = tmpFile.Name()
+	b.scriptPath = scriptPath
 
 	b.cmd = exec.Command("node", b.scriptPath)
 	if b.projectRoot != "" {
@@ -305,6 +323,32 @@ func (b *NodeBridge) Start() error {
 
 	b.state = BridgeRunning
 	return nil
+}
+
+// writeBridgeScript writes the embedded bridge script to disk.
+// Prefers projectRoot/.alloy/ so Node can resolve node_modules/ via
+// ancestor traversal. Falls back to OS temp dir.
+func (b *NodeBridge) writeBridgeScript() (string, error) {
+	if b.projectRoot != "" {
+		alloyDir := filepath.Join(b.projectRoot, ".alloy")
+		if err := os.MkdirAll(alloyDir, 0755); err == nil {
+			scriptPath := filepath.Join(alloyDir, "bridge.js")
+			if err := os.WriteFile(scriptPath, []byte(bridgeScript), 0644); err == nil {
+				return scriptPath, nil
+			}
+		}
+	}
+	tmpFile, err := os.CreateTemp("", "alloy-bridge-*.js")
+	if err != nil {
+		return "", fmt.Errorf("creating bridge script: %w", err)
+	}
+	if _, err := tmpFile.WriteString(bridgeScript); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+		return "", fmt.Errorf("writing bridge script: %w", err)
+	}
+	tmpFile.Close()
+	return tmpFile.Name(), nil
 }
 
 // Send sends a JSON-RPC message and reads the response.
