@@ -87,15 +87,28 @@ func DecodeMessage(data []byte) (*Message, error) {
 // NodeRuntime runs Tier 3 Node plugins via a persistent subprocess.
 // Communicates via JSON-RPC over stdin/stdout using the embedded bridge.js.
 type NodeRuntime struct {
-	bridge     *NodeBridge
-	filters    []string
-	shortcodes []string
-	hooks      []string
+	bridge      *NodeBridge
+	projectRoot string
+	filters     []string
+	shortcodes  []string
+	hooks       []string
 }
 
 // NewNodeRuntime creates a new Node.js plugin runtime with its own bridge.
+// Defaults to the current working directory as the project root for module resolution.
 func NewNodeRuntime() *NodeRuntime {
-	return &NodeRuntime{}
+	cwd, _ := os.Getwd()
+	return &NodeRuntime{projectRoot: cwd}
+}
+
+// ProjectRoot returns the project root used for Node module resolution.
+func (r *NodeRuntime) ProjectRoot() string {
+	return r.projectRoot
+}
+
+// SetProjectRoot sets the project root used for Node module resolution.
+func (r *NodeRuntime) SetProjectRoot(root string) {
+	r.projectRoot = root
 }
 
 // EvalFile evaluates a JS plugin file in the Node subprocess.
@@ -108,7 +121,7 @@ func (r *NodeRuntime) EvalFile(path string) error {
 
 	// Start bridge if not running
 	if r.bridge == nil {
-		r.bridge = NewNodeBridge("")
+		r.bridge = NewNodeBridge(r.projectRoot)
 		if err := r.bridge.Start(); err != nil {
 			return fmt.Errorf("starting Node bridge: %w", err)
 		}
@@ -254,6 +267,14 @@ func NewNodeBridge(projectRoot string) *NodeBridge {
 // State returns the current lifecycle state of the bridge.
 func (b *NodeBridge) State() BridgeState {
 	return b.state
+}
+
+// WorkingDir returns the working directory of the Node subprocess.
+func (b *NodeBridge) WorkingDir() string {
+	if b.cmd != nil {
+		return b.cmd.Dir
+	}
+	return b.projectRoot
 }
 
 // PID returns the process ID of the Node subprocess, or 0 if not running.
