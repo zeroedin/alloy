@@ -47,6 +47,7 @@ var mimeTypes = map[string]string{
 // Uses a built-in map for common web extensions, falls back to
 // Go's mime.TypeByExtension, then application/octet-stream.
 func MIMEType(ext string) string {
+	ext = strings.ToLower(ext)
 	if ct, ok := mimeTypes[ext]; ok {
 		return ct
 	}
