@@ -156,6 +156,65 @@ var _ = Describe("Server", func() {
 		})
 	})
 
+	// ── MIME type serving (issue #252) ───────────────────────────────
+	// The dev server must set correct Content-Type headers based on
+	// file extension. Without this, browsers refuse to apply CSS
+	// stylesheets served as text/plain.
+
+	Describe("MIME type serving", func() {
+		It("serves CSS files with text/css content type", func() {
+			contentType := server.MIMEType(".css")
+			Expect(contentType).To(Equal("text/css; charset=utf-8"),
+				"CSS files must be served as text/css, not text/plain")
+		})
+
+		It("serves JavaScript files with application/javascript content type", func() {
+			contentType := server.MIMEType(".js")
+			Expect(contentType).To(Equal("application/javascript; charset=utf-8"))
+		})
+
+		It("serves JSON files with application/json content type", func() {
+			contentType := server.MIMEType(".json")
+			Expect(contentType).To(Equal("application/json; charset=utf-8"))
+		})
+
+		It("serves SVG files with image/svg+xml content type", func() {
+			contentType := server.MIMEType(".svg")
+			Expect(contentType).To(Equal("image/svg+xml"))
+		})
+
+		It("serves WASM files with application/wasm content type", func() {
+			contentType := server.MIMEType(".wasm")
+			Expect(contentType).To(Equal("application/wasm"))
+		})
+
+		It("serves font files with correct content type", func() {
+			Expect(server.MIMEType(".woff2")).To(Equal("font/woff2"))
+			Expect(server.MIMEType(".woff")).To(Equal("font/woff"))
+			Expect(server.MIMEType(".ttf")).To(Equal("font/ttf"))
+		})
+
+		It("serves image files with correct content type", func() {
+			Expect(server.MIMEType(".png")).To(Equal("image/png"))
+			Expect(server.MIMEType(".jpg")).To(Equal("image/jpeg"))
+			Expect(server.MIMEType(".jpeg")).To(Equal("image/jpeg"))
+			Expect(server.MIMEType(".gif")).To(Equal("image/gif"))
+			Expect(server.MIMEType(".webp")).To(Equal("image/webp"))
+			Expect(server.MIMEType(".ico")).To(Equal("image/x-icon"))
+		})
+
+		It("serves HTML files with text/html content type", func() {
+			contentType := server.MIMEType(".html")
+			Expect(contentType).To(Equal("text/html; charset=utf-8"))
+		})
+
+		It("returns application/octet-stream for unknown extensions", func() {
+			contentType := server.MIMEType(".alloyunknown")
+			Expect(contentType).To(Equal("application/octet-stream"),
+				"unknown file extensions must fall back to application/octet-stream")
+		})
+	})
+
 	// ── Passthrough path mapping ──────────────────────────────────────
 
 	Describe("Passthrough path mapping", func() {
