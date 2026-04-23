@@ -203,8 +203,13 @@ var _ = Describe("Server", func() {
 			Expect(server.MIMEType(".ico")).To(Equal("image/x-icon"))
 		})
 
+		It("serves HTML files with text/html content type", func() {
+			contentType := server.MIMEType(".html")
+			Expect(contentType).To(Equal("text/html; charset=utf-8"))
+		})
+
 		It("returns application/octet-stream for unknown extensions", func() {
-			contentType := server.MIMEType(".xyz")
+			contentType := server.MIMEType(".alloyunknown")
 			Expect(contentType).To(Equal("application/octet-stream"),
 				"unknown file extensions must fall back to application/octet-stream")
 		})
