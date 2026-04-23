@@ -256,6 +256,7 @@ func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
 			}
 			rt := NewNodeRuntime()
 			if err := rt.EvalFile(p.Path); err != nil {
+				rt.Close()
 				warnings = append(warnings, fmt.Sprintf("plugin %s: eval failed: %v", p.Name, err))
 				continue
 			}
