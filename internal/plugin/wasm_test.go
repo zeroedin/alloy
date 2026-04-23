@@ -398,6 +398,75 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			_ = rt.RegisteredHooks()
 		})
 
+		// ── Issue #241: Tier 3 Node plugin evaluation and subprocess ──
+		// These tests are in the unified Runtime section because
+		// NodeRuntime implements the same interface. They specifically
+		// test Node subprocess spawning and JS evaluation.
+
+		It("NodeRuntime.EvalFile discovers hooks and filters from JS plugin", func() {
+			rt := plugin.NewNodeRuntime()
+
+			err := rt.EvalFile(filepath.Join(testdataDir(), "single-files", "node-simple.js"))
+			Expect(err).NotTo(HaveOccurred(),
+				"NodeRuntime must evaluate Node plugin JS files")
+
+			// node-simple.js registers: filter "nodeUpper" + hook "onContentTransformed"
+			filters := rt.RegisteredFilters()
+			Expect(filters).To(ContainElement("nodeUpper"),
+				"NodeRuntime must discover filters registered via alloy.filter() in JS")
+
+			hooks := rt.RegisteredHooks()
+			Expect(hooks).To(ContainElement("onContentTransformed"),
+				"NodeRuntime must discover hooks registered via alloy.hook() in JS")
+		})
+
+		It("NodeRuntime.CallFilter routes call through subprocess and returns result", func() {
+			rt := plugin.NewNodeRuntime()
+			Expect(rt.EvalFile(filepath.Join(testdataDir(), "single-files", "node-simple.js"))).To(Succeed())
+
+			// nodeUpper converts to uppercase — proves the JS function executed
+			result, err := rt.CallFilter("nodeUpper", "hello alloy")
+			Expect(err).NotTo(HaveOccurred(),
+				"NodeRuntime.CallFilter must route to Node subprocess")
+			Expect(result).To(Equal("HELLO ALLOY"),
+				"Node filter must transform input — proves JS function executed, "+
+					"not just returned input unchanged")
+		})
+
+		It("NodeRuntime.CallHook routes call through subprocess and returns modified payload", func() {
+			rt := plugin.NewNodeRuntime()
+			Expect(rt.EvalFile(filepath.Join(testdataDir(), "single-files", "node-simple.js"))).To(Succeed())
+
+			// onContentTransformed appends "<!-- node-plugin -->"
+			result, err := rt.CallHook("onContentTransformed", "<p>test</p>")
+			Expect(err).NotTo(HaveOccurred(),
+				"NodeRuntime.CallHook must route to Node subprocess")
+			resultStr, ok := result.(string)
+			Expect(ok).To(BeTrue())
+			Expect(resultStr).To(ContainSubstring("<!-- node-plugin -->"),
+				"Node hook must modify the payload — proves JS function executed "+
+					"via subprocess, not just returned input unchanged")
+		})
+
+		It("NodeBridge.Start spawns a Node subprocess", func() {
+			bridge := plugin.NewNodeBridge(filepath.Join(testdataDir()))
+			err := bridge.Start()
+			Expect(err).NotTo(HaveOccurred(),
+				"NodeBridge.Start must spawn a Node subprocess")
+			Expect(bridge.State()).To(Equal(plugin.BridgeRunning),
+				"bridge state must be Running after Start")
+
+			// Verify an actual process is running — PID must be non-zero
+			Expect(bridge.PID()).To(BeNumerically(">", 0),
+				"NodeBridge must have a non-zero PID after Start — "+
+					"proves a real subprocess was spawned, not just a state change")
+
+			Expect(bridge.Stop()).To(Succeed(),
+				"NodeBridge.Stop must cleanly shut down the subprocess")
+			Expect(bridge.State()).To(Equal(plugin.BridgeStopped),
+				"bridge state must be Stopped after Stop")
+		})
+
 		It("Registry.Runtimes includes Node runtimes after LoadPlugins", func() {
 			registry := plugin.NewRegistry(filepath.Join(testdataDir(), "plugins-populated"))
 			Expect(registry.DiscoverPlugins()).To(Succeed())
