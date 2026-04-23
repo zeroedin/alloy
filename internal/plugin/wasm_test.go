@@ -398,9 +398,10 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			_ = rt.RegisteredHooks()
 		})
 
-		// ── Issue #241: Node plugin evaluation and subprocess ─────────
-		// NodeRuntime must evaluate plugin JS, discover registrations,
-		// and route calls through a Node subprocess.
+		// ── Issue #241: Tier 3 Node plugin evaluation and subprocess ──
+		// These tests are in the unified Runtime section because
+		// NodeRuntime implements the same interface. They specifically
+		// test Node subprocess spawning and JS evaluation.
 
 		It("NodeRuntime.EvalFile discovers hooks and filters from JS plugin", func() {
 			rt := plugin.NewNodeRuntime()
@@ -455,7 +456,11 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(bridge.State()).To(Equal(plugin.BridgeRunning),
 				"bridge state must be Running after Start")
 
-			// The subprocess must actually be running — Stop must succeed
+			// Verify an actual process is running — PID must be non-zero
+			Expect(bridge.PID()).To(BeNumerically(">", 0),
+				"NodeBridge must have a non-zero PID after Start — "+
+					"proves a real subprocess was spawned, not just a state change")
+
 			Expect(bridge.Stop()).To(Succeed(),
 				"NodeBridge.Stop must cleanly shut down the subprocess")
 			Expect(bridge.State()).To(Equal(plugin.BridgeStopped),
