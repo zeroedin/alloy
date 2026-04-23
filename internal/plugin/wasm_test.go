@@ -467,6 +467,35 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 				"bridge state must be Stopped after Stop")
 		})
 
+		// ── Issue #248: Node module resolution ──────────────────────
+		// The Node subprocess must resolve imports from the project root,
+		// not from the temp directory where the bridge script lives.
+
+		It("NodeBridge runs from project root for module resolution", func() {
+			// The bridge must set cmd.Dir to the project root so Node
+			// resolves imports from the project's node_modules/
+			bridge := plugin.NewNodeBridge(filepath.Join(testdataDir()))
+			Expect(bridge.Start()).To(Succeed())
+			DeferCleanup(bridge.Stop)
+
+			// The subprocess's working directory must be the project root
+			Expect(bridge.WorkingDir()).To(Equal(filepath.Join(testdataDir())),
+				"NodeBridge subprocess must run from the project root — "+
+					"not the temp directory where the bridge script lives. "+
+					"Without this, import('@lit-labs/ssr') fails because "+
+					"node_modules/ can't be found from the temp path.")
+		})
+
+		It("NodeRuntime passes project root to bridge", func() {
+			// When LoadPlugins creates a NodeRuntime, it must pass the
+			// project root so the bridge subprocess can resolve imports.
+			// Currently NewNodeRuntime() passes "" (empty string).
+			rt := plugin.NewNodeRuntime()
+			Expect(rt.ProjectRoot()).NotTo(BeEmpty(),
+				"NodeRuntime must know the project root so it can pass it "+
+					"to NewNodeBridge for module resolution")
+		})
+
 		It("Registry.Runtimes includes Node runtimes after LoadPlugins", func() {
 			registry := plugin.NewRegistry(filepath.Join(testdataDir(), "plugins-populated"))
 			Expect(registry.DiscoverPlugins()).To(Succeed())
