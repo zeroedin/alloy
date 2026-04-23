@@ -339,6 +339,7 @@ Key points:
     - `CallShortcode(name, args, content)`: Send `Message{ID: n, Type: "shortcode", Name: name, Payload: {args, content}}`. Wait for response. Return rendered HTML from `Result` field.
     - All messages use the existing `Message` type and `EncodeMessage`/`DecodeMessage` with LSP-style length-prefixed framing. The `ID` field correlates requests with responses.
     - **Bridge script**: `NodeBridge.Start()` spawns `node` with a built-in bridge script (embedded in the Go binary or written to a temp file) that implements the `alloy` API object and the JSON-RPC message loop. The bridge script is NOT a user file — it's Alloy's Node-side runtime.
+    - **Module resolution (issue #248)**: The Node subprocess must run from the project root (`cmd.Dir = projectRoot`) so `import()` and `require()` resolve packages from the project's `node_modules/`. `NewNodeRuntime` must accept the project root and pass it to `NewNodeBridge`. `LoadPlugins` derives the project root from `registry.pluginsDir` (parent directory). Without this, plugins that import npm packages fail because Node resolves from the temp bridge script location.
 
   `LoadPlugins()` does the same bridging for all runtimes:
   ```

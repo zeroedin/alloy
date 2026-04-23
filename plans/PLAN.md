@@ -1693,6 +1693,8 @@ For plugins that need Node-specific capabilities:
 
 **Bring your own Node.** Alloy does not ship Node.js, manage `package.json`, or run `npm install`. The user is responsible for their Node version, dependencies, and package management. Alloy spawns whatever `node` is in PATH. If Node plugins exist but `node` is not found, the build fails with a clear error.
 
+**Module resolution**: The Node subprocess runs from the project root directory so `import()` and `require()` resolve packages from the project's `node_modules/`. This means plugins can use any installed npm package — `@lit-labs/ssr`, `postcss`, `sharp`, etc. — without special configuration. The user installs packages with `npm install` in the project root, and plugins import them normally.
+
 **Security: Tier 3 plugins run with the same permissions as the user.** They have full access to the filesystem, network, and environment variables. A plugin can read files, make HTTP requests, or spawn child processes — there is no sandbox. This is the same trust model used by 11ty, Jekyll, and every other plugin-based SSG: installing a plugin is an explicit statement of trust. Only install plugins you have reviewed or that come from trusted sources.
 
 Alloy scans `plugins/` for `.js` and `.ts` files that export `runtime: "node"`. If any are found, it spawns a single Node subprocess that loads all of them. If none are found, no Node process is started — zero overhead. Communicates via stdin/stdout using length-prefixed JSON-RPC (LSP-style framing). Plugin stderr is redirected to `.alloy/plugin.log`.
