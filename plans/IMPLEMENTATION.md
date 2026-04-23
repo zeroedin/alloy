@@ -587,6 +587,10 @@ if cmd.Flags().Changed("root") {
 
 The flag must be applied **after** config loading but **before** pipeline execution, since all `structure:` paths resolve against `ProjectRoot`.
 
+#### MIME type serving (issue #252)
+
+`serveFileWithReload` must set `Content-Type` based on file extension before writing the response. Add a `MIMEType(ext string) string` function to the server package with a built-in map of common web file extensions. This avoids relying on the platform's MIME database which may be incomplete (macOS missing `.css` → `text/plain`). For unknown extensions, fall back to `mime.TypeByExtension(ext)`, then `application/octet-stream`. In `serveFileWithReload`, call `w.Header().Set("Content-Type", MIMEType(filepath.Ext(filePath)))` before writing.
+
 #### Build progress output
 
 The pipeline needs a `ProgressReporter` interface that `Build()` and `BuildIncremental()` accept (or nil for no progress):
