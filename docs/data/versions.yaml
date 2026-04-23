@@ -1,0 +1,7 @@
+versions:
+  - label: "0.1"
+    path: "/v0.1/"
+    tag: "v0.1.0"
+    latest: true
+
+current: "0.1"

@@ -1,0 +1,14 @@
+<nav class="sidebar-nav" aria-label="Documentation">
+  {% for section in site.data.navigation.sections %}
+    <div class="sidebar-section">
+      <h3><a href="{{ section.path }}">{{ section.title }}</a></h3>
+      <ul>
+        {% for item in section.items %}
+          <li>
+            <a href="{{ item.path }}">{{ item.title }}</a>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endfor %}
+</nav>

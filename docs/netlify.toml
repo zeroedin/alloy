@@ -1,0 +1,36 @@
+[build]
+  base = "docs"
+  publish = "docs/_site"
+  command = "cd .. && go build -o alloy . && cd docs && ../alloy build && npx pagefind --site _site"
+
+[build.environment]
+  GO_VERSION = "1.25"
+
+# Redirect /latest/ to current version
+[[redirects]]
+  from = "/latest/*"
+  to = "/v1/:splat"
+  status = 302
+
+# Custom 404
+[[redirects]]
+  from = "/*"
+  to = "/404.html"
+  status = 404
+
+# Cache static assets
+[[headers]]
+  for = "/static/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Deploy previews — only build current version (fast)
+[context.deploy-preview]
+  command = "cd .. && go build -o alloy . && cd docs && ../alloy build && npx pagefind --site _site"
+
+[context.deploy-preview.environment]
+  GO_VERSION = "1.25"
+
+# Production — build all versions
+[context.production]
+  command = "bash scripts/build-versions.sh"

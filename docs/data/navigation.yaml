@@ -1,0 +1,40 @@
+sections:
+  - title: "Getting Started"
+    path: "/getting-started/"
+    items:
+      - title: "Installation"
+        path: "/getting-started/"
+      - title: "Quickstart"
+        path: "/getting-started/quickstart/"
+      - title: "Project Structure"
+        path: "/getting-started/project-structure/"
+  - title: "Configuration"
+    path: "/configuration/"
+    items:
+      - title: "Overview"
+        path: "/configuration/"
+  - title: "Content Authoring"
+    path: "/content-authoring/"
+    items:
+      - title: "Overview"
+        path: "/content-authoring/"
+  - title: "Templates"
+    path: "/templates/"
+    items:
+      - title: "Overview"
+        path: "/templates/"
+  - title: "Collections"
+    path: "/collections/"
+    items:
+      - title: "Overview"
+        path: "/collections/"
+  - title: "Plugins"
+    path: "/plugins/"
+    items:
+      - title: "Overview"
+        path: "/plugins/"
+  - title: "CLI"
+    path: "/cli/"
+    items:
+      - title: "Overview"
+        path: "/cli/"

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page.title }} — Alloy Docs</title>
+  <meta name="description" content="{{ page.description | default: 'Alloy documentation' }}">
+  <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body class="docs-page">
+  <header class="site-header">
+    <nav class="top-nav">
+      <a href="/" class="logo">Alloy</a>
+      <div class="nav-links">
+        <a href="/getting-started/">Docs</a>
+        <a href="/plugins/">Plugins</a>
+        <a href="/cli/">CLI</a>
+        <a href="https://github.com/zeroedin/alloy" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </nav>
+  </header>
+  <div class="docs-layout">
+    <aside class="sidebar">
+      {% include "partials/sidebar" %}
+    </aside>
+    <main class="content">
+      <article>
+        <h1>{{ page.title }}</h1>
+        {{ content }}
+      </article>
+    </main>
+  </div>
+  <footer class="site-footer">
+    <p>Alloy is open source under the <a href="https://github.com/zeroedin/alloy/blob/main/LICENSE">MIT License</a>.</p>
+  </footer>
+</body>
+</html>
