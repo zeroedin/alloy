@@ -84,12 +84,19 @@ func newDevCommand() *cobra.Command {
 			}
 			defer pipeline.SetReporter(nil)
 
-			if _, err := pipeline.Build(cfg); err != nil {
-				log.Printf("warning: initial build failed: %v", err)
+			_, initialBuildErr := pipeline.Build(cfg)
+			if initialBuildErr != nil {
+				log.Printf("warning: initial build failed: %v", initialBuildErr)
 			}
 
 			srv := server.NewWithMode(cfg, server.ModeDev)
 			srv.SetNoDrafts(noDrafts)
+
+			if initialBuildErr != nil {
+				srv.Overlay().SetErrors([]server.BuildError{
+					{Message: initialBuildErr.Error(), Stage: "initial build"},
+				})
+			}
 
 			portStr, _ := cmd.Flags().GetString("port")
 			port, err := strconv.Atoi(portStr)
