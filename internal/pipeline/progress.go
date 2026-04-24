@@ -85,7 +85,9 @@ func (p *TTYProgress) Update(current int, filePath string, elapsed time.Duration
 }
 
 func (p *TTYProgress) EndStage() {
-	fmt.Fprintln(p.w)
+	if p.total != 0 {
+		fmt.Fprintln(p.w)
+	}
 }
 
 func (p *TTYProgress) Summary(pageCount int, duration time.Duration, pagesSkipped int) {
