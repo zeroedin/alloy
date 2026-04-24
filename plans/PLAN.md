@@ -2282,7 +2282,23 @@ Useful for identifying slow pages or debugging build issues. No progress bar —
 
 No output at all except errors. Not even the summary line. Exit code communicates success/failure.
 
-**Serve mode rebuilds:**
+**Serve mode — initial build:**
+
+The initial `pipeline.Build()` called by `alloy serve` (both dev and `--preview` modes) must attach a progress reporter using the same flag-based logic as `alloy build`:
+- `--quiet` → nil
+- `--verbose` → `VerboseProgress`
+- default → `TTYProgress` if terminal, nil if piped
+
+This is where the progress bar is most valuable — the user is watching the terminal waiting for the server to start. Without it, there is no output between running the command and seeing `Serving at http://localhost:3000`.
+
+```
+[alloy] Discovering content... 420 pages found
+[alloy] Rendering  [========>                ] 34% (142/420) content/blog/my-post.md
+[alloy] Built 420 pages in 1.8s
+Serving at http://localhost:3000
+```
+
+**Serve mode — incremental rebuilds:**
 
 Incremental rebuilds in `alloy serve` show a compact one-line summary:
 
@@ -2290,7 +2306,7 @@ Incremental rebuilds in `alloy serve` show a compact one-line summary:
 [alloy] 12:34:58 Rebuilt 3 pages in 47ms (417 cached)
 ```
 
-Full rebuilds (triggered by config changes or bulk file changes) show the full progress bar.
+Full rebuilds (triggered by config changes or bulk file changes) show the full progress bar. `BuildIncremental()` must call the progress reporter the same way `Build()` does — `StartStage`, `Update`, `EndStage`, `Summary`.
 
 #### `--root` flag behavior
 
