@@ -25,6 +25,7 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().StringP("root", "r", "", "Project root directory (overrides config file location)")
 
 	root.AddCommand(newBuildCommand())
+	root.AddCommand(newDevCommand())
 	root.AddCommand(newServeCommand())
 	root.AddCommand(newInitCommand())
 	root.AddCommand(newVersionCommand())
