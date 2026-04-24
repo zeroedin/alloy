@@ -746,4 +746,77 @@ var _ = Describe("Build Pipeline", func() {
 				"build with ssr: config must run Phase 2")
 		})
 	})
+
+	// ── BuildOptions: SkipSSR (issue #264) ──────────────────────────
+	// alloy dev always skips SSR. Build() accepts BuildOptions with
+	// SkipSSR to skip Phase 2 regardless of ssr: config.
+
+	Describe("BuildOptions SkipSSR", func() {
+		It("SkipSSR=true skips Phase 2 even when SSR is configured", func() {
+			cfg := &config.Config{
+				Title: "SSR Site",
+				SSR:   &config.SSRConfig{Command: "cat"},
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			result, err := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.SSRSkipped).To(BeTrue(),
+				"Build with SkipSSR=true must skip Phase 2 entirely — "+
+					"this is how alloy dev avoids SSR overhead regardless of config")
+		})
+
+		It("SkipSSR=false with SSR config runs Phase 2 normally", func() {
+			cfg := &config.Config{
+				Title: "SSR Site",
+				SSR:   &config.SSRConfig{Command: "cat"},
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			result, err := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: false})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.SSRSkipped).To(BeFalse(),
+				"Build with SkipSSR=false must run Phase 2 when SSR is configured — "+
+					"this is the alloy build / alloy serve path")
+		})
+
+		It("no BuildOptions runs Phase 2 when SSR is configured", func() {
+			cfg := &config.Config{
+				Title: "SSR Site",
+				SSR:   &config.SSRConfig{Command: "cat"},
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			// No opts — existing callers must continue to work
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.SSRSkipped).To(BeFalse(),
+				"Build without options must run Phase 2 when SSR is configured — "+
+					"backward compatible with existing alloy build behavior")
+		})
+
+		It("BuildIncremental respects SkipSSR", func() {
+			cfg := &config.Config{
+				Title:   "SSR Incremental",
+				BaseURL: "https://example.com",
+				SSR:     &config.SSRConfig{Command: "cat"},
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n<ds-card>Hello</ds-card>",
+			}
+
+			result, err := pipeline.BuildIncremental(
+				cfg, contentMap, nil, nil,
+				pipeline.BuildOptions{SkipSSR: true},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.SSRSkipped).To(BeTrue(),
+				"BuildIncremental with SkipSSR=true must skip Phase 2 — "+
+					"alloy dev incremental rebuilds never run SSR")
+			Expect(result.SSRPagesRendered).To(Equal(0),
+				"no pages should go through SSR when SkipSSR is true")
+		})
+	})
 })

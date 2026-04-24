@@ -2082,7 +2082,7 @@ Alloy's server has two modes. Both use the same built-in Go HTTP server, serve f
 
 The daily driver for active development.
 
-- **Phase 1 only** — Liquid + Markdown → HTML with raw component tags. No SSR, no DSD, regardless of config.
+- **Phase 1 only** — Liquid + Markdown → HTML with raw component tags. No SSR, no DSD, regardless of config. `Build()` is called with `BuildOptions{SkipSSR: true}` so Phase 2 is skipped even when `ssr:` is configured.
 - **Components render client-side** — Browser loads component JS and renders them normally.
 - **Full page reload** — A small dev client (injected in dev mode only) connects via WebSocket. Any file change triggers a rebuild of affected pages and sends `{"type": "reload"}` to the browser.
 
