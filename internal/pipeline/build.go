@@ -72,6 +72,11 @@ func reportSummary(pageCount int, duration time.Duration, pagesSkipped int) {
 	}
 }
 
+// BuildOptions controls optional pipeline behavior.
+type BuildOptions struct {
+	SkipSSR bool // true = skip Phase 2 entirely, regardless of cfg.SSR
+}
+
 // BuildResult holds the outcome of a build.
 type BuildResult struct {
 	OutputDir        string
@@ -86,7 +91,8 @@ type BuildResult struct {
 }
 
 // Build runs the complete build pipeline (Phase 0 through Phase 3).
-func Build(cfg *config.Config) (*BuildResult, error) {
+// Pass BuildOptions to control pipeline behavior (e.g., SkipSSR for dev mode).
+func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	start := time.Now()
 
 	config.ApplyDefaults(cfg)
@@ -919,7 +925,7 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildR
 // build (per the cache) or were invalidated by a layout/data change.
 // Used by alloy serve for incremental rebuilds on file watcher events.
 // If previousCache is nil, all pages are rendered (equivalent to full build).
-func BuildIncremental(cfg *config.Config, contentMap map[string]string, previousCache *cache.Cache, changedFiles []string) (*BuildResult, error) {
+func BuildIncremental(cfg *config.Config, contentMap map[string]string, previousCache *cache.Cache, changedFiles []string, opts ...BuildOptions) (*BuildResult, error) {
 	start := time.Now()
 	config.ApplyDefaults(cfg)
 

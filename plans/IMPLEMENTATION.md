@@ -269,6 +269,26 @@ Key points:
 - **`validateOutputDir`** (issue #9): Uses path equality + parent/child overlap detection (not substring matching). Only rejects exact matches (`output == content`) and nesting (`output = content/build` or `content` inside `output`). Names like `my_content_site` are valid output directories.
 - **Render ordering** (issue #10): Markdown renders first, then template tags — per spec §6 steps 3-4. Goldmark's TemplateTags extension preserves `{{ }}`/`{% %}` through markdown rendering. After markdown rendering and before Liquid processing, `escapeTemplateTagsInCode` converts template tags inside `<code>` elements to HTML entities so Liquid ignores them (issue #46). Markdown errors use stage name `"content transformation"`, template errors use `"template rendering"`.
 
+#### `BuildOptions` (issue #264)
+
+`Build()` accepts an optional `BuildOptions` to control pipeline behavior without changing config:
+
+```go
+type BuildOptions struct {
+    SkipSSR bool // true = skip Phase 2 entirely, regardless of cfg.SSR
+}
+
+func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error)
+```
+
+The variadic pattern keeps existing callers working (`Build(cfg)` still compiles). When `opts` is provided and `SkipSSR` is true, the pipeline skips Phase 2 entirely and sets `result.SSRSkipped = true`. The SSR check becomes:
+
+```go
+ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
+```
+
+`cmd/dev.go` always passes `pipeline.BuildOptions{SkipSSR: true}`. `cmd/build.go` and `cmd/serve.go` call `Build(cfg)` with no options (SSR runs if configured). `BuildIncremental` gets the same variadic parameter.
+
 #### `Build()` full orchestration (issue #30)
 
 `Build()` must orchestrate all pipeline stages from §2. Currently it stops after markdown+template rendering. The individual packages for each stage are implemented and pass tests — they need to be called in order:
