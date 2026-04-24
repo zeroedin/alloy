@@ -1005,10 +1005,13 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
-	// Render only the pages that need it
-	reportStartStage("Rendering", len(pagesToRender))
+	// Render only the pages that need it.
+	// Suppress per-page reporter calls — incremental rebuilds are fast
+	// and only emit a compact Summary line (spec §259).
+	savedReporter := activeReporter
+	activeReporter = nil
 	rendered, renderErr := renderPages(pagesToRender, cfg, nil, nil, nil, nil)
-	reportEndStage()
+	activeReporter = savedReporter
 	if renderErr != nil {
 		return nil, renderErr
 	}
