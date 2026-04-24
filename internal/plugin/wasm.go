@@ -346,7 +346,7 @@ func (r *WASMRuntime) LoadModule(path string) error {
 	wasmBytes, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("WASM module not found: %s", path)
+			return fmt.Errorf("wasm module not found: %s", path)
 		}
 		return fmt.Errorf("reading WASM module %s: %w", path, err)
 	}
@@ -384,7 +384,7 @@ func (r *WASMRuntime) LoadModule(path string) error {
 	// Require alloc export for safe memory allocation
 	if r.mod.ExportedFunction("alloc") == nil {
 		r.Close()
-		return fmt.Errorf("WASM module %s missing required alloc export — "+
+		return fmt.Errorf("wasm module %s missing required alloc export — "+
 			"alloc(size i32) -> (ptr i32) is needed for safe memory allocation", filepath.Base(path))
 	}
 
@@ -396,7 +396,7 @@ func (r *WASMRuntime) LoadModule(path string) error {
 // and the function is called with (ptr, len). The result is read back.
 func (r *WASMRuntime) CallExport(name string, args ...interface{}) (interface{}, error) {
 	if r.mod == nil {
-		return nil, fmt.Errorf("WASM module not loaded — call LoadModule first")
+		return nil, fmt.Errorf("wasm module not loaded — call LoadModule first")
 	}
 	if !r.exports[name] {
 		return nil, fmt.Errorf("export %q not found in %s.wasm", name, r.moduleName)
@@ -422,7 +422,7 @@ func (r *WASMRuntime) CallExport(name string, args ...interface{}) (interface{},
 		case fmt.Stringer:
 			input = v.String()
 		default:
-			return nil, fmt.Errorf("WASM CallExport %q: argument 0 is %T, expected string-like type", name, args[0])
+			return nil, fmt.Errorf("wasm CallExport %q: argument 0 is %T, expected string-like type", name, args[0])
 		}
 
 		if len(args) > 1 {
@@ -437,12 +437,12 @@ func (r *WASMRuntime) CallExport(name string, args ...interface{}) (interface{},
 				case fmt.Stringer:
 					strArgs[i] = v.String()
 				default:
-					return nil, fmt.Errorf("WASM CallExport %q: argument %d is %T, expected string-like type", name, i, args[i])
+					return nil, fmt.Errorf("wasm CallExport %q: argument %d is %T, expected string-like type", name, i, args[i])
 				}
 			}
 			jsonBytes, err := json.Marshal(strArgs)
 			if err != nil {
-				return nil, fmt.Errorf("WASM CallExport %q: marshaling args: %w", name, err)
+				return nil, fmt.Errorf("wasm CallExport %q: marshaling args: %w", name, err)
 			}
 			input = string(jsonBytes)
 		}
@@ -451,7 +451,7 @@ func (r *WASMRuntime) CallExport(name string, args ...interface{}) (interface{},
 
 	results, err := fn.Call(context.Background())
 	if err != nil {
-		return nil, fmt.Errorf("WASM call %q: %w", name, err)
+		return nil, fmt.Errorf("wasm call %q: %w", name, err)
 	}
 	if len(results) > 0 {
 		return results[0], nil
@@ -464,29 +464,29 @@ func (r *WASMRuntime) CallExport(name string, args ...interface{}) (interface{},
 func (r *WASMRuntime) callStringFilter(fn api.Function, input string) (interface{}, error) {
 	mem := r.mod.Memory()
 	if mem == nil {
-		return nil, fmt.Errorf("WASM module has no exported memory — cannot pass string arguments")
+		return nil, fmt.Errorf("wasm module has no exported memory — cannot pass string arguments")
 	}
 
 	// Allocate memory via the module's exported alloc function
 	allocFn := r.mod.ExportedFunction("alloc")
 	if allocFn == nil {
-		return nil, fmt.Errorf("WASM module missing alloc export — cannot allocate memory for input")
+		return nil, fmt.Errorf("wasm module missing alloc export — cannot allocate memory for input")
 	}
 
 	inputBytes := []byte(input)
 	allocResult, err := allocFn.Call(context.Background(), uint64(len(inputBytes)))
 	if err != nil {
-		return nil, fmt.Errorf("WASM alloc(%d) failed: %w", len(inputBytes), err)
+		return nil, fmt.Errorf("wasm alloc(%d) failed: %w", len(inputBytes), err)
 	}
 	inputPtr := uint32(allocResult[0])
 
 	if !mem.Write(inputPtr, inputBytes) {
-		return nil, fmt.Errorf("WASM memory write failed: input (%d bytes) at offset %d exceeds memory", len(inputBytes), inputPtr)
+		return nil, fmt.Errorf("wasm memory write failed: input (%d bytes) at offset %d exceeds memory", len(inputBytes), inputPtr)
 	}
 
 	results, err := fn.Call(context.Background(), uint64(inputPtr), uint64(len(inputBytes)))
 	if err != nil {
-		return nil, fmt.Errorf("WASM filter call: %w", err)
+		return nil, fmt.Errorf("wasm filter call: %w", err)
 	}
 
 	if len(results) >= 2 {
@@ -500,21 +500,21 @@ func (r *WASMRuntime) callStringFilter(fn api.Function, input string) (interface
 					errPtr, errLen := uint32(errResults[0]), uint32(errResults[1])
 					if errPtr != 0 && errLen != 0 {
 						if errMsg, ok := mem.Read(errPtr, errLen); ok {
-							return nil, fmt.Errorf("WASM filter error: %s", string(errMsg))
+							return nil, fmt.Errorf("wasm filter error: %s", string(errMsg))
 						}
 					}
 				}
 			}
-			return nil, fmt.Errorf("WASM filter returned (0, 0) — plugin execution error")
+			return nil, fmt.Errorf("wasm filter returned (0, 0) — plugin execution error")
 		}
 		resultData, ok := mem.Read(resultPtr, resultLen)
 		if !ok {
-			return nil, fmt.Errorf("WASM memory read failed: result at offset %d len %d", resultPtr, resultLen)
+			return nil, fmt.Errorf("wasm memory read failed: result at offset %d len %d", resultPtr, resultLen)
 		}
 		return string(resultData), nil
 	}
 
-	return nil, fmt.Errorf("WASM filter ABI mismatch: expected 2 return values (ptr, len), got %d", len(results))
+	return nil, fmt.Errorf("wasm filter ABI mismatch: expected 2 return values (ptr, len), got %d", len(results))
 }
 
 // CallExportRaw invokes a WASM function with raw i32 arguments and reads
@@ -522,7 +522,7 @@ func (r *WASMRuntime) callStringFilter(fn api.Function, input string) (interface
 // per the ABI error convention.
 func (r *WASMRuntime) CallExportRaw(name string, ptr, length uint32) (string, error) {
 	if r.mod == nil {
-		return "", fmt.Errorf("WASM module not loaded — call LoadModule first")
+		return "", fmt.Errorf("wasm module not loaded — call LoadModule first")
 	}
 
 	fn := r.mod.ExportedFunction(name)
@@ -532,7 +532,7 @@ func (r *WASMRuntime) CallExportRaw(name string, ptr, length uint32) (string, er
 
 	results, err := fn.Call(context.Background(), uint64(ptr), uint64(length))
 	if err != nil {
-		return "", fmt.Errorf("WASM call %q: %w", name, err)
+		return "", fmt.Errorf("wasm call %q: %w", name, err)
 	}
 
 	if len(results) >= 2 {
@@ -546,26 +546,26 @@ func (r *WASMRuntime) CallExportRaw(name string, ptr, length uint32) (string, er
 						mem := r.mod.Memory()
 						if mem != nil {
 							if errMsg, ok := mem.Read(errPtr, errLen); ok {
-								return "", fmt.Errorf("WASM function %q error: %s", name, string(errMsg))
+								return "", fmt.Errorf("wasm function %q error: %s", name, string(errMsg))
 							}
 						}
 					}
 				}
 			}
-			return "", fmt.Errorf("WASM function %q returned (0, 0) — plugin execution error", name)
+			return "", fmt.Errorf("wasm function %q returned (0, 0) — plugin execution error", name)
 		}
 		mem := r.mod.Memory()
 		if mem == nil {
-			return "", fmt.Errorf("WASM module has no exported memory")
+			return "", fmt.Errorf("wasm module has no exported memory")
 		}
 		resultData, ok := mem.Read(resultPtr, resultLen)
 		if !ok {
-			return "", fmt.Errorf("WASM memory read failed: result at offset %d len %d", resultPtr, resultLen)
+			return "", fmt.Errorf("wasm memory read failed: result at offset %d len %d", resultPtr, resultLen)
 		}
 		return string(resultData), nil
 	}
 
-	return "", fmt.Errorf("WASM function %q returned fewer than 2 values", name)
+	return "", fmt.Errorf("wasm function %q returned fewer than 2 values", name)
 }
 
 // wasmRuntimeExports are well-known WASM exports that are not plugin filters.

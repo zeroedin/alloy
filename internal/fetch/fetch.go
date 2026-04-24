@@ -124,7 +124,7 @@ func ParseXML(data []byte) (map[string]interface{}, error) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("XML parse error: %w", err)
+			return nil, fmt.Errorf("xml parse error: %w", err)
 		}
 
 		switch t := token.(type) {
@@ -151,7 +151,7 @@ func ParseCSVResponse(data []byte) ([]map[string]string, error) {
 
 	records, err := reader.ReadAll()
 	if err != nil {
-		return nil, fmt.Errorf("CSV parse error: %w", err)
+		return nil, fmt.Errorf("csv parse error: %w", err)
 	}
 
 	if len(records) < 2 {
