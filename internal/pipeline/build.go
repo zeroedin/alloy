@@ -701,7 +701,7 @@ func Build(cfg *config.Config) (*BuildResult, error) {
 
 		finalHTML, err := BuildPhase2(intermediateHTML, cfg.SSR)
 		if err != nil {
-			return nil, fmt.Errorf("SSR Phase 2: %w", err)
+			return nil, fmt.Errorf("ssr phase 2: %w", err)
 		}
 
 		for _, page := range pages {
@@ -896,7 +896,7 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildR
 		}
 		finalHTML, err := BuildPhase2(intermediateHTML, cfg.SSR)
 		if err != nil {
-			return nil, fmt.Errorf("SSR Phase 2: %w", err)
+			return nil, fmt.Errorf("ssr phase 2: %w", err)
 		}
 		for _, page := range pages {
 			if transformed, ok := finalHTML[page.RelPath]; ok {

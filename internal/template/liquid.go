@@ -434,7 +434,7 @@ func (t *alloyBlockTag) Parse(tokenizer *liquid.Tokenizer) error {
 	for {
 		token := tokenizer.Shift()
 		if token == "" {
-			return fmt.Errorf("Liquid syntax error: '%s' tag was never closed", t.TagName())
+			return fmt.Errorf("liquid syntax error: '%s' tag was never closed", t.TagName())
 		}
 		if strings.HasPrefix(token, "{%") && strings.HasSuffix(token, "%}") {
 			content := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(token, "{%"), "%}"))
