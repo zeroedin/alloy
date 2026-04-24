@@ -85,7 +85,7 @@ type BuildResult struct {
 	SSRPagesRendered int               // pages that went through Phase 2 SSR
 	Duration         time.Duration
 	Errors           []error
-	SSRSkipped       bool              // true when Phase 2 was skipped (no ssr: config)
+	SSRSkipped       bool              // true when Phase 2 was skipped (no ssr: config or SkipSSR)
 	PagesRendered    []string          // source paths of pages that were rendered
 	RenderedContent  map[string]string // source path → final rendered HTML
 }
@@ -372,7 +372,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				OutputDir:  cfg.Build.Output,
 				PageCount:  0,
 				Duration:   time.Since(start),
-				SSRSkipped: cfg.SSR == nil,
+				SSRSkipped: cfg.SSR == nil || options.SkipSSR,
 			}, nil
 		}
 
@@ -504,7 +504,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 					OutputDir:  cfg.Build.Output,
 					PageCount:  0,
 					Duration:   time.Since(start),
-					SSRSkipped: cfg.SSR == nil,
+					SSRSkipped: cfg.SSR == nil || options.SkipSSR,
 				}, nil
 			}
 			return nil, fmt.Errorf("content discovery: %w", err)
@@ -699,8 +699,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			c.Path, c.Sources[0], c.Sources[1])
 	}
 
-	// Phase 2: SSR (if configured and not skipped) — must run before output
-	// writing so transformed HTML reaches disk (spec §6: Phase 1 → Phase 2 → Phase 3).
+	// Phase 2: SSR runs when configured and BuildOptions.SkipSSR is false.
+	// Must run before output writing so transformed HTML reaches disk
+	// (spec §6: Phase 1 → Phase 2 → Phase 3).
 	ssrSkipped := cfg.SSR == nil || options.SkipSSR
 	if cfg.SSR != nil && !options.SkipSSR {
 		intermediateHTML := make(map[string]string, len(pages))
