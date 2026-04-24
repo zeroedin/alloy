@@ -2300,13 +2300,15 @@ Serving at http://localhost:3000
 
 **Serve mode — incremental rebuilds:**
 
-Incremental rebuilds in `alloy serve` show a compact one-line summary:
+Incremental rebuilds via `BuildIncremental()` are typically 1-3 pages and complete in under 100ms. A multi-stage progress bar would be visual noise. `BuildIncremental()` only calls `Summary` on the reporter — no `StartStage`, `Update`, or `EndStage`:
 
 ```
 [alloy] 12:34:58 Rebuilt 3 pages in 47ms (417 cached)
 ```
 
-Full rebuilds (triggered by config changes or bulk file changes) show the full progress bar. `BuildIncremental()` must call the progress reporter the same way `Build()` does — `StartStage`, `Update`, `EndStage`, `Summary`.
+The timestamp prefix is added by the reporter's serve-mode `Summary` implementation, not by the pipeline.
+
+Full rebuilds triggered by config changes or bulk file changes (10+ files) go through `Build()`, not `BuildIncremental()`, and show the full multi-stage progress bar.
 
 #### `--root` flag behavior
 
