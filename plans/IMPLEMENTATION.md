@@ -616,6 +616,12 @@ Two implementations:
 - `--verbose` → `VerboseProgress`
 - default → `TTYProgress` if terminal, nil if piped
 
+`cmd/serve.go` must attach a progress reporter before the initial `pipeline.Build(cfg)` call using the same flag-based logic. This is where progress matters most — the user is watching the terminal waiting for the server to start. Without a reporter, there is no output between running the command and seeing `Serving at http://localhost:3000`. The reporter must be cleaned up after the initial build completes (`defer pipeline.SetReporter(nil)` scoped to the initial build, not the entire serve lifetime).
+
+For file-watcher rebuilds in serve mode, `cmd/serve.go` should also attach a reporter before calling `pipeline.Build(cfg)` or `pipeline.BuildIncremental(...)`. The reporter is set and cleared around each rebuild call.
+
+`BuildIncremental()` must call the reporter the same way `Build()` does — `StartStage`, `Update`, `EndStage`, `Summary`. The `Summary` call should use the `pagesSkipped` parameter to show cached page count.
+
 The pipeline must nil-guard every progress call since the reporter may be nil:
 ```go
 if reporter != nil { reporter.StartStage("Rendering", len(pages)) }

@@ -1,6 +1,8 @@
 package pipeline_test
 
 import (
+	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -8,6 +10,37 @@ import (
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/pipeline"
 )
+
+// spyReporter records all ProgressReporter calls for test assertions.
+type spyReporter struct {
+	stages    []string
+	messages  []string
+	updates   []spyUpdate
+	ended     int
+	summaries []spySummary
+}
+
+type spyUpdate struct {
+	current  int
+	filePath string
+	elapsed  time.Duration
+}
+
+type spySummary struct {
+	pageCount    int
+	duration     time.Duration
+	pagesSkipped int
+}
+
+func (s *spyReporter) StartStage(name string, total int) { s.stages = append(s.stages, name) }
+func (s *spyReporter) Message(text string)               { s.messages = append(s.messages, text) }
+func (s *spyReporter) Update(current int, filePath string, elapsed time.Duration) {
+	s.updates = append(s.updates, spyUpdate{current: current, filePath: filePath, elapsed: elapsed})
+}
+func (s *spyReporter) EndStage() { s.ended++ }
+func (s *spyReporter) Summary(pageCount int, duration time.Duration, pagesSkipped int) {
+	s.summaries = append(s.summaries, spySummary{pageCount: pageCount, duration: duration, pagesSkipped: pagesSkipped})
+}
 
 // Spec reference: PLAN.md §2 — Build Pipeline
 // Tests are immutable. They encode the specification.
@@ -744,6 +777,117 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(ssrResult).NotTo(BeNil())
 			Expect(ssrResult.SSRSkipped).To(BeFalse(),
 				"build with ssr: config must run Phase 2")
+		})
+	})
+
+	// ── Progress reporter wiring (issue #255) ─────────────────────
+	// The ProgressReporter must be called by both Build() and
+	// BuildIncremental(). This is critical for alloy serve where
+	// users watch the terminal waiting for the server to start.
+
+	Describe("Progress reporter", func() {
+		AfterEach(func() {
+			pipeline.SetReporter(nil)
+		})
+
+		It("Build calls StartStage, Update, EndStage, and Summary", func() {
+			spy := &spyReporter{}
+			pipeline.SetReporter(spy)
+
+			cfg := &config.Config{
+				Title:   "Progress Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			Expect(spy.stages).NotTo(BeEmpty(),
+				"Build must call StartStage at least once — "+
+					"without this, serve mode has no progress output during initial build")
+			Expect(spy.ended).To(BeNumerically(">", 0),
+				"Build must call EndStage to finalize each stage")
+			Expect(spy.summaries).To(HaveLen(1),
+				"Build must call Summary exactly once at the end")
+			Expect(spy.summaries[0].pageCount).To(Equal(result.PageCount),
+				"Summary pageCount must match the build result")
+		})
+
+		It("Build with content calls Update for each page", func() {
+			spy := &spyReporter{}
+			pipeline.SetReporter(spy)
+
+			cfg := &config.Config{
+				Title:   "Progress Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			content := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+				"content/about.md": "---\ntitle: About\n---\n# About",
+			}
+			result, err := pipeline.BuildWithContent(cfg, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			Expect(spy.updates).To(HaveLen(result.PageCount),
+				"Build must call Update once per page rendered — "+
+					"each Update drives the progress bar forward")
+		})
+
+		It("BuildIncremental calls the progress reporter", func() {
+			spy := &spyReporter{}
+			pipeline.SetReporter(spy)
+
+			cfg := &config.Config{
+				Title:   "Incremental Progress",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+				"content/about.md": "---\ntitle: About\n---\n# About",
+			}
+
+			// First build populates cache
+			previousCache := cache.New()
+			for path, body := range contentMap {
+				relPath := path[len("content/"):]
+				previousCache.SetHash(relPath, cache.HashContent([]byte(body)))
+			}
+
+			// Change one page
+			contentMap["content/about.md"] = "---\ntitle: About\n---\n# About Updated"
+			changedFiles := []string{"content/about.md"}
+
+			result, err := pipeline.BuildIncremental(cfg, contentMap, previousCache, changedFiles)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			Expect(spy.stages).NotTo(BeEmpty(),
+				"BuildIncremental must call StartStage — "+
+					"without this, serve-mode rebuilds have no progress output")
+			Expect(spy.summaries).To(HaveLen(1),
+				"BuildIncremental must call Summary exactly once")
+			Expect(spy.summaries[0].pagesSkipped).To(Equal(result.PagesSkipped),
+				"Summary pagesSkipped must match the incremental result — "+
+					"this drives the '(N cached)' display in serve rebuild output")
+		})
+
+		It("no reporter does not panic", func() {
+			pipeline.SetReporter(nil)
+
+			cfg := &config.Config{
+				Title:   "No Reporter",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil(),
+				"Build with nil reporter must succeed without panicking — "+
+					"this is the --quiet and piped non-TTY path")
 		})
 	})
 })
