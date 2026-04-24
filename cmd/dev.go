@@ -84,7 +84,7 @@ func newDevCommand() *cobra.Command {
 			}
 			defer pipeline.SetReporter(nil)
 
-			_, initialBuildErr := pipeline.Build(cfg)
+			_, initialBuildErr := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})
 			if initialBuildErr != nil {
 				log.Printf("warning: initial build failed: %v", initialBuildErr)
 			}
@@ -210,7 +210,7 @@ func newDevCommand() *cobra.Command {
 								log.Printf("rebuilding (%d files changed)...", len(events))
 							}
 
-							if _, err := pipeline.Build(cfg); err != nil {
+							if _, err := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true}); err != nil {
 								log.Printf("rebuild failed: %v", err)
 								srv.Overlay().SetErrors([]server.BuildError{
 									{Message: err.Error(), Stage: "rebuild"},

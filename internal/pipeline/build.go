@@ -85,7 +85,7 @@ type BuildResult struct {
 	SSRPagesRendered int               // pages that went through Phase 2 SSR
 	Duration         time.Duration
 	Errors           []error
-	SSRSkipped       bool              // true when Phase 2 was skipped (no ssr: config)
+	SSRSkipped       bool              // true when Phase 2 was skipped (no ssr: config or SkipSSR)
 	PagesRendered    []string          // source paths of pages that were rendered
 	RenderedContent  map[string]string // source path → final rendered HTML
 }
@@ -93,7 +93,16 @@ type BuildResult struct {
 // Build runs the complete build pipeline (Phase 0 through Phase 3).
 // Pass BuildOptions to control pipeline behavior (e.g., SkipSSR for dev mode).
 func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
+	if len(opts) > 1 {
+		return nil, fmt.Errorf("accepts at most one BuildOptions value, got %d", len(opts))
+	}
+
 	start := time.Now()
+
+	var options BuildOptions
+	if len(opts) == 1 {
+		options = opts[0]
+	}
 
 	config.ApplyDefaults(cfg)
 
@@ -367,7 +376,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				OutputDir:  cfg.Build.Output,
 				PageCount:  0,
 				Duration:   time.Since(start),
-				SSRSkipped: cfg.SSR == nil,
+				SSRSkipped: cfg.SSR == nil || options.SkipSSR,
 			}, nil
 		}
 
@@ -499,7 +508,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 					OutputDir:  cfg.Build.Output,
 					PageCount:  0,
 					Duration:   time.Since(start),
-					SSRSkipped: cfg.SSR == nil,
+					SSRSkipped: cfg.SSR == nil || options.SkipSSR,
 				}, nil
 			}
 			return nil, fmt.Errorf("content discovery: %w", err)
@@ -694,10 +703,11 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			c.Path, c.Sources[0], c.Sources[1])
 	}
 
-	// Phase 2: SSR (if configured) — must run before output writing so
-	// transformed HTML reaches disk (spec §6: Phase 1 → Phase 2 → Phase 3).
-	ssrSkipped := cfg.SSR == nil
-	if cfg.SSR != nil {
+	// Phase 2: SSR runs when configured and BuildOptions.SkipSSR is false.
+	// Must run before output writing so transformed HTML reaches disk
+	// (spec §6: Phase 1 → Phase 2 → Phase 3).
+	ssrSkipped := cfg.SSR == nil || options.SkipSSR
+	if cfg.SSR != nil && !options.SkipSSR {
 		intermediateHTML := make(map[string]string, len(pages))
 		for _, page := range pages {
 			if len(page.RenderedBody) > 0 {
@@ -926,14 +936,24 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildR
 // Used by alloy serve for incremental rebuilds on file watcher events.
 // If previousCache is nil, all pages are rendered (equivalent to full build).
 func BuildIncremental(cfg *config.Config, contentMap map[string]string, previousCache *cache.Cache, changedFiles []string, opts ...BuildOptions) (*BuildResult, error) {
+	if len(opts) > 1 {
+		return nil, fmt.Errorf("accepts at most one BuildOptions value, got %d", len(opts))
+	}
+
 	start := time.Now()
+
+	var options BuildOptions
+	if len(opts) == 1 {
+		options = opts[0]
+	}
+
 	config.ApplyDefaults(cfg)
 
 	if len(contentMap) == 0 {
 		return &BuildResult{
 			OutputDir:  cfg.Build.Output,
 			PageCount:  0,
-			SSRSkipped: cfg.SSR == nil,
+			SSRSkipped: cfg.SSR == nil || options.SkipSSR,
 			Duration:   time.Since(start),
 		}, nil
 	}
@@ -1032,10 +1052,10 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	}
 
 	// Phase 2: SSR for incremental rebuilds (preview mode)
-	ssrSkipped := cfg.SSR == nil
+	ssrSkipped := cfg.SSR == nil || options.SkipSSR
 	ssrPagesRendered := 0
 
-	if cfg.SSR != nil {
+	if cfg.SSR != nil && !options.SkipSSR {
 		// Collect pages needing SSR: rebuilt pages with custom elements.
 		// Scan raw content (not rendered) since goldmark may strip raw HTML.
 		contentPrefix := cfg.Structure.Content
