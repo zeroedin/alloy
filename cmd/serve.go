@@ -84,6 +84,16 @@ func newServeCommand() *cobra.Command {
 			// Dev mode includes drafts unless --no-drafts; preview excludes them
 			cfg.IncludeDrafts = mode == server.ModeDev && !noDrafts
 
+			// Set up progress reporter for builds (same logic as cmd/build.go)
+			if !cfg.Quiet {
+				if cfg.Verbose {
+					pipeline.SetReporter(pipeline.NewVerboseProgress(cmd.OutOrStdout()))
+				} else if isTTY() {
+					pipeline.SetReporter(pipeline.NewTTYProgress(cmd.OutOrStdout(), termWidth()))
+				}
+			}
+			defer pipeline.SetReporter(nil)
+
 			// Initial build per spec §9 step 2
 			if _, err := pipeline.Build(cfg); err != nil {
 				log.Printf("warning: initial build failed: %v", err)

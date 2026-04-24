@@ -1006,7 +1006,9 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	}
 
 	// Render only the pages that need it
+	reportStartStage("Rendering", len(pagesToRender))
 	rendered, renderErr := renderPages(pagesToRender, cfg, nil, nil, nil, nil)
+	reportEndStage()
 	if renderErr != nil {
 		return nil, renderErr
 	}
@@ -1096,7 +1098,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
-	return &BuildResult{
+	result := &BuildResult{
 		OutputDir:        cfg.Build.Output,
 		PageCount:        len(pagesToRender),
 		PagesSkipped:     skipped,
@@ -1105,7 +1107,11 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		SSRSkipped:       ssrSkipped,
 		PagesRendered:    rendered,
 		RenderedContent:  renderedContent,
-	}, nil
+	}
+
+	reportSummary(result.PageCount, result.Duration, result.PagesSkipped)
+
+	return result, nil
 }
 
 // BuildPhase1 runs Phase 1 (content rendering) and returns a map of
