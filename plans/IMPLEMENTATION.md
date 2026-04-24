@@ -630,12 +630,28 @@ Two implementations:
 - `--verbose` → `VerboseProgress`
 - default → `TTYProgress` if terminal, nil if piped
 
-The pipeline must nil-guard every progress call since the reporter may be nil:
+Both `cmd/dev.go` and `cmd/serve.go` must attach a progress reporter before the initial `pipeline.Build(cfg)` call using the same flag-based logic. This is where progress matters most — the user is watching the terminal waiting for the server to start. Without a reporter, there is no output between running the command and seeing `Serving at http://localhost:3000`. The reporter must be cleaned up after the initial build completes (`defer pipeline.SetReporter(nil)` scoped to the initial build, not the entire serve lifetime).
+
+For file-watcher rebuilds, the command should also attach a reporter before calling `pipeline.Build(cfg)` or `pipeline.BuildIncremental(...)`. The reporter is set and cleared around each rebuild call.
+
+`BuildIncremental()` only calls `Summary` on the reporter — no `StartStage`, `Update`, or `EndStage`. Incremental rebuilds are typically 1-3 pages in under 100ms; a multi-stage progress bar would be visual noise. The `Summary` call uses `pagesSkipped` to show cached page count (e.g., "Rebuilt 3 pages in 47ms (417 cached)").
+
+Full rebuilds in serve mode (config changes, 10+ files) go through `Build()`, which uses the full multi-stage reporter sequence.
+
+The pipeline must nil-guard every progress call since the reporter may be nil.
+
+`Build()` reporter calls:
 ```go
 if reporter != nil { reporter.StartStage("Rendering", len(pages)) }
 // per page (1-based current):
 if reporter != nil { reporter.Update(i+1, page.RelPath, elapsed) }
 if reporter != nil { reporter.EndStage() }
+if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.PagesSkipped) }
+```
+
+`BuildIncremental()` reporter calls:
+```go
+// No StartStage/Update/EndStage — compact summary only
 if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.PagesSkipped) }
 ```
 

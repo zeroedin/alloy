@@ -1008,7 +1008,7 @@ Errors are treated differently depending on the mode. The core principle: **`all
         Server stopped.
 ```
 
-### Incremental Builds — Serve Mode Only
+### Incremental Builds — Dev Mode Only
 
 Incremental builds are exclusive to `alloy dev` (dev mode). `alloy build` and `alloy serve` always do a **full clean rebuild** — every page is rendered, every file is written. This ensures CI/CD and production preview produce deterministic, complete output.
 
@@ -2076,7 +2076,7 @@ The `url` filter resolves paths relative to `baseURL`.
 
 ## 8. Dev Server — Two Modes
 
-Alloy's server has two modes. Both use the same built-in Go HTTP server, serve from `_site/`, and watch for changes. The difference is what gets written and how updates reach the browser.
+Alloy's server has two modes. Both use the same built-in Go HTTP server and watch for changes. `alloy serve` writes to and serves from `_site/`, while `alloy dev` serves rendered pages from memory and static/passthrough files directly from source. The difference is what gets written and how updates reach the browser.
 
 ### `alloy dev` — Dev Mode
 
@@ -2291,15 +2291,33 @@ Useful for identifying slow pages or debugging build issues. No progress bar —
 
 No output at all except errors. Not even the summary line. Exit code communicates success/failure.
 
-**Dev mode rebuilds:**
+**Dev/serve mode — initial build:**
 
-Incremental rebuilds in `alloy dev` show a compact one-line summary:
+The initial `pipeline.Build()` called by `alloy dev` or `alloy serve` must attach a progress reporter using the same flag-based logic as `alloy build`:
+- `--quiet` → nil
+- `--verbose` → `VerboseProgress`
+- default → `TTYProgress` if terminal, nil if piped
+
+This is where the progress bar is most valuable — the user is watching the terminal waiting for the server to start. Without it, there is no output between running the command and seeing `Serving at http://localhost:3000`.
+
+```
+[alloy] Discovering content... 420 pages found
+[alloy] Rendering  [========>                ] 34% (142/420) content/blog/my-post.md
+[alloy] Built 420 pages in 1.8s
+Serving at http://localhost:3000
+```
+
+**Dev mode — incremental rebuilds:**
+
+Incremental rebuilds via `BuildIncremental()` (used by `alloy dev`) are typically 1-3 pages and complete in under 100ms. A multi-stage progress bar would be visual noise. `BuildIncremental()` only calls `Summary` on the reporter — no `StartStage`, `Update`, or `EndStage`:
 
 ```
 [alloy] 12:34:58 Rebuilt 3 pages in 47ms (417 cached)
 ```
 
-Full rebuilds (triggered by config changes or bulk file changes) show the full progress bar.
+The timestamp prefix is added by the reporter's serve-mode `Summary` implementation, not by the pipeline.
+
+Full rebuilds triggered by config changes or bulk file changes (10+ files) go through `Build()`, not `BuildIncremental()`, and show the full multi-stage progress bar.
 
 #### `--root` flag behavior
 
