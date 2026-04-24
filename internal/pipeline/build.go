@@ -93,10 +93,14 @@ type BuildResult struct {
 // Build runs the complete build pipeline (Phase 0 through Phase 3).
 // Pass BuildOptions to control pipeline behavior (e.g., SkipSSR for dev mode).
 func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
+	if len(opts) > 1 {
+		return nil, fmt.Errorf("Build accepts at most one BuildOptions value, got %d", len(opts))
+	}
+
 	start := time.Now()
 
 	var options BuildOptions
-	if len(opts) > 0 {
+	if len(opts) == 1 {
 		options = opts[0]
 	}
 
@@ -932,10 +936,14 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildR
 // Used by alloy serve for incremental rebuilds on file watcher events.
 // If previousCache is nil, all pages are rendered (equivalent to full build).
 func BuildIncremental(cfg *config.Config, contentMap map[string]string, previousCache *cache.Cache, changedFiles []string, opts ...BuildOptions) (*BuildResult, error) {
+	if len(opts) > 1 {
+		return nil, fmt.Errorf("BuildIncremental accepts at most one BuildOptions value, got %d", len(opts))
+	}
+
 	start := time.Now()
 
 	var options BuildOptions
-	if len(opts) > 0 {
+	if len(opts) == 1 {
 		options = opts[0]
 	}
 
