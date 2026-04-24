@@ -542,7 +542,7 @@ Key points:
 **Files**: `main.go`, `root.go`, `build.go`, `serve.go`, `init.go`, `version.go`
 
 - **`main.go` exit code handling (issue #28)**: `main()` must check the error return from `cmd.Execute()` and call `os.Exit(1)` on failure. Without this, all CLI errors exit 0, breaking scripts and CI. Current code discards the error.
-- Register Cobra flags (--config, --output, --root, --verbose, --quiet, --port, --preview, --no-drafts, --refetch) ✅ done (except --root)
+- Register Cobra flags (--config, --output, --root, --verbose, --quiet) on root; (--port, --no-drafts, --refetch) on dev; (--port, --refetch) on serve ✅ done (except --root, dev/serve split)
 - `Version`: Set to non-empty string ✅ done
 
 #### `cmd/init.go` (issue #26)
@@ -564,17 +564,31 @@ Key points:
 
 **Test note**: The existing cmd test `"build command executes the build pipeline successfully"` runs without a project fixture. Build must handle missing content directory gracefully (return zero-page success, not error) for this test to pass.
 
-#### `cmd/serve.go` (issue #29)
+#### `cmd/dev.go` (issue #256, was #29)
 
-`RunE` is an empty stub. Must wire to server:
+Dev server command (`alloy dev`). Uses `ModeDev` — Phase 1 only, in-memory, drafts visible.
+
 1. Load config (same as build).
-2. Run initial build via `pipeline.Build(cfg)`.
-3. Read `--port`, `--preview`, `--no-drafts`, `--refetch` flags.
-4. Call `server.NewWithMode(cfg, mode)` and `server.Start()`.
-5. Start file watcher.
-6. Block until interrupt.
+2. Set `cfg.IncludeDrafts = true` (unless `--no-drafts`).
+3. Run initial build via `pipeline.Build(cfg)`.
+4. Read `--port`, `--no-drafts`, `--refetch` flags.
+5. Call `server.NewWithMode(cfg, server.ModeDev)` and `server.Start()`.
+6. Start file watcher.
+7. Block until interrupt.
 
-**Test note**: The cmd test `"serve command is registered and callable"` verifies command registration via `root.Find()` without calling `Execute()`, since the serve command blocks on `Wait()`. Server startup behavior is tested directly in `internal/server/server_test.go`.
+#### `cmd/serve.go` (issue #256)
+
+Production server command (`alloy serve`). Uses `ModePreview` — same pipeline as `alloy build`, writes to `_site/`, SSR if configured, excludes drafts.
+
+1. Load config (same as build).
+2. Set `cfg.IncludeDrafts = false`.
+3. Run initial build via `pipeline.Build(cfg)`.
+4. Read `--port`, `--refetch` flags. No `--no-drafts` (production always excludes drafts). No `--preview` (removed).
+5. Call `server.NewWithMode(cfg, server.ModePreview)` and `server.Start()`.
+6. Start file watcher.
+7. Block until interrupt.
+
+**Test note**: The cmd tests verify both `dev` and `serve` commands are registered via `root.Find()` without calling `Execute()`. Server startup behavior is tested directly in `internal/server/server_test.go`.
 
 #### `--root` flag (issue #75)
 
@@ -636,12 +650,28 @@ Two implementations:
 - `--verbose` → `VerboseProgress`
 - default → `TTYProgress` if terminal, nil if piped
 
-The pipeline must nil-guard every progress call since the reporter may be nil:
+Both `cmd/dev.go` and `cmd/serve.go` must attach a progress reporter before the initial `pipeline.Build(cfg)` call using the same flag-based logic. This is where progress matters most — the user is watching the terminal waiting for the server to start. Without a reporter, there is no output between running the command and seeing `Serving at http://localhost:3000`. The reporter must be cleaned up after the initial build completes (`defer pipeline.SetReporter(nil)` scoped to the initial build, not the entire serve lifetime).
+
+For file-watcher rebuilds, the command should also attach a reporter before calling `pipeline.Build(cfg)` or `pipeline.BuildIncremental(...)`. The reporter is set and cleared around each rebuild call.
+
+`BuildIncremental()` only calls `Summary` on the reporter — no `StartStage`, `Update`, or `EndStage`. Incremental rebuilds are typically 1-3 pages in under 100ms; a multi-stage progress bar would be visual noise. The `Summary` call uses `pagesSkipped` to show cached page count (e.g., "Rebuilt 3 pages in 47ms (417 cached)").
+
+Full rebuilds in serve mode (config changes, 10+ files) go through `Build()`, which uses the full multi-stage reporter sequence.
+
+The pipeline must nil-guard every progress call since the reporter may be nil.
+
+`Build()` reporter calls:
 ```go
 if reporter != nil { reporter.StartStage("Rendering", len(pages)) }
 // per page (1-based current):
 if reporter != nil { reporter.Update(i+1, page.RelPath, elapsed) }
 if reporter != nil { reporter.EndStage() }
+if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.PagesSkipped) }
+```
+
+`BuildIncremental()` reporter calls:
+```go
+// No StartStage/Update/EndStage — compact summary only
 if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.PagesSkipped) }
 ```
 

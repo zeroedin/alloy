@@ -491,14 +491,14 @@ expiryDate: 2026-12-31        # Removed from output after this date
 ```
 
 - **Default state is published.** If `draft` is `false` or not present, and `publishDate` is not set or is in the past, the page is published immediately. You opt into hiding content, not into showing it.
-- `draft: true` → always excluded from `alloy build`. Visible only in `alloy serve` (dev mode always shows drafts so authors can preview their work). **A draft page ignores `publishDate` and `expiryDate` in dev mode** — it behaves as if it were published now. Date fields are still used for sort ordering within collections.
-- `publishDate` in the future → excluded from both `alloy build` AND `alloy serve`. Future-dated pages are hidden everywhere until their publish date arrives. To preview a future-dated page, set `draft: true` — the draft flag overrides date filtering in dev mode.
-- `expiryDate` in the past → excluded from both `alloy build` and `alloy serve`. To preview an expired page, set `draft: true`.
+- `draft: true` → always excluded from `alloy build` and `alloy serve`. Visible only in `alloy dev` (dev mode always shows drafts so authors can preview their work). **A draft page ignores `publishDate` and `expiryDate` in dev mode** — it behaves as if it were published now. Date fields are still used for sort ordering within collections.
+- `publishDate` in the future → excluded from `alloy build`, `alloy serve`, AND `alloy dev`. Future-dated pages are hidden everywhere until their publish date arrives. To preview a future-dated page, set `draft: true` — the draft flag overrides date filtering in dev mode.
+- `expiryDate` in the past → excluded from `alloy build`, `alloy serve`, and `alloy dev`. To preview an expired page, set `draft: true`.
 - All three interact with collections and pagination:
-  - **Drafts**: excluded from `collections.*` in `alloy build`, **included** in `alloy serve` (so authors can preview paginated lists with draft content)
-  - **Future `publishDate`**: excluded from `collections.*` in both build and serve
-  - **Past `expiryDate`**: excluded from `collections.*` in both build and serve
-  - **Pagination** always operates on the post-filtered collection. Lifecycle filtering happens first, then pagination chunks the remaining items. A paginated list of 47 articles with 3 drafts produces 5 pages of 10 in build mode (44 items) but may produce different page counts in dev mode (47 items, drafts included).
+  - **Drafts**: excluded from `collections.*` in `alloy build` and `alloy serve`, **included** in `alloy dev` (so authors can preview paginated lists with draft content)
+  - **Future `publishDate`**: excluded from `collections.*` in build, serve, and dev
+  - **Past `expiryDate`**: excluded from `collections.*` in build, serve, and dev
+  - **Pagination** always operates on the post-filtered collection. Lifecycle filtering happens first, then pagination chunks the remaining items. A paginated list of 47 articles with 3 drafts produces 5 pages of 10 in build/serve mode (44 items) but may produce different page counts in dev mode (47 items, drafts included).
 
 ### Content Summaries
 
@@ -657,7 +657,7 @@ All source data (built-in and plugin) is cached to `.alloy/fetch-cache/` on disk
 
 - **Cache-first** — never refetch unless TTL has expired
 - **File changes don't trigger refetches** — only content/template rebuilds
-- **Force refetch** — `alloy serve --refetch` bypasses cache TTL and fetches fresh data on startup
+- **Force refetch** — `alloy dev --refetch` or `alloy serve --refetch` bypasses cache TTL and fetches fresh data on startup
 - **Expired TTL** — refetch happens on next rebuild, not proactively
 
 ### Combined with Virtual Pages
@@ -726,7 +726,7 @@ passthrough:
 **Build mode (`alloy build`):**
 - Static and passthrough files are **copied** to `_site/`
 
-**Dev mode (`alloy serve`):**
+**Dev mode (`alloy dev`):**
 - Static and passthrough files are **served directly** from their source locations
 - The Go HTTP server maps URL paths to source directories — no copy at all
 - File changes are reflected instantly (no rebuild, no copy, no watcher needed)
@@ -975,7 +975,7 @@ Each phase must complete before the next begins, but work within each phase is p
 
 ### Error Handling
 
-Errors are treated differently depending on the mode. The core principle: **`alloy build` never produces partial output. `alloy serve` keeps running and shows errors clearly.**
+Errors are treated differently depending on the mode. The core principle: **`alloy build` never produces partial output. `alloy dev` keeps running and shows errors clearly.**
 
 **`alloy build` (production) — fail fast, fail completely:**
 
@@ -991,7 +991,7 @@ Errors are treated differently depending on the mode. The core principle: **`all
         Build aborted. No output written.
 ```
 
-**`alloy serve` (development) — keep running, show errors:**
+**`alloy dev` (development) — keep running, show errors:**
 
 - **Page render failure does not stop the server.** The failed page shows an error overlay in the browser (file path, line number, code snippet). Other pages continue to serve normally. The error clears on the next successful rebuild.
 - **Plugin error or crash stops the server.** A hook returning an error and a plugin crash are treated identically — both stop the server. Plugins are foundational — if a plugin fails to load, returns an error from a hook, or crashes during execution, the server exits with diagnostic info (plugin name, error, stack trace where available). The user must fix the plugin and restart. The only non-fatal plugin failure is a **timeout**: a timed-out hook produces a warning and continues with the pre-hook payload.
@@ -1008,11 +1008,11 @@ Errors are treated differently depending on the mode. The core principle: **`all
         Server stopped.
 ```
 
-### Incremental Builds — Serve Mode Only
+### Incremental Builds — Dev Mode Only
 
-Incremental builds are exclusive to `alloy serve` (dev mode). `alloy build` always does a **full clean rebuild** — every page is rendered, every file is written. This ensures CI/CD produces deterministic, complete output.
+Incremental builds are exclusive to `alloy dev` (dev mode). `alloy build` and `alloy serve` always do a **full clean rebuild** — every page is rendered, every file is written. This ensures CI/CD and production preview produce deterministic, complete output.
 
-In serve mode, after the initial full build, the file watcher triggers incremental rebuilds on changes. Unlike 11ty's stage-based invalidation (where build-ordering edges cause cascading rebuilds), Alloy tracks **actual data reads** to determine the minimum set of pages to rebuild. The pipeline function `BuildIncremental(cfg, contentMap, previousCache, changedFiles)` accepts a previous build cache and only rebuilds affected pages.
+In dev mode, after the initial full build, the file watcher triggers incremental rebuilds on changes. Alloy tracks **actual data reads** to determine the minimum set of pages to rebuild. The pipeline function `BuildIncremental(cfg, contentMap, previousCache, changedFiles)` accepts a previous build cache and only rebuilds affected pages.
 
 **Content-hash change detection** (SHA-256, stored in `.alloy/cache.json`):
 - On incremental rebuild, skip unchanged files entirely (no re-parse, no re-render)
@@ -1662,7 +1662,7 @@ The `alloc` export is required to avoid writing at hardcoded memory offsets that
 - **`shortcode`**: Input is a JSON object: `{ "name": "youtube", "args": ["abc123"], "content": "" }`. Output is a UTF-8 HTML string.
 - **`hook`**: Input is a JSON payload (shape depends on the hook — see Lifecycle Events). Output is the modified JSON payload.
 
-**Error handling:** If any export returns `(0, 0)`, the host treats it as a plugin execution error and propagates the failure according to the normal pipeline error policy (build aborts in `alloy build`, error overlay in `alloy serve`). If the module exports `last_error()`, the host reads and surfaces the error details. No silent fallback to original input — consistent with the error handling policy in §2.
+**Error handling:** If any export returns `(0, 0)`, the host treats it as a plugin execution error and propagates the failure according to the normal pipeline error policy (build aborts in `alloy build`/`alloy serve`, error overlay in `alloy dev`). If the module exports `last_error()`, the host reads and surfaces the error details. No silent fallback to original input — consistent with the error handling policy in §2.
 
 **Optional exports:**
 
@@ -2076,9 +2076,9 @@ The `url` filter resolves paths relative to `baseURL`.
 
 ## 8. Dev Server — Two Modes
 
-Alloy's server has two modes. Both use the same built-in Go HTTP server, serve from `_site/`, and watch for changes. The difference is what gets written and how updates reach the browser.
+Alloy's server has two modes. Both use the same built-in Go HTTP server and watch for changes. `alloy serve` writes to and serves from `_site/`, while `alloy dev` serves rendered pages from memory and static/passthrough files directly from source. The difference is what gets written and how updates reach the browser.
 
-### `alloy serve` — Dev Mode
+### `alloy dev` — Dev Mode
 
 The daily driver for active development.
 
@@ -2088,7 +2088,7 @@ The daily driver for active development.
 
 **Future: Signals-Based HMR.** The architecture should preserve surface area for granular hot module replacement in a future version — binding markers in template output, per-property DOM patching, CSS hot-swap, and component reconstruction without full reload. For v1, full page reload is sufficient. The WebSocket infrastructure and file watcher are the same foundation HMR would build on.
 
-### `alloy serve --preview` — Preview Mode
+### `alloy serve` — Production Server
 
 For verifying production output locally. Runs the same pipeline as `alloy build` but keeps serving.
 
@@ -2099,28 +2099,28 @@ For verifying production output locally. Runs the same pipeline as `alloy build`
 
 ### `alloy build` — No Server
 
-Same pipeline as `--preview`: Phase 1 + conditional Phase 2. Writes to `_site/` and exits. No server, no watching. This is what you deploy.
+Same pipeline as `alloy serve`: Phase 1 + conditional Phase 2. Writes to `_site/` and exits. No server, no watching. This is what you deploy.
 
 ### SSR Is Always Opt-In
 
-SSR only runs (in `--preview` and `build`) when explicitly configured:
+SSR only runs (in `alloy serve` and `alloy build`) when explicitly configured:
 
 ```yaml
 # alloy.config.yaml
 ssr:
-  command: "golit render --defs ./bundles"
+  command: "your-ssr-engine render"
 
-# No ssr: key → no SSR ever, even in --preview or build
+# No ssr: key → no SSR ever, even in serve or build
 ```
 
-Without an `ssr:` config block, `--preview` still works — it just serves Phase 1 output with full reload (useful for verifying templates, data cascade, and layouts without dev tooling).
+Without an `ssr:` config block, `alloy serve` still works — it just serves Phase 1 output with full reload (useful for verifying templates, data cascade, and layouts without dev tooling).
 
 ### Shared Server Features (both modes)
 
 - **File watcher**: `fsnotify` with 50ms debounce. Watches `content/`, `layouts/`, `data/`, `assets/`, `static/`, and component source dirs.
 - **Bulk change protection**: If many files change at once (e.g., `git checkout`), trigger a full rebuild instead of N incremental ones.
-- **Dev mode (`alloy serve`)**: Rendered pages are held in an in-memory map — no `_site/` output written to disk, lower latency, no SSD wear. Source files (content, layouts, data, assets, static) are still read from disk normally. Static and passthrough files are served directly from their source locations (no copy).
-- **Preview mode (`alloy serve --preview`)**: Writes to `_site/` and serves from disk. Production-like output including SSR.
+- **Dev mode (`alloy dev`)**: Rendered pages are held in an in-memory map — no `_site/` output written to disk, lower latency, no SSD wear. Source files (content, layouts, data, assets, static) are still read from disk normally. Static and passthrough files are served directly from their source locations (no copy).
+- **Serve mode (`alloy serve`)**: Writes to `_site/` and serves from disk. Production-like output including SSR.
 - **Build mode (`alloy build`)**: Always writes to `_site/`.
 - **Port auto-increment**: If the requested port is occupied, the server tries up to 10 consecutive ports (e.g., 3000 → 3001 → … → 3009) before giving up with an error. A warning is logged for each skipped port (e.g., `[alloy] WARN Port 3000 in use, using 3001`). The startup message always shows the actual port. This matches the behavior of modern dev servers (Vite, Next.js) and reduces friction when multiple projects run simultaneously.
 - **Auto-opens browser** (optional)
@@ -2172,9 +2172,8 @@ Scripts and CI pipelines rely on exit codes. The error return from `cmd.Execute(
 ```
 alloy init               # Create default alloy.config.yaml (fails if one already exists)
 alloy build              # Run pipeline (Phase 1 + Phase 2 if SSR configured), write _site/, exit
-alloy serve              # Dev mode: Phase 1, full page reload, client-side components
-alloy serve --preview    # Preview mode: same pipeline as build, served locally, full reload
-alloy serve --refetch    # Bypass source cache TTL, fetch fresh external data on startup
+alloy dev                # Dev mode: Phase 1, full page reload, client-side components, drafts visible
+alloy serve              # Production server: same pipeline as build, served locally, full reload
 alloy version            # Print version
 alloy help               # Help text
 ```
@@ -2203,15 +2202,26 @@ Runs the full build pipeline and writes output to `_site/` (or the configured ou
 4. Print build summary: page count and duration (e.g., `Built 42 pages in 127ms`).
 5. Exit 0 on success, exit 1 on any error.
 
-#### `alloy serve`
+#### `alloy dev`
 
-Starts the development server with live reload.
+Starts the development server with live reload. Phase 1 only, in-memory, drafts visible.
 
 1. Load config (same as build).
-2. Run initial build via `pipeline.Build(cfg)`.
+2. Run initial build via `pipeline.Build(cfg)` with `cfg.IncludeDrafts = true` (unless `--no-drafts`).
 3. Start HTTP server on `--port` (default 3000). If the port is occupied, auto-increment up to 10 consecutive ports. If all 10 are occupied, exit 1 with an error listing the range tried.
 4. Start file watcher for live reload.
 5. Print startup message: `Serving at http://localhost:<actual-port>` (always shows the actual port, which may differ from `--port` if auto-increment kicked in).
+6. Block until interrupted (Ctrl+C).
+
+#### `alloy serve`
+
+Starts the production server. Same pipeline as `alloy build` but keeps serving with file watching. Writes to `_site/`, runs SSR if configured, excludes drafts.
+
+1. Load config (same as build).
+2. Run initial build via `pipeline.Build(cfg)` with `cfg.IncludeDrafts = false`.
+3. Start HTTP server on `--port` (default 3000) with port auto-increment.
+4. Start file watcher for live reload.
+5. Print startup message.
 6. Block until interrupted (Ctrl+C).
 
 ### Flags
@@ -2222,10 +2232,9 @@ Starts the development server with live reload.
 --output, -o       Output directory (default: _site)
 --verbose, -v      Verbose logging
 --quiet, -q        Suppress output
---port, -p         Dev server port (default: 3000)
---preview          Run serve in preview mode (production pipeline + full reload)
---no-drafts        Hide draft content in dev mode (alloy serve only, drafts visible by default)
---refetch          Bypass source cache TTL, fetch fresh data on startup
+--port, -p         Server port (default: 3000) — alloy dev and alloy serve
+--no-drafts        Hide draft content (alloy dev only, drafts visible by default)
+--refetch          Bypass source cache TTL, fetch fresh data on startup — alloy dev and alloy serve
 ```
 
 ### Build Progress Output
@@ -2282,15 +2291,33 @@ Useful for identifying slow pages or debugging build issues. No progress bar —
 
 No output at all except errors. Not even the summary line. Exit code communicates success/failure.
 
-**Serve mode rebuilds:**
+**Dev/serve mode — initial build:**
 
-Incremental rebuilds in `alloy serve` show a compact one-line summary:
+The initial `pipeline.Build()` called by `alloy dev` or `alloy serve` must attach a progress reporter using the same flag-based logic as `alloy build`:
+- `--quiet` → nil
+- `--verbose` → `VerboseProgress`
+- default → `TTYProgress` if terminal, nil if piped
+
+This is where the progress bar is most valuable — the user is watching the terminal waiting for the server to start. Without it, there is no output between running the command and seeing `Serving at http://localhost:3000`.
+
+```
+[alloy] Discovering content... 420 pages found
+[alloy] Rendering  [========>                ] 34% (142/420) content/blog/my-post.md
+[alloy] Built 420 pages in 1.8s
+Serving at http://localhost:3000
+```
+
+**Dev mode — incremental rebuilds:**
+
+Incremental rebuilds via `BuildIncremental()` (used by `alloy dev`) are typically 1-3 pages and complete in under 100ms. A multi-stage progress bar would be visual noise. `BuildIncremental()` only calls `Summary` on the reporter — no `StartStage`, `Update`, or `EndStage`:
 
 ```
 [alloy] 12:34:58 Rebuilt 3 pages in 47ms (417 cached)
 ```
 
-Full rebuilds (triggered by config changes or bulk file changes) show the full progress bar.
+The timestamp prefix is added by the reporter's serve-mode `Summary` implementation, not by the pipeline.
+
+Full rebuilds triggered by config changes or bulk file changes (10+ files) go through `Build()`, not `BuildIncremental()`, and show the full multi-stage progress bar.
 
 #### `--root` flag behavior
 
@@ -2474,7 +2501,7 @@ func BenchmarkBuild1000Pages(b *testing.B) {
 
 ### Phase 1 — Foundation
 - [ ] Initialize Go module (`go mod init`)
-- [ ] CLI skeleton (`alloy init`, `alloy build`, `alloy serve`, `alloy version`, `alloy help`)
+- [ ] CLI skeleton (`alloy init`, `alloy build`, `alloy dev`, `alloy serve`, `alloy version`, `alloy help`)
 - [ ] Config file loading (YAML, TOML, JSON — detected by file extension)
 - [ ] Content discovery (walk `content/` directory, collect files)
 - [ ] Front matter extraction (YAML `---`, TOML `+++`, JSON `{` — detected by delimiter)
@@ -2494,7 +2521,7 @@ func BenchmarkBuild1000Pages(b *testing.B) {
 - [ ] Taxonomy page generation (index + per-term pages, shared layout, `taxonomy` context object)
 - [ ] Permalinks and URL generation (token system, front matter overrides, Liquid fallback, aliases)
 - [ ] Pagination (paginated lists with `perPage > 1`, virtual pages with `perPage: 1`)
-- [ ] Content lifecycle (draft — serve only, publishDate, expiryDate, summaries)
+- [ ] Content lifecycle (draft — dev only, publishDate, expiryDate, summaries)
 - [ ] Output formats (HTML, JSON, XML via template file extension)
 - [ ] Auto-generated files (sitemap.xml with `sitemap: false` disable, feed.xml as opt-in templates)
 - [ ] External data sources (built-in REST/GraphQL fetch, plugin source handlers, cache to `.alloy/fetch-cache/`)
@@ -2514,14 +2541,14 @@ func BenchmarkBuild1000Pages(b *testing.B) {
 - [ ] Component invalidation: rebuild pages using changed components (via `componentToPages` lookup)
 
 ### Phase 4 — Dev Experience
-- [ ] Dev server (`alloy serve`) with file watching (fsnotify, 50ms debounce)
+- [ ] Dev server (`alloy dev`) with file watching (fsnotify, 50ms debounce)
 - [ ] WebSocket dev client for full page reload on file changes
-- [ ] Preview mode (`alloy serve --preview`) — production pipeline + full reload
-- [ ] SSR engine process management in preview mode (spawn on start, kill on exit)
+- [ ] Production server (`alloy serve`) — same pipeline as build, served locally, full reload
+- [ ] SSR engine process management in serve mode (spawn on start, kill on exit)
 - [ ] Incremental builds with content-hash change detection
 - [ ] Fine-grained invalidation (Phase 1 vs Phase 2 independence)
 - [ ] Bulk change protection (many files at once → full rebuild instead of N incremental)
-- [ ] `--no-drafts` flag (hide drafts in dev mode)
+- [ ] `--no-drafts` flag (hide drafts in `alloy dev`)
 - [ ] Error overlay in browser (file path, line number, code snippet)
 - [ ] Error reporting in terminal (clear messages with file/line, colored output)
 
@@ -2555,7 +2582,7 @@ func BenchmarkBuild1000Pages(b *testing.B) {
 
 After each phase, verify by:
 1. `alloy build` on a test site with increasing page counts (10, 100, 1000)
-2. `alloy serve` with live reload — change a file, confirm < 200ms incremental rebuild
+2. `alloy dev` with live reload — change a file, confirm < 200ms incremental rebuild
 3. Run `go test ./...` — all tests pass
 4. Run `go build` — single binary, no CGo dependencies
 5. Benchmark: `time alloy build` on 1000-page test site, target < 5s (no SSR), < 10s (with SSR)
@@ -2587,7 +2614,7 @@ Alloy is licensed under **MIT**. All dependencies use permissive licenses (MIT, 
 
 ### Signals-Based HMR (Dev Mode)
 
-Replace full page reload in `alloy serve` with granular hot module replacement. The v1 WebSocket and file watcher infrastructure is designed to support this upgrade path.
+Replace full page reload in `alloy dev` with granular hot module replacement. The v1 WebSocket and file watcher infrastructure is designed to support this upgrade path.
 
 **Binding markers** — During dev-mode rendering, template outputs are tagged with data attributes:
 
@@ -2647,9 +2674,9 @@ v1 plugin hooks are synchronous barriers — all pages batch through each hook b
 A validation-only command that reuses Phase 0 logic without running a full build. Useful in CI to catch errors early. Could validate: front matter schemas, broken internal links, missing layouts, unused data files, output path conflicts, and taxonomy/collection integrity.
 
 
-### `alloy serve --preview` Flag Naming
+### ~~`alloy serve --preview` Flag Naming~~ (Resolved)
 
-Evaluate whether `--preview` is the clearest DX for "serve production-like output locally." Alternative: `--build` (but risks confusion with `alloy build`). Most tools use "preview" (Astro's `astro preview`, Vite's preview mode). Revisit based on user feedback after v1.
+Resolved in #256: split into `alloy dev` (development) and `alloy serve` (production). The `--preview` flag is removed.
 
 ### `alloy init` Scaffolding
 
@@ -2674,20 +2701,20 @@ Glob patterns matched against the relative path within `assets/`. Matched files 
 Allow the dev server to behave as if it were running at a specified future (or past) date/time. This enables previewing future-`publishDate` content and testing `expiryDate` behavior without setting `draft: true` on every page.
 
 ```bash
-alloy serve --act-as-datetime="2026-12-25T00:00:00Z"
+alloy dev --act-as-datetime="2026-12-25T00:00:00Z"
 ```
 
-All lifecycle filtering (`publishDate`, `expiryDate`) uses the provided datetime instead of `time.Now()`. Collections are built accordingly. The terminal and browser overlay show a banner indicating the simulated time. This is a dev-mode-only feature — `alloy build` always uses real time.
+All lifecycle filtering (`publishDate`, `expiryDate`) uses the provided datetime instead of `time.Now()`. Collections are built accordingly. The terminal and browser overlay show a banner indicating the simulated time. This is a dev-mode-only feature — `alloy build` and `alloy serve` always use real time.
 
 ### Reconsider Error Overlay Approach
 
-The current spec (S8) defines an HTML error overlay injected into failed pages during `alloy serve`. While this is dev-mode only (never in `alloy build` output), injecting HTML the user didn't write raises concerns:
+The current spec (S8) defines an HTML error overlay injected into failed pages during `alloy dev`. While this is dev-mode only (never in `alloy build` or `alloy serve` output), injecting HTML the user didn't write raises concerns:
 
 - Could interfere with component rendering and layout debugging
 - Adds complexity to the dev server (HTML injection, error state tracking, overlay dismissal)
 - Is opinionated — some developers prefer terminal-only errors and find overlays intrusive
 
-Consider moving build failure reporting to terminal-only output, with structured error messages (file path, line number, code snippet, pipeline stage) displayed in the terminal where `alloy serve` is running. The WebSocket dev client could optionally `console.error()` the details in the browser's DevTools instead of rendering an overlay. This keeps the browser output clean and avoids injecting any HTML the user didn't author, while still surfacing errors where the developer can see them.
+Consider moving build failure reporting to terminal-only output, with structured error messages (file path, line number, code snippet, pipeline stage) displayed in the terminal where `alloy dev` is running. The WebSocket dev client could optionally `console.error()` the details in the browser's DevTools instead of rendering an overlay. This keeps the browser output clean and avoids injecting any HTML the user didn't author, while still surfacing errors where the developer can see them.
 
 ### Alternative Template Engine: pongo2
 

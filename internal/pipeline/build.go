@@ -1011,7 +1011,14 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
-	// Render only the pages that need it
+	// Suppress per-page reporter calls for the remainder of this function.
+	// Incremental rebuilds are fast and only emit a compact Summary line
+	// (spec §259). Restore via defer so all renderPages calls (including
+	// on-demand SSR rendering below) are covered.
+	savedReporter := activeReporter
+	activeReporter = nil
+	defer func() { activeReporter = savedReporter }()
+
 	rendered, renderErr := renderPages(pagesToRender, cfg, nil, nil, nil, nil)
 	if renderErr != nil {
 		return nil, renderErr
@@ -1102,7 +1109,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
-	return &BuildResult{
+	result := &BuildResult{
 		OutputDir:        cfg.Build.Output,
 		PageCount:        len(pagesToRender),
 		PagesSkipped:     skipped,
@@ -1111,7 +1118,13 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		SSRSkipped:       ssrSkipped,
 		PagesRendered:    rendered,
 		RenderedContent:  renderedContent,
-	}, nil
+	}
+
+	if savedReporter != nil {
+		savedReporter.Summary(result.PageCount, result.Duration, result.PagesSkipped)
+	}
+
+	return result, nil
 }
 
 // BuildPhase1 runs Phase 1 (content rendering) and returns a map of
