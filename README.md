@@ -17,7 +17,7 @@ Static site generators tend to make you choose between speed and extensibility. 
 - **Permalinks** — Fast token replacement with Liquid fallback for complex patterns
 - **Multiple output formats** — HTML, JSON, XML, or anything else from a single content file
 - **i18n** — Opt-in multilingual support with per-language content trees and shared layouts
-- **Incremental rebuilds (dev mode)** — Content-hash change detection in `alloy serve` for fast rebuilds on file changes. `alloy build` always does a full clean rebuild for CI/CD reliability.
+- **Incremental rebuilds (dev mode)** — Content-hash change detection in `alloy dev` for fast rebuilds on file changes. `alloy build` always does a full clean rebuild for CI/CD reliability.
 - **Web Component SSR** — Opt-in two-phase rendering: pipe each page to an external SSR engine via stdin/stdout for Declarative Shadow DOM
 - **Tiered plugin system** — Built-in Go filters (ns), in-process JS/WASM plugins (us), Node subprocess plugins (ms)
 - **Dev server** — File watching, WebSocket live reload, in-memory rendering, error reporting
@@ -29,7 +29,7 @@ Static site generators tend to make you choose between speed and extensibility. 
 alloy init
 
 # Start the dev server
-alloy serve
+alloy dev
 
 # Build for production
 alloy build
@@ -239,20 +239,20 @@ Compatible with any SSR engine that reads stdin and writes stdout. [golit](https
 
 ## Dev Server
 
-Two modes, same infrastructure:
+Two commands, same infrastructure:
 
-- **`alloy serve`** — Dev mode. Phase 1 only (Liquid + Markdown), components render client-side. Pages held in memory, no disk writes. Static files served from source. On file changes, only affected pages are rebuilt (incremental via content-hash cache).
-- **`alloy serve --preview`** — Preview mode. Full production pipeline (Phase 1 + Phase 2 SSR if configured). Writes to `_site/` and serves from disk. Incremental rebuilds include SSR for pages with custom elements. Component definition changes trigger re-SSR of affected pages.
+- **`alloy dev`** — Dev mode. Phase 1 only (Liquid + Markdown), components render client-side. Pages held in memory, no disk writes. Static files served from source. Drafts visible. On file changes, only affected pages are rebuilt (incremental via content-hash cache).
+- **`alloy serve`** — Production server. Full production pipeline (Phase 1 + Phase 2 SSR if configured). Writes to `_site/` and serves from disk. Drafts excluded. Same output as `alloy build`.
 
-Both modes include WebSocket live reload, file watching with 50ms debounce, port auto-increment (tries up to 10 ports), custom 404 page support, and error overlay in the browser. Layout changes invalidate all pages using that layout. Config changes trigger a full rebuild.
+Both commands include WebSocket live reload, file watching with 50ms debounce, port auto-increment (tries up to 10 ports), custom 404 page support, and error overlay in the browser. Layout changes invalidate all pages using that layout. Config changes trigger a full rebuild.
 
 ## CLI
 
 ```
 alloy init                  Create a new project config
 alloy build                 Full clean build to _site/ (always rebuilds all pages)
-alloy serve                 Dev server with live reload (incremental rebuilds)
-alloy serve --preview       Production pipeline served locally
+alloy dev                   Dev server with live reload (incremental rebuilds, drafts visible)
+alloy serve                 Production server (same pipeline as build, served locally)
 alloy version               Print version
 ```
 
@@ -261,11 +261,10 @@ alloy version               Print version
 --config, -c       Config file path (default: alloy.config.yaml)
 --root, -r         Project root directory (default: config file's directory)
 --output, -o       Output directory (default: _site)
---port, -p         Dev server port (default: 3000, auto-increments if occupied)
---preview          Serve with production pipeline (SSR, full output)
+--port, -p         Server port (default: 3000, auto-increments if occupied)
 --verbose, -v      Verbose logging
 --quiet, -q        Suppress output
---no-drafts        Hide drafts in dev mode
+--no-drafts        Hide drafts in dev mode (alloy dev only)
 --refetch          Bypass external data cache
 ```
 

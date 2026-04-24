@@ -26,6 +26,17 @@ var _ = Describe("CLI Commands", func() {
 				"alloy build must complete the pipeline without error")
 		})
 
+		It("dev command is registered and callable", func() {
+			root := cmd.NewRootCommand()
+			devCmd, _, err := root.Find([]string{"dev"})
+			Expect(err).NotTo(HaveOccurred(),
+				"dev command must be findable on root")
+			Expect(devCmd).NotTo(BeNil())
+			Expect(devCmd.Name()).To(Equal("dev"),
+				"dev command must be registered on root — "+
+					"alloy dev is the development server (Phase 1, in-memory, drafts visible)")
+		})
+
 		It("serve command is registered and callable", func() {
 			root := cmd.NewRootCommand()
 			serveCmd, _, err := root.Find([]string{"serve"})
@@ -33,7 +44,8 @@ var _ = Describe("CLI Commands", func() {
 				"serve command must be findable on root")
 			Expect(serveCmd).NotTo(BeNil())
 			Expect(serveCmd.Name()).To(Equal("serve"),
-				"serve command must be registered on root")
+				"serve command must be registered on root — "+
+					"alloy serve is the production server (same pipeline as build)")
 		})
 
 		It("init command executes successfully", func() {
@@ -122,9 +134,61 @@ var _ = Describe("CLI Commands", func() {
 		})
 	})
 
-	// ── Serve-specific flags (§9 Flags) ──────────────────────────────
+	// ── Dev command flags (§9 Flags, issue #256) ────────────────────
 
-	Describe("Serve-specific flags", func() {
+	Describe("Dev command flags", func() {
+		var findDev = func(root *cobra.Command) *cobra.Command {
+			for _, c := range root.Commands() {
+				if c.Name() == "dev" {
+					return c
+				}
+			}
+			return nil
+		}
+
+		It("--port / -p defaults to 3000 on dev", func() {
+			root := cmd.NewRootCommand()
+			devCmd := findDev(root)
+			Expect(devCmd).NotTo(BeNil(), "dev command must be registered")
+
+			flag := devCmd.Flags().Lookup("port")
+			if flag == nil {
+				Fail("--port flag must be registered on dev command")
+				return
+			}
+			Expect(flag.Shorthand).To(Equal("p"))
+			Expect(flag.DefValue).To(Equal("3000"))
+		})
+
+		It("--no-drafts is registered on dev command", func() {
+			root := cmd.NewRootCommand()
+			devCmd := findDev(root)
+			Expect(devCmd).NotTo(BeNil(), "dev command must be registered")
+
+			flag := devCmd.Flags().Lookup("no-drafts")
+			if flag == nil {
+				Fail("--no-drafts flag must be registered on dev command — "+
+					"dev mode shows drafts by default, --no-drafts hides them")
+				return
+			}
+		})
+
+		It("--refetch is registered on dev command", func() {
+			root := cmd.NewRootCommand()
+			devCmd := findDev(root)
+			Expect(devCmd).NotTo(BeNil(), "dev command must be registered")
+
+			flag := devCmd.Flags().Lookup("refetch")
+			if flag == nil {
+				Fail("--refetch flag must be registered on dev command")
+				return
+			}
+		})
+	})
+
+	// ── Serve command flags (§9 Flags, issue #256) ───────────────────
+
+	Describe("Serve command flags", func() {
 		var findServe = func(root *cobra.Command) *cobra.Command {
 			for _, c := range root.Commands() {
 				if c.Name() == "serve" {
@@ -134,7 +198,7 @@ var _ = Describe("CLI Commands", func() {
 			return nil
 		}
 
-		It("--port / -p defaults to 3000", func() {
+		It("--port / -p defaults to 3000 on serve", func() {
 			root := cmd.NewRootCommand()
 			serveCmd := findServe(root)
 			Expect(serveCmd).NotTo(BeNil(), "serve command must be registered")
@@ -148,30 +212,6 @@ var _ = Describe("CLI Commands", func() {
 			Expect(flag.DefValue).To(Equal("3000"))
 		})
 
-		It("--preview is registered on serve command", func() {
-			root := cmd.NewRootCommand()
-			serveCmd := findServe(root)
-			Expect(serveCmd).NotTo(BeNil(), "serve command must be registered")
-
-			flag := serveCmd.Flags().Lookup("preview")
-			if flag == nil {
-				Fail("--preview flag must be registered on serve command")
-				return
-			}
-		})
-
-		It("--no-drafts is registered on serve command", func() {
-			root := cmd.NewRootCommand()
-			serveCmd := findServe(root)
-			Expect(serveCmd).NotTo(BeNil(), "serve command must be registered")
-
-			flag := serveCmd.Flags().Lookup("no-drafts")
-			if flag == nil {
-				Fail("--no-drafts flag must be registered on serve command")
-				return
-			}
-		})
-
 		It("--refetch is registered on serve command", func() {
 			root := cmd.NewRootCommand()
 			serveCmd := findServe(root)
@@ -182,6 +222,28 @@ var _ = Describe("CLI Commands", func() {
 				Fail("--refetch flag must be registered on serve command")
 				return
 			}
+		})
+
+		It("--preview flag does NOT exist on serve command", func() {
+			root := cmd.NewRootCommand()
+			serveCmd := findServe(root)
+			Expect(serveCmd).NotTo(BeNil(), "serve command must be registered")
+
+			flag := serveCmd.Flags().Lookup("preview")
+			Expect(flag).To(BeNil(),
+				"--preview flag must not exist — alloy serve IS the production server, "+
+					"the --preview flag was removed in #256")
+		})
+
+		It("--no-drafts flag does NOT exist on serve command", func() {
+			root := cmd.NewRootCommand()
+			serveCmd := findServe(root)
+			Expect(serveCmd).NotTo(BeNil(), "serve command must be registered")
+
+			flag := serveCmd.Flags().Lookup("no-drafts")
+			Expect(flag).To(BeNil(),
+				"--no-drafts must not exist on serve — "+
+					"production server always excludes drafts, no flag needed")
 		})
 	})
 
