@@ -620,14 +620,24 @@ Two implementations:
 
 For file-watcher rebuilds in serve mode, `cmd/serve.go` should also attach a reporter before calling `pipeline.Build(cfg)` or `pipeline.BuildIncremental(...)`. The reporter is set and cleared around each rebuild call.
 
-`BuildIncremental()` must call the reporter the same way `Build()` does — `StartStage`, `Update`, `EndStage`, `Summary`. The `Summary` call should use the `pagesSkipped` parameter to show cached page count.
+`BuildIncremental()` only calls `Summary` on the reporter — no `StartStage`, `Update`, or `EndStage`. Incremental rebuilds are typically 1-3 pages in under 100ms; a multi-stage progress bar would be visual noise. The `Summary` call uses `pagesSkipped` to show cached page count (e.g., "Rebuilt 3 pages in 47ms (417 cached)").
 
-The pipeline must nil-guard every progress call since the reporter may be nil:
+Full rebuilds in serve mode (config changes, 10+ files) go through `Build()`, which uses the full multi-stage reporter sequence.
+
+The pipeline must nil-guard every progress call since the reporter may be nil.
+
+`Build()` reporter calls:
 ```go
 if reporter != nil { reporter.StartStage("Rendering", len(pages)) }
 // per page (1-based current):
 if reporter != nil { reporter.Update(i+1, page.RelPath, elapsed) }
 if reporter != nil { reporter.EndStage() }
+if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.PagesSkipped) }
+```
+
+`BuildIncremental()` reporter calls:
+```go
+// No StartStage/Update/EndStage — compact summary only
 if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.PagesSkipped) }
 ```
 

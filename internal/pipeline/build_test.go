@@ -836,7 +836,7 @@ var _ = Describe("Build Pipeline", func() {
 					"each Update drives the progress bar forward")
 		})
 
-		It("BuildIncremental calls the progress reporter", func() {
+		It("BuildIncremental calls only Summary on the reporter", func() {
 			spy := &spyReporter{}
 			pipeline.SetReporter(spy)
 
@@ -865,11 +865,19 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 
-			Expect(spy.stages).NotTo(BeEmpty(),
-				"BuildIncremental must call StartStage — "+
-					"without this, serve-mode rebuilds have no progress output")
+			Expect(spy.stages).To(BeEmpty(),
+				"BuildIncremental must NOT call StartStage — "+
+					"incremental rebuilds are fast (1-3 pages, <100ms), "+
+					"a multi-stage progress bar would be visual noise")
+			Expect(spy.updates).To(BeEmpty(),
+				"BuildIncremental must NOT call Update — "+
+					"no per-page progress for incremental rebuilds")
+			Expect(spy.ended).To(Equal(0),
+				"BuildIncremental must NOT call EndStage — "+
+					"no stages to end")
 			Expect(spy.summaries).To(HaveLen(1),
-				"BuildIncremental must call Summary exactly once")
+				"BuildIncremental must call Summary exactly once — "+
+					"compact one-line output: 'Rebuilt 3 pages in 47ms (417 cached)'")
 			Expect(spy.summaries[0].pagesSkipped).To(Equal(result.PagesSkipped),
 				"Summary pagesSkipped must match the incremental result — "+
 					"this drives the '(N cached)' display in serve rebuild output")
