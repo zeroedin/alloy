@@ -74,7 +74,7 @@ func newDevCommand() *cobra.Command {
 			noDrafts, _ := cmd.Flags().GetBool("no-drafts")
 			cfg.IncludeDrafts = !noDrafts
 
-			// Set up progress reporter for initial build
+			// Set up progress reporter for all builds (initial + watcher rebuilds)
 			if !cfg.Quiet {
 				if cfg.Verbose {
 					pipeline.SetReporter(pipeline.NewVerboseProgress(cmd.OutOrStdout()))
@@ -200,7 +200,7 @@ func newDevCommand() *cobra.Command {
 							events := pending
 							pending = nil
 
-							debouncer.Debounce(events)
+							events, _ = debouncer.Debounce(events)
 
 							if _, err := hooks.RunWithTimeout(plugin.OnFileChanged, events); err != nil {
 								log.Printf("warning: plugin hook onFileChanged: %v", err)
