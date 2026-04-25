@@ -33,6 +33,8 @@ sections:
     items:
       - title: "Overview"
         path: "/plugins/"
+      - title: "WASM Plugins"
+        path: "/plugins/wasm/"
   - title: "CLI"
     path: "/cli/"
     items:
