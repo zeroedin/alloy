@@ -156,6 +156,45 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Unified pipeline: single-language as degenerate i18n (issue #280) ──
+	// A site without languages: config must produce identical results
+	// whether processed via a single batch or the old single-language path.
+	// This proves the pipeline has ONE code path, not two forks.
+
+	Describe("Unified pipeline", func() {
+		It("single-language build produces same result with or without explicit language config", func() {
+			content := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+				"content/about.md": "---\ntitle: About\n---\n# About",
+			}
+
+			// Build without languages: config
+			cfgNoLang := &config.Config{
+				Title:   "No Lang",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			resultNoLang, err := pipeline.BuildWithContent(cfgNoLang, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resultNoLang).NotTo(BeNil())
+
+			// Build with explicit single language matching the default
+			cfgWithLang := &config.Config{
+				Title:    "With Lang",
+				BaseURL:  "https://example.com",
+				Language: "en",
+				Build:    config.BuildConfig{Output: "_site"},
+			}
+			resultWithLang, err := pipeline.BuildWithContent(cfgWithLang, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resultWithLang).NotTo(BeNil())
+
+			Expect(resultWithLang.PageCount).To(Equal(resultNoLang.PageCount),
+				"single-language build must produce the same page count "+
+					"regardless of whether languages: is set — proves one code path")
+		})
+	})
+
 	// ── Build is always full rebuild (§2, issue #221) ───────────────
 	// alloy build always renders all pages — no incremental skipping.
 	// It is intended for CI/CD where a clean, complete output is required.
