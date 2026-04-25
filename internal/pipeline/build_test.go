@@ -197,6 +197,75 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── BuildWithContent delegates to Build (issue #283) ────────────
+	// BuildWithContent must be a thin wrapper that delegates to Build().
+	// It must not duplicate any pipeline logic. Tests verify that
+	// pipeline stages that were previously missing now run.
+
+	Describe("BuildWithContent delegates to Build", func() {
+		It("forwards BuildOptions to Build", func() {
+			cfg := &config.Config{
+				Title:   "Delegate Test",
+				BaseURL: "https://example.com",
+				SSR:     &config.SSRConfig{Command: "cat"},
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			content := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+			}
+			result, err := pipeline.BuildWithContent(cfg, content, pipeline.BuildOptions{SkipSSR: true})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.SSRSkipped).To(BeTrue(),
+				"BuildWithContent must forward BuildOptions to Build — "+
+					"SkipSSR=true must skip Phase 2")
+		})
+
+		It("runs lifecycle filtering through Build", func() {
+			cfg := &config.Config{
+				Title:         "Lifecycle Test",
+				BaseURL:       "https://example.com",
+				Build:         config.BuildConfig{Output: "_site"},
+				IncludeDrafts: false,
+			}
+			content := map[string]string{
+				"content/published.md": "---\ntitle: Published\n---\n# Published",
+				"content/draft.md":     "---\ntitle: Draft\ndraft: true\n---\n# Draft",
+			}
+			result, err := pipeline.BuildWithContent(cfg, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(1),
+				"BuildWithContent must run lifecycle filtering via Build — "+
+					"draft pages must be excluded when IncludeDrafts is false")
+		})
+
+		It("renders through layout chain via Build", func() {
+			cfg := &config.Config{
+				Title:   "Layout Chain Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			content := map[string]string{
+				"content/page.md":        "---\ntitle: Test\nlayout: child\n---\n# Hello",
+				"layouts/child.liquid":   "---\nlayout: \"base\"\n---\n<main>{{ content }}</main>",
+				"layouts/base.liquid":    "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["page.md"]
+			Expect(html).To(ContainSubstring("<html>"),
+				"BuildWithContent must render through layout chain via Build — "+
+					"root layout wrapper must be present")
+			Expect(html).To(ContainSubstring("<main>"),
+				"middle layout wrapper must be present")
+			Expect(html).NotTo(ContainSubstring("layout:"),
+				"layout front matter must be stripped")
+		})
+	})
+
 	// ── Build is always full rebuild (§2, issue #221) ───────────────
 	// alloy build always renders all pages — no incremental skipping.
 	// It is intended for CI/CD where a clean, complete output is required.
