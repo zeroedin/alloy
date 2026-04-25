@@ -90,6 +90,13 @@ type PluginsConfig struct {
 type TaxonomyConfig struct {
 	Permalink string `yaml:"permalink" toml:"permalink" json:"permalink"`
 	Layout    string `yaml:"layout" toml:"layout" json:"layout"`
+	Render    *bool  `yaml:"render" toml:"render" json:"render"`
+}
+
+// ShouldRender returns whether taxonomy pages should be generated.
+// nil (omitted) and true both mean render; only explicit false suppresses.
+func (tc *TaxonomyConfig) ShouldRender() bool {
+	return tc.Render == nil || *tc.Render
 }
 
 // PaginationConfig holds pagination path settings.
@@ -241,6 +248,7 @@ func ApplyDefaults(cfg *Config) {
 	// YAML `tags:` with no value produces a nil *TaxonomyConfig pointer;
 	// downstream code (GenerateTaxonomyPages, ResolveTaxonomyLayout)
 	// dereferences the pointer without nil checks, causing a panic.
+	// Render defaults to true via ShouldRender() (nil *bool = true).
 	for name, tc := range cfg.Taxonomies {
 		if tc == nil {
 			cfg.Taxonomies[name] = &TaxonomyConfig{}

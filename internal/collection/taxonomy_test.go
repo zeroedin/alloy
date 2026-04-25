@@ -9,6 +9,8 @@ import (
 	"github.com/zeroedin/alloy/internal/content"
 )
 
+func boolPtr(b bool) *bool { return &b }
+
 var _ = Describe("Taxonomy", func() {
 
 	var (
@@ -246,7 +248,7 @@ var _ = Describe("Taxonomy", func() {
 	Describe("render: false", func() {
 		It("taxonomy data is built even when render is false", func() {
 			tagsCfg := map[string]*config.TaxonomyConfig{
-				"tags": {Render: false},
+				"tags": {Render: boolPtr(false)},
 			}
 			taxonomies := collection.BuildTaxonomies(pages, tagsCfg)
 			Expect(taxonomies).To(HaveKey("tags"),
@@ -258,7 +260,7 @@ var _ = Describe("Taxonomy", func() {
 		})
 
 		It("does not generate pages when render is false", func() {
-			tagsCfg := &config.TaxonomyConfig{Render: false}
+			tagsCfg := &config.TaxonomyConfig{Render: boolPtr(false)}
 			tc := collection.BuildTaxonomies(pages, map[string]*config.TaxonomyConfig{
 				"tags": tagsCfg,
 			})["tags"]
@@ -274,7 +276,7 @@ var _ = Describe("Taxonomy", func() {
 		// simply doesn't call it when render is false.
 
 		It("generates pages when render is true (default)", func() {
-			tagsCfg := &config.TaxonomyConfig{Render: true, Layout: "tags"}
+			tagsCfg := &config.TaxonomyConfig{Render: boolPtr(true), Layout: "tags"}
 			tc := collection.BuildTaxonomies(pages, map[string]*config.TaxonomyConfig{
 				"tags": tagsCfg,
 			})["tags"]
