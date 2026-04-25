@@ -1812,6 +1812,8 @@ export default function(alloy) {
 
 **Important:** `alloy.data` is set after plugin files are evaluated. Access it inside filter, shortcode, and hook functions — not at the top level of your plugin file. Top-level `alloy.data` access during eval will be `undefined`.
 
+**Modifying data:** `alloy.data` is read-only — mutations within JS don't propagate back to Go or affect templates. To add or modify data that templates see, use hooks like `onDataFetched` or `onAfterValidation` which receive the data, let you modify it, and return it to the pipeline. See "Data mutation via hooks" in the Lifecycle Events section.
+
 For Node (Tier 3) plugins, `alloy.data` is sent as part of the bridge initialization message after data loading completes.
 
 #### WASM Plugins (Compiled)
@@ -2001,6 +2003,35 @@ Fire **once per build**. Payload is a JSON-serializable representation of the Go
 | `onBeforeValidation` | `{ paths: ["/about/", "/blog/", ...] }` | Same + additions | Before conflict detection. Plugin adds output paths. |
 | `onAfterValidation` | `{ paths: [...], cascade: { ... } }` | Cascade portion only | After validation. Plugin injects cascade data. |
 | `onDataFetched` | `{ <sourceName>: <data>, ... }` | Same shape | After external data fetched. Plugin modifies fetched data. |
+
+**Data mutation via hooks** — To modify site data that templates see, use per-build hooks. The hook receives the data object, modifies it, and returns it. The pipeline applies the returned value. This is the only way to add or change data that flows into templates — `alloy.data` in filters/shortcodes is read-only.
+
+```javascript
+// plugins/enrich-data.js
+export default function(alloy) {
+    // Add computed data after external sources are fetched
+    alloy.on("onDataFetched", (data) => {
+        if (data.team) {
+            data.teamCount = data.team.length;
+            data.teamByDepartment = {};
+            for (const member of data.team) {
+                const dept = member.department || "unassigned";
+                if (!data.teamByDepartment[dept]) data.teamByDepartment[dept] = [];
+                data.teamByDepartment[dept].push(member);
+            }
+        }
+        return data;  // returned value replaces the pipeline's data
+    });
+
+    // Inject data into the cascade after validation
+    alloy.on("onAfterValidation", (payload) => {
+        payload.cascade.buildTimestamp = new Date().toISOString();
+        return payload;  // cascade changes are applied
+    });
+}
+```
+
+Templates can then use `{{ site.data.teamCount }}`, `{{ site.data.teamByDepartment }}`, and `{{ site.data.buildTimestamp }}`.
 
 #### Read-only hooks (return value ignored)
 
