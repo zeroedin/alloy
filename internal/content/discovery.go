@@ -19,14 +19,29 @@ func Discover(contentDir string) ([]*Page, error) {
 // DiscoverWithFormats walks the content directory and returns only pages
 // whose file extension matches one of the allowed formats.
 func DiscoverWithFormats(contentDir string, formats []string) ([]*Page, error) {
+	pages, _, err := discoverInternal(contentDir, formats, false)
+	return pages, err
+}
+
+// DiscoverWithPassthrough walks the content directory and returns content pages
+// (files matching formats) and passthrough file paths (everything else).
+// Excludes _data.yaml, _data.yml, and dot-prefixed files from passthrough.
+func DiscoverWithPassthrough(contentDir string, formats []string) ([]*Page, []string, error) {
+	return discoverInternal(contentDir, formats, true)
+}
+
+// discoverInternal is the shared walk logic for content discovery.
+// When collectPassthrough is true, non-format files are collected as
+// passthrough paths instead of being silently skipped.
+func discoverInternal(contentDir string, formats []string, collectPassthrough bool) ([]*Page, []string, error) {
 	contentDir = filepath.Clean(contentDir)
 
 	info, err := os.Stat(contentDir)
 	if err != nil {
-		return nil, fmt.Errorf("content discovery error: %s: %w", contentDir, err)
+		return nil, nil, fmt.Errorf("content discovery error: %s: %w", contentDir, err)
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("content discovery error: %s is not a directory", contentDir)
+		return nil, nil, fmt.Errorf("content discovery error: %s is not a directory", contentDir)
 	}
 
 	formatSet := make(map[string]bool)
@@ -51,6 +66,7 @@ func DiscoverWithFormats(contentDir string, formats []string) ([]*Page, error) {
 	})
 
 	var pages []*Page
+	var passthroughs []string
 
 	err = filepath.Walk(contentDir, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
@@ -69,6 +85,16 @@ func DiscoverWithFormats(contentDir string, formats []string) ([]*Page, error) {
 
 		ext := filepath.Ext(name)
 		if !formatSet[ext] {
+			if collectPassthrough {
+				if strings.HasPrefix(name, ".") {
+					return nil
+				}
+				rel, err := filepath.Rel(contentDir, path)
+				if err != nil {
+					return err
+				}
+				passthroughs = append(passthroughs, filepath.ToSlash(rel))
+			}
 			return nil
 		}
 
@@ -125,8 +151,8 @@ func DiscoverWithFormats(contentDir string, formats []string) ([]*Page, error) {
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("content discovery error: %s: %w", contentDir, err)
+		return nil, nil, fmt.Errorf("content discovery error: %s: %w", contentDir, err)
 	}
 
-	return pages, nil
+	return pages, passthroughs, nil
 }
