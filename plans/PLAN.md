@@ -1234,18 +1234,31 @@ taxonomies:
   tags:
     permalink: "/tags/:slug/"
     layout: "tags"
+    render: true                   # default — generate taxonomy pages
 ```
+
+**Collection-only (no pages):**
+
+```yaml
+taxonomies:
+  tags:
+    render: false                  # no /tags/ or /tags/:slug/ pages generated
+```
+
+When `render: false`, the taxonomy data is still built and available in templates as `collections.taxonomies.tags.*`, but no output pages are generated and no layout is required. Useful for tags that organize content into navigation sections without needing browsable taxonomy pages.
+
+Duplicate term slugs are not an error when `render: false` — since no pages are generated, there are no output path conflicts.
 
 **Customized declaration:**
 
 ```yaml
 taxonomies:
   tags:
-    permalink: "/topics/:slug/"    # override URL pattern
-    layout: "term"                 # override layout name
+    render: false                  # organizational metadata, no pages
   categories:
     permalink: "/sections/:slug/"
-    layout: "term"                 # share layout with tags
+    layout: "term"                 # generates pages with custom layout
+    render: true                   # default, explicit for clarity
 ```
 
 A post with taxonomy values in front matter:
@@ -1270,7 +1283,7 @@ The taxonomy index (all terms) is also available:
 
 ### Taxonomy Page Generation
 
-Alloy auto-generates both the index page (`/tags/`) and a page per term (`/tags/javascript/`, `/tags/lit/`, etc.). Both use the **same layout** — one template handles both cases via the template context.
+When `render: true` (the default), Alloy auto-generates both the index page (`/tags/`) and a page per term (`/tags/javascript/`, `/tags/lit/`, etc.). Both use the **same layout** — one template handles both cases via the template context. When `render: false`, this entire section is skipped — no pages, no layout required, no duplicate term slug checks.
 
 **Layout lookup order** (for `tags` with default layout):
 1. `layouts/taxonomies/tags.liquid`

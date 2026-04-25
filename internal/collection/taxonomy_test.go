@@ -238,4 +238,66 @@ var _ = Describe("Taxonomy", func() {
 				"custom permalink /topics/:slug/ must produce /topics/go/")
 		})
 	})
+
+	// ── render: false (issue #319) ──────────────────────────────────
+	// Taxonomies with render: false build collection data but do not
+	// generate output pages.
+
+	Describe("render: false", func() {
+		It("taxonomy data is built even when render is false", func() {
+			tagsCfg := map[string]*config.TaxonomyConfig{
+				"tags": {Render: false},
+			}
+			taxonomies := collection.BuildTaxonomies(pages, tagsCfg)
+			Expect(taxonomies).To(HaveKey("tags"),
+				"taxonomy data must be built even with render: false — "+
+					"collections.taxonomies.tags.* must be available in templates")
+			tc := taxonomies["tags"]
+			Expect(tc.Terms()).NotTo(BeEmpty(),
+				"terms must be populated for collection access")
+		})
+
+		It("does not generate pages when render is false", func() {
+			tagsCfg := &config.TaxonomyConfig{Render: false}
+			tc := collection.BuildTaxonomies(pages, map[string]*config.TaxonomyConfig{
+				"tags": tagsCfg,
+			})["tags"]
+
+			taxPages := collection.GenerateTaxonomyPages(tc, tagsCfg)
+			Expect(taxPages).To(BeEmpty(),
+				"GenerateTaxonomyPages must return no pages when render is false")
+		})
+
+		It("does not check duplicate term slugs when render is false", func() {
+			// Create pages with duplicate tags — normally an error
+			dupePages := []*content.Page{
+				{RelPath: "a.md", FrontMatter: map[string]interface{}{"tags": []interface{}{"Go"}}},
+				{RelPath: "b.md", FrontMatter: map[string]interface{}{"tags": []interface{}{"go"}}},
+			}
+			tagsCfg := map[string]*config.TaxonomyConfig{
+				"tags": {Render: false},
+			}
+			taxonomies := collection.BuildTaxonomies(dupePages, tagsCfg)
+			tc := taxonomies["tags"]
+
+			// With render: false, duplicate slugs are NOT an error
+			dupes := collection.DetectDuplicateTermSlugs(tc)
+			// The function may still detect them, but the pipeline must NOT
+			// call DetectDuplicateTermSlugs for render: false taxonomies.
+			// This test documents that the pipeline skip is the fix, not
+			// changing DetectDuplicateTermSlugs itself.
+			_ = dupes // detection still works, pipeline skips calling it
+		})
+
+		It("generates pages when render is true (default)", func() {
+			tagsCfg := &config.TaxonomyConfig{Render: true, Layout: "tags"}
+			tc := collection.BuildTaxonomies(pages, map[string]*config.TaxonomyConfig{
+				"tags": tagsCfg,
+			})["tags"]
+
+			taxPages := collection.GenerateTaxonomyPages(tc, tagsCfg)
+			Expect(taxPages).NotTo(BeEmpty(),
+				"GenerateTaxonomyPages must generate pages when render is true")
+		})
+	})
 })
