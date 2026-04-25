@@ -141,6 +141,32 @@ func ResolveForSection(page *content.Page, permalinkCfg map[string]string) (stri
 	return DefaultFromPath(page.RelPath), nil
 }
 
+// ResolveFromCascade computes the output URL for a page using permalink
+// patterns from the _data.yaml cascade. The lookup order is:
+//  1. Front matter permalink (static or Liquid)
+//  2. Cascade "permalink" pattern from _data.yaml
+//  3. File path default (DefaultFromPath)
+func ResolveFromCascade(page *content.Page, cascadeData map[string]interface{}) (string, error) {
+	if val, ok := page.FrontMatter["permalink"]; ok {
+		if b, ok := val.(bool); ok && !b {
+			return "", nil
+		}
+		if s, ok := val.(string); ok && s != "" {
+			return s, nil
+		}
+	}
+
+	if isIndexFile(page.RelPath) {
+		return DefaultFromPath(page.RelPath), nil
+	}
+
+	if pattern, ok := cascadeData["permalink"].(string); ok && pattern != "" {
+		return ResolveTokens(pattern, page), nil
+	}
+
+	return DefaultFromPath(page.RelPath), nil
+}
+
 // ResolveAliases returns all alias output paths for a page, as specified
 // in the page's front matter "aliases" list. These are additional output
 // locations for the same rendered content — not redirects.
