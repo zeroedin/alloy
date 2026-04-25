@@ -71,7 +71,7 @@ These packages depend only on stdlib or already-defined types.
 
 - `Paginate`: Chunk data by `perPage`, build `PaginationContext` for each. First page = basePath, subsequent = `basePath + pathSegment + "/N/"`
 - `ResolveDataSource`: Parse dot-path ref (`site.data.X`, `collections.X`), lookup in provided maps
-- `PaginateWithLiquidPermalink`: Per-item pages with Liquid URL rendering
+- `PaginateWithTemplatePermalink(data, permalinkTemplate, as, renderer)`: Per-item pages with template URL rendering. Renamed from `PaginateWithLiquidPermalink` (issue #315). Accepts a `renderer func(templateSrc string, ctx map[string]interface{}) (string, error)` callback instead of hardcoding Liquid. The pipeline provides the callback from the configured engine (`liquid` or `gotemplate`). The `useLiquidPermalink` check in `build.go` should be renamed to `useTemplatePermalink` — detection still uses `strings.Contains(permalinkStr, "{{")` since both engines use `{{` syntax.
 
 ### 1F: `internal/template/filters.go` — ~22 tests (standalone filter functions)
 **File**: `internal/template/filters.go`
