@@ -1,6 +1,9 @@
 package content_test
 
 import (
+	"fmt"
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -413,17 +416,56 @@ var _ = Describe("RenderMarkdown", func() {
 		})
 	})
 
-	// ── Render hooks (issue #273) ──────────────────────────────────
+	// ── Render hooks (issue #273, #310) ───────────────────────────
 	// Render hook templates in layouts/_markup/ override how specific
 	// markdown elements are rendered to HTML.
+	// Tests must provide a HookRenderer callback — when HookRenderer
+	// is nil, hooks are ignored (issue #310).
 
 	Describe("Render hooks", func() {
+		// HookRenderer wraps template rendering. The content package
+		// cannot import the template package (circular dep), so the
+		// pipeline provides this callback. Tests use a simple
+		// substitution that replaces {{ markup.X }} with context values.
+		// The production pipeline uses the real Liquid engine.
+		hookRenderer := func(templateSrc string, ctx map[string]interface{}) (string, error) {
+			result := templateSrc
+			markup, _ := ctx["markup"].(map[string]interface{})
+			if markup == nil {
+				return result, nil
+			}
+			for key, val := range markup {
+				placeholder := fmt.Sprintf("{{ markup.%s }}", key)
+				result = strings.ReplaceAll(result, placeholder, fmt.Sprintf("%v", val))
+			}
+			// Handle {% if markup.is_external %} ... {% else %} ... {% endif %}
+			if strings.Contains(result, "{% if markup.is_external %}") {
+				isExternal, _ := markup["is_external"].(bool)
+				ifStart := strings.Index(result, "{% if markup.is_external %}")
+				elseStart := strings.Index(result, "{% else %}")
+				endifStart := strings.Index(result, "{% endif %}")
+				if ifStart >= 0 && elseStart >= 0 && endifStart >= 0 {
+					trueBranch := result[ifStart+len("{% if markup.is_external %}") : elseStart]
+					falseBranch := result[elseStart+len("{% else %}") : endifStart]
+					before := result[:ifStart]
+					after := result[endifStart+len("{% endif %}"):]
+					if isExternal {
+						result = before + trueBranch + after
+					} else {
+						result = before + falseBranch + after
+					}
+				}
+			}
+			return result, nil
+		}
+
 		It("render-codeblock.liquid overrides fenced code block output", func() {
 			opts := content.MarkdownOptions{
 				Unsafe: true, Typographer: true, TemplateTags: true,
 				Hooks: map[string]string{
 					"codeblock": `<rh-code-block language="{{ markup.language }}">{{ markup.inner }}</rh-code-block>`,
 				},
+				HookRenderer: hookRenderer,
 			}
 			out, err := content.RenderMarkdown([]byte("```javascript\nconsole.log('hello');\n```"), opts)
 			Expect(err).NotTo(HaveOccurred())
@@ -444,6 +486,7 @@ var _ = Describe("RenderMarkdown", func() {
 				Hooks: map[string]string{
 					"link": `<a href="{{ markup.destination }}" class="custom">{{ markup.text }}</a>`,
 				},
+				HookRenderer: hookRenderer,
 			}
 			out, err := content.RenderMarkdown([]byte("[Click here](https://example.com)"), opts)
 			Expect(err).NotTo(HaveOccurred())
@@ -462,6 +505,7 @@ var _ = Describe("RenderMarkdown", func() {
 				Hooks: map[string]string{
 					"heading": `<h{{ markup.level }} id="{{ markup.id }}"><a href="#{{ markup.id }}">{{ markup.inner }}</a></h{{ markup.level }}>`,
 				},
+				HookRenderer: hookRenderer,
 			}
 			out, err := content.RenderMarkdown([]byte("## My Section"), opts)
 			Expect(err).NotTo(HaveOccurred())
@@ -480,6 +524,7 @@ var _ = Describe("RenderMarkdown", func() {
 				Hooks: map[string]string{
 					"image": `<figure><img src="{{ markup.src }}" alt="{{ markup.alt }}" loading="lazy"><figcaption>{{ markup.title }}</figcaption></figure>`,
 				},
+				HookRenderer: hookRenderer,
 			}
 			out, err := content.RenderMarkdown([]byte(`![A photo](/photo.jpg "Photo caption")`), opts)
 			Expect(err).NotTo(HaveOccurred())
@@ -498,6 +543,7 @@ var _ = Describe("RenderMarkdown", func() {
 				Hooks: map[string]string{
 					"blockquote": `<rh-alert>{{ markup.inner }}</rh-alert>`,
 				},
+				HookRenderer: hookRenderer,
 			}
 			out, err := content.RenderMarkdown([]byte("> This is a note"), opts)
 			Expect(err).NotTo(HaveOccurred())
@@ -516,6 +562,7 @@ var _ = Describe("RenderMarkdown", func() {
 				Hooks: map[string]string{
 					"table": `<div class="table-wrapper">{{ markup.inner }}</div>`,
 				},
+				HookRenderer: hookRenderer,
 			}
 			out, err := content.RenderMarkdown([]byte("| A | B |\n|---|---|\n| 1 | 2 |"), opts)
 			Expect(err).NotTo(HaveOccurred())
@@ -533,6 +580,7 @@ var _ = Describe("RenderMarkdown", func() {
 					"codeblock":         `<pre class="default"><code>{{ markup.inner }}</code></pre>`,
 					"codeblock-mermaid": `<div class="mermaid">{{ markup.inner }}</div>`,
 				},
+				HookRenderer: hookRenderer,
 			}
 			out, err := content.RenderMarkdown([]byte("```mermaid\ngraph TD;\nA-->B;\n```"), opts)
 			Expect(err).NotTo(HaveOccurred())
@@ -546,7 +594,8 @@ var _ = Describe("RenderMarkdown", func() {
 		It("falls back to default rendering when no hook exists", func() {
 			opts := content.MarkdownOptions{
 				Unsafe: true, Typographer: true, TemplateTags: true,
-				Hooks: map[string]string{},
+				Hooks:        map[string]string{},
+				HookRenderer: hookRenderer,
 			}
 			out, err := content.RenderMarkdown([]byte("```go\nfmt.Println(\"hello\")\n```"), opts)
 			Expect(err).NotTo(HaveOccurred())
@@ -563,6 +612,7 @@ var _ = Describe("RenderMarkdown", func() {
 				Hooks: map[string]string{
 					"link": `{% if markup.is_external %}<a href="{{ markup.destination }}" target="_blank">{{ markup.text }}</a>{% else %}<a href="{{ markup.destination }}">{{ markup.text }}</a>{% endif %}`,
 				},
+				HookRenderer: hookRenderer,
 			}
 			out, err := content.RenderMarkdown([]byte("[External](https://example.com) and [Internal](/about)"), opts)
 			Expect(err).NotTo(HaveOccurred())
