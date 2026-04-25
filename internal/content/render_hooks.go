@@ -7,8 +7,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/Notifuse/liquidgo/liquid"
-	liquidtags "github.com/Notifuse/liquidgo/liquid/tags"
 	"github.com/yuin/goldmark/ast"
 	extast "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/renderer"
@@ -86,7 +84,7 @@ func (r *hookNodeRenderer) renderFencedCodeBlock(
 			"inner":    codeBuf.String(),
 		},
 	}
-	rendered, err := r.renderHookTemplate(hookName, hookTemplate, ctx)
+	rendered, err := r.renderHookTemplate(hookTemplate, ctx)
 	if err != nil {
 		return ast.WalkStop, err
 	}
@@ -114,7 +112,7 @@ func (r *hookNodeRenderer) renderLink(
 			"is_external": isExternal,
 		},
 	}
-	rendered, err := r.renderHookTemplate("link", r.hooks["link"], ctx)
+	rendered, err := r.renderHookTemplate(r.hooks["link"], ctx)
 	if err != nil {
 		return ast.WalkStop, err
 	}
@@ -140,7 +138,7 @@ func (r *hookNodeRenderer) renderHeading(
 			"inner": inner,
 		},
 	}
-	rendered, err := r.renderHookTemplate("heading", r.hooks["heading"], ctx)
+	rendered, err := r.renderHookTemplate(r.hooks["heading"], ctx)
 	if err != nil {
 		return ast.WalkStop, err
 	}
@@ -165,7 +163,7 @@ func (r *hookNodeRenderer) renderImage(
 			"title": string(n.Title),
 		},
 	}
-	rendered, err := r.renderHookTemplate("image", r.hooks["image"], ctx)
+	rendered, err := r.renderHookTemplate(r.hooks["image"], ctx)
 	if err != nil {
 		return ast.WalkStop, err
 	}
@@ -189,7 +187,7 @@ func (r *hookNodeRenderer) renderBlockquote(
 			"inner": inner,
 		},
 	}
-	rendered, err := r.renderHookTemplate("blockquote", r.hooks["blockquote"], ctx)
+	rendered, err := r.renderHookTemplate(r.hooks["blockquote"], ctx)
 	if err != nil {
 		return ast.WalkStop, err
 	}
@@ -213,7 +211,7 @@ func (r *hookNodeRenderer) renderTable(
 			"inner": buf.String(),
 		},
 	}
-	rendered, err := r.renderHookTemplate("table", r.hooks["table"], ctx)
+	rendered, err := r.renderHookTemplate(r.hooks["table"], ctx)
 	if err != nil {
 		return ast.WalkStop, err
 	}
@@ -246,27 +244,9 @@ func slugifyHeading(text string) string {
 	return s
 }
 
-func (r *hookNodeRenderer) renderHookTemplate(name, tmplSource string, ctx map[string]interface{}) (string, error) {
-	if r.renderHook != nil {
-		return r.renderHook(name, tmplSource, ctx)
+func (r *hookNodeRenderer) renderHookTemplate(tmplSource string, ctx map[string]interface{}) (string, error) {
+	if r.renderHook == nil {
+		return "", fmt.Errorf("render hook template requires a HookRenderer callback")
 	}
-	return renderHookTemplateLiquid(tmplSource, ctx)
-}
-
-func renderHookTemplateLiquid(tmplSource string, ctx map[string]interface{}) (string, error) {
-	env := liquid.NewEnvironment()
-	liquidtags.RegisterStandardTags(env)
-
-	tpl, err := liquid.ParseTemplate(tmplSource, &liquid.TemplateOptions{
-		Environment: env,
-	})
-	if err != nil {
-		return "", fmt.Errorf("render hook template parse error: %w", err)
-	}
-
-	result := tpl.Render(ctx, &liquid.RenderOptions{})
-	if errs := tpl.Errors(); len(errs) > 0 {
-		return "", fmt.Errorf("render hook template render error: %s", errs[0].Error())
-	}
-	return result, nil
+	return r.renderHook(tmplSource, ctx)
 }

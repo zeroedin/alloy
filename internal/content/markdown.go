@@ -17,9 +17,9 @@ import (
 )
 
 // HookRenderer renders a hook template with the given context variables.
-// name is a cache key (e.g. "heading"), source is the template source,
-// and ctx contains the template variables (e.g. {"markup": {...}}).
-type HookRenderer func(name, source string, ctx map[string]interface{}) (string, error)
+// source is the template source and ctx contains the template variables
+// (e.g. {"markup": {...}}).
+type HookRenderer func(source string, ctx map[string]interface{}) (string, error)
 
 // MarkdownOptions controls goldmark rendering behavior.
 type MarkdownOptions struct {

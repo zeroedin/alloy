@@ -1103,8 +1103,8 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 	if len(hooks) > 0 {
 		mdOpts.Hooks = hooks
 		if engine != nil {
-			mdOpts.HookRenderer = func(name, source string, ctx map[string]interface{}) (string, error) {
-				tpl, err := engine.Parse("_markup/"+name, []byte(source))
+			mdOpts.HookRenderer = func(source string, ctx map[string]interface{}) (string, error) {
+				tpl, err := engine.Parse("_markup/hook", []byte(source))
 				if err != nil {
 					return "", err
 				}
