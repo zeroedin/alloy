@@ -18,8 +18,18 @@ var _ = Describe("RenderMarkdown", func() {
 
 	Context("Basic Markdown", func() {
 		It("converts headings to h1-h6 tags", func() {
+			// AutoHeadingID: false — test heading tag conversion in isolation
+			// without auto-generated id attributes (issue #306).
+			// Auto heading ID behavior is tested separately in the
+			// "Auto heading IDs" describe block with AutoHeadingID: true.
+			noAutoID := content.MarkdownOptions{
+				Unsafe:        true,
+				Typographer:   true,
+				TemplateTags:  true,
+				AutoHeadingID: false,
+			}
 			source := []byte("# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, err := content.RenderMarkdown(source, noAutoID)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<h1>H1</h1>"))
@@ -300,10 +310,17 @@ var _ = Describe("RenderMarkdown", func() {
 	// Goldmark must generate id attributes on all headings by default.
 
 	Describe("Auto heading IDs", func() {
+		autoIDOpts := content.MarkdownOptions{
+			Unsafe:        true,
+			Typographer:   true,
+			TemplateTags:  true,
+			AutoHeadingID: true,
+		}
+
 		It("generates id attributes on headings", func() {
 			out, err := content.RenderMarkdown(
 				[]byte("## Getting Started\n\n### Installation"),
-				defaultOpts)
+				autoIDOpts)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`id="getting-started"`),
@@ -315,7 +332,7 @@ var _ = Describe("RenderMarkdown", func() {
 		It("handles duplicate headings with numeric suffix", func() {
 			out, err := content.RenderMarkdown(
 				[]byte("## Overview\n\nText.\n\n## Overview\n\nMore text.\n\n## Overview"),
-				defaultOpts)
+				autoIDOpts)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`id="overview"`),
@@ -329,7 +346,7 @@ var _ = Describe("RenderMarkdown", func() {
 		It("respects manual heading attributes override", func() {
 			out, err := content.RenderMarkdown(
 				[]byte("## My Section {#custom-id}"),
-				defaultOpts)
+				autoIDOpts)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`id="custom-id"`),

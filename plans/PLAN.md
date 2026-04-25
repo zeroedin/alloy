@@ -586,7 +586,15 @@ Alloy automatically extracts the heading structure from each page during markdow
 
 Nesting follows the heading hierarchy — h3s nest under h2s, h4s under h3s. The top-level array contains the shallowest headings (typically h2). Pages with no headings (or only h1) have an empty `page.toc`.
 
-**Auto heading IDs** — Alloy enables goldmark's `parser.WithAutoHeadingID()` by default. Every heading gets a slugified `id` attribute automatically (e.g., "Getting Started" → `id="getting-started"`). Duplicate headings get a numeric suffix (`getting-started-1`). The algorithm is goldmark's default.
+**Auto heading IDs** — Alloy enables goldmark's `parser.WithAutoHeadingID()` by default. Every heading gets a slugified `id` attribute automatically (e.g., "Getting Started" → `id="getting-started"`). Duplicate headings get a numeric suffix (`getting-started-1`). The algorithm is goldmark's default. Configurable:
+
+```yaml
+content:
+  markdown:
+    autoHeadingID: true   # default: true — every heading gets an id attribute
+```
+
+Set `content.markdown.autoHeadingID: false` to disable auto-generated heading IDs. Headings render as plain `<h2>My Section</h2>` with no `id` attribute. Note: TOC anchor links (`#my-section`) won't work without heading IDs.
 
 **Heading attributes** — Authors can override the auto-generated ID using the heading attributes syntax:
 
