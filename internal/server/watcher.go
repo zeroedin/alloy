@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -42,6 +44,10 @@ const (
 	RebuildIncremental RebuildScope = iota + 1
 	// RebuildFull means all pages are rebuilt (triggered by bulk changes, config, etc.).
 	RebuildFull
+	// RebuildPipeline means the change requires running the pipeline (content, layouts, data).
+	RebuildPipeline
+	// RebuildRecopy means the change only requires recopying files (static, assets, passthrough).
+	RebuildRecopy
 )
 
 // structureDir returns a config directory or falls back to the default name.
@@ -107,6 +113,31 @@ func ClassifyChange(path string, cfg *config.Config) ChangeType {
 // hasPathPrefix checks if a file path is under the given directory.
 func hasPathPrefix(path, dir string) bool {
 	return strings.HasPrefix(path, dir+"/") || strings.HasPrefix(path, dir+"\\")
+}
+
+// RebuildScopeForChangeType returns the rebuild scope for a given change type.
+func RebuildScopeForChangeType(ct ChangeType) RebuildScope {
+	switch ct {
+	case StaticChange, AssetChange, PassthroughChange:
+		return RebuildRecopy
+	default:
+		return RebuildPipeline
+	}
+}
+
+// RecopyPassthroughFile computes the output path for a changed passthrough file.
+func RecopyPassthroughFile(path string, cfg *config.Config) (string, error) {
+	for _, pt := range cfg.Passthrough {
+		if hasPathPrefix(path, pt.From) {
+			relPath := strings.TrimPrefix(path, pt.From+"/")
+			outputDir := cfg.Build.Output
+			if outputDir == "" {
+				outputDir = "_site"
+			}
+			return filepath.Join(outputDir, pt.To, relPath), nil
+		}
+	}
+	return "", fmt.Errorf("path %q does not match any passthrough mapping", path)
 }
 
 // ReloadMessage returns the JSON message sent to the browser via WebSocket
