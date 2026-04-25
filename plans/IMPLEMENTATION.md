@@ -302,15 +302,17 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
  2. validateOutputDir(cfg)                               ✅ done
  3. content.DiscoverWithFormats(contentDir, formats)      ✅ done
  4. content.FilterByLifecycle(pages, now, includeDrafts)  ✅ done (issue #108: must pass includeDrafts from server mode, not hardcode false)
- 5. permalink.Resolve(page) using cascade permalink       ← CHANGED (issue #302)
-    Permalink pattern comes from _data.yaml cascade (step 6), not cfg.Permalinks.
-    Step 6 (cascade) must run BEFORE step 5 (permalink resolution) so the
-    cascade permalink is available. Reorder: steps 6 → 5 → 7.
- 6. cascade.LoadDirectoryCascade + FindCascadeData + PageContext ✅ done
+ 5. cascade.LoadDirectoryCascade + FindCascadeData + PageContext ✅ done (was step 6, reordered for #302)
+ 6. permalink.ResolveFromCascade(page, cascadeData)       ← CHANGED (issue #302)
+    Permalink pattern comes from _data.yaml cascade (step 5), not cfg.Permalinks.
+    Remove `Permalinks map[string]string` from Config struct.
+    Remove `ResolveForSection` — replaced by `ResolveFromCascade`.
+    Update all callers in build.go (batch loop, i18n prefix logic).
  7. data.LoadDirectory(dataDir) → siteData                ✅ done
  8. collection.BuildCollections(pages, cascadeData)       ← CHANGED (issue #302)
-    Date-based section detection reads permalink from _data.yaml cascade
-    instead of cfg.Permalinks.
+    Date-based section detection reads permalink from each section's
+    _data.yaml cascade instead of cfg.Permalinks map.
+    `isDateBasedSection` in layout.go also needs cascade data.
  9. collection.BuildTaxonomies(pages, taxonomies)         ✅ done
 10. template.RegisterBuiltinFilters(engine)               ✅ done
 11. renderPages (markdown → template tags)                ✅ done
