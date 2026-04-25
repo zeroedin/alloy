@@ -336,6 +336,12 @@ var _ = Describe("File Watcher", func() {
 			Expect(scope).To(Equal(server.RebuildPipeline),
 				"LayoutChange must trigger a pipeline rebuild to re-render affected pages")
 		})
+
+		It("AssetChange triggers a recopy", func() {
+			scope := server.RebuildScopeForChangeType(server.AssetChange)
+			Expect(scope).To(Equal(server.RebuildRecopy),
+				"AssetChange must trigger a file recopy, not a full pipeline rebuild")
+		})
 	})
 
 	// ── Cache-based page skipping in serve mode ─────────────────────

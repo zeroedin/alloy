@@ -618,7 +618,7 @@ Production server command (`alloy serve`). Uses `ModePreview` — same pipeline 
    - All types → `srv.BroadcastReload()` after rebuild/recopy
 7. Block until interrupt.
 
-**`server.RecopyPassthroughFile(changedPath string, cfg *config.Config) error`** — Finds the matching passthrough mapping by checking which `from:` directory the `changedPath` is under. Computes the relative path within `from:`, constructs the output path as `_site/<to>/<relative-path>`, and copies the single file. Returns error if no matching mapping is found.
+**`server.RecopyPassthroughFile(changedPath string, cfg *config.Config) (string, error)`** — Finds the matching passthrough mapping by checking which `from:` directory the `changedPath` is under. Computes the relative path within `from:`, constructs the output path as `_site/<to>/<relative-path>`, copies the single file, and returns the output path. Returns error if no matching mapping is found or the copy fails.
 
 **Test note**: The cmd tests verify both `dev` and `serve` commands are registered via `root.Find()` without calling `Execute()`. Server startup behavior is tested directly in `internal/server/server_test.go`.
 
