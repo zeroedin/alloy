@@ -890,6 +890,35 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── page.toc pipeline wiring (issue #274) ───────────────────────
+	// page.toc must be populated during Build and accessible in templates.
+
+	Describe("TOC pipeline wiring", func() {
+		It("page.toc is accessible in layout templates", func() {
+			cfg := &config.Config{
+				Title:   "TOC Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/guide.md": "---\ntitle: Guide\nlayout: default\n---\n## Getting Started\n\n### Installation\n\n## Configuration",
+				"layouts/default.liquid": `<html><body>{{ content }}<nav>{% for item in page.toc %}<a href="#{{ item.id }}">{{ item.text }}</a>{% endfor %}</nav></body></html>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["guide.md"]
+			Expect(html).To(ContainSubstring(`href="#getting-started"`),
+				"page.toc must be populated and accessible in layout templates — "+
+					"TOC links must render with heading IDs")
+			Expect(html).To(ContainSubstring(">Getting Started<"),
+				"TOC entry text must be available in templates")
+			Expect(html).To(ContainSubstring(">Configuration<"),
+				"all h2 headings must appear in page.toc")
+		})
+	})
+
 	// ── {% inline %} pipeline wiring (issue #295) ──────────────────
 	// RegisterInlineTag must be called in createEngine() so the tag
 	// works in actual builds, not just unit tests.
