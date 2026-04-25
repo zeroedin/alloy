@@ -105,6 +105,28 @@ func (r *QuickJSRuntime) Init() error {
 	return nil
 }
 
+// SetSiteData makes site data available as alloy.data in the JS context.
+// Data is JSON-serialized from Go and parsed in JS.
+func (r *QuickJSRuntime) SetSiteData(data map[string]interface{}) error {
+	if !r.initialized {
+		return fmt.Errorf("QuickJS runtime not initialized — call Init() first")
+	}
+
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("serializing site data: %w", err)
+	}
+
+	r.ctx.Global().SetPropertyStr("__siteDataJSON", r.ctx.NewString(string(jsonBytes)))
+	_, err = r.ctx.Eval("site-data.js", qjs.Code(`alloy.data = JSON.parse(__siteDataJSON);`))
+	r.ctx.Global().SetPropertyStr("__siteDataJSON", r.ctx.NewUndefined())
+
+	if err != nil {
+		return fmt.Errorf("setting alloy.data: %w", err)
+	}
+	return nil
+}
+
 // IsInitialized returns whether the runtime has been initialized.
 func (r *QuickJSRuntime) IsInitialized() bool {
 	return r.initialized
