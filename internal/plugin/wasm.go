@@ -111,18 +111,26 @@ func (r *QuickJSRuntime) IsInitialized() bool {
 }
 
 // SetSiteData makes site data available as alloy.data in the JS context.
-// TODO: full implementation tracked by issue #317.
+// Minimal implementation for test compilation — full version in #317.
 func (r *QuickJSRuntime) SetSiteData(data map[string]interface{}) error {
+	if !r.initialized || r.ctx == nil {
+		return fmt.Errorf("QuickJS runtime not initialized — call Init() first")
+	}
+
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("marshaling site data: %w", err)
 	}
 	r.ctx.Global().SetPropertyStr("__siteDataJSON", r.ctx.NewString(string(dataJSON)))
-	_, err = r.ctx.Eval("site-data.js", qjs.Code(`alloy.data = JSON.parse(__siteDataJSON);`))
+	defer r.ctx.Global().SetPropertyStr("__siteDataJSON", r.ctx.NewUndefined())
+
+	result, err := r.ctx.Eval("site-data.js", qjs.Code(`alloy.data = JSON.parse(__siteDataJSON);`))
+	if result != nil {
+		result.Free()
+	}
 	if err != nil {
 		return fmt.Errorf("setting site data: %w", err)
 	}
-	r.ctx.Global().SetPropertyStr("__siteDataJSON", r.ctx.NewUndefined())
 	return nil
 }
 
@@ -187,6 +195,14 @@ func (r *QuickJSRuntime) CallFilter(name string, input interface{}, args ...inte
 	// containing special characters (e.g., quotes).
 	r.ctx.Global().SetPropertyStr("__callFilterName", r.ctx.NewString(name))
 
+	// Clean up all globals on exit, including early-return error paths
+	defer func() {
+		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewUndefined())
+		r.ctx.Global().SetPropertyStr("__callFilterName", r.ctx.NewUndefined())
+		r.ctx.Global().SetPropertyStr("__callArgsJSON", r.ctx.NewUndefined())
+		r.ctx.Eval("args-cleanup.js", qjs.Code(`__callArgs = undefined;`))
+	}()
+
 	// Serialize args as a JS array so the filter function receives them
 	if len(args) > 0 {
 		argsJSON, err := json.Marshal(args)
@@ -208,11 +224,6 @@ func (r *QuickJSRuntime) CallFilter(name string, input interface{}, args ...inte
 	// Invoke the filter function stored in __filters, spreading additional args
 	result, err := r.ctx.Eval("filter-call.js", qjs.Code(
 		`__filters[__callFilterName](__callInput, ...__callArgs)`))
-
-	// Clean up globals to avoid stale references between calls
-	r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewUndefined())
-	r.ctx.Global().SetPropertyStr("__callFilterName", r.ctx.NewUndefined())
-	r.ctx.Global().SetPropertyStr("__callArgsJSON", r.ctx.NewUndefined())
 
 	if err != nil {
 		return nil, fmt.Errorf("filter %q: %w", name, err)
