@@ -523,8 +523,8 @@ var _ = Describe("LiquidEngine", func() {
 				[]byte("valid"), 0644)).To(Succeed())
 			Expect(os.WriteFile(filepath.Join(markupDir, "not-a-hook.liquid"),
 				[]byte("invalid"), 0644)).To(Succeed())
-			Expect(os.WriteFile(filepath.Join(markupDir, "render-unknown.liquid"),
-				[]byte("unknown type"), 0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(markupDir, "render-unicorn.liquid"),
+				[]byte("not a valid hook type"), 0644)).To(Succeed())
 
 			hooks, err := tmpl.DiscoverRenderHooks(filepath.Join(tmpDir, "layouts"), "liquid")
 			Expect(err).NotTo(HaveOccurred())
