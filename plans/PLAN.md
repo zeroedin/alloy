@@ -197,7 +197,7 @@ content/about/
     └── demo.html         ← content file if .html is in formats (front matter required)
 ```
 
-During content discovery, `DiscoverWithFormats` collects two lists: content pages (matching formats) and passthrough files (everything else, excluding `_data.yaml`/`_data.yml`). The pipeline copies passthrough files to the output directory during Phase 3 (output writing), alongside static and passthrough-config files. In dev mode, passthrough files in `content/` are served directly from source (no copy needed).
+During content discovery, `DiscoverWithPassthrough` collects two lists: content pages (matching formats) and passthrough files (everything else). Excluded from passthrough: `_data.yaml`/`_data.yml` (cascade data), dot-prefixed files (`.DS_Store`, `.gitkeep`, etc.), and directories. The pipeline copies passthrough files to the output directory during Phase 3 (output writing), alongside static and passthrough-config files. In dev mode, passthrough files in `content/` are served directly from source (no copy needed).
 
 **Data files** (`data/`, `_data.*`) — detected by file extension:
 - `.yaml`, `.yml`

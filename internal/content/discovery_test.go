@@ -274,7 +274,7 @@ var _ = Describe("Discovery", func() {
 					"both non-format files must be collected as passthrough")
 			})
 
-			It("excludes _data.yaml from passthrough", func() {
+			It("excludes _data.yaml and _data.yml from passthrough", func() {
 				tmpDir, err := os.MkdirTemp("", "passthrough-test-*")
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() { os.RemoveAll(tmpDir) })
@@ -284,6 +284,8 @@ var _ = Describe("Discovery", func() {
 
 				Expect(os.WriteFile(filepath.Join(contentDir, "_data.yaml"),
 					[]byte("layout: post"), 0644)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(contentDir, "_data.yml"),
+					[]byte("layout: page"), 0644)).To(Succeed())
 				Expect(os.WriteFile(filepath.Join(contentDir, "icon.svg"),
 					[]byte("<svg></svg>"), 0644)).To(Succeed())
 
@@ -291,8 +293,31 @@ var _ = Describe("Discovery", func() {
 					contentDir, []string{"md", "html"})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(passthroughs).To(HaveLen(1),
-					"_data.yaml must not be included in passthrough")
+					"both _data.yaml and _data.yml must be excluded from passthrough")
 				Expect(passthroughs).To(ContainElement("icon.svg"))
+			})
+
+			It("excludes dot-prefixed files from passthrough", func() {
+				tmpDir, err := os.MkdirTemp("", "passthrough-test-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				Expect(os.WriteFile(filepath.Join(contentDir, ".DS_Store"),
+					[]byte{0, 0, 0, 1}, 0644)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(contentDir, ".gitkeep"),
+					[]byte(""), 0644)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(contentDir, "logo.svg"),
+					[]byte("<svg></svg>"), 0644)).To(Succeed())
+
+				_, passthroughs, err := content.DiscoverWithPassthrough(
+					contentDir, []string{"md", "html"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(passthroughs).To(HaveLen(1),
+					"dot-prefixed files (.DS_Store, .gitkeep) must be excluded from passthrough")
+				Expect(passthroughs).To(ContainElement("logo.svg"))
 			})
 
 			It("preserves nested directory structure in passthrough paths", func() {
