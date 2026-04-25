@@ -705,6 +705,7 @@ if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.
 
 - HTTP server with mode-aware behavior (dev/preview)
 - File watcher with debouncing and change classification
+- **Passthrough watching (issue #275)**: `WatchDirs(cfg)` must iterate `cfg.Passthrough` and append each `from:` path. `ClassifyChange(path, cfg)` must add a `PassthroughChange` type for files matching passthrough source directories. The serve rebuild handler should recopy only the changed file to `_site/<to>/<relative-path>` on `PassthroughChange` instead of triggering a full pipeline rebuild. In `alloy dev`, passthrough changes only trigger a browser reload (files are served from source). `addRecursiveWatch` must be called on each passthrough `from:` directory.
 - Error overlay injection
 - `WebSocketReloadMessage()`: Return `{"type": "reload"}` JSON string for connected browser reload
 - `DebounceInterval()`: Return configurable debounce interval in milliseconds for file watcher
