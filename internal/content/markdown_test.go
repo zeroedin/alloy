@@ -1,13 +1,11 @@
 package content_test
 
 import (
-	"fmt"
-	"strings"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/zeroedin/alloy/internal/content"
+	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
 var _ = Describe("RenderMarkdown", func() {
@@ -423,40 +421,21 @@ var _ = Describe("RenderMarkdown", func() {
 	// is nil, hooks are ignored (issue #310).
 
 	Describe("Render hooks", func() {
-		// HookRenderer wraps template rendering. The content package
-		// cannot import the template package (circular dep), so the
-		// pipeline provides this callback. Tests use a simple
-		// substitution that replaces {{ markup.X }} with context values.
-		// The production pipeline uses the real Liquid engine.
+		// HookRenderer wraps Liquid template rendering. The content
+		// package cannot import template (circular dep) in production
+		// code, but the external test package (content_test) can.
+		// Tests use the real Liquid engine to match the production path.
 		hookRenderer := func(templateSrc string, ctx map[string]interface{}) (string, error) {
-			result := templateSrc
-			markup, _ := ctx["markup"].(map[string]interface{})
-			if markup == nil {
-				return result, nil
+			engine := tmpl.NewLiquidEngine()
+			tpl, err := engine.Parse("hook", []byte(templateSrc))
+			if err != nil {
+				return "", err
 			}
-			for key, val := range markup {
-				placeholder := fmt.Sprintf("{{ markup.%s }}", key)
-				result = strings.ReplaceAll(result, placeholder, fmt.Sprintf("%v", val))
+			result, err := tpl.Render(ctx)
+			if err != nil {
+				return "", err
 			}
-			// Handle {% if markup.is_external %} ... {% else %} ... {% endif %}
-			if strings.Contains(result, "{% if markup.is_external %}") {
-				isExternal, _ := markup["is_external"].(bool)
-				ifStart := strings.Index(result, "{% if markup.is_external %}")
-				elseStart := strings.Index(result, "{% else %}")
-				endifStart := strings.Index(result, "{% endif %}")
-				if ifStart >= 0 && elseStart >= 0 && endifStart >= 0 {
-					trueBranch := result[ifStart+len("{% if markup.is_external %}") : elseStart]
-					falseBranch := result[elseStart+len("{% else %}") : endifStart]
-					before := result[:ifStart]
-					after := result[endifStart+len("{% endif %}"):]
-					if isExternal {
-						result = before + trueBranch + after
-					} else {
-						result = before + falseBranch + after
-					}
-				}
-			}
-			return result, nil
+			return string(result), nil
 		}
 
 		It("render-codeblock.liquid overrides fenced code block output", func() {
