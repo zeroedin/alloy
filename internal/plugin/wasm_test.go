@@ -138,6 +138,52 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 				"CallFilter with no additional args must still work")
 		})
 
+		// ── Plugin site data access (issue #317) ─────────────────────
+		// Plugins can access site.data via alloy.data in the JS context.
+
+		It("SetSiteData makes data available as alloy.data in JS", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+
+			siteData := map[string]interface{}{
+				"statusLegend": map[string]interface{}{
+					"ready":   map[string]interface{}{"pretty": "Done", "color": "green"},
+					"pending": map[string]interface{}{"pretty": "In Progress", "color": "yellow"},
+				},
+			}
+			Expect(rt.SetSiteData(siteData)).To(Succeed())
+
+			// Eval a script that reads alloy.data
+			Expect(rt.EvalFile(filepath.Join(testdataDir(), "single-files", "site-data-reader.js"))).To(Succeed())
+
+			result, err := rt.CallFilter("statusPretty", "ready")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("Done"),
+				"filter must access alloy.data.statusLegend.ready.pretty — "+
+					"proves site data is available in the QuickJS context")
+		})
+
+		It("SetSiteData handles nested data structures", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+
+			siteData := map[string]interface{}{
+				"nav": []interface{}{
+					map[string]interface{}{"title": "Home", "url": "/"},
+					map[string]interface{}{"title": "About", "url": "/about/"},
+				},
+			}
+			Expect(rt.SetSiteData(siteData)).To(Succeed())
+
+			Expect(rt.EvalFile(filepath.Join(testdataDir(), "single-files", "site-data-reader.js"))).To(Succeed())
+
+			result, err := rt.CallFilter("navCount", "ignored")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal(float64(2)),
+				"filter must access alloy.data.nav array — "+
+					"proves arrays are preserved through JSON serialization")
+		})
+
 		It("parses alloy.hook() registrations from JS plugin", func() {
 			rt := plugin.NewQuickJSRuntime()
 			Expect(rt.Init()).To(Succeed())
