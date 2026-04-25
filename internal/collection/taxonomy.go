@@ -61,7 +61,7 @@ func BuildTaxonomies(pages []*content.Page, taxonomyCfg map[string]*config.Taxon
 
 // GenerateTaxonomyPages creates the virtual index and term pages for a taxonomy.
 func GenerateTaxonomyPages(taxonomy *TaxonomyCollection, cfg *config.TaxonomyConfig) []*content.Page {
-	if !cfg.Render {
+	if !cfg.ShouldRender() {
 		return nil
 	}
 
