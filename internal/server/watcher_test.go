@@ -260,6 +260,84 @@ var _ = Describe("File Watcher", func() {
 		})
 	})
 
+	// ── Passthrough targeted recopy (issue #291) ────────────────────
+	// On PassthroughChange, only the changed file is recopied to
+	// _site/<to>/<relative-path> — not the entire directory.
+
+	Describe("Passthrough targeted recopy", func() {
+		It("RecopyPassthroughFile copies single file to correct output path", func() {
+			cfg := &config.Config{
+				Title: "Recopy Test",
+				Build: config.BuildConfig{Output: "_site"},
+				Passthrough: []config.PassthroughMapping{
+					{From: "vendor/js", To: "js/vendor"},
+				},
+			}
+			outputPath, err := server.RecopyPassthroughFile("vendor/js/lib.min.js", cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(outputPath).To(Equal("_site/js/vendor/lib.min.js"),
+				"recopy must map vendor/js/lib.min.js → _site/js/vendor/lib.min.js — "+
+					"relative path within from: is preserved under to:")
+		})
+
+		It("RecopyPassthroughFile handles nested subdirectories", func() {
+			cfg := &config.Config{
+				Title: "Recopy Test",
+				Build: config.BuildConfig{Output: "_site"},
+				Passthrough: []config.PassthroughMapping{
+					{From: "../design-system/dist", To: "elements"},
+				},
+			}
+			outputPath, err := server.RecopyPassthroughFile("../design-system/dist/components/card/card.js", cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(outputPath).To(Equal("_site/elements/components/card/card.js"),
+				"nested subdirectory structure within from: must be preserved in output")
+		})
+
+		It("RecopyPassthroughFile returns error for unmatched path", func() {
+			cfg := &config.Config{
+				Title: "Recopy Test",
+				Build: config.BuildConfig{Output: "_site"},
+				Passthrough: []config.PassthroughMapping{
+					{From: "vendor/js", To: "js/vendor"},
+				},
+			}
+			_, err := server.RecopyPassthroughFile("content/index.md", cfg)
+			Expect(err).To(HaveOccurred(),
+				"RecopyPassthroughFile must error when path doesn't match any passthrough mapping")
+		})
+	})
+
+	// ── Serve mode rebuild dispatch (issue #291) ─────────────────────
+	// alloy serve must dispatch rebuilds by ChangeType, not just
+	// do a full pipeline rebuild for everything.
+
+	Describe("Rebuild dispatch by change type", func() {
+		It("PassthroughChange does not trigger a full pipeline rebuild", func() {
+			scope := server.RebuildScopeForChangeType(server.PassthroughChange)
+			Expect(scope).To(Equal(server.RebuildRecopy),
+				"PassthroughChange must trigger a targeted recopy, not a full pipeline rebuild")
+		})
+
+		It("ContentChange triggers a pipeline rebuild", func() {
+			scope := server.RebuildScopeForChangeType(server.ContentChange)
+			Expect(scope).To(Equal(server.RebuildPipeline),
+				"ContentChange must trigger a pipeline rebuild")
+		})
+
+		It("StaticChange triggers a recopy", func() {
+			scope := server.RebuildScopeForChangeType(server.StaticChange)
+			Expect(scope).To(Equal(server.RebuildRecopy),
+				"StaticChange must trigger a file recopy, not a full pipeline rebuild")
+		})
+
+		It("LayoutChange triggers a pipeline rebuild", func() {
+			scope := server.RebuildScopeForChangeType(server.LayoutChange)
+			Expect(scope).To(Equal(server.RebuildPipeline),
+				"LayoutChange must trigger a pipeline rebuild to re-render affected pages")
+		})
+	})
+
 	// ── Cache-based page skipping in serve mode ─────────────────────
 	// On incremental rebuild, the server uses the build cache to skip
 	// pages whose content hash hasn't changed.

@@ -610,8 +610,15 @@ Production server command (`alloy serve`). Uses `ModePreview` — same pipeline 
 3. Run initial build via `pipeline.Build(cfg)`.
 4. Read `--port`, `--refetch` flags. No `--no-drafts` (production always excludes drafts). No `--preview` (removed).
 5. Call `server.NewWithMode(cfg, server.ModePreview)` and `server.Start()`.
-6. Start file watcher.
+6. **Start file watcher (issue #291)** — same setup as `cmd/dev.go`: call `server.WatchDirs(cfg)`, `addRecursiveWatch` on each directory, fsnotify event loop with `ClassifyChange` and debouncer. On file change, dispatch by `ChangeType`:
+   - `ContentChange`/`LayoutChange`/`DataChange` → `pipeline.Build(cfg)` (full rebuild, serve mode has no incremental)
+   - `AssetChange`/`StaticChange` → recopy changed files to `_site/`
+   - `PassthroughChange` → `server.RecopyPassthroughFile(changedPath, cfg)` — copies only the changed file to `_site/<to>/<relative-path>`
+   - `ComponentChange` → full rebuild (SSR re-render)
+   - All types → `srv.BroadcastReload()` after rebuild/recopy
 7. Block until interrupt.
+
+**`server.RecopyPassthroughFile(changedPath string, cfg *config.Config) error`** — Finds the matching passthrough mapping by checking which `from:` directory the `changedPath` is under. Computes the relative path within `from:`, constructs the output path as `_site/<to>/<relative-path>`, and copies the single file. Returns error if no matching mapping is found.
 
 **Test note**: The cmd tests verify both `dev` and `serve` commands are registered via `root.Find()` without calling `Execute()`. Server startup behavior is tested directly in `internal/server/server_test.go`.
 
