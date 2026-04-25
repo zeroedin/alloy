@@ -361,7 +361,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		batchColls := buildCollectionsContext(batchPages, cfg, batchTax)
 
 		// Pagination
-		batchPages = processPagination(batchPages, cfg, siteData, batchColls)
+		batchPages = processPagination(batchPages, cfg, siteData, batchColls, engine)
 
 		pages = append(pages, batchPages...)
 		batches = append(batches, langBatch{
@@ -1194,7 +1194,7 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 // processPagination detects pages with pagination: front matter, resolves
 // data sources, and generates virtual or paginated pages. Original paginated
 // pages are replaced by their expanded set.
-func processPagination(pages []*content.Page, cfg *config.Config, siteData map[string]interface{}, collectionsCtx map[string]interface{}) []*content.Page {
+func processPagination(pages []*content.Page, cfg *config.Config, siteData map[string]interface{}, collectionsCtx map[string]interface{}, engine tmpl.TemplateEngine) []*content.Page {
 	var result []*content.Page
 	for _, page := range pages {
 		paginationRaw, ok := page.FrontMatter["pagination"]
@@ -1233,14 +1233,27 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 			asVar = "item"
 		}
 
-		// Check if the page has a Liquid permalink (virtual page generation)
+		// Check if the page has a template permalink (virtual page generation)
 		permalinkStr, _ := page.FrontMatter["permalink"].(string)
-		useLiquidPermalink := permalinkStr != "" && strings.Contains(permalinkStr, "{{")
+		useTemplatePermalink := permalinkStr != "" && strings.Contains(permalinkStr, "{{")
 
 		var contexts []pagination.PaginationContext
 		var paths []string
 
-		if useLiquidPermalink && perPage == 1 {
+		if useTemplatePermalink && perPage == 1 && engine != nil {
+			renderer := func(source string, ctx map[string]interface{}) (string, error) {
+				tpl, err := engine.Parse("_permalink", []byte(source))
+				if err != nil {
+					return "", err
+				}
+				out, err := tpl.Render(ctx)
+				if err != nil {
+					return "", err
+				}
+				return string(out), nil
+			}
+			contexts, paths, err = pagination.PaginateWithTemplatePermalink(resolved, permalinkStr, asVar, renderer)
+		} else if useTemplatePermalink && perPage == 1 {
 			contexts, paths, err = pagination.PaginateWithLiquidPermalink(resolved, permalinkStr, asVar)
 		} else {
 			basePath := page.URL
