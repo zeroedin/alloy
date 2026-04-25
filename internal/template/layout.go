@@ -136,7 +136,7 @@ func DetectCircularLayouts(layoutsDir string) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
-		parent := extractLayoutParent(path)
+		parent := ExtractLayoutParent(path)
 		if parent != "" {
 			rel, _ := filepath.Rel(layoutsDir, path)
 			layouts[rel] = parent
@@ -195,11 +195,6 @@ func ExtractLayoutParent(path string) string {
 		}
 	}
 	return ""
-}
-
-// extractLayoutParent is the unexported wrapper for internal callers.
-func extractLayoutParent(path string) string {
-	return ExtractLayoutParent(path)
 }
 
 // StripLayoutFrontMatter removes YAML front matter (--- delimited) from layout content.

@@ -312,7 +312,7 @@ var _ = Describe("ResolveLayout", func() {
 				"layout body content must be preserved after stripping front matter")
 		})
 
-		It("RenderLayoutChain renders through multiple layout levels", func() {
+		It("ResolveLayoutChain follows parent references to build ordered chain", func() {
 			dir, err := os.MkdirTemp("", "layout-chain-*")
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(func() { os.RemoveAll(dir) })
