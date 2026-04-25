@@ -129,7 +129,7 @@ func RebuildScopeForChangeType(ct ChangeType) RebuildScope {
 func RecopyPassthroughFile(path string, cfg *config.Config) (string, error) {
 	for _, pt := range cfg.Passthrough {
 		if hasPathPrefix(path, pt.From) {
-			relPath := strings.TrimPrefix(path, pt.From+"/")
+			relPath, _ := filepath.Rel(pt.From, path)
 			outputDir := cfg.Build.Output
 			if outputDir == "" {
 				outputDir = "_site"
