@@ -352,7 +352,7 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
   
   The two-pass design ensures `page.Translations` is populated before layout templates render, enabling `{% for trans in page.translations %}` for hreflang tags.
 - **Plugin filter bridging (issue #93)**: After `registry.LoadPlugins(hooks)` (step 0) and engine creation (step 10), bridge plugin-discovered filters to the template engine. For each filter name from `LoadPlugins()`, call `engine.AddFilter(name, wrapperFn)` where `wrapperFn` routes through `QuickJSRuntime.CallFilter()`. This must happen before content rendering (step 11) so templates can use plugin filters. Similarly, `alloy.hook()`/`alloy.on()` registrations discovered by `EvalFile()` must be wired into the `HookRegistry` during `LoadPlugins()`.
-- **`{% inline %}` tag (issue #288)**: Register `inline` as a custom tag via `engine.AddTag("inline", inlineTagFunc)` during engine setup (after `RegisterBuiltinFilters`, before content rendering). The tag function:
+- **`{% inline %}` tag (issue #288, wiring #295)**: `createEngine()` in `build.go` must call `tmpl.RegisterInlineTag(engine)` after `RegisterBuiltinFilters(engine)`. Without this, `{% inline %}` works in unit tests but fails with "unknown tag" in actual builds. Register `inline` as a custom tag via `engine.AddTag("inline", inlineTagFunc)`. The tag function:
   1. Extracts the path argument (first positional arg, string)
   2. Validates path starts with `./` or `../` — error if absolute
   3. Checks file extension against an allowlist (`.svg`, `.html`, `.htm`, `.txt`, `.css`, `.js`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`, `.md`) — error with guidance for binary types
