@@ -295,4 +295,119 @@ var _ = Describe("RenderMarkdown", func() {
 			Expect(html).To(ContainSubstring("</pre>"))
 		})
 	})
+
+	// ── Render hooks (issue #273) ──────────────────────────────────
+	// Render hook templates in layouts/_markup/ override how specific
+	// markdown elements are rendered to HTML.
+
+	Describe("Render hooks", func() {
+		It("render-codeblock.liquid overrides fenced code block output", func() {
+			hooks := map[string]string{
+				"codeblock": `<rh-code-block language="{{ markup.language }}">{{ markup.inner }}</rh-code-block>`,
+			}
+			input := "```javascript\nconsole.log('hello');\n```"
+			out, err := content.RenderMarkdownWithHooks(input, defaultOpts, hooks)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<rh-code-block"),
+				"render hook must override default <pre><code> output")
+			Expect(html).To(ContainSubstring(`language="javascript"`),
+				"markup.language must be available in the hook template")
+			Expect(html).To(ContainSubstring("console.log"),
+				"markup.inner must contain the code content")
+			Expect(html).NotTo(ContainSubstring("<pre>"),
+				"default <pre><code> must not appear when hook is active")
+		})
+
+		It("render-link.liquid overrides link output", func() {
+			hooks := map[string]string{
+				"link": `<a href="{{ markup.destination }}" class="custom">{{ markup.text }}</a>`,
+			}
+			input := "[Click here](https://example.com)"
+			out, err := content.RenderMarkdownWithHooks(input, defaultOpts, hooks)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`class="custom"`),
+				"render hook must override default link output")
+			Expect(html).To(ContainSubstring(`href="https://example.com"`),
+				"markup.destination must be available")
+			Expect(html).To(ContainSubstring("Click here"),
+				"markup.text must contain the link text")
+		})
+
+		It("render-heading.liquid overrides heading output", func() {
+			hooks := map[string]string{
+				"heading": `<h{{ markup.level }} id="{{ markup.id }}"><a href="#{{ markup.id }}">{{ markup.inner }}</a></h{{ markup.level }}>`,
+			}
+			input := "## My Section"
+			out, err := content.RenderMarkdownWithHooks(input, defaultOpts, hooks)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`id="`),
+				"markup.id must provide an auto-generated slug")
+			Expect(html).To(ContainSubstring(`<a href="#`),
+				"render hook must be able to wrap headings in permalink anchors")
+			Expect(html).To(ContainSubstring("My Section"),
+				"markup.inner must contain the heading content")
+		})
+
+		It("render-image.liquid overrides image output", func() {
+			hooks := map[string]string{
+				"image": `<figure><img src="{{ markup.src }}" alt="{{ markup.alt }}" loading="lazy"><figcaption>{{ markup.title }}</figcaption></figure>`,
+			}
+			input := `![A photo](/photo.jpg "Photo caption")`
+			out, err := content.RenderMarkdownWithHooks(input, defaultOpts, hooks)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<figure>"),
+				"render hook must override default <img> output")
+			Expect(html).To(ContainSubstring(`loading="lazy"`),
+				"hook can add custom attributes like lazy loading")
+			Expect(html).To(ContainSubstring("Photo caption"),
+				"markup.title must be available")
+		})
+
+		It("language-specific codeblock hook takes precedence", func() {
+			hooks := map[string]string{
+				"codeblock":         `<pre class="default"><code>{{ markup.inner }}</code></pre>`,
+				"codeblock-mermaid": `<div class="mermaid">{{ markup.inner }}</div>`,
+			}
+			input := "```mermaid\ngraph TD;\nA-->B;\n```"
+			out, err := content.RenderMarkdownWithHooks(input, defaultOpts, hooks)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`<div class="mermaid">`),
+				"language-specific hook (render-codeblock-mermaid) must take precedence over generic")
+			Expect(html).NotTo(ContainSubstring(`class="default"`),
+				"generic codeblock hook must not be used when language-specific exists")
+		})
+
+		It("falls back to default rendering when no hook exists", func() {
+			// Empty hooks map — no overrides
+			hooks := map[string]string{}
+			input := "```go\nfmt.Println(\"hello\")\n```"
+			out, err := content.RenderMarkdownWithHooks(input, defaultOpts, hooks)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<pre>"),
+				"without render hooks, goldmark default rendering must be used")
+			Expect(html).To(ContainSubstring("<code"),
+				"default <pre><code> output must appear when no hook is set")
+		})
+
+		It("render-link.liquid provides is_external for external links", func() {
+			hooks := map[string]string{
+				"link": `{% if markup.is_external %}<a href="{{ markup.destination }}" target="_blank">{{ markup.text }}</a>{% else %}<a href="{{ markup.destination }}">{{ markup.text }}</a>{% endif %}`,
+			}
+			input := "[External](https://example.com) and [Internal](/about)"
+			out, err := content.RenderMarkdownWithHooks(input, defaultOpts, hooks)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`target="_blank"`),
+				"external link must have target=_blank via markup.is_external")
+			// Internal link should NOT have target=_blank
+			Expect(html).To(ContainSubstring(`<a href="/about">Internal</a>`),
+				"internal link must not have target=_blank")
+		})
+	})
 })
