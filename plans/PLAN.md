@@ -729,7 +729,13 @@ passthrough:
 **Dev mode (`alloy dev`):**
 - Static and passthrough files are **served directly** from their source locations
 - The Go HTTP server maps URL paths to source directories — no copy at all
-- File changes are reflected instantly (no rebuild, no copy, no watcher needed)
+- File changes are reflected instantly (no rebuild, no copy needed — but the watcher still triggers a browser reload)
+
+**Serve mode (`alloy serve`):**
+- Static and passthrough files are **copied** to `_site/` (same as build)
+- Passthrough `from:` directories must be watched for changes. On change, only the modified file is recopied to `_site/<to>/<relative-path>` — not the entire passthrough directory. A browser reload is triggered after the recopy.
+
+**Passthrough file watching** — `WatchDirs()` must include all passthrough `from:` directories from config. Passthrough sources are directory trees — the watcher must recursively watch subdirectories, including subdirectories created after the server starts. Changes to passthrough files are classified as `PassthroughChange` and trigger a targeted file recopy instead of a full pipeline rebuild.
 
 ### Pre-Build Validation
 

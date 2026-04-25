@@ -52,6 +52,69 @@ var _ = Describe("File Watcher", func() {
 		})
 	})
 
+	// ── Passthrough directory watching (issue #275) ──────────────────
+	// Passthrough from: directories must be included in WatchDirs
+	// so changes are detected and recopied during serve mode.
+
+	Describe("Passthrough watching", func() {
+		It("WatchDirs includes passthrough from: directories", func() {
+			cfg := &config.Config{
+				Title: "Passthrough Site",
+				Passthrough: []config.PassthroughMapping{
+					{From: "../design-system/dist/elements", To: "elements"},
+					{From: "vendor/js", To: "js/vendor"},
+				},
+			}
+			dirs := server.WatchDirs(cfg)
+			Expect(dirs).To(ContainElement("../design-system/dist/elements"),
+				"passthrough from: directories must be included in WatchDirs — "+
+					"without this, changes to passthrough sources are never detected")
+			Expect(dirs).To(ContainElement("vendor/js"),
+				"all passthrough from: directories must be watched, not just the first")
+		})
+
+		It("WatchDirs includes both base dirs and passthrough dirs", func() {
+			cfg := &config.Config{
+				Title: "Mixed Site",
+				Passthrough: []config.PassthroughMapping{
+					{From: "../shared/fonts", To: "assets/fonts"},
+				},
+			}
+			dirs := server.WatchDirs(cfg)
+			Expect(dirs).To(ContainElements("content", "layouts", "data", "assets", "static"),
+				"base directories must still be present")
+			Expect(dirs).To(ContainElement("../shared/fonts"),
+				"passthrough directories must be added alongside base directories")
+			Expect(len(dirs)).To(Equal(6),
+				"5 base dirs + 1 passthrough dir = 6 total")
+		})
+
+		It("ClassifyChange identifies passthrough file changes", func() {
+			cfg := &config.Config{
+				Title: "Passthrough Site",
+				Passthrough: []config.PassthroughMapping{
+					{From: "vendor/js", To: "js/vendor"},
+				},
+			}
+			changeType := server.ClassifyChange("vendor/js/lib.min.js", cfg)
+			Expect(changeType).To(Equal(server.PassthroughChange),
+				"files under passthrough from: directories must be classified as PassthroughChange — "+
+					"this triggers a targeted file recopy instead of a full pipeline rebuild")
+		})
+
+		It("ClassifyChange does not misclassify non-passthrough files", func() {
+			cfg := &config.Config{
+				Title: "Passthrough Site",
+				Passthrough: []config.PassthroughMapping{
+					{From: "vendor/js", To: "js/vendor"},
+				},
+			}
+			changeType := server.ClassifyChange("content/index.md", cfg)
+			Expect(changeType).To(Equal(server.ContentChange),
+				"content files must not be classified as PassthroughChange")
+		})
+	})
+
 	// ── Change classification ─────────────────────────────────────────
 
 	Describe("ClassifyChange", func() {
