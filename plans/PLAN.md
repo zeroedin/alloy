@@ -2184,10 +2184,18 @@ Without an `ssr:` config block, `alloy serve` still works — it just serves Pha
 
 ### Shared Server Features (both modes)
 
-- **File watcher**: `fsnotify` with 50ms debounce. Watches `content/`, `layouts/`, `data/`, `assets/`, `static/`, and component source dirs.
+- **File watcher**: `fsnotify` with 50ms debounce. Watches `content/`, `layouts/`, `data/`, `assets/`, `static/`, passthrough `from:` directories, and component source dirs. Both `alloy dev` and `alloy serve` must set up watchers — `alloy serve` is NOT a one-shot build.
 - **Bulk change protection**: If many files change at once (e.g., `git checkout`), trigger a full rebuild instead of N incremental ones.
+- **Rebuild handler by change type** (applies to both `alloy dev` and `alloy serve`):
+  - `ContentChange`, `LayoutChange`, `DataChange` → pipeline rebuild (incremental in dev, full in serve)
+  - `AssetChange` → recopy assets to `_site/`
+  - `StaticChange` → recopy static files to `_site/`
+  - `PassthroughChange` → targeted recopy: determine which passthrough mapping the file belongs to, compute relative path within `from:`, copy only that file to `_site/<to>/<relative-path>`. In dev mode, no recopy needed (served from source) — just browser reload.
+  - `ComponentChange` → SSR re-render of affected pages
+  - All change types trigger a browser reload via WebSocket after the rebuild/recopy completes.
+- **Passthrough targeted recopy** — `RecopyPassthroughFile(changedPath, cfg)` finds the matching passthrough mapping, computes the output path, and copies only the changed file. Does not re-run the pipeline or recopy the entire passthrough directory.
 - **Dev mode (`alloy dev`)**: Rendered pages are held in an in-memory map — no `_site/` output written to disk, lower latency, no SSD wear. Source files (content, layouts, data, assets, static) are still read from disk normally. Static and passthrough files are served directly from their source locations (no copy).
-- **Serve mode (`alloy serve`)**: Writes to `_site/` and serves from disk. Production-like output including SSR.
+- **Serve mode (`alloy serve`)**: Writes to `_site/` and serves from disk. Production-like output including SSR. Must have the same file watcher setup as `alloy dev` — watches all directories, dispatches rebuilds by change type, triggers browser reload.
 - **Build mode (`alloy build`)**: Always writes to `_site/`.
 - **Port auto-increment**: If the requested port is occupied, the server tries up to 10 consecutive ports (e.g., 3000 → 3001 → … → 3009) before giving up with an error. A warning is logged for each skipped port (e.g., `[alloy] WARN Port 3000 in use, using 3001`). The startup message always shows the actual port. This matches the behavior of modern dev servers (Vite, Next.js) and reduces friction when multiple projects run simultaneously.
 - **Auto-opens browser** (optional)
