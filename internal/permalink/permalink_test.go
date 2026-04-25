@@ -300,6 +300,80 @@ var _ = Describe("Permalink", func() {
 		})
 	})
 
+	// ── Cascade permalink resolution (issue #302) ──────────────────
+	// Permalink patterns come from _data.yaml cascade, not site config.
+	// ResolveFromCascade reads the "permalink" key from cascade data.
+
+	Describe("Cascade permalink resolution", func() {
+		It("resolves permalink from cascade data", func() {
+			page := &content.Page{
+				Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+				FrontMatter: map[string]interface{}{"title": "My Post"},
+				Section:     "blog",
+				RelPath:     "blog/my-post.md",
+			}
+			cascadeData := map[string]interface{}{
+				"permalink": "/:year/:month/:slug/",
+			}
+			result, err := permalink.ResolveFromCascade(page, cascadeData)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("/2026/04/my-post/"),
+				"permalink pattern from _data.yaml cascade must be applied via token replacement")
+		})
+
+		It("falls back to DefaultFromPath when no cascade permalink", func() {
+			page := &content.Page{
+				Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+				FrontMatter: map[string]interface{}{"title": "About"},
+				Section:     "docs",
+				RelPath:     "docs/about.md",
+			}
+			// No "permalink" key in cascade data
+			cascadeData := map[string]interface{}{
+				"layout": "doc",
+			}
+			result, err := permalink.ResolveFromCascade(page, cascadeData)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("/docs/about/"),
+				"without cascade permalink, file path must map directly to URL")
+		})
+
+		It("front matter permalink overrides cascade permalink", func() {
+			page := &content.Page{
+				Date: time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+				FrontMatter: map[string]interface{}{
+					"title":     "My Post",
+					"permalink": "/custom/path/",
+				},
+				Section: "blog",
+				RelPath: "blog/my-post.md",
+			}
+			cascadeData := map[string]interface{}{
+				"permalink": "/:year/:month/:slug/",
+			}
+			result, err := permalink.ResolveFromCascade(page, cascadeData)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("/custom/path/"),
+				"front matter permalink must override cascade permalink")
+		})
+
+		It("index files skip cascade permalink", func() {
+			page := &content.Page{
+				Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+				FrontMatter: map[string]interface{}{"title": "Blog"},
+				Section:     "blog",
+				RelPath:     "blog/index.md",
+			}
+			cascadeData := map[string]interface{}{
+				"permalink": "/:year/:month/:slug/",
+			}
+			result, err := permalink.ResolveFromCascade(page, cascadeData)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("/blog/"),
+				"index files must skip cascade permalink and use DefaultFromPath")
+		})
+	})
+
 	// ── No recognized tokens ─────────────────────────────────────────
 
 	Describe("No recognized tokens", func() {
