@@ -24,6 +24,8 @@ const (
 	StaticChange
 	// ComponentChange means a component source file was modified.
 	ComponentChange
+	// PassthroughChange means a file in a passthrough from: directory was modified.
+	PassthroughChange
 )
 
 // ChangeEvent represents a single file change detected by the watcher.
@@ -64,6 +66,9 @@ func WatchDirs(cfg *config.Config) []string {
 	if cfg.SSR != nil {
 		dirs = append(dirs, "components")
 	}
+	for _, pt := range cfg.Passthrough {
+		dirs = append(dirs, pt.From)
+	}
 	return dirs
 }
 
@@ -90,6 +95,11 @@ func ClassifyChange(path string, cfg *config.Config) ChangeType {
 	case hasPathPrefix(path, "components"):
 		return ComponentChange
 	default:
+		for _, pt := range cfg.Passthrough {
+			if hasPathPrefix(path, pt.From) {
+				return PassthroughChange
+			}
+		}
 		return ContentChange
 	}
 }
