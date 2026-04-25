@@ -90,6 +90,7 @@ type PluginsConfig struct {
 type TaxonomyConfig struct {
 	Permalink string `yaml:"permalink" toml:"permalink" json:"permalink"`
 	Layout    string `yaml:"layout" toml:"layout" json:"layout"`
+	Render    bool   `yaml:"render" toml:"render" json:"render"`
 }
 
 // PaginationConfig holds pagination path settings.
@@ -243,7 +244,7 @@ func ApplyDefaults(cfg *Config) {
 	// dereferences the pointer without nil checks, causing a panic.
 	for name, tc := range cfg.Taxonomies {
 		if tc == nil {
-			cfg.Taxonomies[name] = &TaxonomyConfig{}
+			cfg.Taxonomies[name] = &TaxonomyConfig{Render: true}
 		}
 	}
 }

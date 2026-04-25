@@ -22,7 +22,7 @@ var _ = Describe("Taxonomy", func() {
 			{FrontMatter: map[string]interface{}{"title": "Post 2", "tags": []interface{}{"go", "testing"}}},
 		}
 		taxonomyCfg = map[string]*config.TaxonomyConfig{
-			"tags": {Permalink: "/tags/:slug/", Layout: "tags"},
+			"tags": {Permalink: "/tags/:slug/", Layout: "tags", Render: true},
 		}
 	})
 
@@ -98,7 +98,7 @@ var _ = Describe("Taxonomy", func() {
 		})
 
 		It("uses default permalink pattern when not customized", func() {
-			defaultCfg := &config.TaxonomyConfig{Layout: "categories"}
+			defaultCfg := &config.TaxonomyConfig{Layout: "categories", Render: true}
 			taxonomy := &collection.TaxonomyCollection{
 				Name: "categories",
 				Terms: map[string][]*content.Page{
@@ -217,6 +217,7 @@ var _ = Describe("Taxonomy", func() {
 			customCfg := &config.TaxonomyConfig{
 				Permalink: "/topics/:slug/",
 				Layout:    "term",
+				Render:    true,
 			}
 			taxonomy := &collection.TaxonomyCollection{
 				Name: "tags",
