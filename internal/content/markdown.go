@@ -162,9 +162,13 @@ type TOCEntry struct {
 // RenderMarkdownWithTOC renders markdown and extracts a nested table of contents
 // from the heading structure. h1 headings are excluded from the TOC.
 func RenderMarkdownWithTOC(source []byte, opts MarkdownOptions) ([]byte, []TOCEntry, error) {
-	html, err := RenderMarkdown(source, opts)
-	if err != nil {
-		return nil, nil, err
+	src := source
+
+	var placeholders []string
+	if opts.TemplateTags {
+		src, placeholders = protectTemplateTags(src)
+	} else {
+		src = escapeTemplateTags(src)
 	}
 
 	extensions := []goldmark.Extender{
@@ -176,16 +180,32 @@ func RenderMarkdownWithTOC(source []byte, opts MarkdownOptions) ([]byte, []TOCEn
 		extensions = append(extensions, extension.NewTypographer())
 	}
 
+	rendererOpts := []renderer.Option{}
+	if opts.Unsafe {
+		rendererOpts = append(rendererOpts, html.WithUnsafe())
+	}
+
 	md := goldmark.New(
 		goldmark.WithExtensions(extensions...),
+		goldmark.WithRendererOptions(rendererOpts...),
 		goldmark.WithParserOptions(
 			parser.WithAutoHeadingID(),
 			parser.WithAttribute(),
 		),
 	)
 
-	reader := text.NewReader(source)
+	reader := text.NewReader(src)
 	doc := md.Parser().Parse(reader)
+
+	var buf bytes.Buffer
+	if err := md.Renderer().Render(&buf, src, doc); err != nil {
+		return nil, nil, fmt.Errorf("markdown render error: %w", err)
+	}
+
+	result := buf.Bytes()
+	if opts.TemplateTags && len(placeholders) > 0 {
+		result = restoreTemplateTags(result, placeholders)
+	}
 
 	var flat []TOCEntry
 	ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
@@ -203,11 +223,7 @@ func RenderMarkdownWithTOC(source []byte, opts MarkdownOptions) ([]byte, []TOCEn
 		}
 
 		var textBuf bytes.Buffer
-		for child := heading.FirstChild(); child != nil; child = child.NextSibling() {
-			if t, ok := child.(*ast.Text); ok {
-				textBuf.Write(t.Segment.Value(source))
-			}
-		}
+		extractText(&textBuf, heading, src)
 
 		flat = append(flat, TOCEntry{
 			ID:    id,
@@ -218,7 +234,18 @@ func RenderMarkdownWithTOC(source []byte, opts MarkdownOptions) ([]byte, []TOCEn
 	})
 
 	toc := nestTOCEntries(flat)
-	return html, toc, nil
+	return result, toc, nil
+}
+
+// extractText recursively collects all text content from an AST node's subtree.
+func extractText(buf *bytes.Buffer, node ast.Node, source []byte) {
+	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
+		if t, ok := child.(*ast.Text); ok {
+			buf.Write(t.Segment.Value(source))
+		} else {
+			extractText(buf, child, source)
+		}
+	}
 }
 
 func nestTOCEntries(flat []TOCEntry) []TOCEntry {
