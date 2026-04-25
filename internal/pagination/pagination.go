@@ -145,6 +145,49 @@ func PaginateWithLiquidPermalink(data []interface{}, permalinkTemplate string, a
 	return contexts, paths, nil
 }
 
+// TemplateRenderer renders a template string with the given context variables.
+type TemplateRenderer func(source string, ctx map[string]interface{}) (string, error)
+
+// PaginateWithTemplatePermalink generates one virtual page per data item,
+// using the provided renderer callback to resolve the permalink template.
+// This works with any template engine (Liquid, Go templates, etc.).
+func PaginateWithTemplatePermalink(data []interface{}, permalinkTemplate string, as string, renderer TemplateRenderer) ([]PaginationContext, []string, error) {
+	if len(data) == 0 {
+		return nil, nil, nil
+	}
+
+	contexts := make([]PaginationContext, len(data))
+	paths := make([]string, len(data))
+
+	for i, item := range data {
+		ctx := map[string]interface{}{as: item}
+		rendered, err := renderer(permalinkTemplate, ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("template permalink render for item %d: %w", i, err)
+		}
+		paths[i] = strings.TrimSpace(rendered)
+		contexts[i] = PaginationContext{
+			PageNumber: i + 1,
+			TotalPages: len(data),
+			Items:      []interface{}{item},
+		}
+		if i > 0 {
+			contexts[i].PreviousPage = paths[i-1]
+		}
+		contexts[i].First = paths[0]
+	}
+
+	lastPath := paths[len(paths)-1]
+	for i := range contexts {
+		contexts[i].Last = lastPath
+		if i < len(contexts)-1 {
+			contexts[i].NextPage = paths[i+1]
+		}
+	}
+
+	return contexts, paths, nil
+}
+
 // renderSimpleLiquid renders a simple Liquid-style template by replacing
 // {{ varName.field }} with the corresponding value from the item.
 func renderSimpleLiquid(tmpl string, varName string, item interface{}) string {
