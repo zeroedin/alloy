@@ -302,11 +302,13 @@ var _ = Describe("RenderMarkdown", func() {
 
 	Describe("Render hooks", func() {
 		It("render-codeblock.liquid overrides fenced code block output", func() {
-			hooks := map[string]string{
-				"codeblock": `<rh-code-block language="{{ markup.language }}">{{ markup.inner }}</rh-code-block>`,
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"codeblock": `<rh-code-block language="{{ markup.language }}">{{ markup.inner }}</rh-code-block>`,
+				},
 			}
-			input := "```javascript\nconsole.log('hello');\n```"
-			out, err := content.RenderMarkdownWithHooks(input, defaultOpts, hooks)
+			out, err := content.RenderMarkdown([]byte("```javascript\nconsole.log('hello');\n```"), opts)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<rh-code-block"),
@@ -320,11 +322,13 @@ var _ = Describe("RenderMarkdown", func() {
 		})
 
 		It("render-link.liquid overrides link output", func() {
-			hooks := map[string]string{
-				"link": `<a href="{{ markup.destination }}" class="custom">{{ markup.text }}</a>`,
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"link": `<a href="{{ markup.destination }}" class="custom">{{ markup.text }}</a>`,
+				},
 			}
-			input := "[Click here](https://example.com)"
-			out, err := content.RenderMarkdownWithHooks(input, defaultOpts, hooks)
+			out, err := content.RenderMarkdown([]byte("[Click here](https://example.com)"), opts)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`class="custom"`),
@@ -336,27 +340,31 @@ var _ = Describe("RenderMarkdown", func() {
 		})
 
 		It("render-heading.liquid overrides heading output", func() {
-			hooks := map[string]string{
-				"heading": `<h{{ markup.level }} id="{{ markup.id }}"><a href="#{{ markup.id }}">{{ markup.inner }}</a></h{{ markup.level }}>`,
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }} id="{{ markup.id }}"><a href="#{{ markup.id }}">{{ markup.inner }}</a></h{{ markup.level }}>`,
+				},
 			}
-			input := "## My Section"
-			out, err := content.RenderMarkdownWithHooks(input, defaultOpts, hooks)
+			out, err := content.RenderMarkdown([]byte("## My Section"), opts)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
-			Expect(html).To(ContainSubstring(`id="`),
-				"markup.id must provide an auto-generated slug")
-			Expect(html).To(ContainSubstring(`<a href="#`),
+			Expect(html).To(ContainSubstring(`id="my-section"`),
+				"markup.id must be a slugified version of the heading text")
+			Expect(html).To(ContainSubstring(`<a href="#my-section">`),
 				"render hook must be able to wrap headings in permalink anchors")
 			Expect(html).To(ContainSubstring("My Section"),
 				"markup.inner must contain the heading content")
 		})
 
 		It("render-image.liquid overrides image output", func() {
-			hooks := map[string]string{
-				"image": `<figure><img src="{{ markup.src }}" alt="{{ markup.alt }}" loading="lazy"><figcaption>{{ markup.title }}</figcaption></figure>`,
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"image": `<figure><img src="{{ markup.src }}" alt="{{ markup.alt }}" loading="lazy"><figcaption>{{ markup.title }}</figcaption></figure>`,
+				},
 			}
-			input := `![A photo](/photo.jpg "Photo caption")`
-			out, err := content.RenderMarkdownWithHooks(input, defaultOpts, hooks)
+			out, err := content.RenderMarkdown([]byte(`![A photo](/photo.jpg "Photo caption")`), opts)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<figure>"),
@@ -367,13 +375,49 @@ var _ = Describe("RenderMarkdown", func() {
 				"markup.title must be available")
 		})
 
-		It("language-specific codeblock hook takes precedence", func() {
-			hooks := map[string]string{
-				"codeblock":         `<pre class="default"><code>{{ markup.inner }}</code></pre>`,
-				"codeblock-mermaid": `<div class="mermaid">{{ markup.inner }}</div>`,
+		It("render-blockquote.liquid overrides blockquote output", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"blockquote": `<rh-alert>{{ markup.inner }}</rh-alert>`,
+				},
 			}
-			input := "```mermaid\ngraph TD;\nA-->B;\n```"
-			out, err := content.RenderMarkdownWithHooks(input, defaultOpts, hooks)
+			out, err := content.RenderMarkdown([]byte("> This is a note"), opts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<rh-alert>"),
+				"render hook must override default <blockquote> output")
+			Expect(html).To(ContainSubstring("This is a note"),
+				"markup.inner must contain the blockquote content")
+			Expect(html).NotTo(ContainSubstring("<blockquote>"),
+				"default <blockquote> must not appear when hook is active")
+		})
+
+		It("render-table.liquid overrides table output", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"table": `<div class="table-wrapper">{{ markup.inner }}</div>`,
+				},
+			}
+			out, err := content.RenderMarkdown([]byte("| A | B |\n|---|---|\n| 1 | 2 |"), opts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`<div class="table-wrapper">`),
+				"render hook must override default <table> output")
+			Expect(html).To(ContainSubstring("</div>"),
+				"hook wrapper must be present")
+		})
+
+		It("language-specific codeblock hook takes precedence", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"codeblock":         `<pre class="default"><code>{{ markup.inner }}</code></pre>`,
+					"codeblock-mermaid": `<div class="mermaid">{{ markup.inner }}</div>`,
+				},
+			}
+			out, err := content.RenderMarkdown([]byte("```mermaid\ngraph TD;\nA-->B;\n```"), opts)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`<div class="mermaid">`),
@@ -383,10 +427,11 @@ var _ = Describe("RenderMarkdown", func() {
 		})
 
 		It("falls back to default rendering when no hook exists", func() {
-			// Empty hooks map — no overrides
-			hooks := map[string]string{}
-			input := "```go\nfmt.Println(\"hello\")\n```"
-			out, err := content.RenderMarkdownWithHooks(input, defaultOpts, hooks)
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{},
+			}
+			out, err := content.RenderMarkdown([]byte("```go\nfmt.Println(\"hello\")\n```"), opts)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<pre>"),
@@ -396,16 +441,17 @@ var _ = Describe("RenderMarkdown", func() {
 		})
 
 		It("render-link.liquid provides is_external for external links", func() {
-			hooks := map[string]string{
-				"link": `{% if markup.is_external %}<a href="{{ markup.destination }}" target="_blank">{{ markup.text }}</a>{% else %}<a href="{{ markup.destination }}">{{ markup.text }}</a>{% endif %}`,
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"link": `{% if markup.is_external %}<a href="{{ markup.destination }}" target="_blank">{{ markup.text }}</a>{% else %}<a href="{{ markup.destination }}">{{ markup.text }}</a>{% endif %}`,
+				},
 			}
-			input := "[External](https://example.com) and [Internal](/about)"
-			out, err := content.RenderMarkdownWithHooks(input, defaultOpts, hooks)
+			out, err := content.RenderMarkdown([]byte("[External](https://example.com) and [Internal](/about)"), opts)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`target="_blank"`),
 				"external link must have target=_blank via markup.is_external")
-			// Internal link should NOT have target=_blank
 			Expect(html).To(ContainSubstring(`<a href="/about">Internal</a>`),
 				"internal link must not have target=_blank")
 		})
