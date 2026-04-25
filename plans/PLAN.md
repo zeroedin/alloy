@@ -729,7 +729,7 @@ passthrough:
 **Dev mode (`alloy dev`):**
 - Static and passthrough files are **served directly** from their source locations
 - The Go HTTP server maps URL paths to source directories — no copy at all
-- File changes are reflected instantly (no rebuild, no copy, no watcher needed)
+- File changes are reflected instantly (no rebuild, no copy needed — but the watcher still triggers a browser reload)
 
 **Serve mode (`alloy serve`):**
 - Static and passthrough files are **copied** to `_site/` (same as build)
