@@ -13,6 +13,7 @@ import (
 	"github.com/yuin/goldmark/renderer"
 	"github.com/yuin/goldmark/renderer/html"
 	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 )
 
 // MarkdownOptions controls goldmark rendering behavior.
@@ -42,6 +43,14 @@ func createGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) gold
 	rendererOpts := []renderer.Option{}
 	if opts.Unsafe {
 		rendererOpts = append(rendererOpts, html.WithUnsafe())
+	}
+
+	if len(opts.Hooks) > 0 {
+		noHookOpts := opts
+		noHookOpts.Hooks = nil
+		childMD := createGoldmark(noHookOpts, extraParserOpts...)
+		hookRenderer := newHookNodeRenderer(opts.Hooks, childMD.Renderer())
+		rendererOpts = append(rendererOpts, renderer.WithNodeRenderers(util.Prioritized(hookRenderer, 100)))
 	}
 
 	parserOpts := []parser.Option{}
