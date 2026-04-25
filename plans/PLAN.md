@@ -1810,6 +1810,8 @@ export default function(alloy) {
 
 `alloy.data` is a read-only snapshot of `site.data` injected into the QuickJS context after data files are loaded. It's the same data available in templates as `site.data.*`. The data is JSON-serialized from Go and parsed in JS — complex types (maps, arrays, strings, numbers, booleans) are preserved. Changes to `alloy.data` inside a plugin do not affect other plugins or the template data cascade.
 
+**Important:** `alloy.data` is set after plugin files are evaluated. Access it inside filter, shortcode, and hook functions — not at the top level of your plugin file. Top-level `alloy.data` access during eval will be `undefined`.
+
 For Node (Tier 3) plugins, `alloy.data` is sent as part of the bridge initialization message after data loading completes.
 
 #### WASM Plugins (Compiled)

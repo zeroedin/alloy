@@ -179,7 +179,7 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 
 			result, err := rt.CallFilter("navCount", "ignored")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal(float64(2)),
+			Expect(result).To(BeNumerically("==", 2),
 				"filter must access alloy.data.nav array — "+
 					"proves arrays are preserved through JSON serialization")
 		})
