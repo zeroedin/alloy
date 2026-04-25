@@ -208,6 +208,111 @@ var _ = Describe("Discovery", func() {
 			})
 		})
 
+		// ── Content-colocated passthrough (issue #287) ──────────────
+		// Files in content/ whose extension does NOT match content.formats
+		// must be collected as passthrough files, not processed or errored.
+
+		Context("content-colocated passthrough", func() {
+			It("collects non-format files as passthrough", func() {
+				// Create temp content dir with mixed files
+				tmpDir, err := os.MkdirTemp("", "passthrough-test-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content", "about")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				// Content file (format match)
+				Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+					[]byte("---\ntitle: About\n---\n# About"), 0644)).To(Succeed())
+				// Non-format files (should be passthrough)
+				Expect(os.WriteFile(filepath.Join(contentDir, "diagram.svg"),
+					[]byte("<svg></svg>"), 0644)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(contentDir, "hero.png"),
+					[]byte("fake png"), 0644)).To(Succeed())
+
+				pages, passthroughs, err := content.DiscoverWithPassthrough(
+					filepath.Join(tmpDir, "content"), []string{"md", "html"})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Content pages
+				Expect(pages).To(HaveLen(1),
+					"only .md files matching formats should be content pages")
+				Expect(pages[0].RelPath).To(Equal("about/index.md"))
+
+				// Passthrough files
+				Expect(passthroughs).To(HaveLen(2),
+					"non-format files must be collected as passthrough")
+				Expect(passthroughs).To(ContainElement("about/diagram.svg"),
+					"SVG files must be collected as passthrough")
+				Expect(passthroughs).To(ContainElement("about/hero.png"),
+					"PNG files must be collected as passthrough")
+			})
+
+			It("does not error on non-format files", func() {
+				tmpDir, err := os.MkdirTemp("", "passthrough-test-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				// Only non-format files — no content pages
+				Expect(os.WriteFile(filepath.Join(contentDir, "logo.svg"),
+					[]byte("<svg></svg>"), 0644)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(contentDir, "app.js"),
+					[]byte("console.log('hello')"), 0644)).To(Succeed())
+
+				pages, passthroughs, err := content.DiscoverWithPassthrough(
+					contentDir, []string{"md", "html"})
+				Expect(err).NotTo(HaveOccurred(),
+					"non-format files must not cause a build error — "+
+						"they are passthrough, not content")
+				Expect(pages).To(BeEmpty(),
+					"no content pages when only non-format files exist")
+				Expect(passthroughs).To(HaveLen(2),
+					"both non-format files must be collected as passthrough")
+			})
+
+			It("excludes _data.yaml from passthrough", func() {
+				tmpDir, err := os.MkdirTemp("", "passthrough-test-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				Expect(os.WriteFile(filepath.Join(contentDir, "_data.yaml"),
+					[]byte("layout: post"), 0644)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(contentDir, "icon.svg"),
+					[]byte("<svg></svg>"), 0644)).To(Succeed())
+
+				_, passthroughs, err := content.DiscoverWithPassthrough(
+					contentDir, []string{"md", "html"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(passthroughs).To(HaveLen(1),
+					"_data.yaml must not be included in passthrough")
+				Expect(passthroughs).To(ContainElement("icon.svg"))
+			})
+
+			It("preserves nested directory structure in passthrough paths", func() {
+				tmpDir, err := os.MkdirTemp("", "passthrough-test-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				nested := filepath.Join(tmpDir, "content", "about", "images")
+				Expect(os.MkdirAll(nested, 0755)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(nested, "photo.jpg"),
+					[]byte("fake jpg"), 0644)).To(Succeed())
+
+				_, passthroughs, err := content.DiscoverWithPassthrough(
+					filepath.Join(tmpDir, "content"), []string{"md", "html"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(passthroughs).To(ContainElement("about/images/photo.jpg"),
+					"passthrough paths must be relative to content root, preserving directory structure")
+			})
+		})
+
 		// ── Deeply nested directories (3+ levels) ────────────────────
 
 		Context("deeply nested directories", func() {

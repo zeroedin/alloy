@@ -184,7 +184,20 @@ Alloy supports YAML, TOML, and JSON wherever structured data is accepted:
 | `+++` | TOML | `+++`<br>`title = "My Post"`<br>`+++` |
 | `{` | JSON | `{ "title": "My Post" }` |
 
-**Front matter is required on content files only.** Files in the content directory without front matter delimiters are a build error. Empty front matter (`---\n---`) is valid (all fields default to nil/zero), but no delimiters at all is not. This avoids the edge-case bugs Hugo encounters with frontmatter-less files and ensures every page has an explicit metadata boundary. The error message should suggest adding empty front matter if the author has no metadata to set. Layouts, partials, data files, and other non-content files do not have or require front matter — they are templates and structured data, not content pages.
+**Front matter is required on content files only.** Files in the content directory whose extension matches `content.formats` (default: `["md", "html"]`) are content files — front matter delimiters are required. Empty front matter (`---\n---`) is valid (all fields default to nil/zero), but no delimiters at all is not. This avoids the edge-case bugs Hugo encounters with frontmatter-less files and ensures every page has an explicit metadata boundary. The error message should suggest adding empty front matter if the author has no metadata to set. Layouts, partials, data files, and other non-content files do not have or require front matter — they are templates and structured data, not content pages.
+
+**Content-colocated passthrough** — Files in the content directory whose extension does NOT match `content.formats` are automatically copied to the output directory preserving their path relative to `content/`. No front matter check, no template processing, no Markdown rendering — raw file copy. This enables colocation of assets with content:
+
+```
+content/about/
+├── index.md              ← content file (processed through pipeline)
+├── diagram.svg           ← passthrough (copied to _site/about/diagram.svg)
+├── hero.png              ← passthrough (copied to _site/about/hero.png)
+└── patterns/
+    └── demo.html         ← content file if .html is in formats (front matter required)
+```
+
+During content discovery, `DiscoverWithFormats` collects two lists: content pages (matching formats) and passthrough files (everything else, excluding `_data.yaml`/`_data.yml`). The pipeline copies passthrough files to the output directory during Phase 3 (output writing), alongside static and passthrough-config files. In dev mode, passthrough files in `content/` are served directly from source (no copy needed).
 
 **Data files** (`data/`, `_data.*`) — detected by file extension:
 - `.yaml`, `.yml`

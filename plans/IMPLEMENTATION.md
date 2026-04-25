@@ -119,7 +119,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 
 **discovery.go**:
 - `Discover`: Walk `contentDir`, create `Page` per .md/.html/.txt. Set `Section` from first path segment. Handle page bundles. Ignore `_data.yaml`.
-- `DiscoverWithFormats`: Same but filter by allowed extensions.
+- `DiscoverWithFormats`: Same but filter by allowed extensions. Must also collect non-format files (excluding `_data.yaml`/`_data.yml` and directories) as content-colocated passthroughs (issue #287). Return both content pages and passthrough file paths. The passthrough files are copied to the output directory during Phase 3, preserving their path relative to `content/`. Non-format files must NOT be passed to `BuildPage`/`ExtractFrontMatter` — they have no front matter and would error.
 
 **markdown.go**:
 - `RenderMarkdown`: Configure goldmark with extensions (tables, task lists, typographer, footnotes). Handle `Unsafe` (raw HTML passthrough). Handle `TemplateTags` (preserve `{{ }}`/`{% %}` through rendering via placeholder substitution). Handle `TemplateBlocks` (issue #202): register a block-level parser that detects `{% tagname %}...{% endtagname %}` when the opening tag starts a line. Emit the opening/closing tags as custom AST block nodes with a custom renderer that outputs the tag text verbatim — do NOT use `ast.RawHTML` which is gated by the `unsafe` setting. Template tags must be preserved regardless of whether `unsafe` is true or false (same as the inline TemplateTags extension). Inner content between the tags is parsed as normal markdown. This prevents block shortcodes producing `<div>` from being wrapped in `<p>` tags.
