@@ -107,7 +107,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	config.ApplyDefaults(cfg)
 
 	// Track which pages use which layouts for cache invalidation
-	templateUsage := make(map[string]string) // page.RelPath → layoutPath (relative)
+	templateUsage := make(map[string][]string) // page.RelPath → layoutPaths (relative)
 
 	// Plugin system: discover plugins and set up hook registry
 	hooks := plugin.NewHookRegistry()
@@ -423,7 +423,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 					if relLayout, relErr := filepath.Rel(cfg.ProjectRoot, lp); relErr == nil {
 						trackedLayout = filepath.ToSlash(relLayout)
 					}
-					templateUsage[page.RelPath] = trackedLayout
+					templateUsage[page.RelPath] = append(templateUsage[page.RelPath], trackedLayout)
 				}
 
 				// Render inside-out through the layout chain
@@ -597,7 +597,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				if relLayout, relErr := filepath.Rel(cfg.ProjectRoot, lp); relErr == nil {
 					trackedLayout = filepath.ToSlash(relLayout)
 				}
-				templateUsage[page.RelPath] = trackedLayout
+				templateUsage[page.RelPath] = append(templateUsage[page.RelPath], trackedLayout)
 			}
 
 			for _, lp := range chain {
@@ -834,8 +834,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			buildCache.SetHash(page.RelPath, cache.HashContent(page.Content))
 		}
 		// Track template usage for incremental rebuild invalidation
-		for pagePath, layoutPath := range templateUsage {
-			buildCache.TrackTemplateUsage(pagePath, layoutPath)
+		for pagePath, layoutPaths := range templateUsage {
+			for _, layoutPath := range layoutPaths {
+				buildCache.TrackTemplateUsage(pagePath, layoutPath)
+			}
 		}
 		cacheDir := resolveDir(cfg.ProjectRoot, ".alloy")
 		if err := buildCache.SaveTo(cacheDir); err != nil {
@@ -1648,7 +1650,7 @@ func renderPageFormats(page *content.Page, layoutsDir, engineName string, engine
 		if err != nil {
 			return fmt.Errorf("reading format layout %s: %w", fmtLayoutPath, err)
 		}
-		fmtTpl, err := engine.Parse(fmtLayoutPath, fmtContent)
+		fmtTpl, err := engine.Parse(fmtLayoutPath, []byte(tmpl.StripLayoutFrontMatter(string(fmtContent))))
 		if err != nil {
 			return fmt.Errorf("parsing format layout %s: %w", fmtLayoutPath, err)
 		}

@@ -207,6 +207,14 @@ func StripLayoutFrontMatter(s string) string {
 	if len(rest) > 0 && rest[0] == '\n' {
 		rest = rest[1:]
 	}
+	// Handle empty front matter (---\n---\n)
+	if strings.HasPrefix(rest, "---") {
+		body := rest[3:]
+		if len(body) > 0 && body[0] == '\n' {
+			body = body[1:]
+		}
+		return body
+	}
 	idx := strings.Index(rest, "\n---")
 	if idx < 0 {
 		return s
