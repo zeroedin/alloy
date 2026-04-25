@@ -257,7 +257,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Pass 2 (steps 12-15): layout resolution + rendering per batch.
 
 	var langContexts []i18n.LanguageContext
-	multiLang := len(cfg.Languages) > 1
 	if len(cfg.Languages) > 0 {
 		var langErr error
 		langContexts, langErr = i18n.BuildLanguageContexts(cfg.Languages)
@@ -267,6 +266,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	} else {
 		langContexts = []i18n.LanguageContext{{Code: cfg.Language, Root: true}}
 	}
+	multiLang := len(langContexts) > 1 || (len(langContexts) == 1 && !langContexts[0].Root)
 	langCodes := make([]string, len(langContexts))
 	for idx, lc := range langContexts {
 		langCodes[idx] = lc.Code
@@ -657,7 +657,12 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 // BuildWithContent runs the pipeline with injected content for testing.
 // The content map keys are source paths, values are raw file content.
 func BuildWithContent(cfg *config.Config, contentMap map[string]string, opts ...BuildOptions) (*BuildResult, error) {
+	if len(opts) > 1 {
+		return nil, fmt.Errorf("accepts at most one BuildOptions value, got %d", len(opts))
+	}
+
 	if len(contentMap) == 0 {
+		start := time.Now()
 		config.ApplyDefaults(cfg)
 		skipSSR := cfg.SSR == nil
 		if len(opts) > 0 && opts[0].SkipSSR {
@@ -666,7 +671,7 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string, opts ...
 		return &BuildResult{
 			OutputDir:  cfg.Build.Output,
 			PageCount:  0,
-			Duration:   0,
+			Duration:   time.Since(start),
 			SSRSkipped: skipSSR,
 		}, nil
 	}
