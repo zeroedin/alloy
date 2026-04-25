@@ -68,10 +68,6 @@ build:
 content:
   formats: ["md", "html"]
 
-permalinks:
-  blog: "/:year/:month/:slug/"
-  default: "/:slug/"
-
 taxonomies:
   tags:
   categories:

@@ -79,16 +79,16 @@ type BuildOptions struct {
 
 // BuildResult holds the outcome of a build.
 type BuildResult struct {
-	OutputDir        string
-	PageCount        int
-	PagesSkipped     int               // pages skipped via cache (incremental only)
-	SSRPagesRendered int               // pages that went through Phase 2 SSR
-	Duration         time.Duration
-	Errors           []error
-	SSRSkipped            bool              // true when Phase 2 was skipped (no ssr: config or SkipSSR)
-	PagesRendered         []string          // source paths of pages that were rendered
-	RenderedContent       map[string]string // source path → final rendered HTML
-	ContentPassthroughs   []string          // relative paths of non-content files copied from content/ to output
+	OutputDir           string
+	PageCount           int
+	PagesSkipped        int // pages skipped via cache (incremental only)
+	SSRPagesRendered    int // pages that went through Phase 2 SSR
+	Duration            time.Duration
+	Errors              []error
+	SSRSkipped          bool              // true when Phase 2 was skipped (no ssr: config or SkipSSR)
+	PagesRendered       []string          // source paths of pages that were rendered
+	RenderedContent     map[string]string // source path → final rendered HTML
+	ContentPassthroughs []string          // relative paths of non-content files copied from content/ to output
 }
 
 // Build runs the complete build pipeline (Phase 0 through Phase 3).
@@ -282,6 +282,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	var batches []langBatch
 	var pages []*content.Page
 	var rendered []string
+	var contentPassthroughs []string
 
 	// ── Pass 1a: discover + prepare per batch (steps 3-9) ──
 	reportStartStage("Discovering", -1)
@@ -292,13 +293,14 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			batchContentDir = filepath.Join(contentDir, lc.Code)
 		}
 
-		batchPages, err := content.DiscoverWithFormats(batchContentDir, cfg.Content.Formats)
+		batchPages, batchPassthroughs, err := content.DiscoverWithPassthrough(batchContentDir, cfg.Content.Formats)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
 			return nil, fmt.Errorf("content discovery (%s): %w", lc.Code, err)
 		}
+		contentPassthroughs = append(contentPassthroughs, batchPassthroughs...)
 
 		// Set lang + prefix RelPath for multi-language translation linking.
 		// Single-language builds skip this to avoid injecting i18n context
@@ -594,6 +596,24 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
+	// Stage 7b: Copy content-colocated passthrough files
+	if len(contentPassthroughs) > 0 {
+		for _, relPath := range contentPassthroughs {
+			src := filepath.Join(contentDir, relPath)
+			dst := filepath.Join(outputDir, relPath)
+			if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+				return nil, fmt.Errorf("copying content passthrough: %w", err)
+			}
+			srcData, err := os.ReadFile(src)
+			if err != nil {
+				return nil, fmt.Errorf("copying content passthrough %s: %w", relPath, err)
+			}
+			if err := os.WriteFile(dst, srcData, 0644); err != nil {
+				return nil, fmt.Errorf("copying content passthrough %s: %w", relPath, err)
+			}
+		}
+	}
+
 	// Stage 8: Sitemap generation
 	if len(pages) > 0 {
 		sitemapXML, err := output.GenerateSitemap(pages, cfg.Sitemap, cfg.BaseURL)
@@ -631,12 +651,13 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 
 	result := &BuildResult{
-		OutputDir:       cfg.Build.Output,
-		PageCount:       len(pages),
-		Duration:        time.Since(start),
-		SSRSkipped:      ssrSkipped,
-		PagesRendered:   rendered,
-		RenderedContent: renderedContent,
+		OutputDir:           cfg.Build.Output,
+		PageCount:           len(pages),
+		Duration:            time.Since(start),
+		SSRSkipped:          ssrSkipped,
+		PagesRendered:       rendered,
+		RenderedContent:     renderedContent,
+		ContentPassthroughs: contentPassthroughs,
 	}
 
 	reportEndStage()
@@ -1582,4 +1603,3 @@ func validateOutputDir(cfg *config.Config) error {
 
 	return nil
 }
-

@@ -116,10 +116,6 @@ taxonomies:
   tags:                          # auto-generates /tags/ and /tags/:slug/
   categories:                    # auto-generates /categories/ and /categories/:slug/
 
-permalinks:
-  blog: "/:year/:month/:slug/"
-  default: "/:slug/"
-
 pagination:
   path: "page"                 # Paginated URL segment (default: "page" → /blog/page/2/)
 
@@ -224,17 +220,23 @@ This follows the same principle as output path conflicts (§2): no silent overwr
 
 ## 1b. Permalinks and URL Customization
 
-### Two Modes: Token Replacement (Fast) + Liquid Fallback (Flexible)
+### Permalink Resolution
 
-**Config-level patterns use token replacement** — simple string substitution, ~0.3µs per page:
+Permalink patterns are **not configured at the site level**. There is no `permalinks:` key in `alloy.config.yaml`. URL patterns are section-level data that belongs in `_data.yaml` — sections own their own URL structure.
+
+**Resolution order:**
+1. Front matter `permalink:` (always wins)
+2. `_data.yaml` cascade `permalink:` (section-level pattern)
+3. `DefaultFromPath` — file path maps directly to URL (`content/about.md` → `/about/`)
+
+**Section-level patterns via `_data.yaml`** — use token replacement for section-wide URL patterns:
 
 ```yaml
-# alloy.config.yaml
-permalinks:
-  blog: "/:year/:month/:slug/"     # /2026/04/my-post/
-  docs: "/docs/:slug/"             # /docs/getting-started/
-  default: "/:slug/"               # /about/
+# content/blog/_data.yaml — all blog posts get date-based URLs
+permalink: "/:year/:month/:slug/"
 ```
+
+This cascades to all pages in `content/blog/` and subdirectories. A post at `content/blog/my-post.md` with `date: 2026-04-10` becomes `/2026/04/my-post/`. To include the section prefix: `permalink: "/blog/:year/:month/:slug/"` or `permalink: "/:section/:year/:month/:slug/"`.
 
 **Available tokens:**
 
@@ -266,17 +268,17 @@ slug: "custom-slug"                 # Override just the :slug token
 ---
 ```
 
-If no `permalink` in front matter, the section default from config is used. If no section match, the `default` pattern is used. If no config at all, the file path maps directly to the URL (`content/blog/my-post.md` → `/blog/my-post/`).
+Pages without a `permalink` in front matter or `_data.yaml` cascade use `DefaultFromPath` — the file path maps directly to the URL (`content/blog/my-post.md` → `/blog/my-post/`).
 
 ### Index Files
 
-Index files (`index.md`, `index.html`) are directory landing pages and resolve to their parent directory path by default, **skipping** section and default permalink patterns:
+Index files (`index.md`, `index.html`) are directory landing pages and resolve to their parent directory path by default, **skipping** cascade permalink patterns:
 
 - `content/index.md` → `/` (site root)
 - `content/blog/index.md` → `/blog/` (section landing)
 - `content/blog/second-post/index.md` → `/blog/second-post/` (page bundle)
 
-This prevents a `default: "/:slug/"` pattern from turning `content/index.md` (title: "Home") into `/home/` instead of `/`.
+This prevents a `_data.yaml` permalink pattern from turning `content/index.md` (title: "Home") into `/home/` instead of `/`.
 
 **Front matter `permalink:` still overrides** — useful when the site is served from a subdirectory:
 ```yaml
@@ -290,7 +292,7 @@ The lookup order for index files is:
 1. Front matter `permalink:` (if set) — always honored
 2. `DefaultFromPath` — strips `/index` suffix, returns directory path
 
-Non-index files follow the full chain: front matter → section pattern → default pattern → `DefaultFromPath`.
+Non-index files follow the full chain: front matter `permalink:` → `_data.yaml` cascade `permalink:` → `DefaultFromPath`.
 
 **Performance:** 3000 pages with token replacement ≈ 1ms. Only pages with `{{ }}` in their permalink pay the Liquid rendering cost.
 
@@ -1168,7 +1170,7 @@ Deep merging happens **lazily** — only when a nested key is accessed at multip
 
 Not every subdirectory is a collection. Collections are created in two ways:
 
-**Blog collections** — A section with a date-based permalink pattern (containing `:year`, `:month`, or `:day` tokens) automatically collects its children into a section collection. The permalink declaration is what creates the collection; the date in each post's front matter drives URL structure and default sort order. For example, `content/blog/` with `permalinks: blog: "/:year/:month/:day/:slug/"` produces `collections.blog` containing all posts in that directory.
+**Blog collections** — A section with a date-based permalink pattern (containing `:year`, `:month`, or `:day` tokens in `_data.yaml`) automatically collects its children into a section collection. The permalink declaration is what creates the collection; the date in each post's front matter drives URL structure and default sort order. For example, `content/blog/_data.yaml` with `permalink: "/:year/:month/:day/:slug/"` produces `collections.blog` containing all posts in that directory.
 
 **Taxonomy collections** — Cross-cutting groups created by front matter tags, categories, or other declared taxonomy keys. A blog post and a docs page can both be tagged "javascript" and appear in the same taxonomy collection. Tags can be applied to all pages in a directory via `_data.yaml` without repeating the tag in every file's front matter. See the Taxonomies section below.
 

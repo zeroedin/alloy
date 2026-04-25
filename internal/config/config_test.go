@@ -94,11 +94,13 @@ var _ = Describe("Config", func() {
 				Expect(cfg.Taxonomies["categories"].Layout).To(Equal("categories"))
 			})
 
-			It("parses permalinks map", func() {
-				Expect(err).NotTo(HaveOccurred())
-				Expect(cfg.Permalinks).To(HaveKeyWithValue("blog", "/:year/:month/:slug/"))
-				Expect(cfg.Permalinks).To(HaveKeyWithValue("default", "/:slug/"))
-			})
+			// Issue #302: Site-level permalinks removed. Permalink patterns
+			// are set via _data.yaml cascade, not alloy.config.yaml.
+			// The developer must:
+			// 1. Remove Permalinks field from Config struct (compiler catches all callers)
+			// 2. Remove permalinks from testdata/*.yaml/toml/json
+			// 3. Config loader must not error on unknown keys (old configs with
+			//    permalinks: should load without failing)
 
 			It("parses pagination section with path", func() {
 				Expect(err).NotTo(HaveOccurred())
