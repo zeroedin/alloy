@@ -412,30 +412,41 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 					continue // layout: false — skip
 				}
 
-				// Track template usage for cache invalidation
-				trackedLayout := filepath.ToSlash(filepath.Clean(layoutPath))
-				if relLayout, relErr := filepath.Rel(cfg.ProjectRoot, layoutPath); relErr == nil {
-					trackedLayout = filepath.ToSlash(relLayout)
-				}
-				templateUsage[page.RelPath] = trackedLayout
-
-				layoutContent, err := os.ReadFile(layoutPath)
-				if err != nil {
-					return nil, fmt.Errorf("reading layout %s: %w", layoutPath, err)
-				}
-				tpl, err := engine.Parse(layoutPath, layoutContent)
-				if err != nil {
-					return nil, fmt.Errorf("parsing layout %s: %w", layoutPath, err)
+				chain, chainErr := tmpl.ResolveLayoutChain(layoutPath, layoutsDir, engineName)
+				if chainErr != nil {
+					return nil, fmt.Errorf("layout chain for %s: %w", page.RelPath, chainErr)
 				}
 
-				tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, siteData, langContexts, page), pages, batch.collections, nil, "")
-				ctx := tc.ToMap()
-				ctx["content"] = string(page.RenderedBody)
-				layoutResult, err := tpl.Render(ctx)
-				if err != nil {
-					return nil, fmt.Errorf("rendering layout %s: %w", layoutPath, err)
+				// Track all layouts in the chain for cache invalidation
+				for _, lp := range chain {
+					trackedLayout := filepath.ToSlash(filepath.Clean(lp))
+					if relLayout, relErr := filepath.Rel(cfg.ProjectRoot, lp); relErr == nil {
+						trackedLayout = filepath.ToSlash(relLayout)
+					}
+					templateUsage[page.RelPath] = trackedLayout
 				}
-				page.RenderedBody = layoutResult
+
+				// Render inside-out through the layout chain
+				for _, lp := range chain {
+					layoutContent, err := os.ReadFile(lp)
+					if err != nil {
+						return nil, fmt.Errorf("reading layout %s: %w", lp, err)
+					}
+					stripped := tmpl.StripLayoutFrontMatter(string(layoutContent))
+					tpl, err := engine.Parse(lp, []byte(stripped))
+					if err != nil {
+						return nil, fmt.Errorf("parsing layout %s: %w", lp, err)
+					}
+
+					tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, siteData, langContexts, page), pages, batch.collections, nil, "")
+					ctx := tc.ToMap()
+					ctx["content"] = string(page.RenderedBody)
+					layoutResult, err := tpl.Render(ctx)
+					if err != nil {
+						return nil, fmt.Errorf("rendering layout %s: %w", lp, err)
+					}
+					page.RenderedBody = layoutResult
+				}
 
 				// Multi-format output: render additional formats (spec §1e)
 				if err := renderPageFormats(page, layoutsDir, engineName, engine, cfg, siteData, langContexts, pages, batch.collections); err != nil {
@@ -576,30 +587,39 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				continue
 			}
 
-			// Track template usage for cache invalidation
-			trackedLayout := filepath.ToSlash(filepath.Clean(layoutPath))
-			if relLayout, relErr := filepath.Rel(cfg.ProjectRoot, layoutPath); relErr == nil {
-				trackedLayout = filepath.ToSlash(relLayout)
-			}
-			templateUsage[page.RelPath] = trackedLayout
-
-			layoutContent, err := os.ReadFile(layoutPath)
-			if err != nil {
-				return nil, fmt.Errorf("reading layout %s: %w", layoutPath, err)
-			}
-			tpl, err := engine.Parse(layoutPath, layoutContent)
-			if err != nil {
-				return nil, fmt.Errorf("parsing layout %s: %w", layoutPath, err)
+			chain, chainErr := tmpl.ResolveLayoutChain(layoutPath, layoutsDir, engineName)
+			if chainErr != nil {
+				return nil, fmt.Errorf("layout chain for %s: %w", page.RelPath, chainErr)
 			}
 
-			tc := tmpl.BuildTemplateContext(page, combinedSiteData(cfg, siteData), pages, collectionsCtx, nil, "")
-			ctx := tc.ToMap()
-			ctx["content"] = string(page.RenderedBody)
-			layoutResult, err := tpl.Render(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("rendering layout %s: %w", layoutPath, err)
+			for _, lp := range chain {
+				trackedLayout := filepath.ToSlash(filepath.Clean(lp))
+				if relLayout, relErr := filepath.Rel(cfg.ProjectRoot, lp); relErr == nil {
+					trackedLayout = filepath.ToSlash(relLayout)
+				}
+				templateUsage[page.RelPath] = trackedLayout
 			}
-			page.RenderedBody = layoutResult
+
+			for _, lp := range chain {
+				layoutContent, err := os.ReadFile(lp)
+				if err != nil {
+					return nil, fmt.Errorf("reading layout %s: %w", lp, err)
+				}
+				stripped := tmpl.StripLayoutFrontMatter(string(layoutContent))
+				tpl, err := engine.Parse(lp, []byte(stripped))
+				if err != nil {
+					return nil, fmt.Errorf("parsing layout %s: %w", lp, err)
+				}
+
+				tc := tmpl.BuildTemplateContext(page, combinedSiteData(cfg, siteData), pages, collectionsCtx, nil, "")
+				ctx := tc.ToMap()
+				ctx["content"] = string(page.RenderedBody)
+				layoutResult, err := tpl.Render(ctx)
+				if err != nil {
+					return nil, fmt.Errorf("rendering layout %s: %w", lp, err)
+				}
+				page.RenderedBody = layoutResult
+			}
 
 			if err := renderPageFormats(page, layoutsDir, engineName, engine, cfg, siteData, nil, pages, collectionsCtx); err != nil {
 				return nil, err
@@ -901,6 +921,58 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildR
 		return nil, renderErr
 	}
 
+	// Layout resolution + chaining
+	layoutsDir := filepath.Join(tmpDir, "layouts")
+	engineName := cfg.Templates.Engine
+	if engineName == "" {
+		engineName = "liquid"
+	}
+	var engine tmpl.TemplateEngine
+	if engineName == "gotemplate" {
+		engine = tmpl.NewGoEngine()
+	} else {
+		engine = tmpl.NewLiquidEngine()
+	}
+	tmpl.RegisterBuiltinFilters(engine)
+
+	if info, err := os.Stat(layoutsDir); err == nil && info.IsDir() {
+		for _, page := range pages {
+			layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, engineName, cfg.Permalinks)
+			if err != nil {
+				continue
+			}
+			if layoutPath == "" {
+				continue
+			}
+
+			chain, chainErr := tmpl.ResolveLayoutChain(layoutPath, layoutsDir, engineName)
+			if chainErr != nil {
+				return nil, fmt.Errorf("layout chain for %s: %w", page.RelPath, chainErr)
+			}
+
+			for _, lp := range chain {
+				layoutContent, err := os.ReadFile(lp)
+				if err != nil {
+					return nil, fmt.Errorf("reading layout %s: %w", lp, err)
+				}
+				stripped := tmpl.StripLayoutFrontMatter(string(layoutContent))
+				tpl, err := engine.Parse(lp, []byte(stripped))
+				if err != nil {
+					return nil, fmt.Errorf("parsing layout %s: %w", lp, err)
+				}
+
+				tc := tmpl.BuildTemplateContext(page, nil, pages, nil, nil, "")
+				ctx := tc.ToMap()
+				ctx["content"] = string(page.RenderedBody)
+				layoutResult, err := tpl.Render(ctx)
+				if err != nil {
+					return nil, fmt.Errorf("rendering layout %s: %w", lp, err)
+				}
+				page.RenderedBody = layoutResult
+			}
+		}
+	}
+
 	// Phase 2: SSR (if configured)
 	ssrSkipped := cfg.SSR == nil
 	if cfg.SSR != nil {
@@ -922,12 +994,20 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildR
 		ssrSkipped = false
 	}
 
+	renderedContent := make(map[string]string, len(pages))
+	for _, page := range pages {
+		if len(page.RenderedBody) > 0 {
+			renderedContent[page.RelPath] = string(page.RenderedBody)
+		}
+	}
+
 	return &BuildResult{
-		OutputDir:     cfg.Build.Output,
-		PageCount:     len(rendered),
-		Duration:      time.Since(start),
-		SSRSkipped:    ssrSkipped,
-		PagesRendered: rendered,
+		OutputDir:       cfg.Build.Output,
+		PageCount:       len(rendered),
+		Duration:        time.Since(start),
+		SSRSkipped:      ssrSkipped,
+		PagesRendered:   rendered,
+		RenderedContent: renderedContent,
 	}, nil
 }
 

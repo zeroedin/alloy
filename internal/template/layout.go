@@ -199,15 +199,48 @@ func ExtractLayoutParent(path string) string {
 
 // StripLayoutFrontMatter removes YAML front matter (--- delimited) from layout content.
 // Returns the content after the closing --- delimiter.
-func StripLayoutFrontMatter(content string) string {
-	return content // stub — developer implements
+func StripLayoutFrontMatter(s string) string {
+	if !strings.HasPrefix(s, "---") {
+		return s
+	}
+	rest := s[3:]
+	if len(rest) > 0 && rest[0] == '\n' {
+		rest = rest[1:]
+	}
+	idx := strings.Index(rest, "\n---")
+	if idx < 0 {
+		return s
+	}
+	body := rest[idx+4:]
+	if len(body) > 0 && body[0] == '\n' {
+		body = body[1:]
+	}
+	return body
 }
 
 // ResolveLayoutChain follows layout: directives in layout front matter to build
 // the full chain from innermost to root. Returns the ordered list of layout file paths.
 // Returns error if the chain exceeds maxDepth (10) or if a referenced layout is not found.
 func ResolveLayoutChain(layoutPath string, layoutsDir string, engine string) ([]string, error) {
-	return nil, fmt.Errorf("not implemented")
+	const maxDepth = 10
+	ext := layoutExtension(engine)
+	chain := []string{layoutPath}
+
+	current := layoutPath
+	for i := 0; i < maxDepth; i++ {
+		parent := ExtractLayoutParent(current)
+		if parent == "" {
+			return chain, nil
+		}
+		parentPath := filepath.Join(layoutsDir, parent+ext)
+		if _, err := os.Stat(parentPath); err != nil {
+			return nil, fmt.Errorf("parent layout %q not found (referenced from %s)", parent, filepath.Base(current))
+		}
+		chain = append(chain, parentPath)
+		current = parentPath
+	}
+
+	return nil, fmt.Errorf("layout chain exceeds maximum depth of %d levels", maxDepth)
 }
 
 // ResolveLayoutWithCascade resolves layout considering cascade data.
