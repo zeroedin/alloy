@@ -890,6 +890,58 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Content-colocated passthrough copy (issue #300) ─────────────
+	// Non-content files in content/ must be copied to _site/ preserving
+	// their path relative to content/.
+
+	Describe("Content-colocated passthrough copy", func() {
+		It("copies non-content files to output directory", func() {
+			cfg := &config.Config{
+				Title:   "Passthrough Copy Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/about/index.md":    "---\ntitle: About\n---\n# About",
+				"content/about/diagram.svg": `<svg xmlns="http://www.w3.org/2000/svg"><circle r="10"/></svg>`,
+				"content/about/photo.png":   "fake png bytes",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			// The content page must be rendered
+			Expect(result.PageCount).To(Equal(1),
+				"only .md files should be content pages")
+
+			// Non-content files must be copied to output
+			Expect(result.ContentPassthroughs).To(ContainElement("about/diagram.svg"),
+				"SVG in content/ must be copied to _site/about/diagram.svg")
+			Expect(result.ContentPassthroughs).To(ContainElement("about/photo.png"),
+				"PNG in content/ must be copied to _site/about/photo.png")
+		})
+
+		It("does not copy _data.yaml as passthrough", func() {
+			cfg := &config.Config{
+				Title:   "Data Exclusion Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/blog/index.md":    "---\ntitle: Blog\n---\n# Blog",
+				"content/blog/_data.yaml":  "layout: post",
+				"content/blog/icon.svg":    "<svg></svg>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			Expect(result.ContentPassthroughs).To(HaveLen(1),
+				"_data.yaml must not be copied as passthrough")
+			Expect(result.ContentPassthroughs).To(ContainElement("blog/icon.svg"))
+		})
+	})
+
 	// ── page.toc pipeline wiring (issue #274) ───────────────────────
 	// page.toc must be populated during Build and accessible in templates.
 
