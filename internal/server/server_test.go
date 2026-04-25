@@ -235,19 +235,40 @@ var _ = Describe("Server", func() {
 
 	Describe("Content-colocated file serving", func() {
 		It("serves non-content files from content/ in dev mode", func() {
-			cfg := &config.Config{Title: "Dev Site"}
+			projectRoot, err := os.MkdirTemp("", "alloy-content-serving-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(projectRoot) })
+
+			contentDir := filepath.Join(projectRoot, "content", "about")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			svgBytes := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><circle r="10"/></svg>`)
+			Expect(os.WriteFile(filepath.Join(contentDir, "diagram.svg"), svgBytes, 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Dev Site",
+				ProjectRoot: projectRoot,
+			}
 			srv := server.New(cfg)
 			body, err := srv.ServeContentFile("/about/diagram.svg")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(body).NotTo(BeEmpty(),
-				"dev mode must serve content-colocated files (SVG, PNG, etc.) "+
-					"directly from the content/ directory — same pattern as static file serving")
+			Expect(body).To(Equal(svgBytes),
+				"dev mode must serve content-colocated files directly from content/ — "+
+					"exact bytes must match the source file")
 		})
 
 		It("returns error for non-existent content file", func() {
-			cfg := &config.Config{Title: "Dev Site"}
+			projectRoot, err := os.MkdirTemp("", "alloy-content-serving-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(projectRoot) })
+
+			Expect(os.MkdirAll(filepath.Join(projectRoot, "content"), 0755)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Dev Site",
+				ProjectRoot: projectRoot,
+			}
 			srv := server.New(cfg)
-			_, err := srv.ServeContentFile("/about/nonexistent.svg")
+			_, err = srv.ServeContentFile("/about/nonexistent.svg")
 			Expect(err).To(HaveOccurred(),
 				"requesting a non-existent content file must return an error, not empty content")
 		})
