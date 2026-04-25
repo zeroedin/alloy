@@ -141,30 +141,6 @@ func (r *QuickJSRuntime) IsInitialized() bool {
 	return r.initialized
 }
 
-// SetSiteData makes site data available as alloy.data in the JS context.
-// Minimal implementation for test compilation — full version in #317.
-func (r *QuickJSRuntime) SetSiteData(data map[string]interface{}) error {
-	if !r.initialized || r.ctx == nil {
-		return fmt.Errorf("QuickJS runtime not initialized — call Init() first")
-	}
-
-	dataJSON, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("marshaling site data: %w", err)
-	}
-	r.ctx.Global().SetPropertyStr("__siteDataJSON", r.ctx.NewString(string(dataJSON)))
-	defer r.ctx.Global().SetPropertyStr("__siteDataJSON", r.ctx.NewUndefined())
-
-	result, err := r.ctx.Eval("site-data.js", qjs.Code(`alloy.data = JSON.parse(__siteDataJSON);`))
-	if result != nil {
-		result.Free()
-	}
-	if err != nil {
-		return fmt.Errorf("setting site data: %w", err)
-	}
-	return nil
-}
-
 // moduleExportRegex matches "export default function(alloy)" or
 // "export default function (alloy)" at the start of a plugin file.
 var moduleExportRegex = regexp.MustCompile(
