@@ -178,12 +178,14 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resultNoLang).NotTo(BeNil())
 
-			// Build with explicit single language matching the default
+			// Build with explicit single language via Languages map
 			cfgWithLang := &config.Config{
-				Title:    "With Lang",
-				BaseURL:  "https://example.com",
-				Language: "en",
-				Build:    config.BuildConfig{Output: "_site"},
+				Title:   "With Lang",
+				BaseURL: "https://example.com",
+				Languages: map[string]*config.LanguageConfig{
+					"en": {Root: true},
+				},
+				Build: config.BuildConfig{Output: "_site"},
 			}
 			resultWithLang, err := pipeline.BuildWithContent(cfgWithLang, content)
 			Expect(err).NotTo(HaveOccurred())
