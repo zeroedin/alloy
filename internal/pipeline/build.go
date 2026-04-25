@@ -299,10 +299,12 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			return nil, fmt.Errorf("content discovery (%s): %w", lc.Code, err)
 		}
 
-		// Set lang on each page; prefix RelPath for multi-language translation linking
-		for _, page := range batchPages {
-			page.FrontMatter["lang"] = lc.Code
-			if multiLang {
+		// Set lang + prefix RelPath for multi-language translation linking.
+		// Single-language builds skip this to avoid injecting i18n context
+		// (site.language, lang front matter) that wasn't present before.
+		if multiLang {
+			for _, page := range batchPages {
+				page.FrontMatter["lang"] = lc.Code
 				page.RelPath = lc.Code + "/" + page.RelPath
 			}
 		}
@@ -368,11 +370,18 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 	reportEndStage()
 
+	// For single-language builds, don't pass langContexts to rendering helpers
+	// so combinedSiteDataForPage doesn't inject site.language or override site.title.
+	var renderLangContexts []i18n.LanguageContext
+	if multiLang {
+		renderLangContexts = langContexts
+	}
+
 	// ── Pass 1b: content rendering per batch (steps 10-11) ──
 	reportMessage(fmt.Sprintf("%d pages found", len(pages)))
 	reportStartStage("Rendering", len(pages))
 	for i := range batches {
-		batchRendered, renderErr := renderPages(batches[i].pages, cfg, siteData, batches[i].collections, engine, langContexts)
+		batchRendered, renderErr := renderPages(batches[i].pages, cfg, siteData, batches[i].collections, engine, renderLangContexts)
 		if renderErr != nil {
 			return nil, renderErr
 		}
@@ -420,17 +429,21 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				continue
 			}
 
-			if err := renderPageThroughLayouts(page, layoutPath, layoutsDir, engineName, engine, cfg, siteData, langContexts, pages, batch.collections, templateUsage); err != nil {
+			if err := renderPageThroughLayouts(page, layoutPath, layoutsDir, engineName, engine, cfg, siteData, renderLangContexts, pages, batch.collections, templateUsage); err != nil {
 				return nil, err
 			}
 
-			if err := renderPageFormats(page, layoutsDir, engineName, engine, cfg, siteData, langContexts, pages, batch.collections); err != nil {
+			if err := renderPageFormats(page, layoutsDir, engineName, engine, cfg, siteData, renderLangContexts, pages, batch.collections); err != nil {
 				return nil, err
 			}
 		}
 
 		if batch.taxonomies != nil && engine != nil {
-			taxPages, err := generateTaxonomyPages(batch.taxonomies, cfg, layoutsDir, engineName, engine, siteData, langContexts, pages, batch.collections, &batch.ctx)
+			var taxLangCtx *i18n.LanguageContext
+			if multiLang {
+				taxLangCtx = &batch.ctx
+			}
+			taxPages, err := generateTaxonomyPages(batch.taxonomies, cfg, layoutsDir, engineName, engine, siteData, renderLangContexts, pages, batch.collections, taxLangCtx)
 			if err != nil {
 				return nil, err
 			}
