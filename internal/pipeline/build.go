@@ -1093,6 +1093,30 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 		AutoHeadingID: true,
 	}
 
+	layoutsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts)
+	engineName := cfg.Templates.Engine
+
+	hooks, err := tmpl.DiscoverRenderHooks(layoutsDir, engineName)
+	if err != nil {
+		return nil, fmt.Errorf("render hook discovery: %w", err)
+	}
+	if len(hooks) > 0 {
+		mdOpts.Hooks = hooks
+		if engine != nil {
+			mdOpts.HookRenderer = func(name, source string, ctx map[string]interface{}) (string, error) {
+				tpl, err := engine.Parse("_markup/"+name, []byte(source))
+				if err != nil {
+					return "", err
+				}
+				out, err := tpl.Render(ctx)
+				if err != nil {
+					return "", err
+				}
+				return string(out), nil
+			}
+		}
+	}
+
 	var rendered []string
 
 	for i, page := range pages {
