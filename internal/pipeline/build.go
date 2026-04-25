@@ -659,11 +659,15 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 func BuildWithContent(cfg *config.Config, contentMap map[string]string, opts ...BuildOptions) (*BuildResult, error) {
 	if len(contentMap) == 0 {
 		config.ApplyDefaults(cfg)
+		skipSSR := cfg.SSR == nil
+		if len(opts) > 0 && opts[0].SkipSSR {
+			skipSSR = true
+		}
 		return &BuildResult{
 			OutputDir:  cfg.Build.Output,
 			PageCount:  0,
 			Duration:   0,
-			SSRSkipped: cfg.SSR == nil,
+			SSRSkipped: skipSSR,
 		}, nil
 	}
 
@@ -683,8 +687,9 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string, opts ...
 		}
 	}
 
-	cfg.ProjectRoot = tmpDir
-	return Build(cfg, opts...)
+	cfgCopy := *cfg
+	cfgCopy.ProjectRoot = tmpDir
+	return Build(&cfgCopy, opts...)
 }
 
 // BuildIncremental renders only pages that have changed since the previous
