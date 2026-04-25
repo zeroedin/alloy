@@ -1794,6 +1794,26 @@ export default function(alloy) {
 
 Now `{{ page.content | wordCount }}` and `{% youtube "dQw4w9WgXcQ" %}` work in templates. No compilation, no config.
 
+**Site data access** — Plugins can access global data from `data/` files via `alloy.data`:
+
+```javascript
+// plugins/status-tag.js
+export default function(alloy) {
+    alloy.shortcode("statusTag", (args) => {
+        const key = args[0];
+        const legend = alloy.data.statusLegend;  // from data/statusLegend.yaml
+        const entry = legend[key];
+        return `<rh-tag color="${entry.color}" icon="${entry.icon}">${entry.pretty}</rh-tag>`;
+    });
+}
+```
+
+`alloy.data` is a read-only snapshot of `site.data` injected into the QuickJS context after data files are loaded. It's the same data available in templates as `site.data.*`. The data is JSON-serialized from Go and parsed in JS — complex types (maps, arrays, strings, numbers, booleans) are preserved. Changes to `alloy.data` inside a plugin do not affect other plugins or the template data cascade.
+
+**Important:** `alloy.data` is set after plugin files are evaluated. Access it inside filter, shortcode, and hook functions — not at the top level of your plugin file. Top-level `alloy.data` access during eval will be `undefined`.
+
+For Node (Tier 3) plugins, `alloy.data` is sent as part of the bridge initialization message after data loading completes.
+
 #### WASM Plugins (Compiled)
 
 For maximum performance, plugin authors can compile to native WASM instructions. These run ~5-10x faster than QuickJS-interpreted JS — worth it for plugins called thousands of times per build (e.g., a filter applied to every page).
