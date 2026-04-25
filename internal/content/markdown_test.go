@@ -296,6 +296,110 @@ var _ = Describe("RenderMarkdown", func() {
 		})
 	})
 
+	// ── Auto heading IDs (issue #274) ─────────────────────────────
+	// Goldmark must generate id attributes on all headings by default.
+
+	Describe("Auto heading IDs", func() {
+		It("generates id attributes on headings", func() {
+			out, err := content.RenderMarkdown(
+				[]byte("## Getting Started\n\n### Installation"),
+				defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`id="getting-started"`),
+				"h2 must have an auto-generated slugified id attribute")
+			Expect(html).To(ContainSubstring(`id="installation"`),
+				"h3 must have an auto-generated slugified id attribute")
+		})
+
+		It("handles duplicate headings with numeric suffix", func() {
+			out, err := content.RenderMarkdown(
+				[]byte("## Overview\n\nText.\n\n## Overview\n\nMore text.\n\n## Overview"),
+				defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`id="overview"`),
+				"first heading must have the base id")
+			Expect(html).To(ContainSubstring(`id="overview-1"`),
+				"second duplicate must get suffix -1")
+			Expect(html).To(ContainSubstring(`id="overview-2"`),
+				"third duplicate must get suffix -2")
+		})
+
+		It("respects manual heading attributes override", func() {
+			out, err := content.RenderMarkdown(
+				[]byte("## My Section {#custom-id}"),
+				defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`id="custom-id"`),
+				"manual {#id} attribute must override the auto-generated id")
+			Expect(html).NotTo(ContainSubstring(`id="my-section"`),
+				"auto-generated id must not appear when manual override is set")
+		})
+	})
+
+	// ── Table of contents (issue #274) ────────────────────────────
+	// page.toc is extracted from the goldmark AST during markdown
+	// rendering. Nested array of {id, text, level, children}.
+
+	Describe("Table of contents", func() {
+		It("extracts headings into a nested TOC structure", func() {
+			input := "## Getting Started\n\n### Installation\n\n### Quickstart\n\n## Configuration"
+			_, toc, err := content.RenderMarkdownWithTOC([]byte(input), defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(toc).To(HaveLen(2),
+				"top-level TOC must contain two h2 entries")
+			Expect(toc[0].Text).To(Equal("Getting Started"))
+			Expect(toc[0].ID).To(Equal("getting-started"))
+			Expect(toc[0].Level).To(Equal(2))
+			Expect(toc[0].Children).To(HaveLen(2),
+				"h3s must nest under their preceding h2")
+			Expect(toc[0].Children[0].Text).To(Equal("Installation"))
+			Expect(toc[0].Children[1].Text).To(Equal("Quickstart"))
+			Expect(toc[1].Text).To(Equal("Configuration"))
+			Expect(toc[1].Children).To(BeEmpty())
+		})
+
+		It("excludes h1 from TOC", func() {
+			input := "# Page Title\n\n## Section One\n\n## Section Two"
+			_, toc, err := content.RenderMarkdownWithTOC([]byte(input), defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(toc).To(HaveLen(2),
+				"h1 must be excluded from TOC — it is the page title")
+			Expect(toc[0].Text).To(Equal("Section One"))
+			Expect(toc[1].Text).To(Equal("Section Two"))
+		})
+
+		It("returns empty TOC for pages with no headings", func() {
+			input := "Just a paragraph of text."
+			_, toc, err := content.RenderMarkdownWithTOC([]byte(input), defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(toc).To(BeEmpty(),
+				"pages without headings must have an empty TOC")
+		})
+
+		It("uses manual {#id} override in TOC entry", func() {
+			input := "## My Section {#custom-id}"
+			_, toc, err := content.RenderMarkdownWithTOC([]byte(input), defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(toc).To(HaveLen(1))
+			Expect(toc[0].ID).To(Equal("custom-id"),
+				"TOC must use the manually overridden id, not the auto-generated slug")
+		})
+
+		It("nests h4 under h3 under h2", func() {
+			input := "## Top\n\n### Mid\n\n#### Deep"
+			_, toc, err := content.RenderMarkdownWithTOC([]byte(input), defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(toc).To(HaveLen(1))
+			Expect(toc[0].Children).To(HaveLen(1))
+			Expect(toc[0].Children[0].Children).To(HaveLen(1),
+				"h4 must nest under h3 which nests under h2")
+			Expect(toc[0].Children[0].Children[0].Text).To(Equal("Deep"))
+		})
+	})
+
 	// ── Render hooks (issue #273) ──────────────────────────────────
 	// Render hook templates in layouts/_markup/ override how specific
 	// markdown elements are rendered to HTML.

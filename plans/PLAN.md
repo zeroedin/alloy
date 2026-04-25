@@ -553,6 +553,65 @@ For display-time summary composition, build the summary in the list template rat
 
 Liquid's `{% capture %}` and Go's `{{ define }}` can compose summaries within a single template, but these are local variables — they do not feed back into the data cascade and are not accessible from other templates or collection loops.
 
+### Table of Contents (`page.toc`)
+
+Alloy automatically extracts the heading structure from each page during markdown rendering and exposes it as `page.toc` — a nested array of headings available in templates. Sites control the TOC markup; Alloy provides the data.
+
+```liquid
+<!-- layouts/partials/toc.liquid -->
+<nav class="toc">
+  {% for item in page.toc %}
+    <a href="#{{ item.id }}">{{ item.text }}</a>
+    {% if item.children.size > 0 %}
+      <ul>
+        {% for child in item.children %}
+          <li><a href="#{{ child.id }}">{{ child.text }}</a></li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% endfor %}
+</nav>
+```
+
+**Data structure** — Each entry in `page.toc` has:
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string | The heading's `id` attribute (auto-generated slug or `{#custom-id}` override) |
+| `text` | string | Plain text content of the heading (no HTML) |
+| `level` | int | Heading level (2-6; h1 is excluded — it's the page title) |
+| `children` | array | Nested headings one level deeper |
+
+Nesting follows the heading hierarchy — h3s nest under h2s, h4s under h3s. The top-level array contains the shallowest headings (typically h2). Pages with no headings (or only h1) have an empty `page.toc`.
+
+**Auto heading IDs** — Alloy enables goldmark's `parser.WithAutoHeadingID()` by default. Every heading gets a slugified `id` attribute automatically (e.g., "Getting Started" → `id="getting-started"`). Duplicate headings get a numeric suffix (`getting-started-1`). The algorithm is goldmark's default.
+
+**Heading attributes** — Authors can override the auto-generated ID using the heading attributes syntax:
+
+```markdown
+## My Heading {#custom-id}
+## My Heading {.custom-class}
+## My Heading {#custom-id .custom-class}
+```
+
+Manual `{#id}` overrides take precedence over auto-generated IDs. Alloy enables `parser.WithAttribute()` alongside `parser.WithAutoHeadingID()`.
+
+**Extraction** — TOC is extracted from the goldmark AST during markdown rendering (Phase 1, step 3), not from rendered HTML. This is fast and reliable — no HTML parsing pass needed. The AST contains the heading nodes with their auto-generated or attribute-overridden IDs.
+
+**Important:** If a render hook (`render-heading.liquid`) modifies heading IDs in the HTML output, the TOC data will not reflect those changes — it reflects the AST-level IDs. To sync, use the `onContentTransformed` plugin hook to mutate `page.toc` after markdown rendering but before layout rendering.
+
+**Config:**
+
+```yaml
+content:
+  markdown:
+    toc: true     # default: true — generate page.toc for all pages
+```
+
+Set `content.markdown.toc: false` to disable TOC generation entirely (skips the AST walk for sites that don't use TOC).
+
+**Future option:** Configurable ID generation algorithm via a custom `parser.IDs` implementation, exposed as a config option. For v1, goldmark's default slugification is used.
+
 ---
 
 ## 1g. External Data Sources
@@ -1932,7 +1991,7 @@ Source File → Front Matter Extract → Format Detect → Markdown Parse → Me
 1. **Front matter extraction**: Split YAML/TOML header from body (delimited by `---` or `+++`)
 2. **Format detection**: By file extension (`.md`, `.html`, `.txt`)
 3. **Markdown parsing** (`.md` files only):
-   - goldmark (CommonMark + extensions: tables, footnotes, task lists, typographer)
+   - goldmark (CommonMark + extensions: tables, footnotes, task lists, typographer, auto heading IDs, heading attributes)
    - `html.WithUnsafe()` enabled — raw HTML blocks pass through untouched
    - Template tag auto-detection extension — `{{ ... }}` and `{% ... %}` patterns are recognized as raw inline nodes and pass through goldmark untouched. No special delimiters needed.
    - `.html` → no Markdown processing (already HTML)
