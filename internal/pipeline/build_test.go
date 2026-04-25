@@ -890,6 +890,35 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── {% inline %} pipeline wiring (issue #295) ──────────────────
+	// RegisterInlineTag must be called in createEngine() so the tag
+	// works in actual builds, not just unit tests.
+
+	Describe("Inline tag pipeline wiring", func() {
+		It("{% inline %} resolves and inlines files through BuildWithContent", func() {
+			cfg := &config.Config{
+				Title:   "Inline Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/about/index.md":    "---\ntitle: About\n---\n# About\n\n{% inline \"./diagram.svg\" %}",
+				"content/about/diagram.svg": `<svg xmlns="http://www.w3.org/2000/svg"><circle r="10"/></svg>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"build with {% inline %} must not fail with 'unknown tag' — "+
+					"RegisterInlineTag must be called in createEngine()")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["about/index.md"]
+			Expect(html).To(ContainSubstring("<svg"),
+				"{% inline %} must resolve and insert the SVG content through the build pipeline")
+			Expect(html).To(ContainSubstring(`circle r="10"`),
+				"inlined SVG content must be present in the rendered output")
+		})
+	})
+
 	// ── Layout chaining (issue #276) ────────────────────────────────
 	// Layout files can reference a parent layout via front matter.
 	// The pipeline renders inside-out: content → child → parent → root.
