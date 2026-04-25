@@ -1987,6 +1987,64 @@ When the opening tag is embedded in a line with other text, the inline TemplateT
 - **Go engine:** use `{{ "{{" }}` to output a literal `{{` (standard Go template escaping)
 - **Both engines:** goldmark's inline code (backticks) and fenced code blocks protect their contents from the auto-detection extension — goldmark's parsers take precedence.
 
+### Markdown Render Hooks
+
+Render hooks override how specific markdown element types are rendered to HTML. Instead of goldmark's default output, a Liquid template controls the HTML for that element type. Templates live in `layouts/_markup/`:
+
+```
+layouts/_markup/
+├── render-blockquote.liquid     # blockquotes (>)
+├── render-codeblock.liquid      # fenced code blocks (```)
+├── render-codeblock-mermaid.liquid  # language-specific: mermaid code blocks
+├── render-heading.liquid        # headings (#, ##, ###)
+├── render-image.liquid          # images (![alt](src))
+├── render-link.liquid           # links ([text](url))
+└── render-table.liquid          # tables (| ... |)
+```
+
+If a render hook template exists, Alloy registers a custom goldmark node renderer that delegates to the template instead of emitting default HTML. If no template exists, default goldmark rendering applies. Render hooks run during Phase 1 (markdown rendering) — before template tag processing and layout rendering. Alloy scans `layouts/_markup/` at startup and registers renderers for any templates found.
+
+**Engine selection** — Render hook templates follow the configured template engine. With `templates.engine: "liquid"` (default), hooks are `.liquid` files. With `templates.engine: "gotemplate"`, hooks are `.html` files (e.g., `render-codeblock.html`). The hook template syntax matches the engine — `{{ markup.language }}` in Liquid, `{{ .markup.language }}` in Go templates.
+
+**Template context** — Each render hook template receives a `markup` object with element-specific properties:
+
+| Template | `markup.*` properties |
+|---|---|
+| `render-blockquote` | `inner` (rendered inner HTML), `attributes` |
+| `render-codeblock` | `inner` (raw code text), `language`, `attributes` |
+| `render-heading` | `inner` (rendered inner HTML), `level` (1-6), `id` (auto-generated slug via `slugify` — e.g., "My Section" → `my-section`), `text` (plain text, no HTML) |
+| `render-image` | `src`, `alt`, `title`, `attributes` |
+| `render-link` | `destination`, `text` (rendered inner HTML), `title`, `is_external` (boolean: starts with `http://` or `https://`) |
+| `render-table` | `inner` (rendered inner HTML — thead/tbody/tr/td), `attributes` |
+
+The full `page.*` and `site.*` context is also available — render hooks can access front matter, site data, collections, etc.
+
+**Language-specific code block hooks** — `render-codeblock-{language}.liquid` overrides rendering for a specific fenced code block language. For example, `render-codeblock-mermaid.liquid` renders mermaid blocks as `<div class="mermaid">` instead of `<pre><code>`. The generic `render-codeblock.liquid` is the fallback when no language-specific template matches. Lookup order: language-specific → generic → default goldmark rendering.
+
+**Example: custom code block rendering**
+
+```liquid
+<!-- layouts/_markup/render-codeblock.liquid -->
+<rh-code-block language="{{ markup.language }}">
+  <script type="text/{{ markup.language }}">{{ markup.inner }}</script>
+</rh-code-block>
+```
+
+**Example: external link detection**
+
+```liquid
+<!-- layouts/_markup/render-link.liquid -->
+{% if markup.is_external %}
+  <a href="{{ markup.destination }}" target="_blank" rel="noopener">{{ markup.text }} <svg class="external-icon">...</svg></a>
+{% else %}
+  <a href="{{ markup.destination }}">{{ markup.text }}</a>
+{% endif %}
+```
+
+**Template tag escaping** — The pipeline's `escapeTemplateTagsInCode` step protects `{{ }}`/`{% %}` inside `<code>` elements from Liquid processing. When a render hook replaces `<pre><code>` with a different structure (e.g., `<rh-code-block><script>`), the hook's `markup.inner` content is already escaped by goldmark. The hook template receives pre-escaped code content — no additional escaping needed.
+
+**Implementation** — Custom goldmark node renderers are registered for each supported element type. At startup, the pipeline scans `layouts/_markup/` for render hook templates. For each found template, a custom renderer is registered that calls the Liquid engine with the node's context instead of emitting default HTML. The template is parsed once at startup and reused for every matching node.
+
 **Cache key**: `hash(source_content + front_matter + layout + data_cascade_snapshot)`
 
 Phase 1 output is **intermediate HTML** — it contains raw Web Component tags (`<ds-button>`, `<ds-card>`, etc.) that haven't been SSR'd yet.
