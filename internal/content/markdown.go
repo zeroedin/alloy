@@ -17,10 +17,11 @@ import (
 
 // MarkdownOptions controls goldmark rendering behavior.
 type MarkdownOptions struct {
-	Unsafe       bool
-	Typographer  bool
-	TemplateTags bool
-	Hooks        map[string]string
+	Unsafe        bool
+	Typographer   bool
+	TemplateTags  bool
+	AutoHeadingID bool
+	Hooks         map[string]string
 }
 
 // templateTagPattern matches {{ ... }} and {% ... %} template expressions,
@@ -57,13 +58,15 @@ func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
 		rendererOpts = append(rendererOpts, html.WithUnsafe())
 	}
 
+	parserOpts := []parser.Option{}
+	if opts.AutoHeadingID {
+		parserOpts = append(parserOpts, parser.WithAutoHeadingID(), parser.WithAttribute())
+	}
+
 	md := goldmark.New(
 		goldmark.WithExtensions(extensions...),
 		goldmark.WithRendererOptions(rendererOpts...),
-		goldmark.WithParserOptions(
-			parser.WithAutoHeadingID(),
-			parser.WithAttribute(),
-		),
+		goldmark.WithParserOptions(parserOpts...),
 	)
 
 	var buf bytes.Buffer

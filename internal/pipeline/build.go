@@ -952,9 +952,10 @@ func BuildPhase1(cfg *config.Config) (map[string]string, error) {
 	result := make(map[string]string, len(pages))
 
 	mdOpts := content.MarkdownOptions{
-		Unsafe:       cfg.Content.Markdown.Goldmark.Unsafe,
-		Typographer:  cfg.Content.Markdown.Goldmark.Typographer,
-		TemplateTags: cfg.Content.Markdown.Goldmark.TemplateTags,
+		Unsafe:        cfg.Content.Markdown.Goldmark.Unsafe,
+		Typographer:   cfg.Content.Markdown.Goldmark.Typographer,
+		TemplateTags:  cfg.Content.Markdown.Goldmark.TemplateTags,
+		AutoHeadingID: true,
 	}
 
 	for _, page := range pages {
@@ -1086,9 +1087,10 @@ func buildPhase2Stream(intermediateHTML map[string]string, ssrCfg *config.SSRCon
 // used with strict filters to catch undefined filter usage in tests.
 func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]interface{}, collectionsCtx map[string]interface{}, engine tmpl.TemplateEngine, langContexts []i18n.LanguageContext) ([]string, error) {
 	mdOpts := content.MarkdownOptions{
-		Unsafe:       cfg.Content.Markdown.Goldmark.Unsafe,
-		Typographer:  cfg.Content.Markdown.Goldmark.Typographer,
-		TemplateTags: cfg.Content.Markdown.Goldmark.TemplateTags,
+		Unsafe:        cfg.Content.Markdown.Goldmark.Unsafe,
+		Typographer:   cfg.Content.Markdown.Goldmark.Typographer,
+		TemplateTags:  cfg.Content.Markdown.Goldmark.TemplateTags,
+		AutoHeadingID: true,
 	}
 
 	var rendered []string
