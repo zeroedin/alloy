@@ -228,6 +228,31 @@ var _ = Describe("Server", func() {
 		})
 	})
 
+	// ── Content-colocated file serving in dev mode (issue #300) ─────
+	// In dev mode, non-content files in content/ must be served directly
+	// from source — no _site/ copy needed. The dev server falls back to
+	// content/ for URLs that don't match a rendered page in memory.
+
+	Describe("Content-colocated file serving", func() {
+		It("serves non-content files from content/ in dev mode", func() {
+			cfg := &config.Config{Title: "Dev Site"}
+			srv := server.New(cfg)
+			body, err := srv.ServeContentFile("/about/diagram.svg")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(body).NotTo(BeEmpty(),
+				"dev mode must serve content-colocated files (SVG, PNG, etc.) "+
+					"directly from the content/ directory — same pattern as static file serving")
+		})
+
+		It("returns error for non-existent content file", func() {
+			cfg := &config.Config{Title: "Dev Site"}
+			srv := server.New(cfg)
+			_, err := srv.ServeContentFile("/about/nonexistent.svg")
+			Expect(err).To(HaveOccurred(),
+				"requesting a non-existent content file must return an error, not empty content")
+		})
+	})
+
 	// ── Port conflict handling ────────────────────────────────────────
 
 	Describe("Port conflict handling", func() {
