@@ -971,6 +971,33 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Render hook pipeline wiring (issues #310, #311) ─────────────
+	// The pipeline must discover render hook templates from
+	// layouts/_markup/ and wire them into MarkdownOptions.
+
+	Describe("Render hook pipeline wiring", func() {
+		It("render hooks from layouts/_markup/ are applied during build", func() {
+			cfg := &config.Config{
+				Title:   "Render Hook Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/page.md": "---\ntitle: Test\n---\n[Click here](https://example.com)",
+				"layouts/_markup/render-link.liquid": `<a href="{{ markup.destination }}" class="custom-link">{{ markup.text }}</a>`,
+				"layouts/default.liquid":             "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["page.md"]
+			Expect(html).To(ContainSubstring(`class="custom-link"`),
+				"render hook from layouts/_markup/render-link.liquid must be applied "+
+					"during the build pipeline — proves discovery + wiring works end-to-end")
+		})
+	})
+
 	// ── {% inline %} pipeline wiring (issue #295) ──────────────────
 	// RegisterInlineTag must be called in createEngine() so the tag
 	// works in actual builds, not just unit tests.
