@@ -329,10 +329,12 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
 17. assets.CopyAssets(assetsDir, outputDir)                ✅ done
 18. static.CopyPassthroughWithValidation(...)             ✅ done
 18b. Copy content-colocated passthrough files (issue #300)  ← MISSING
-     Step 3 must use `DiscoverWithPassthrough` instead of `DiscoverWithFormats`.
-     The returned passthrough paths are copied to outputDir preserving their
-     relative path: `content/about/diagram.svg` → `_site/about/diagram.svg`.
-     Use `static.CopyFile(src, dst)` or equivalent for each passthrough file.
+     `Build()` step 3 must switch from `DiscoverWithFormats` to `DiscoverWithPassthrough`.
+     The returned passthrough paths are carried through the pipeline and copied
+     to outputDir preserving their relative path: `content/about/diagram.svg`
+     → `_site/about/diagram.svg`. Use `static.CopyFile(src, dst)` or equivalent.
+     Add `ContentPassthroughs []string` to `BuildResult` — relative paths of
+     non-content files copied from `content/` to output.
      In dev mode (alloy dev), skip the copy — files are served from source.
 19. output.GenerateSitemap(pages, baseURL, outputDir)     ✅ done
 20. cache.SaveTo(cacheFile)                               ✅ done
