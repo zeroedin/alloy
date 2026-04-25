@@ -250,14 +250,19 @@ This cascades to all pages in `content/blog/` and subdirectories. A post at `con
 | `:section` | Top-level content directory | `blog` |
 | `:filename` | Source filename without extension | `my-first-post` |
 
-**Front matter permalinks containing `{{ }}` trigger Liquid rendering** — full template power when needed, ~50µs per page:
+**Front matter permalinks containing `{{ }}` trigger template rendering** — uses the configured template engine (Liquid or Go templates), ~50µs per page:
 
 ```yaml
 ---
 title: "My Post"
+# Liquid engine:
 permalink: "/{{ page.customField | slugify }}/{{ page.date | date: '%Y' }}/"
+# Go template engine:
+# permalink: "/{{ .page.customField | slugify }}/{{ .page.date | date "%Y" }}/"
 ---
 ```
+
+The permalink template syntax must match the configured engine. A Liquid permalink (`{{ page.slug }}`) in a Go template project will fail — and vice versa. Detection uses `{{` which is shared by both engines, but rendering uses the configured engine.
 
 **Static front matter overrides** are also token-free fast path:
 

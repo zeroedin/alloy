@@ -5,6 +5,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/zeroedin/alloy/internal/pagination"
+	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
 var _ = Describe("Paginate", func() {
@@ -194,6 +195,44 @@ var _ = Describe("Paginate", func() {
 			Expect(contexts).To(HaveLen(2))
 			Expect(paths).To(HaveLen(2))
 			Expect(paths[0]).To(Equal("/team/alice/"))
+			Expect(paths[1]).To(Equal("/team/bob/"))
+		})
+	})
+
+	// ── Template permalink with renderer callback (issue #315) ──────
+	// PaginateWithTemplatePermalink accepts a renderer callback so it
+	// works with both Liquid and Go template engines.
+
+	Context("Template permalink with renderer callback", func() {
+		It("renders per-item permalink using provided renderer", func() {
+			data := []interface{}{
+				map[string]interface{}{"name": "Alice", "slug": "alice"},
+				map[string]interface{}{"name": "Bob", "slug": "bob"},
+			}
+			// Use the real Liquid engine — matches the production path
+			renderer := func(src string, ctx map[string]interface{}) (string, error) {
+				engine := tmpl.NewLiquidEngine()
+				tpl, err := engine.Parse("permalink", []byte(src))
+				if err != nil {
+					return "", err
+				}
+				result, err := tpl.Render(ctx)
+				if err != nil {
+					return "", err
+				}
+				return string(result), nil
+			}
+			contexts, paths, err := pagination.PaginateWithTemplatePermalink(
+				data,
+				"/team/{{ member.slug }}/",
+				"member",
+				renderer,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(contexts).To(HaveLen(2))
+			Expect(paths).To(HaveLen(2))
+			Expect(paths[0]).To(Equal("/team/alice/"),
+				"renderer callback must be used for URL generation")
 			Expect(paths[1]).To(Equal("/team/bob/"))
 		})
 	})
