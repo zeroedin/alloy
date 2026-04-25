@@ -1107,6 +1107,11 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 			tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, siteData, langContexts, page), pages, collectionsCtx, nil, "")
 			tc.Content = string(html)
 			ctx := tc.ToMap()
+			if page.SourcePath != "" {
+				ctx["_contentDir"] = filepath.Dir(page.SourcePath)
+				contentRoot := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
+				ctx["_contentRoot"] = contentRoot
+			}
 			if engine != nil {
 				tpl, err := engine.Parse(page.RelPath, html)
 				if err != nil {
@@ -1527,6 +1532,7 @@ func createEngine(cfg *config.Config) (tmpl.TemplateEngine, error) {
 	if err := tmpl.RegisterBuiltinFilters(engine); err != nil {
 		return nil, fmt.Errorf("registering template filters: %w", err)
 	}
+	tmpl.RegisterInlineTag(engine)
 	return engine, nil
 }
 
