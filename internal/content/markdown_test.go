@@ -9,17 +9,28 @@ import (
 
 var _ = Describe("RenderMarkdown", func() {
 	defaultOpts := content.MarkdownOptions{
-		Unsafe:       true,
-		Typographer:  true,
-		TemplateTags: true,
+		Unsafe:        true,
+		Typographer:   true,
+		TemplateTags:  true,
+		AutoHeadingID: true,
 	}
 
 	// ── Basic Markdown ─────────────────────────────────────────────────
 
 	Context("Basic Markdown", func() {
 		It("converts headings to h1-h6 tags", func() {
+			// AutoHeadingID: false — test heading tag conversion in isolation
+			// without auto-generated id attributes (issue #306).
+			// Auto heading ID behavior is tested separately in the
+			// "Auto heading IDs" describe block with AutoHeadingID: true.
+			noAutoID := content.MarkdownOptions{
+				Unsafe:        true,
+				Typographer:   true,
+				TemplateTags:  true,
+				AutoHeadingID: false,
+			}
 			source := []byte("# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, err := content.RenderMarkdown(source, noAutoID)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<h1>H1</h1>"))
@@ -293,6 +304,273 @@ var _ = Describe("RenderMarkdown", func() {
 				".txt files must be wrapped in <pre> tags")
 			Expect(html).To(ContainSubstring("This is plain text."))
 			Expect(html).To(ContainSubstring("</pre>"))
+		})
+	})
+
+	// ── Auto heading IDs (issue #274) ─────────────────────────────
+	// Goldmark must generate id attributes on all headings by default.
+
+	Describe("Auto heading IDs", func() {
+		// defaultOpts has AutoHeadingID: true (production default)
+
+		It("generates id attributes on headings", func() {
+			out, err := content.RenderMarkdown(
+				[]byte("## Getting Started\n\n### Installation"),
+				defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`id="getting-started"`),
+				"h2 must have an auto-generated slugified id attribute")
+			Expect(html).To(ContainSubstring(`id="installation"`),
+				"h3 must have an auto-generated slugified id attribute")
+		})
+
+		It("handles duplicate headings with numeric suffix", func() {
+			out, err := content.RenderMarkdown(
+				[]byte("## Overview\n\nText.\n\n## Overview\n\nMore text.\n\n## Overview"),
+				defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`id="overview"`),
+				"first heading must have the base id")
+			Expect(html).To(ContainSubstring(`id="overview-1"`),
+				"second duplicate must get suffix -1")
+			Expect(html).To(ContainSubstring(`id="overview-2"`),
+				"third duplicate must get suffix -2")
+		})
+
+		It("respects manual heading attributes override", func() {
+			out, err := content.RenderMarkdown(
+				[]byte("## My Section {#custom-id}"),
+				defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`id="custom-id"`),
+				"manual {#id} attribute must override the auto-generated id")
+			Expect(html).NotTo(ContainSubstring(`id="my-section"`),
+				"auto-generated id must not appear when manual override is set")
+		})
+	})
+
+	// ── Table of contents (issue #274) ────────────────────────────
+	// page.toc is extracted from the goldmark AST during markdown
+	// rendering. Nested array of {id, text, level, children}.
+
+	Describe("Table of contents", func() {
+		It("extracts headings into a nested TOC structure", func() {
+			input := "## Getting Started\n\n### Installation\n\n### Quickstart\n\n## Configuration"
+			_, toc, err := content.RenderMarkdownWithTOC([]byte(input), defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(toc).To(HaveLen(2),
+				"top-level TOC must contain two h2 entries")
+			Expect(toc[0].Text).To(Equal("Getting Started"))
+			Expect(toc[0].ID).To(Equal("getting-started"))
+			Expect(toc[0].Level).To(Equal(2))
+			Expect(toc[0].Children).To(HaveLen(2),
+				"h3s must nest under their preceding h2")
+			Expect(toc[0].Children[0].Text).To(Equal("Installation"))
+			Expect(toc[0].Children[1].Text).To(Equal("Quickstart"))
+			Expect(toc[1].Text).To(Equal("Configuration"))
+			Expect(toc[1].Children).To(BeEmpty())
+		})
+
+		It("excludes h1 from TOC", func() {
+			input := "# Page Title\n\n## Section One\n\n## Section Two"
+			_, toc, err := content.RenderMarkdownWithTOC([]byte(input), defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(toc).To(HaveLen(2),
+				"h1 must be excluded from TOC — it is the page title")
+			Expect(toc[0].Text).To(Equal("Section One"))
+			Expect(toc[1].Text).To(Equal("Section Two"))
+		})
+
+		It("returns empty TOC for pages with no headings", func() {
+			input := "Just a paragraph of text."
+			_, toc, err := content.RenderMarkdownWithTOC([]byte(input), defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(toc).To(BeEmpty(),
+				"pages without headings must have an empty TOC")
+		})
+
+		It("uses manual {#id} override in TOC entry", func() {
+			input := "## My Section {#custom-id}"
+			_, toc, err := content.RenderMarkdownWithTOC([]byte(input), defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(toc).To(HaveLen(1))
+			Expect(toc[0].ID).To(Equal("custom-id"),
+				"TOC must use the manually overridden id, not the auto-generated slug")
+		})
+
+		It("nests h4 under h3 under h2", func() {
+			input := "## Top\n\n### Mid\n\n#### Deep"
+			_, toc, err := content.RenderMarkdownWithTOC([]byte(input), defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(toc).To(HaveLen(1))
+			Expect(toc[0].Children).To(HaveLen(1))
+			Expect(toc[0].Children[0].Children).To(HaveLen(1),
+				"h4 must nest under h3 which nests under h2")
+			Expect(toc[0].Children[0].Children[0].Text).To(Equal("Deep"))
+		})
+	})
+
+	// ── Render hooks (issue #273) ──────────────────────────────────
+	// Render hook templates in layouts/_markup/ override how specific
+	// markdown elements are rendered to HTML.
+
+	Describe("Render hooks", func() {
+		It("render-codeblock.liquid overrides fenced code block output", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"codeblock": `<rh-code-block language="{{ markup.language }}">{{ markup.inner }}</rh-code-block>`,
+				},
+			}
+			out, err := content.RenderMarkdown([]byte("```javascript\nconsole.log('hello');\n```"), opts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<rh-code-block"),
+				"render hook must override default <pre><code> output")
+			Expect(html).To(ContainSubstring(`language="javascript"`),
+				"markup.language must be available in the hook template")
+			Expect(html).To(ContainSubstring("console.log"),
+				"markup.inner must contain the code content")
+			Expect(html).NotTo(ContainSubstring("<pre>"),
+				"default <pre><code> must not appear when hook is active")
+		})
+
+		It("render-link.liquid overrides link output", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"link": `<a href="{{ markup.destination }}" class="custom">{{ markup.text }}</a>`,
+				},
+			}
+			out, err := content.RenderMarkdown([]byte("[Click here](https://example.com)"), opts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`class="custom"`),
+				"render hook must override default link output")
+			Expect(html).To(ContainSubstring(`href="https://example.com"`),
+				"markup.destination must be available")
+			Expect(html).To(ContainSubstring("Click here"),
+				"markup.text must contain the link text")
+		})
+
+		It("render-heading.liquid overrides heading output", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }} id="{{ markup.id }}"><a href="#{{ markup.id }}">{{ markup.inner }}</a></h{{ markup.level }}>`,
+				},
+			}
+			out, err := content.RenderMarkdown([]byte("## My Section"), opts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`id="my-section"`),
+				"markup.id must be a slugified version of the heading text")
+			Expect(html).To(ContainSubstring(`<a href="#my-section">`),
+				"render hook must be able to wrap headings in permalink anchors")
+			Expect(html).To(ContainSubstring("My Section"),
+				"markup.inner must contain the heading content")
+		})
+
+		It("render-image.liquid overrides image output", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"image": `<figure><img src="{{ markup.src }}" alt="{{ markup.alt }}" loading="lazy"><figcaption>{{ markup.title }}</figcaption></figure>`,
+				},
+			}
+			out, err := content.RenderMarkdown([]byte(`![A photo](/photo.jpg "Photo caption")`), opts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<figure>"),
+				"render hook must override default <img> output")
+			Expect(html).To(ContainSubstring(`loading="lazy"`),
+				"hook can add custom attributes like lazy loading")
+			Expect(html).To(ContainSubstring("Photo caption"),
+				"markup.title must be available")
+		})
+
+		It("render-blockquote.liquid overrides blockquote output", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"blockquote": `<rh-alert>{{ markup.inner }}</rh-alert>`,
+				},
+			}
+			out, err := content.RenderMarkdown([]byte("> This is a note"), opts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<rh-alert>"),
+				"render hook must override default <blockquote> output")
+			Expect(html).To(ContainSubstring("This is a note"),
+				"markup.inner must contain the blockquote content")
+			Expect(html).NotTo(ContainSubstring("<blockquote>"),
+				"default <blockquote> must not appear when hook is active")
+		})
+
+		It("render-table.liquid overrides table output", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"table": `<div class="table-wrapper">{{ markup.inner }}</div>`,
+				},
+			}
+			out, err := content.RenderMarkdown([]byte("| A | B |\n|---|---|\n| 1 | 2 |"), opts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`<div class="table-wrapper">`),
+				"render hook must override default <table> output")
+			Expect(html).To(ContainSubstring("</div>"),
+				"hook wrapper must be present")
+		})
+
+		It("language-specific codeblock hook takes precedence", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"codeblock":         `<pre class="default"><code>{{ markup.inner }}</code></pre>`,
+					"codeblock-mermaid": `<div class="mermaid">{{ markup.inner }}</div>`,
+				},
+			}
+			out, err := content.RenderMarkdown([]byte("```mermaid\ngraph TD;\nA-->B;\n```"), opts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`<div class="mermaid">`),
+				"language-specific hook (render-codeblock-mermaid) must take precedence over generic")
+			Expect(html).NotTo(ContainSubstring(`class="default"`),
+				"generic codeblock hook must not be used when language-specific exists")
+		})
+
+		It("falls back to default rendering when no hook exists", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{},
+			}
+			out, err := content.RenderMarkdown([]byte("```go\nfmt.Println(\"hello\")\n```"), opts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<pre>"),
+				"without render hooks, goldmark default rendering must be used")
+			Expect(html).To(ContainSubstring("<code"),
+				"default <pre><code> output must appear when no hook is set")
+		})
+
+		It("render-link.liquid provides is_external for external links", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"link": `{% if markup.is_external %}<a href="{{ markup.destination }}" target="_blank">{{ markup.text }}</a>{% else %}<a href="{{ markup.destination }}">{{ markup.text }}</a>{% endif %}`,
+				},
+			}
+			out, err := content.RenderMarkdown([]byte("[External](https://example.com) and [Internal](/about)"), opts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`target="_blank"`),
+				"external link must have target=_blank via markup.is_external")
+			Expect(html).To(ContainSubstring(`<a href="/about">Internal</a>`),
+				"internal link must not have target=_blank")
 		})
 	})
 })

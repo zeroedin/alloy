@@ -4,26 +4,21 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"syscall"
-	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/pipeline"
-	"github.com/zeroedin/alloy/internal/plugin"
 	"github.com/zeroedin/alloy/internal/server"
 )
 
 func newServeCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start the dev server",
+		Short: "Build and serve the production site",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configPath, _ := cmd.Flags().GetString("config")
 
@@ -31,7 +26,6 @@ func newServeCommand() *cobra.Command {
 			cfg, err := config.LoadWithDefaults(configPath)
 			if err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
-					// No config file — serve with defaults
 					cfg = &config.Config{}
 					config.ApplyDefaults(cfg)
 					configLoaded = false
@@ -66,42 +60,38 @@ func newServeCommand() *cobra.Command {
 				config.MergeFlags(cfg, flags)
 			}
 
-			// Validate config semantics when a config file was loaded
 			if configLoaded {
 				if err := config.Validate(cfg); err != nil {
 					return err
 				}
 			}
 
-			// Determine server mode early — needed before initial build for draft inclusion
-			preview, _ := cmd.Flags().GetBool("preview")
-			mode := server.ModeDev
-			if preview {
-				mode = server.ModePreview
+			// Production server always excludes drafts
+			cfg.IncludeDrafts = false
+
+			// Set up progress reporter for build
+			if !cfg.Quiet {
+				if cfg.Verbose {
+					pipeline.SetReporter(pipeline.NewVerboseProgress(cmd.OutOrStdout()))
+				} else if isTTY() {
+					pipeline.SetReporter(pipeline.NewTTYProgress(cmd.OutOrStdout(), termWidth()))
+				}
 			}
-			noDrafts, _ := cmd.Flags().GetBool("no-drafts")
+			defer pipeline.SetReporter(nil)
 
-			// Dev mode includes drafts unless --no-drafts; preview excludes them
-			cfg.IncludeDrafts = mode == server.ModeDev && !noDrafts
-
-			// Initial build per spec §9 step 2
+			// Run the full build pipeline (same as alloy build)
 			if _, err := pipeline.Build(cfg); err != nil {
-				log.Printf("warning: initial build failed: %v", err)
+				return fmt.Errorf("build failed: %w", err)
 			}
 
-			srv := server.NewWithMode(cfg, mode)
+			srv := server.NewWithMode(cfg, server.ModePreview)
 
-			// Apply --no-drafts flag
-			srv.SetNoDrafts(noDrafts)
-
-			// Parse port
 			portStr, _ := cmd.Flags().GetString("port")
 			port, err := strconv.Atoi(portStr)
 			if err != nil {
 				return fmt.Errorf("invalid port %q: %w", portStr, err)
 			}
 
-			// Start server with port auto-increment per spec §9
 			actualPort, err := srv.StartWithPortFallback(port, 10)
 			if err != nil {
 				return err
@@ -111,135 +101,6 @@ func newServeCommand() *cobra.Command {
 				fmt.Fprintf(cmd.OutOrStdout(), "Serving at http://localhost:%d\n", actualPort)
 			}
 
-			// Set up plugin hooks for dev server
-			hooks := plugin.NewHookRegistry()
-			hooks.SetTimeout(cfg.Plugins.Timeout)
-			pluginsDir := "plugins"
-			if cfg.ProjectRoot != "" {
-				pluginsDir = filepath.Join(cfg.ProjectRoot, "plugins")
-			}
-			registry := plugin.NewRegistry(pluginsDir)
-			if err := registry.DiscoverPlugins(); err != nil {
-				log.Printf("warning: plugin discovery: %v", err)
-			}
-			for _, w := range registry.LoadPlugins(hooks) {
-				log.Printf("warning: %s", w)
-			}
-			if _, err := hooks.RunWithTimeout(plugin.OnDevServerStart, cfg); err != nil {
-				log.Printf("warning: plugin hook onDevServerStart: %v", err)
-			}
-
-			// Set up file watcher for live rebuild
-			watcher, err := fsnotify.NewWatcher()
-			if err != nil {
-				log.Printf("warning: file watcher unavailable: %v", err)
-			} else {
-				defer watcher.Close()
-
-				// Watch configured directories
-				watchDirs := server.WatchDirs(cfg)
-				for _, dir := range watchDirs {
-					absDir := dir
-					if cfg.ProjectRoot != "" {
-						absDir = filepath.Join(cfg.ProjectRoot, dir)
-					}
-					if info, err := os.Stat(absDir); err == nil && info.IsDir() {
-						if err := addRecursiveWatch(watcher, absDir); err != nil {
-							log.Printf("warning: watching %s: %v", dir, err)
-						}
-					}
-				}
-
-				debouncer := server.NewDebouncer(
-					time.Duration(srv.DebounceInterval())*time.Millisecond,
-					10,
-				)
-
-				// File watcher goroutine
-				go func() {
-					var pending []server.ChangeEvent
-					timer := time.NewTimer(time.Duration(srv.DebounceInterval()) * time.Millisecond)
-					timer.Stop()
-
-					for {
-						select {
-						case event, ok := <-watcher.Events:
-							if !ok {
-								return
-							}
-							if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) == 0 {
-								continue
-							}
-
-							// Make path relative to project root for classification
-							relPath := event.Name
-							if cfg.ProjectRoot != "" {
-								if r, err := filepath.Rel(cfg.ProjectRoot, event.Name); err == nil {
-									relPath = r
-								}
-							}
-
-							changeType := server.ClassifyChange(relPath, cfg)
-							pending = append(pending, server.ChangeEvent{
-								Path:       relPath,
-								ChangeType: changeType,
-							})
-
-							// If a new directory was created, add it to the watcher
-							if event.Op&fsnotify.Create != 0 {
-								if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
-									addRecursiveWatch(watcher, event.Name)
-								}
-							}
-
-							// Reset debounce timer
-							timer.Reset(time.Duration(srv.DebounceInterval()) * time.Millisecond)
-
-						case <-timer.C:
-							if len(pending) == 0 {
-								continue
-							}
-
-							events := pending
-							pending = nil
-
-							debouncer.Debounce(events)
-
-							// Fire onFileChanged plugin hook
-							if _, err := hooks.RunWithTimeout(plugin.OnFileChanged, events); err != nil {
-								log.Printf("warning: plugin hook onFileChanged: %v", err)
-							}
-
-							if !cfg.Quiet {
-								log.Printf("rebuilding (%d files changed)...", len(events))
-							}
-
-							// Trigger rebuild
-							if _, err := pipeline.Build(cfg); err != nil {
-								log.Printf("rebuild failed: %v", err)
-								srv.Overlay().SetErrors([]server.BuildError{
-									{Message: err.Error(), Stage: "rebuild"},
-								})
-								srv.BroadcastReload()
-							} else {
-								srv.Overlay().ClearErrors()
-								if !cfg.Quiet {
-									log.Printf("rebuild complete")
-								}
-								srv.BroadcastReload()
-							}
-
-						case err, ok := <-watcher.Errors:
-							if !ok {
-								return
-							}
-							log.Printf("watcher error: %v", err)
-						}
-					}
-				}()
-			}
-
-			// Wait for interrupt signal
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 			<-sigCh
@@ -252,22 +113,7 @@ func newServeCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringP("port", "p", "3000", "Port to serve on")
-	cmd.Flags().Bool("preview", false, "Serve production build preview")
-	cmd.Flags().Bool("no-drafts", false, "Exclude draft content")
 	cmd.Flags().Bool("refetch", false, "Bypass fetch cache")
 
 	return cmd
-}
-
-// addRecursiveWatch adds a directory and all its subdirectories to the watcher.
-func addRecursiveWatch(watcher *fsnotify.Watcher, root string) error {
-	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil // skip inaccessible directories
-		}
-		if d.IsDir() {
-			return watcher.Add(path)
-		}
-		return nil
-	})
 }

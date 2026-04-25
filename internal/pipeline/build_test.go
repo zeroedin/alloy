@@ -1,6 +1,8 @@
 package pipeline_test
 
 import (
+	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -8,6 +10,37 @@ import (
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/pipeline"
 )
+
+// spyReporter records all ProgressReporter calls for test assertions.
+type spyReporter struct {
+	stages    []string
+	messages  []string
+	updates   []spyUpdate
+	ended     int
+	summaries []spySummary
+}
+
+type spyUpdate struct {
+	current  int
+	filePath string
+	elapsed  time.Duration
+}
+
+type spySummary struct {
+	pageCount    int
+	duration     time.Duration
+	pagesSkipped int
+}
+
+func (s *spyReporter) StartStage(name string, total int) { s.stages = append(s.stages, name) }
+func (s *spyReporter) Message(text string)               { s.messages = append(s.messages, text) }
+func (s *spyReporter) Update(current int, filePath string, elapsed time.Duration) {
+	s.updates = append(s.updates, spyUpdate{current: current, filePath: filePath, elapsed: elapsed})
+}
+func (s *spyReporter) EndStage() { s.ended++ }
+func (s *spyReporter) Summary(pageCount int, duration time.Duration, pagesSkipped int) {
+	s.summaries = append(s.summaries, spySummary{pageCount: pageCount, duration: duration, pagesSkipped: pagesSkipped})
+}
 
 // Spec reference: PLAN.md §2 — Build Pipeline
 // Tests are immutable. They encode the specification.
@@ -120,6 +153,116 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 			Expect(result.PageCount).To(Equal(0))
+		})
+	})
+
+	// ── Unified pipeline: single-language as degenerate i18n (issue #280) ──
+	// A site without languages: config must produce identical results
+	// whether processed via a single batch or the old single-language path.
+	// This proves the pipeline has ONE code path, not two forks.
+
+	Describe("Unified pipeline", func() {
+		It("single-language build produces same result with or without explicit language config", func() {
+			content := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+				"content/about.md": "---\ntitle: About\n---\n# About",
+			}
+
+			// Build without languages: config
+			cfgNoLang := &config.Config{
+				Title:   "No Lang",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			resultNoLang, err := pipeline.BuildWithContent(cfgNoLang, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resultNoLang).NotTo(BeNil())
+
+			// Build with explicit single language via Languages map
+			cfgWithLang := &config.Config{
+				Title:   "With Lang",
+				BaseURL: "https://example.com",
+				Languages: map[string]*config.LanguageConfig{
+					"en": {Root: true},
+				},
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			resultWithLang, err := pipeline.BuildWithContent(cfgWithLang, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resultWithLang).NotTo(BeNil())
+
+			Expect(resultWithLang.PageCount).To(Equal(resultNoLang.PageCount),
+				"single-language build must produce the same page count "+
+					"regardless of whether languages: is set — proves one code path")
+		})
+	})
+
+	// ── BuildWithContent delegates to Build (issue #283) ────────────
+	// BuildWithContent must be a thin wrapper that delegates to Build().
+	// It must not duplicate any pipeline logic. Tests verify that
+	// pipeline stages that were previously missing now run.
+
+	Describe("BuildWithContent delegates to Build", func() {
+		It("forwards BuildOptions to Build", func() {
+			cfg := &config.Config{
+				Title:   "Delegate Test",
+				BaseURL: "https://example.com",
+				SSR:     &config.SSRConfig{Command: "cat"},
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			content := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+			}
+			result, err := pipeline.BuildWithContent(cfg, content, pipeline.BuildOptions{SkipSSR: true})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.SSRSkipped).To(BeTrue(),
+				"BuildWithContent must forward BuildOptions to Build — "+
+					"SkipSSR=true must skip Phase 2")
+		})
+
+		It("runs lifecycle filtering through Build", func() {
+			cfg := &config.Config{
+				Title:         "Lifecycle Test",
+				BaseURL:       "https://example.com",
+				Build:         config.BuildConfig{Output: "_site"},
+				IncludeDrafts: false,
+			}
+			content := map[string]string{
+				"content/published.md": "---\ntitle: Published\n---\n# Published",
+				"content/draft.md":     "---\ntitle: Draft\ndraft: true\n---\n# Draft",
+			}
+			result, err := pipeline.BuildWithContent(cfg, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(1),
+				"BuildWithContent must run lifecycle filtering via Build — "+
+					"draft pages must be excluded when IncludeDrafts is false")
+		})
+
+		It("renders through layout chain via Build", func() {
+			cfg := &config.Config{
+				Title:   "Layout Chain Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			content := map[string]string{
+				"content/page.md":        "---\ntitle: Test\nlayout: child\n---\n# Hello",
+				"layouts/child.liquid":   "---\nlayout: \"base\"\n---\n<main>{{ content }}</main>",
+				"layouts/base.liquid":    "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["page.md"]
+			Expect(html).To(ContainSubstring("<html>"),
+				"BuildWithContent must render through layout chain via Build — "+
+					"root layout wrapper must be present")
+			Expect(html).To(ContainSubstring("<main>"),
+				"middle layout wrapper must be present")
+			Expect(html).NotTo(ContainSubstring("layout:"),
+				"layout front matter must be stripped")
 		})
 	})
 
@@ -744,6 +887,365 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(ssrResult).NotTo(BeNil())
 			Expect(ssrResult.SSRSkipped).To(BeFalse(),
 				"build with ssr: config must run Phase 2")
+		})
+	})
+
+	// ── Content-colocated passthrough copy (issue #300) ─────────────
+	// Non-content files in content/ must be copied to _site/ preserving
+	// their path relative to content/.
+
+	Describe("Content-colocated passthrough copy", func() {
+		It("copies non-content files to output directory", func() {
+			cfg := &config.Config{
+				Title:   "Passthrough Copy Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/about/index.md":    "---\ntitle: About\n---\n# About",
+				"content/about/diagram.svg": `<svg xmlns="http://www.w3.org/2000/svg"><circle r="10"/></svg>`,
+				"content/about/photo.png":   "fake png bytes",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			// The content page must be rendered
+			Expect(result.PageCount).To(Equal(1),
+				"only .md files should be content pages")
+
+			// Non-content files must be copied to output
+			Expect(result.ContentPassthroughs).To(ContainElement("about/diagram.svg"),
+				"SVG in content/ must be copied to _site/about/diagram.svg")
+			Expect(result.ContentPassthroughs).To(ContainElement("about/photo.png"),
+				"PNG in content/ must be copied to _site/about/photo.png")
+		})
+
+		It("does not copy _data.yaml as passthrough", func() {
+			cfg := &config.Config{
+				Title:   "Data Exclusion Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/blog/index.md":    "---\ntitle: Blog\n---\n# Blog",
+				"content/blog/_data.yaml":  "layout: post",
+				"content/blog/icon.svg":    "<svg></svg>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			Expect(result.ContentPassthroughs).To(HaveLen(1),
+				"_data.yaml must not be copied as passthrough")
+			Expect(result.ContentPassthroughs).To(ContainElement("blog/icon.svg"))
+		})
+	})
+
+	// ── page.toc pipeline wiring (issue #274) ───────────────────────
+	// page.toc must be populated during Build and accessible in templates.
+
+	Describe("TOC pipeline wiring", func() {
+		It("page.toc is accessible in layout templates", func() {
+			cfg := &config.Config{
+				Title:   "TOC Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/guide.md": "---\ntitle: Guide\nlayout: default\n---\n## Getting Started\n\n### Installation\n\n## Configuration",
+				"layouts/default.liquid": `<html><body>{{ content }}<nav>{% for item in page.toc %}<a href="#{{ item.id }}">{{ item.text }}</a>{% endfor %}</nav></body></html>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["guide.md"]
+			Expect(html).To(ContainSubstring(`href="#getting-started"`),
+				"page.toc must be populated and accessible in layout templates — "+
+					"TOC links must render with heading IDs")
+			Expect(html).To(ContainSubstring(">Getting Started<"),
+				"TOC entry text must be available in templates")
+			Expect(html).To(ContainSubstring(">Configuration<"),
+				"all h2 headings must appear in page.toc")
+		})
+	})
+
+	// ── {% inline %} pipeline wiring (issue #295) ──────────────────
+	// RegisterInlineTag must be called in createEngine() so the tag
+	// works in actual builds, not just unit tests.
+
+	Describe("Inline tag pipeline wiring", func() {
+		It("{% inline %} resolves and inlines files through BuildWithContent", func() {
+			cfg := &config.Config{
+				Title:   "Inline Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/about/index.md":    "---\ntitle: About\n---\n# About\n\n{% inline \"./diagram.svg\" %}",
+				"content/about/diagram.svg": `<svg xmlns="http://www.w3.org/2000/svg"><circle r="10"/></svg>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"build with {% inline %} must not fail with 'unknown tag' — "+
+					"RegisterInlineTag must be called in createEngine()")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["about/index.md"]
+			Expect(html).To(ContainSubstring("<svg"),
+				"{% inline %} must resolve and insert the SVG content through the build pipeline")
+			Expect(html).To(ContainSubstring(`circle r="10"`),
+				"inlined SVG content must be present in the rendered output")
+		})
+	})
+
+	// ── Layout chaining (issue #276) ────────────────────────────────
+	// Layout files can reference a parent layout via front matter.
+	// The pipeline renders inside-out: content → child → parent → root.
+	// Front matter in layout files must be stripped, not output as text.
+
+	Describe("Layout chaining", func() {
+		It("renders content through a chain of layouts", func() {
+			cfg := &config.Config{
+				Title:   "Chain Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			content := map[string]string{
+				"content/page.md":          "---\ntitle: Test\nlayout: has-toc\n---\n# Hello",
+				"layouts/has-toc.liquid":   "---\nlayout: \"base\"\n---\n<div class=\"toc\">{{ content }}</div>",
+				"layouts/base.liquid":      "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(1))
+
+			html := result.RenderedContent["page.md"]
+			Expect(html).To(ContainSubstring("<html>"),
+				"output must include root layout (base.liquid) wrapper")
+			Expect(html).To(ContainSubstring("<div class=\"toc\">"),
+				"output must include middle layout (has-toc.liquid) wrapper")
+			Expect(html).To(ContainSubstring("Hello"),
+				"output must include the page content")
+			Expect(html).NotTo(ContainSubstring("---"),
+				"layout front matter must be stripped — not output as literal text")
+			Expect(html).NotTo(ContainSubstring("layout:"),
+				"layout: directive must not appear in rendered output")
+		})
+
+		It("layout front matter is not rendered as literal text", func() {
+			cfg := &config.Config{
+				Title:   "FrontMatter Strip Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			content := map[string]string{
+				"content/page.md":         "---\ntitle: Test\nlayout: child\n---\nContent here",
+				"layouts/child.liquid":    "---\nlayout: \"parent\"\n---\n<main>{{ content }}</main>",
+				"layouts/parent.liquid":   "<html>{{ content }}</html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["page.md"]
+			Expect(html).NotTo(ContainSubstring("layout: \"parent\""),
+				"layout front matter must be stripped before rendering — "+
+					"this is the bug reported in #276")
+		})
+	})
+
+	// ── BuildOptions: SkipSSR (issue #264) ──────────────────────────
+	// alloy dev always skips SSR. Build() accepts BuildOptions with
+	// SkipSSR to skip Phase 2 regardless of ssr: config.
+
+	Describe("BuildOptions SkipSSR", func() {
+		It("SkipSSR=true skips Phase 2 even when SSR is configured", func() {
+			cfg := &config.Config{
+				Title: "SSR Site",
+				SSR:   &config.SSRConfig{Command: "cat"},
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			result, err := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.SSRSkipped).To(BeTrue(),
+				"Build with SkipSSR=true must skip Phase 2 entirely — "+
+					"this is how alloy dev avoids SSR overhead regardless of config")
+		})
+
+		It("SkipSSR=false with SSR config runs Phase 2 normally", func() {
+			cfg := &config.Config{
+				Title: "SSR Site",
+				SSR:   &config.SSRConfig{Command: "cat"},
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			result, err := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: false})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.SSRSkipped).To(BeFalse(),
+				"Build with SkipSSR=false must run Phase 2 when SSR is configured — "+
+					"this is the alloy build / alloy serve path")
+		})
+
+		It("no BuildOptions runs Phase 2 when SSR is configured", func() {
+			cfg := &config.Config{
+				Title: "SSR Site",
+				SSR:   &config.SSRConfig{Command: "cat"},
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			// No opts — existing callers must continue to work
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.SSRSkipped).To(BeFalse(),
+				"Build without options must run Phase 2 when SSR is configured — "+
+					"backward compatible with existing alloy build behavior")
+		})
+
+		It("BuildIncremental respects SkipSSR", func() {
+			cfg := &config.Config{
+				Title:   "SSR Incremental",
+				BaseURL: "https://example.com",
+				SSR:     &config.SSRConfig{Command: "cat"},
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n<ds-card>Hello</ds-card>",
+			}
+
+			result, err := pipeline.BuildIncremental(
+				cfg, contentMap, nil, nil,
+				pipeline.BuildOptions{SkipSSR: true},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.SSRSkipped).To(BeTrue(),
+				"BuildIncremental with SkipSSR=true must skip Phase 2 — "+
+					"alloy dev incremental rebuilds never run SSR")
+			Expect(result.SSRPagesRendered).To(Equal(0),
+				"no pages should go through SSR when SkipSSR is true")
+		})
+	})
+
+	// ── Progress reporter wiring (issue #255) ─────────────────────
+	// The ProgressReporter must be called by both Build() and
+	// BuildIncremental(). This is critical for alloy serve where
+	// users watch the terminal waiting for the server to start.
+
+	Describe("Progress reporter", func() {
+		AfterEach(func() {
+			pipeline.SetReporter(nil)
+		})
+
+		It("Build calls StartStage, Update, EndStage, and Summary", func() {
+			spy := &spyReporter{}
+			pipeline.SetReporter(spy)
+
+			cfg := &config.Config{
+				Title:   "Progress Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			Expect(spy.stages).NotTo(BeEmpty(),
+				"Build must call StartStage at least once — "+
+					"without this, serve mode has no progress output during initial build")
+			Expect(spy.ended).To(BeNumerically(">", 0),
+				"Build must call EndStage to finalize each stage")
+			Expect(spy.summaries).To(HaveLen(1),
+				"Build must call Summary exactly once at the end")
+			Expect(spy.summaries[0].pageCount).To(Equal(result.PageCount),
+				"Summary pageCount must match the build result")
+		})
+
+		It("Build with content calls Update for each page", func() {
+			spy := &spyReporter{}
+			pipeline.SetReporter(spy)
+
+			cfg := &config.Config{
+				Title:   "Progress Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			content := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+				"content/about.md": "---\ntitle: About\n---\n# About",
+			}
+			result, err := pipeline.BuildWithContent(cfg, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			Expect(spy.updates).To(HaveLen(result.PageCount),
+				"Build must call Update once per page rendered — "+
+					"each Update drives the progress bar forward")
+		})
+
+		It("BuildIncremental calls only Summary on the reporter", func() {
+			spy := &spyReporter{}
+			pipeline.SetReporter(spy)
+
+			cfg := &config.Config{
+				Title:   "Incremental Progress",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+				"content/about.md": "---\ntitle: About\n---\n# About",
+			}
+
+			// First build populates cache
+			previousCache := cache.New()
+			for path, body := range contentMap {
+				relPath := path[len("content/"):]
+				previousCache.SetHash(relPath, cache.HashContent([]byte(body)))
+			}
+
+			// Change one page
+			contentMap["content/about.md"] = "---\ntitle: About\n---\n# About Updated"
+			changedFiles := []string{"content/about.md"}
+
+			result, err := pipeline.BuildIncremental(cfg, contentMap, previousCache, changedFiles)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			Expect(spy.stages).To(BeEmpty(),
+				"BuildIncremental must NOT call StartStage — "+
+					"incremental rebuilds are fast (1-3 pages, <100ms), "+
+					"a multi-stage progress bar would be visual noise")
+			Expect(spy.updates).To(BeEmpty(),
+				"BuildIncremental must NOT call Update — "+
+					"no per-page progress for incremental rebuilds")
+			Expect(spy.ended).To(Equal(0),
+				"BuildIncremental must NOT call EndStage — "+
+					"no stages to end")
+			Expect(spy.summaries).To(HaveLen(1),
+				"BuildIncremental must call Summary exactly once — "+
+					"compact one-line output: 'Rebuilt 3 pages in 47ms (417 cached)'")
+			Expect(spy.summaries[0].pagesSkipped).To(Equal(result.PagesSkipped),
+				"Summary pagesSkipped must match the incremental result — "+
+					"this drives the '(N cached)' display in serve rebuild output")
+		})
+
+		It("no reporter does not panic", func() {
+			pipeline.SetReporter(nil)
+
+			cfg := &config.Config{
+				Title:   "No Reporter",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil(),
+				"Build with nil reporter must succeed without panicking — "+
+					"this is the --quiet and piped non-TTY path")
 		})
 	})
 })

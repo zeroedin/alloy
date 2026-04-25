@@ -7,38 +7,29 @@ import (
 	"strings"
 
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer"
 	"github.com/yuin/goldmark/renderer/html"
+	"github.com/yuin/goldmark/text"
 )
 
 // MarkdownOptions controls goldmark rendering behavior.
 type MarkdownOptions struct {
-	Unsafe       bool
-	Typographer  bool
-	TemplateTags bool
+	Unsafe        bool
+	Typographer   bool
+	TemplateTags  bool
+	AutoHeadingID bool
+	Hooks         map[string]string
 }
 
 // templateTagPattern matches {{ ... }} and {% ... %} template expressions,
 // including those containing newlines (e.g., {{ "hello\nworld" | filter }}).
 var templateTagPattern = regexp.MustCompile(`(?s)(\{\{.*?\}\}|\{%.*?%\})`)
 
-// RenderMarkdown converts Markdown source to HTML.
-func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
-	src := source
-
-	// Template tag preservation: replace {{ }} and {% %} with placeholders
-	// before goldmark processing, then restore them after.
-	var placeholders []string
-	if opts.TemplateTags {
-		src, placeholders = protectTemplateTags(src)
-	} else {
-		// When template tags are disabled, escape braces so they don't
-		// pass through as literal template syntax.
-		src = escapeTemplateTags(src)
-	}
-
-	// Build goldmark with extensions
+// createGoldmark builds a configured goldmark instance from options.
+func createGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) goldmark.Markdown {
 	extensions := []goldmark.Extender{
 		extension.Table,
 		extension.TaskList,
@@ -53,10 +44,31 @@ func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
 		rendererOpts = append(rendererOpts, html.WithUnsafe())
 	}
 
-	md := goldmark.New(
+	parserOpts := []parser.Option{}
+	if opts.AutoHeadingID {
+		parserOpts = append(parserOpts, parser.WithAutoHeadingID(), parser.WithAttribute())
+	}
+	parserOpts = append(parserOpts, extraParserOpts...)
+
+	return goldmark.New(
 		goldmark.WithExtensions(extensions...),
 		goldmark.WithRendererOptions(rendererOpts...),
+		goldmark.WithParserOptions(parserOpts...),
 	)
+}
+
+// preprocessSource handles template tag protection/escaping before goldmark processing.
+func preprocessSource(source []byte, opts MarkdownOptions) ([]byte, []string) {
+	if opts.TemplateTags {
+		return protectTemplateTags(source)
+	}
+	return escapeTemplateTags(source), nil
+}
+
+// RenderMarkdown converts Markdown source to HTML.
+func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
+	src, placeholders := preprocessSource(source, opts)
+	md := createGoldmark(opts)
 
 	var buf bytes.Buffer
 	if err := md.Convert(src, &buf); err != nil {
@@ -64,9 +76,7 @@ func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
 	}
 
 	result := buf.Bytes()
-
-	// Restore template tags from placeholders
-	if opts.TemplateTags && len(placeholders) > 0 {
+	if len(placeholders) > 0 {
 		result = restoreTemplateTags(result, placeholders)
 	}
 
@@ -140,6 +150,109 @@ func escapeTemplateTags(src []byte) []byte {
 		s = strings.ReplaceAll(s, "%}", "%\u200B}")
 		return []byte(s)
 	})
+	return result
+}
+
+// TOCEntry represents a heading in the table of contents.
+type TOCEntry struct {
+	ID       string
+	Text     string
+	Level    int
+	Children []TOCEntry
+}
+
+// RenderMarkdownWithTOC renders markdown and extracts a nested table of contents
+// from the heading structure. h1 headings are excluded from the TOC.
+// Auto heading IDs are always enabled regardless of opts.AutoHeadingID,
+// since TOC entries require IDs to be useful.
+func RenderMarkdownWithTOC(source []byte, opts MarkdownOptions) ([]byte, []TOCEntry, error) {
+	src, placeholders := preprocessSource(source, opts)
+
+	extraOpts := []parser.Option{}
+	if !opts.AutoHeadingID {
+		extraOpts = append(extraOpts, parser.WithAutoHeadingID(), parser.WithAttribute())
+	}
+	md := createGoldmark(opts, extraOpts...)
+
+	reader := text.NewReader(src)
+	doc := md.Parser().Parse(reader)
+
+	var buf bytes.Buffer
+	if err := md.Renderer().Render(&buf, src, doc); err != nil {
+		return nil, nil, fmt.Errorf("markdown render error: %w", err)
+	}
+
+	result := buf.Bytes()
+	if len(placeholders) > 0 {
+		result = restoreTemplateTags(result, placeholders)
+	}
+
+	var flat []TOCEntry
+	ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		heading, ok := n.(*ast.Heading)
+		if !ok || heading.Level < 2 {
+			return ast.WalkContinue, nil
+		}
+
+		id := ""
+		if rawID, found := heading.AttributeString("id"); found {
+			id = string(rawID.([]byte))
+		}
+
+		var textBuf bytes.Buffer
+		extractText(&textBuf, heading, src)
+
+		flat = append(flat, TOCEntry{
+			ID:    id,
+			Text:  textBuf.String(),
+			Level: heading.Level,
+		})
+		return ast.WalkContinue, nil
+	})
+
+	toc := nestTOCEntries(flat)
+	return result, toc, nil
+}
+
+// extractText recursively collects all text content from an AST node's subtree.
+func extractText(buf *bytes.Buffer, node ast.Node, source []byte) {
+	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
+		if t, ok := child.(*ast.Text); ok {
+			buf.Write(t.Segment.Value(source))
+		} else {
+			extractText(buf, child, source)
+		}
+	}
+}
+
+func nestTOCEntries(flat []TOCEntry) []TOCEntry {
+	if len(flat) == 0 {
+		return nil
+	}
+
+	var result []TOCEntry
+	var stack []*TOCEntry
+
+	for i := range flat {
+		entry := flat[i]
+
+		for len(stack) > 0 && stack[len(stack)-1].Level >= entry.Level {
+			stack = stack[:len(stack)-1]
+		}
+
+		if len(stack) == 0 {
+			result = append(result, entry)
+			stack = []*TOCEntry{&result[len(result)-1]}
+		} else {
+			parent := stack[len(stack)-1]
+			parent.Children = append(parent.Children, entry)
+			stack = append(stack, &parent.Children[len(parent.Children)-1])
+		}
+	}
+
 	return result
 }
 

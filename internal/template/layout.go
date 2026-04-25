@@ -136,7 +136,7 @@ func DetectCircularLayouts(layoutsDir string) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
-		parent := extractLayoutParent(path)
+		parent := ExtractLayoutParent(path)
 		if parent != "" {
 			rel, _ := filepath.Rel(layoutsDir, path)
 			layouts[rel] = parent
@@ -167,8 +167,9 @@ func DetectCircularLayouts(layoutsDir string) error {
 	return nil
 }
 
-// extractLayoutParent reads a layout file and looks for a parent reference.
-func extractLayoutParent(path string) string {
+// ExtractLayoutParent reads a layout file and looks for a parent layout reference
+// in its front matter. Returns the parent layout name, or "" if none found.
+func ExtractLayoutParent(path string) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
@@ -176,10 +177,17 @@ func extractLayoutParent(path string) string {
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
+	inFrontMatter := false
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		// Look for {% layout "parent" %} or layout: parent in front matter
-		if strings.Contains(line, "layout:") {
+		if line == "---" {
+			if inFrontMatter {
+				break // end of front matter
+			}
+			inFrontMatter = true
+			continue
+		}
+		if inFrontMatter && strings.HasPrefix(line, "layout:") {
 			parts := strings.SplitN(line, ":", 2)
 			if len(parts) == 2 {
 				return strings.TrimSpace(strings.Trim(parts[1], `"' `))
@@ -187,6 +195,60 @@ func extractLayoutParent(path string) string {
 		}
 	}
 	return ""
+}
+
+// StripLayoutFrontMatter removes YAML front matter (--- delimited) from layout content.
+// Returns the content after the closing --- delimiter.
+func StripLayoutFrontMatter(s string) string {
+	if !strings.HasPrefix(s, "---") {
+		return s
+	}
+	rest := s[3:]
+	if len(rest) > 0 && rest[0] == '\n' {
+		rest = rest[1:]
+	}
+	// Handle empty front matter (---\n---\n)
+	if strings.HasPrefix(rest, "---") {
+		body := rest[3:]
+		if len(body) > 0 && body[0] == '\n' {
+			body = body[1:]
+		}
+		return body
+	}
+	idx := strings.Index(rest, "\n---")
+	if idx < 0 {
+		return s
+	}
+	body := rest[idx+4:]
+	if len(body) > 0 && body[0] == '\n' {
+		body = body[1:]
+	}
+	return body
+}
+
+// ResolveLayoutChain follows layout: directives in layout front matter to build
+// the full chain from innermost to root. Returns the ordered list of layout file paths.
+// Returns error if the chain exceeds maxDepth (10) or if a referenced layout is not found.
+func ResolveLayoutChain(layoutPath string, layoutsDir string, engine string) ([]string, error) {
+	const maxDepth = 10
+	ext := layoutExtension(engine)
+	chain := []string{layoutPath}
+
+	current := layoutPath
+	for i := 0; i < maxDepth; i++ {
+		parent := ExtractLayoutParent(current)
+		if parent == "" {
+			return chain, nil
+		}
+		parentPath := filepath.Join(layoutsDir, parent+ext)
+		if _, err := os.Stat(parentPath); err != nil {
+			return nil, fmt.Errorf("parent layout %q not found (referenced from %s)", parent, filepath.Base(current))
+		}
+		chain = append(chain, parentPath)
+		current = parentPath
+	}
+
+	return nil, fmt.Errorf("layout chain exceeds maximum depth of %d levels", maxDepth)
 }
 
 // ResolveLayoutWithCascade resolves layout considering cascade data.

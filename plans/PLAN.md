@@ -116,10 +116,6 @@ taxonomies:
   tags:                          # auto-generates /tags/ and /tags/:slug/
   categories:                    # auto-generates /categories/ and /categories/:slug/
 
-permalinks:
-  blog: "/:year/:month/:slug/"
-  default: "/:slug/"
-
 pagination:
   path: "page"                 # Paginated URL segment (default: "page" → /blog/page/2/)
 
@@ -184,7 +180,20 @@ Alloy supports YAML, TOML, and JSON wherever structured data is accepted:
 | `+++` | TOML | `+++`<br>`title = "My Post"`<br>`+++` |
 | `{` | JSON | `{ "title": "My Post" }` |
 
-**Front matter is required on content files only.** Files in the content directory without front matter delimiters are a build error. Empty front matter (`---\n---`) is valid (all fields default to nil/zero), but no delimiters at all is not. This avoids the edge-case bugs Hugo encounters with frontmatter-less files and ensures every page has an explicit metadata boundary. The error message should suggest adding empty front matter if the author has no metadata to set. Layouts, partials, data files, and other non-content files do not have or require front matter — they are templates and structured data, not content pages.
+**Front matter is required on content files only.** Files in the content directory whose extension matches `content.formats` (default: `["md", "html"]`) are content files — front matter delimiters are required. Empty front matter (`---\n---`) is valid (all fields default to nil/zero), but no delimiters at all is not. This avoids the edge-case bugs Hugo encounters with frontmatter-less files and ensures every page has an explicit metadata boundary. The error message should suggest adding empty front matter if the author has no metadata to set. Layouts, partials, data files, and other non-content files do not have or require front matter — they are templates and structured data, not content pages.
+
+**Content-colocated passthrough** — Files in the content directory whose extension does NOT match `content.formats` are automatically copied to the output directory preserving their path relative to `content/`. No front matter check, no template processing, no Markdown rendering — raw file copy. This enables colocation of assets with content:
+
+```
+content/about/
+├── index.md              ← content file (processed through pipeline)
+├── diagram.svg           ← passthrough (copied to _site/about/diagram.svg)
+├── hero.png              ← passthrough (copied to _site/about/hero.png)
+└── patterns/
+    └── demo.html         ← content file if .html is in formats (front matter required)
+```
+
+During content discovery, `DiscoverWithPassthrough` collects two lists: content pages (matching formats) and passthrough files (everything else). Excluded from passthrough: `_data.yaml`/`_data.yml` (cascade data), dot-prefixed files (`.DS_Store`, `.gitkeep`, etc.), and directories. The pipeline copies passthrough files to the output directory during Phase 3 (output writing), alongside static and passthrough-config files. In dev mode, passthrough files in `content/` are served directly from source (no copy needed).
 
 **Data files** (`data/`, `_data.*`) — detected by file extension:
 - `.yaml`, `.yml`
@@ -211,17 +220,23 @@ This follows the same principle as output path conflicts (§2): no silent overwr
 
 ## 1b. Permalinks and URL Customization
 
-### Two Modes: Token Replacement (Fast) + Liquid Fallback (Flexible)
+### Permalink Resolution
 
-**Config-level patterns use token replacement** — simple string substitution, ~0.3µs per page:
+Permalink patterns are **not configured at the site level**. There is no `permalinks:` key in `alloy.config.yaml`. URL patterns are section-level data that belongs in `_data.yaml` — sections own their own URL structure.
+
+**Resolution order:**
+1. Front matter `permalink:` (always wins)
+2. `_data.yaml` cascade `permalink:` (section-level pattern)
+3. `DefaultFromPath` — file path maps directly to URL (`content/about.md` → `/about/`)
+
+**Section-level patterns via `_data.yaml`** — use token replacement for section-wide URL patterns:
 
 ```yaml
-# alloy.config.yaml
-permalinks:
-  blog: "/:year/:month/:slug/"     # /2026/04/my-post/
-  docs: "/docs/:slug/"             # /docs/getting-started/
-  default: "/:slug/"               # /about/
+# content/blog/_data.yaml — all blog posts get date-based URLs
+permalink: "/:year/:month/:slug/"
 ```
+
+This cascades to all pages in `content/blog/` and subdirectories. A post at `content/blog/my-post.md` with `date: 2026-04-10` becomes `/2026/04/my-post/`. To include the section prefix: `permalink: "/blog/:year/:month/:slug/"` or `permalink: "/:section/:year/:month/:slug/"`.
 
 **Available tokens:**
 
@@ -253,17 +268,17 @@ slug: "custom-slug"                 # Override just the :slug token
 ---
 ```
 
-If no `permalink` in front matter, the section default from config is used. If no section match, the `default` pattern is used. If no config at all, the file path maps directly to the URL (`content/blog/my-post.md` → `/blog/my-post/`).
+Pages without a `permalink` in front matter or `_data.yaml` cascade use `DefaultFromPath` — the file path maps directly to the URL (`content/blog/my-post.md` → `/blog/my-post/`).
 
 ### Index Files
 
-Index files (`index.md`, `index.html`) are directory landing pages and resolve to their parent directory path by default, **skipping** section and default permalink patterns:
+Index files (`index.md`, `index.html`) are directory landing pages and resolve to their parent directory path by default, **skipping** cascade permalink patterns:
 
 - `content/index.md` → `/` (site root)
 - `content/blog/index.md` → `/blog/` (section landing)
 - `content/blog/second-post/index.md` → `/blog/second-post/` (page bundle)
 
-This prevents a `default: "/:slug/"` pattern from turning `content/index.md` (title: "Home") into `/home/` instead of `/`.
+This prevents a `_data.yaml` permalink pattern from turning `content/index.md` (title: "Home") into `/home/` instead of `/`.
 
 **Front matter `permalink:` still overrides** — useful when the site is served from a subdirectory:
 ```yaml
@@ -277,7 +292,7 @@ The lookup order for index files is:
 1. Front matter `permalink:` (if set) — always honored
 2. `DefaultFromPath` — strips `/index` suffix, returns directory path
 
-Non-index files follow the full chain: front matter → section pattern → default pattern → `DefaultFromPath`.
+Non-index files follow the full chain: front matter `permalink:` → `_data.yaml` cascade `permalink:` → `DefaultFromPath`.
 
 **Performance:** 3000 pages with token replacement ≈ 1ms. Only pages with `{{ }}` in their permalink pay the Liquid rendering cost.
 
@@ -491,14 +506,14 @@ expiryDate: 2026-12-31        # Removed from output after this date
 ```
 
 - **Default state is published.** If `draft` is `false` or not present, and `publishDate` is not set or is in the past, the page is published immediately. You opt into hiding content, not into showing it.
-- `draft: true` → always excluded from `alloy build`. Visible only in `alloy serve` (dev mode always shows drafts so authors can preview their work). **A draft page ignores `publishDate` and `expiryDate` in dev mode** — it behaves as if it were published now. Date fields are still used for sort ordering within collections.
-- `publishDate` in the future → excluded from both `alloy build` AND `alloy serve`. Future-dated pages are hidden everywhere until their publish date arrives. To preview a future-dated page, set `draft: true` — the draft flag overrides date filtering in dev mode.
-- `expiryDate` in the past → excluded from both `alloy build` and `alloy serve`. To preview an expired page, set `draft: true`.
+- `draft: true` → always excluded from `alloy build` and `alloy serve`. Visible only in `alloy dev` (dev mode always shows drafts so authors can preview their work). **A draft page ignores `publishDate` and `expiryDate` in dev mode** — it behaves as if it were published now. Date fields are still used for sort ordering within collections.
+- `publishDate` in the future → excluded from `alloy build`, `alloy serve`, AND `alloy dev`. Future-dated pages are hidden everywhere until their publish date arrives. To preview a future-dated page, set `draft: true` — the draft flag overrides date filtering in dev mode.
+- `expiryDate` in the past → excluded from `alloy build`, `alloy serve`, and `alloy dev`. To preview an expired page, set `draft: true`.
 - All three interact with collections and pagination:
-  - **Drafts**: excluded from `collections.*` in `alloy build`, **included** in `alloy serve` (so authors can preview paginated lists with draft content)
-  - **Future `publishDate`**: excluded from `collections.*` in both build and serve
-  - **Past `expiryDate`**: excluded from `collections.*` in both build and serve
-  - **Pagination** always operates on the post-filtered collection. Lifecycle filtering happens first, then pagination chunks the remaining items. A paginated list of 47 articles with 3 drafts produces 5 pages of 10 in build mode (44 items) but may produce different page counts in dev mode (47 items, drafts included).
+  - **Drafts**: excluded from `collections.*` in `alloy build` and `alloy serve`, **included** in `alloy dev` (so authors can preview paginated lists with draft content)
+  - **Future `publishDate`**: excluded from `collections.*` in build, serve, and dev
+  - **Past `expiryDate`**: excluded from `collections.*` in build, serve, and dev
+  - **Pagination** always operates on the post-filtered collection. Lifecycle filtering happens first, then pagination chunks the remaining items. A paginated list of 47 articles with 3 drafts produces 5 pages of 10 in build/serve mode (44 items) but may produce different page counts in dev mode (47 items, drafts included).
 
 ### Content Summaries
 
@@ -539,6 +554,73 @@ For display-time summary composition, build the summary in the list template rat
 ```
 
 Liquid's `{% capture %}` and Go's `{{ define }}` can compose summaries within a single template, but these are local variables — they do not feed back into the data cascade and are not accessible from other templates or collection loops.
+
+### Table of Contents (`page.toc`)
+
+Alloy automatically extracts the heading structure from each page during markdown rendering and exposes it as `page.toc` — a nested array of headings available in templates. Sites control the TOC markup; Alloy provides the data.
+
+```liquid
+<!-- layouts/partials/toc.liquid -->
+<nav class="toc">
+  {% for item in page.toc %}
+    <a href="#{{ item.id }}">{{ item.text }}</a>
+    {% if item.children.size > 0 %}
+      <ul>
+        {% for child in item.children %}
+          <li><a href="#{{ child.id }}">{{ child.text }}</a></li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% endfor %}
+</nav>
+```
+
+**Data structure** — Each entry in `page.toc` has:
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string | The heading's `id` attribute (auto-generated slug or `{#custom-id}` override) |
+| `text` | string | Plain text content of the heading (no HTML) |
+| `level` | int | Heading level (2-6; h1 is excluded — it's the page title) |
+| `children` | array | Nested headings one level deeper |
+
+Nesting follows the heading hierarchy — h3s nest under h2s, h4s under h3s. The top-level array contains the shallowest headings (typically h2). Pages with no headings (or only h1) have an empty `page.toc`.
+
+**Auto heading IDs** — Alloy enables goldmark's `parser.WithAutoHeadingID()` by default. Every heading gets a slugified `id` attribute automatically (e.g., "Getting Started" → `id="getting-started"`). Duplicate headings get a numeric suffix (`getting-started-1`). The algorithm is goldmark's default. Configurable:
+
+```yaml
+content:
+  markdown:
+    autoHeadingID: true   # default: true — every heading gets an id attribute
+```
+
+Set `content.markdown.autoHeadingID: false` to disable auto-generated heading IDs. Headings render as plain `<h2>My Section</h2>` with no `id` attribute. Note: TOC anchor links (`#my-section`) won't work without heading IDs.
+
+**Heading attributes** — Authors can override the auto-generated ID using the heading attributes syntax:
+
+```markdown
+## My Heading {#custom-id}
+## My Heading {.custom-class}
+## My Heading {#custom-id .custom-class}
+```
+
+Manual `{#id}` overrides take precedence over auto-generated IDs. Alloy enables `parser.WithAttribute()` alongside `parser.WithAutoHeadingID()`.
+
+**Extraction** — TOC is extracted from the goldmark AST during markdown rendering (Phase 1, step 3), not from rendered HTML. This is fast and reliable — no HTML parsing pass needed. The AST contains the heading nodes with their auto-generated or attribute-overridden IDs.
+
+**Important:** If a render hook (`render-heading.liquid`) modifies heading IDs in the HTML output, the TOC data will not reflect those changes — it reflects the AST-level IDs. To sync, use the `onContentTransformed` plugin hook to mutate `page.toc` after markdown rendering but before layout rendering.
+
+**Config:**
+
+```yaml
+content:
+  markdown:
+    toc: true     # default: true — generate page.toc for all pages
+```
+
+Set `content.markdown.toc: false` to disable TOC generation entirely (skips the AST walk for sites that don't use TOC).
+
+**Future option:** Configurable ID generation algorithm via a custom `parser.IDs` implementation, exposed as a config option. For v1, goldmark's default slugification is used.
 
 ---
 
@@ -657,7 +739,7 @@ All source data (built-in and plugin) is cached to `.alloy/fetch-cache/` on disk
 
 - **Cache-first** — never refetch unless TTL has expired
 - **File changes don't trigger refetches** — only content/template rebuilds
-- **Force refetch** — `alloy serve --refetch` bypasses cache TTL and fetches fresh data on startup
+- **Force refetch** — `alloy dev --refetch` or `alloy serve --refetch` bypasses cache TTL and fetches fresh data on startup
 - **Expired TTL** — refetch happens on next rebuild, not proactively
 
 ### Combined with Virtual Pages
@@ -726,10 +808,16 @@ passthrough:
 **Build mode (`alloy build`):**
 - Static and passthrough files are **copied** to `_site/`
 
-**Dev mode (`alloy serve`):**
+**Dev mode (`alloy dev`):**
 - Static and passthrough files are **served directly** from their source locations
 - The Go HTTP server maps URL paths to source directories — no copy at all
-- File changes are reflected instantly (no rebuild, no copy, no watcher needed)
+- File changes are reflected instantly (no rebuild, no copy needed — but the watcher still triggers a browser reload)
+
+**Serve mode (`alloy serve`):**
+- Static and passthrough files are **copied** to `_site/` (same as build)
+- Passthrough `from:` directories must be watched for changes. On change, only the modified file is recopied to `_site/<to>/<relative-path>` — not the entire passthrough directory. A browser reload is triggered after the recopy.
+
+**Passthrough file watching** — `WatchDirs()` must include all passthrough `from:` directories from config. Passthrough sources are directory trees — the watcher must recursively watch subdirectories, including subdirectories created after the server starts. Changes to passthrough files are classified as `PassthroughChange` and trigger a targeted file recopy instead of a full pipeline rebuild.
 
 ### Pre-Build Validation
 
@@ -975,7 +1063,7 @@ Each phase must complete before the next begins, but work within each phase is p
 
 ### Error Handling
 
-Errors are treated differently depending on the mode. The core principle: **`alloy build` never produces partial output. `alloy serve` keeps running and shows errors clearly.**
+Errors are treated differently depending on the mode. The core principle: **`alloy build` never produces partial output. `alloy dev` keeps running and shows errors clearly.**
 
 **`alloy build` (production) — fail fast, fail completely:**
 
@@ -991,7 +1079,7 @@ Errors are treated differently depending on the mode. The core principle: **`all
         Build aborted. No output written.
 ```
 
-**`alloy serve` (development) — keep running, show errors:**
+**`alloy dev` (development) — keep running, show errors:**
 
 - **Page render failure does not stop the server.** The failed page shows an error overlay in the browser (file path, line number, code snippet). Other pages continue to serve normally. The error clears on the next successful rebuild.
 - **Plugin error or crash stops the server.** A hook returning an error and a plugin crash are treated identically — both stop the server. Plugins are foundational — if a plugin fails to load, returns an error from a hook, or crashes during execution, the server exits with diagnostic info (plugin name, error, stack trace where available). The user must fix the plugin and restart. The only non-fatal plugin failure is a **timeout**: a timed-out hook produces a warning and continues with the pre-hook payload.
@@ -1008,11 +1096,11 @@ Errors are treated differently depending on the mode. The core principle: **`all
         Server stopped.
 ```
 
-### Incremental Builds — Serve Mode Only
+### Incremental Builds — Dev Mode Only
 
-Incremental builds are exclusive to `alloy serve` (dev mode). `alloy build` always does a **full clean rebuild** — every page is rendered, every file is written. This ensures CI/CD produces deterministic, complete output.
+Incremental builds are exclusive to `alloy dev` (dev mode). `alloy build` and `alloy serve` always do a **full clean rebuild** — every page is rendered, every file is written. This ensures CI/CD and production preview produce deterministic, complete output.
 
-In serve mode, after the initial full build, the file watcher triggers incremental rebuilds on changes. Unlike 11ty's stage-based invalidation (where build-ordering edges cause cascading rebuilds), Alloy tracks **actual data reads** to determine the minimum set of pages to rebuild. The pipeline function `BuildIncremental(cfg, contentMap, previousCache, changedFiles)` accepts a previous build cache and only rebuilds affected pages.
+In dev mode, after the initial full build, the file watcher triggers incremental rebuilds on changes. Alloy tracks **actual data reads** to determine the minimum set of pages to rebuild. The pipeline function `BuildIncremental(cfg, contentMap, previousCache, changedFiles)` accepts a previous build cache and only rebuilds affected pages.
 
 **Content-hash change detection** (SHA-256, stored in `.alloy/cache.json`):
 - On incremental rebuild, skip unchanged files entirely (no re-parse, no re-render)
@@ -1090,7 +1178,7 @@ Deep merging happens **lazily** — only when a nested key is accessed at multip
 
 Not every subdirectory is a collection. Collections are created in two ways:
 
-**Blog collections** — A section with a date-based permalink pattern (containing `:year`, `:month`, or `:day` tokens) automatically collects its children into a section collection. The permalink declaration is what creates the collection; the date in each post's front matter drives URL structure and default sort order. For example, `content/blog/` with `permalinks: blog: "/:year/:month/:day/:slug/"` produces `collections.blog` containing all posts in that directory.
+**Blog collections** — A section with a date-based permalink pattern (containing `:year`, `:month`, or `:day` tokens in `_data.yaml`) automatically collects its children into a section collection. The permalink declaration is what creates the collection; the date in each post's front matter drives URL structure and default sort order. For example, `content/blog/_data.yaml` with `permalink: "/:year/:month/:day/:slug/"` produces `collections.blog` containing all posts in that directory.
 
 **Taxonomy collections** — Cross-cutting groups created by front matter tags, categories, or other declared taxonomy keys. A blog post and a docs page can both be tagged "javascript" and appear in the same taxonomy collection. Tags can be applied to all pages in a directory via `_data.yaml` without repeating the tag in every file's front matter. See the Taxonomies section below.
 
@@ -1404,9 +1492,70 @@ The `post.liquid` convention only applies to children of sections with date-base
 
 Same layout directory, same lookup order, same data context — different syntax.
 
-**Layout composition** is delegated to each engine's native capabilities — Alloy does not implement its own layout inheritance layer:
-- **Liquid:** `{% include "partial" %}` and `{% render "partial" %}` for partials. Liquid (Shopify spec) does not have `extends`/`block` — layout wrapping is handled by Alloy's two-pass rendering, which injects rendered content into the layout via `{{ content }}`.
+**Layout chaining** — Layouts can reference a parent layout via front matter `layout:` directives. The build pipeline renders inside-out: page content → innermost layout → parent layout → ... → root layout. Each level injects `{{ content }}` from the level below. This enables multi-level composition (e.g., `page → has-toc → base`):
+
+```liquid
+<!-- layouts/has-toc.liquid -->
+---
+layout: "base"
+---
+<div class="with-toc">
+  <aside>{% include "partials/toc" %}</aside>
+  <main>{{ content }}</main>
+</div>
+```
+
+The pipeline strips layout front matter before rendering (it is not output as literal text). Layout front matter is only used for the `layout:` directive — other front matter keys in layouts are ignored.
+
+**Circular layout detection** — Before rendering, `DetectCircularLayouts(layoutsDir)` scans all layout files for parent references and fails the build if a cycle is found (e.g., `a → b → a`). This runs once during Phase 0 validation, not per-page.
+
+**Max depth** — Layout chains are capped at 10 levels. If a chain exceeds this depth without reaching a root layout (one with no `layout:` front matter), the build fails with an error identifying the chain. This prevents infinite loops from malformed layouts that escape cycle detection.
+
+**Partials and includes** are delegated to each engine's native capabilities:
+- **Liquid:** `{% include "partial" %}` and `{% render "partial" %}` for partials. Resolves from the layouts directory.
 - **Go:** `{{ block "name" . }}` / `{{ define "name" }}` for layout inheritance, `{{ template "name" . }}` for includes. Full layout chaining is built into the engine.
+
+**Content-relative file inlining** — `{% inline "./path" %}` reads a file relative to the current content file's directory and inserts its raw contents into the output. No template processing — the file is inserted verbatim. This is an Alloy-specific tag, not part of the Liquid spec.
+
+```markdown
+<!-- content/about/index.md -->
+# About
+
+{% inline "./about-diagram.svg" %}
+```
+
+With the directory structure:
+```
+content/about/
+├── index.md
+└── about-diagram.svg
+```
+
+The SVG markup is inlined directly into the rendered HTML. This is essential for SVGs that need to respond to CSS custom properties (theming) and cannot be loaded as `<img>` tags.
+
+**Path rules:**
+- Path must start with `./` or `../` — always relative to the content file's directory
+- Absolute paths are a build error
+- File not found is a build error (not silent empty output)
+- **Path sandboxing** — After resolving the relative path, the result must be within the content root directory. Paths that traverse outside content (e.g., `../../../../etc/passwd`) are a build error. The check: `filepath.Rel(contentRoot, resolvedPath)` must not start with `..`. This allows `../shared.svg` when it stays inside `content/` but blocks escaping to the filesystem.
+
+**Allowed file types** (text-based only):
+`.svg`, `.html`, `.htm`, `.txt`, `.css`, `.js`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`, `.md`
+
+Binary file types (`.png`, `.jpg`, `.gif`, `.webp`, `.woff2`, `.pdf`, etc.) produce a build error with guidance: `"inline: binary file type .png not supported — use <img> instead"`.
+
+**Future option:** The allowlist is hardcoded for v1. If users need custom text extensions (e.g., `.glsl`, `.webc`), a config-driven allowlist can be added later:
+```yaml
+templates:
+  inline:
+    allow: [".svg", ".html", ".glsl", ".webc"]
+```
+
+**Raw insertion** — The inlined content is NOT processed through Markdown or Liquid. No template tag interpretation, no Markdown rendering. The raw file bytes (as UTF-8 text) are inserted at the tag position. This prevents accidental Liquid parsing of content like `{{x}}` in SVG attributes or JavaScript files.
+
+**Registration** — `{% inline %}` is registered via `engine.AddTag("inline", inlineTagFunc)` during engine setup, the same mechanism used for plugin shortcodes. The tag function receives the content file's directory path from the render context to resolve relative paths.
+
+**Scope** — `{% inline %}` is content-scoped: relative paths are always resolved from the current content file's directory via the render context. If `{% inline %}` appears inside a layout while rendering a page, it still resolves against that page's content directory, not the layout file's directory. For layout-relative partials, use `{% include %}` instead.
 
 **Shortcodes** are reusable content snippets that accept arguments and output HTML. They're used in content files to embed rich elements without writing raw HTML.
 
@@ -1662,7 +1811,7 @@ The `alloc` export is required to avoid writing at hardcoded memory offsets that
 - **`shortcode`**: Input is a JSON object: `{ "name": "youtube", "args": ["abc123"], "content": "" }`. Output is a UTF-8 HTML string.
 - **`hook`**: Input is a JSON payload (shape depends on the hook — see Lifecycle Events). Output is the modified JSON payload.
 
-**Error handling:** If any export returns `(0, 0)`, the host treats it as a plugin execution error and propagates the failure according to the normal pipeline error policy (build aborts in `alloy build`, error overlay in `alloy serve`). If the module exports `last_error()`, the host reads and surfaces the error details. No silent fallback to original input — consistent with the error handling policy in §2.
+**Error handling:** If any export returns `(0, 0)`, the host treats it as a plugin execution error and propagates the failure according to the normal pipeline error policy (build aborts in `alloy build`/`alloy serve`, error overlay in `alloy dev`). If the module exports `last_error()`, the host reads and surfaces the error details. No silent fallback to original input — consistent with the error handling policy in §2.
 
 **Optional exports:**
 
@@ -1852,7 +2001,7 @@ Source File → Front Matter Extract → Format Detect → Markdown Parse → Me
 1. **Front matter extraction**: Split YAML/TOML header from body (delimited by `---` or `+++`)
 2. **Format detection**: By file extension (`.md`, `.html`, `.txt`)
 3. **Markdown parsing** (`.md` files only):
-   - goldmark (CommonMark + extensions: tables, footnotes, task lists, typographer)
+   - goldmark (CommonMark + extensions: tables, footnotes, task lists, typographer, auto heading IDs, heading attributes)
    - `html.WithUnsafe()` enabled — raw HTML blocks pass through untouched
    - Template tag auto-detection extension — `{{ ... }}` and `{% ... %}` patterns are recognized as raw inline nodes and pass through goldmark untouched. No special delimiters needed.
    - `.html` → no Markdown processing (already HTML)
@@ -1906,6 +2055,64 @@ When the opening tag is embedded in a line with other text, the inline TemplateT
 - **Liquid engine:** wrap in `{% raw %}...{% endraw %}`
 - **Go engine:** use `{{ "{{" }}` to output a literal `{{` (standard Go template escaping)
 - **Both engines:** goldmark's inline code (backticks) and fenced code blocks protect their contents from the auto-detection extension — goldmark's parsers take precedence.
+
+### Markdown Render Hooks
+
+Render hooks override how specific markdown element types are rendered to HTML. Instead of goldmark's default output, a Liquid template controls the HTML for that element type. Templates live in `layouts/_markup/`:
+
+```
+layouts/_markup/
+├── render-blockquote.liquid     # blockquotes (>)
+├── render-codeblock.liquid      # fenced code blocks (```)
+├── render-codeblock-mermaid.liquid  # language-specific: mermaid code blocks
+├── render-heading.liquid        # headings (#, ##, ###)
+├── render-image.liquid          # images (![alt](src))
+├── render-link.liquid           # links ([text](url))
+└── render-table.liquid          # tables (| ... |)
+```
+
+If a render hook template exists, Alloy registers a custom goldmark node renderer that delegates to the template instead of emitting default HTML. If no template exists, default goldmark rendering applies. Render hooks run during Phase 1 (markdown rendering) — before template tag processing and layout rendering. Alloy scans `layouts/_markup/` at startup and registers renderers for any templates found.
+
+**Engine selection** — Render hook templates follow the configured template engine. With `templates.engine: "liquid"` (default), hooks are `.liquid` files. With `templates.engine: "gotemplate"`, hooks are `.html` files (e.g., `render-codeblock.html`). The hook template syntax matches the engine — `{{ markup.language }}` in Liquid, `{{ .markup.language }}` in Go templates.
+
+**Template context** — Each render hook template receives a `markup` object with element-specific properties:
+
+| Template | `markup.*` properties |
+|---|---|
+| `render-blockquote` | `inner` (rendered inner HTML), `attributes` |
+| `render-codeblock` | `inner` (raw code text), `language`, `attributes` |
+| `render-heading` | `inner` (rendered inner HTML), `level` (1-6), `id` (auto-generated slug via `slugify` — e.g., "My Section" → `my-section`), `text` (plain text, no HTML) |
+| `render-image` | `src`, `alt`, `title`, `attributes` |
+| `render-link` | `destination`, `text` (rendered inner HTML), `title`, `is_external` (boolean: starts with `http://` or `https://`) |
+| `render-table` | `inner` (rendered inner HTML — thead/tbody/tr/td), `attributes` |
+
+The full `page.*` and `site.*` context is also available — render hooks can access front matter, site data, collections, etc.
+
+**Language-specific code block hooks** — `render-codeblock-{language}.liquid` overrides rendering for a specific fenced code block language. For example, `render-codeblock-mermaid.liquid` renders mermaid blocks as `<div class="mermaid">` instead of `<pre><code>`. The generic `render-codeblock.liquid` is the fallback when no language-specific template matches. Lookup order: language-specific → generic → default goldmark rendering.
+
+**Example: custom code block rendering**
+
+```liquid
+<!-- layouts/_markup/render-codeblock.liquid -->
+<rh-code-block language="{{ markup.language }}">
+  <script type="text/{{ markup.language }}">{{ markup.inner }}</script>
+</rh-code-block>
+```
+
+**Example: external link detection**
+
+```liquid
+<!-- layouts/_markup/render-link.liquid -->
+{% if markup.is_external %}
+  <a href="{{ markup.destination }}" target="_blank" rel="noopener">{{ markup.text }} <svg class="external-icon">...</svg></a>
+{% else %}
+  <a href="{{ markup.destination }}">{{ markup.text }}</a>
+{% endif %}
+```
+
+**Template tag escaping** — The pipeline's `escapeTemplateTagsInCode` step protects `{{ }}`/`{% %}` inside `<code>` elements from Liquid processing. When a render hook replaces `<pre><code>` with a different structure (e.g., `<rh-code-block><script>`), the hook's `markup.inner` content is already escaped by goldmark. The hook template receives pre-escaped code content — no additional escaping needed.
+
+**Implementation** — Custom goldmark node renderers are registered for each supported element type. At startup, the pipeline scans `layouts/_markup/` for render hook templates. For each found template, a custom renderer is registered that calls the Liquid engine with the node's context instead of emitting default HTML. The template is parsed once at startup and reused for every matching node.
 
 **Cache key**: `hash(source_content + front_matter + layout + data_cascade_snapshot)`
 
@@ -2076,19 +2283,19 @@ The `url` filter resolves paths relative to `baseURL`.
 
 ## 8. Dev Server — Two Modes
 
-Alloy's server has two modes. Both use the same built-in Go HTTP server, serve from `_site/`, and watch for changes. The difference is what gets written and how updates reach the browser.
+Alloy's server has two modes. Both use the same built-in Go HTTP server and watch for changes. `alloy serve` writes to and serves from `_site/`, while `alloy dev` serves rendered pages from memory and static/passthrough files directly from source. The difference is what gets written and how updates reach the browser.
 
-### `alloy serve` — Dev Mode
+### `alloy dev` — Dev Mode
 
 The daily driver for active development.
 
-- **Phase 1 only** — Liquid + Markdown → HTML with raw component tags. No SSR, no DSD, regardless of config.
+- **Phase 1 only** — Liquid + Markdown → HTML with raw component tags. No SSR, no DSD, regardless of config. `Build()` is called with `BuildOptions{SkipSSR: true}` so Phase 2 is skipped even when `ssr:` is configured.
 - **Components render client-side** — Browser loads component JS and renders them normally.
 - **Full page reload** — A small dev client (injected in dev mode only) connects via WebSocket. Any file change triggers a rebuild of affected pages and sends `{"type": "reload"}` to the browser.
 
 **Future: Signals-Based HMR.** The architecture should preserve surface area for granular hot module replacement in a future version — binding markers in template output, per-property DOM patching, CSS hot-swap, and component reconstruction without full reload. For v1, full page reload is sufficient. The WebSocket infrastructure and file watcher are the same foundation HMR would build on.
 
-### `alloy serve --preview` — Preview Mode
+### `alloy serve` — Production Server
 
 For verifying production output locally. Runs the same pipeline as `alloy build` but keeps serving.
 
@@ -2099,28 +2306,36 @@ For verifying production output locally. Runs the same pipeline as `alloy build`
 
 ### `alloy build` — No Server
 
-Same pipeline as `--preview`: Phase 1 + conditional Phase 2. Writes to `_site/` and exits. No server, no watching. This is what you deploy.
+Same pipeline as `alloy serve`: Phase 1 + conditional Phase 2. Writes to `_site/` and exits. No server, no watching. This is what you deploy.
 
 ### SSR Is Always Opt-In
 
-SSR only runs (in `--preview` and `build`) when explicitly configured:
+SSR only runs (in `alloy serve` and `alloy build`) when explicitly configured:
 
 ```yaml
 # alloy.config.yaml
 ssr:
-  command: "golit render --defs ./bundles"
+  command: "your-ssr-engine render"
 
-# No ssr: key → no SSR ever, even in --preview or build
+# No ssr: key → no SSR ever, even in serve or build
 ```
 
-Without an `ssr:` config block, `--preview` still works — it just serves Phase 1 output with full reload (useful for verifying templates, data cascade, and layouts without dev tooling).
+Without an `ssr:` config block, `alloy serve` still works — it just serves Phase 1 output with full reload (useful for verifying templates, data cascade, and layouts without dev tooling).
 
 ### Shared Server Features (both modes)
 
-- **File watcher**: `fsnotify` with 50ms debounce. Watches `content/`, `layouts/`, `data/`, `assets/`, `static/`, and component source dirs.
+- **File watcher**: `fsnotify` with 50ms debounce. Watches `content/`, `layouts/`, `data/`, `assets/`, `static/`, passthrough `from:` directories, and component source dirs. Both `alloy dev` and `alloy serve` must set up watchers — `alloy serve` is NOT a one-shot build.
 - **Bulk change protection**: If many files change at once (e.g., `git checkout`), trigger a full rebuild instead of N incremental ones.
-- **Dev mode (`alloy serve`)**: Rendered pages are held in an in-memory map — no `_site/` output written to disk, lower latency, no SSD wear. Source files (content, layouts, data, assets, static) are still read from disk normally. Static and passthrough files are served directly from their source locations (no copy).
-- **Preview mode (`alloy serve --preview`)**: Writes to `_site/` and serves from disk. Production-like output including SSR.
+- **Rebuild handler by change type** (applies to both `alloy dev` and `alloy serve`):
+  - `ContentChange`, `LayoutChange`, `DataChange` → pipeline rebuild (incremental in dev, full in serve)
+  - `AssetChange` → recopy assets to `_site/`
+  - `StaticChange` → recopy static files to `_site/`
+  - `PassthroughChange` → targeted recopy: determine which passthrough mapping the file belongs to, compute relative path within `from:`, copy only that file to `_site/<to>/<relative-path>`. In dev mode, no recopy needed (served from source) — just browser reload.
+  - `ComponentChange` → SSR re-render of affected pages
+  - All change types trigger a browser reload via WebSocket after the rebuild/recopy completes.
+- **Passthrough targeted recopy** — `RecopyPassthroughFile(changedPath, cfg)` finds the matching passthrough mapping, computes the output path, and copies only the changed file. Does not re-run the pipeline or recopy the entire passthrough directory.
+- **Dev mode (`alloy dev`)**: Rendered pages are held in an in-memory map — no `_site/` output written to disk, lower latency, no SSD wear. Source files (content, layouts, data, assets, static) are still read from disk normally. Static and passthrough files are served directly from their source locations (no copy). Content-colocated non-content files (SVGs, images, JS, etc. in `content/`) are also served directly from `content/` — the dev server's request handler falls back to the content directory for URLs that don't match a rendered page in memory. This ensures relative references like `<img src="./photo.png">` work without writing to `_site/`.
+- **Serve mode (`alloy serve`)**: Writes to `_site/` and serves from disk. Production-like output including SSR. Must have the same file watcher setup as `alloy dev` — watches all directories, dispatches rebuilds by change type, triggers browser reload.
 - **Build mode (`alloy build`)**: Always writes to `_site/`.
 - **Port auto-increment**: If the requested port is occupied, the server tries up to 10 consecutive ports (e.g., 3000 → 3001 → … → 3009) before giving up with an error. A warning is logged for each skipped port (e.g., `[alloy] WARN Port 3000 in use, using 3001`). The startup message always shows the actual port. This matches the behavior of modern dev servers (Vite, Next.js) and reduces friction when multiple projects run simultaneously.
 - **Auto-opens browser** (optional)
@@ -2172,9 +2387,8 @@ Scripts and CI pipelines rely on exit codes. The error return from `cmd.Execute(
 ```
 alloy init               # Create default alloy.config.yaml (fails if one already exists)
 alloy build              # Run pipeline (Phase 1 + Phase 2 if SSR configured), write _site/, exit
-alloy serve              # Dev mode: Phase 1, full page reload, client-side components
-alloy serve --preview    # Preview mode: same pipeline as build, served locally, full reload
-alloy serve --refetch    # Bypass source cache TTL, fetch fresh external data on startup
+alloy dev                # Dev mode: Phase 1, full page reload, client-side components, drafts visible
+alloy serve              # Production server: same pipeline as build, served locally, full reload
 alloy version            # Print version
 alloy help               # Help text
 ```
@@ -2203,15 +2417,26 @@ Runs the full build pipeline and writes output to `_site/` (or the configured ou
 4. Print build summary: page count and duration (e.g., `Built 42 pages in 127ms`).
 5. Exit 0 on success, exit 1 on any error.
 
-#### `alloy serve`
+#### `alloy dev`
 
-Starts the development server with live reload.
+Starts the development server with live reload. Phase 1 only, in-memory, drafts visible.
 
 1. Load config (same as build).
-2. Run initial build via `pipeline.Build(cfg)`.
+2. Run initial build via `pipeline.Build(cfg)` with `cfg.IncludeDrafts = true` (unless `--no-drafts`).
 3. Start HTTP server on `--port` (default 3000). If the port is occupied, auto-increment up to 10 consecutive ports. If all 10 are occupied, exit 1 with an error listing the range tried.
 4. Start file watcher for live reload.
 5. Print startup message: `Serving at http://localhost:<actual-port>` (always shows the actual port, which may differ from `--port` if auto-increment kicked in).
+6. Block until interrupted (Ctrl+C).
+
+#### `alloy serve`
+
+Starts the production server. Same pipeline as `alloy build` but keeps serving with file watching. Writes to `_site/`, runs SSR if configured, excludes drafts.
+
+1. Load config (same as build).
+2. Run initial build via `pipeline.Build(cfg)` with `cfg.IncludeDrafts = false`.
+3. Start HTTP server on `--port` (default 3000) with port auto-increment.
+4. Start file watcher for live reload.
+5. Print startup message.
 6. Block until interrupted (Ctrl+C).
 
 ### Flags
@@ -2222,10 +2447,9 @@ Starts the development server with live reload.
 --output, -o       Output directory (default: _site)
 --verbose, -v      Verbose logging
 --quiet, -q        Suppress output
---port, -p         Dev server port (default: 3000)
---preview          Run serve in preview mode (production pipeline + full reload)
---no-drafts        Hide draft content in dev mode (alloy serve only, drafts visible by default)
---refetch          Bypass source cache TTL, fetch fresh data on startup
+--port, -p         Server port (default: 3000) — alloy dev and alloy serve
+--no-drafts        Hide draft content (alloy dev only, drafts visible by default)
+--refetch          Bypass source cache TTL, fetch fresh data on startup — alloy dev and alloy serve
 ```
 
 ### Build Progress Output
@@ -2282,15 +2506,33 @@ Useful for identifying slow pages or debugging build issues. No progress bar —
 
 No output at all except errors. Not even the summary line. Exit code communicates success/failure.
 
-**Serve mode rebuilds:**
+**Dev/serve mode — initial build:**
 
-Incremental rebuilds in `alloy serve` show a compact one-line summary:
+The initial `pipeline.Build()` called by `alloy dev` or `alloy serve` must attach a progress reporter using the same flag-based logic as `alloy build`:
+- `--quiet` → nil
+- `--verbose` → `VerboseProgress`
+- default → `TTYProgress` if terminal, nil if piped
+
+This is where the progress bar is most valuable — the user is watching the terminal waiting for the server to start. Without it, there is no output between running the command and seeing `Serving at http://localhost:3000`.
+
+```
+[alloy] Discovering content... 420 pages found
+[alloy] Rendering  [========>                ] 34% (142/420) content/blog/my-post.md
+[alloy] Built 420 pages in 1.8s
+Serving at http://localhost:3000
+```
+
+**Dev mode — incremental rebuilds:**
+
+Incremental rebuilds via `BuildIncremental()` (used by `alloy dev`) are typically 1-3 pages and complete in under 100ms. A multi-stage progress bar would be visual noise. `BuildIncremental()` only calls `Summary` on the reporter — no `StartStage`, `Update`, or `EndStage`:
 
 ```
 [alloy] 12:34:58 Rebuilt 3 pages in 47ms (417 cached)
 ```
 
-Full rebuilds (triggered by config changes or bulk file changes) show the full progress bar.
+The timestamp prefix is added by the reporter's serve-mode `Summary` implementation, not by the pipeline.
+
+Full rebuilds triggered by config changes or bulk file changes (10+ files) go through `Build()`, not `BuildIncremental()`, and show the full multi-stage progress bar.
 
 #### `--root` flag behavior
 
@@ -2474,7 +2716,7 @@ func BenchmarkBuild1000Pages(b *testing.B) {
 
 ### Phase 1 — Foundation
 - [ ] Initialize Go module (`go mod init`)
-- [ ] CLI skeleton (`alloy init`, `alloy build`, `alloy serve`, `alloy version`, `alloy help`)
+- [ ] CLI skeleton (`alloy init`, `alloy build`, `alloy dev`, `alloy serve`, `alloy version`, `alloy help`)
 - [ ] Config file loading (YAML, TOML, JSON — detected by file extension)
 - [ ] Content discovery (walk `content/` directory, collect files)
 - [ ] Front matter extraction (YAML `---`, TOML `+++`, JSON `{` — detected by delimiter)
@@ -2494,7 +2736,7 @@ func BenchmarkBuild1000Pages(b *testing.B) {
 - [ ] Taxonomy page generation (index + per-term pages, shared layout, `taxonomy` context object)
 - [ ] Permalinks and URL generation (token system, front matter overrides, Liquid fallback, aliases)
 - [ ] Pagination (paginated lists with `perPage > 1`, virtual pages with `perPage: 1`)
-- [ ] Content lifecycle (draft — serve only, publishDate, expiryDate, summaries)
+- [ ] Content lifecycle (draft — dev only, publishDate, expiryDate, summaries)
 - [ ] Output formats (HTML, JSON, XML via template file extension)
 - [ ] Auto-generated files (sitemap.xml with `sitemap: false` disable, feed.xml as opt-in templates)
 - [ ] External data sources (built-in REST/GraphQL fetch, plugin source handlers, cache to `.alloy/fetch-cache/`)
@@ -2514,14 +2756,14 @@ func BenchmarkBuild1000Pages(b *testing.B) {
 - [ ] Component invalidation: rebuild pages using changed components (via `componentToPages` lookup)
 
 ### Phase 4 — Dev Experience
-- [ ] Dev server (`alloy serve`) with file watching (fsnotify, 50ms debounce)
+- [ ] Dev server (`alloy dev`) with file watching (fsnotify, 50ms debounce)
 - [ ] WebSocket dev client for full page reload on file changes
-- [ ] Preview mode (`alloy serve --preview`) — production pipeline + full reload
-- [ ] SSR engine process management in preview mode (spawn on start, kill on exit)
+- [ ] Production server (`alloy serve`) — same pipeline as build, served locally, full reload
+- [ ] SSR engine process management in serve mode (spawn on start, kill on exit)
 - [ ] Incremental builds with content-hash change detection
 - [ ] Fine-grained invalidation (Phase 1 vs Phase 2 independence)
 - [ ] Bulk change protection (many files at once → full rebuild instead of N incremental)
-- [ ] `--no-drafts` flag (hide drafts in dev mode)
+- [ ] `--no-drafts` flag (hide drafts in `alloy dev`)
 - [ ] Error overlay in browser (file path, line number, code snippet)
 - [ ] Error reporting in terminal (clear messages with file/line, colored output)
 
@@ -2555,7 +2797,7 @@ func BenchmarkBuild1000Pages(b *testing.B) {
 
 After each phase, verify by:
 1. `alloy build` on a test site with increasing page counts (10, 100, 1000)
-2. `alloy serve` with live reload — change a file, confirm < 200ms incremental rebuild
+2. `alloy dev` with live reload — change a file, confirm < 200ms incremental rebuild
 3. Run `go test ./...` — all tests pass
 4. Run `go build` — single binary, no CGo dependencies
 5. Benchmark: `time alloy build` on 1000-page test site, target < 5s (no SSR), < 10s (with SSR)
@@ -2587,7 +2829,7 @@ Alloy is licensed under **MIT**. All dependencies use permissive licenses (MIT, 
 
 ### Signals-Based HMR (Dev Mode)
 
-Replace full page reload in `alloy serve` with granular hot module replacement. The v1 WebSocket and file watcher infrastructure is designed to support this upgrade path.
+Replace full page reload in `alloy dev` with granular hot module replacement. The v1 WebSocket and file watcher infrastructure is designed to support this upgrade path.
 
 **Binding markers** — During dev-mode rendering, template outputs are tagged with data attributes:
 
@@ -2647,9 +2889,9 @@ v1 plugin hooks are synchronous barriers — all pages batch through each hook b
 A validation-only command that reuses Phase 0 logic without running a full build. Useful in CI to catch errors early. Could validate: front matter schemas, broken internal links, missing layouts, unused data files, output path conflicts, and taxonomy/collection integrity.
 
 
-### `alloy serve --preview` Flag Naming
+### ~~`alloy serve --preview` Flag Naming~~ (Resolved)
 
-Evaluate whether `--preview` is the clearest DX for "serve production-like output locally." Alternative: `--build` (but risks confusion with `alloy build`). Most tools use "preview" (Astro's `astro preview`, Vite's preview mode). Revisit based on user feedback after v1.
+Resolved in #256: split into `alloy dev` (development) and `alloy serve` (production). The `--preview` flag is removed.
 
 ### `alloy init` Scaffolding
 
@@ -2674,20 +2916,20 @@ Glob patterns matched against the relative path within `assets/`. Matched files 
 Allow the dev server to behave as if it were running at a specified future (or past) date/time. This enables previewing future-`publishDate` content and testing `expiryDate` behavior without setting `draft: true` on every page.
 
 ```bash
-alloy serve --act-as-datetime="2026-12-25T00:00:00Z"
+alloy dev --act-as-datetime="2026-12-25T00:00:00Z"
 ```
 
-All lifecycle filtering (`publishDate`, `expiryDate`) uses the provided datetime instead of `time.Now()`. Collections are built accordingly. The terminal and browser overlay show a banner indicating the simulated time. This is a dev-mode-only feature — `alloy build` always uses real time.
+All lifecycle filtering (`publishDate`, `expiryDate`) uses the provided datetime instead of `time.Now()`. Collections are built accordingly. The terminal and browser overlay show a banner indicating the simulated time. This is a dev-mode-only feature — `alloy build` and `alloy serve` always use real time.
 
 ### Reconsider Error Overlay Approach
 
-The current spec (S8) defines an HTML error overlay injected into failed pages during `alloy serve`. While this is dev-mode only (never in `alloy build` output), injecting HTML the user didn't write raises concerns:
+The current spec (S8) defines an HTML error overlay injected into failed pages during `alloy dev`. While this is dev-mode only (never in `alloy build` or `alloy serve` output), injecting HTML the user didn't write raises concerns:
 
 - Could interfere with component rendering and layout debugging
 - Adds complexity to the dev server (HTML injection, error state tracking, overlay dismissal)
 - Is opinionated — some developers prefer terminal-only errors and find overlays intrusive
 
-Consider moving build failure reporting to terminal-only output, with structured error messages (file path, line number, code snippet, pipeline stage) displayed in the terminal where `alloy serve` is running. The WebSocket dev client could optionally `console.error()` the details in the browser's DevTools instead of rendering an overlay. This keeps the browser output clean and avoids injecting any HTML the user didn't author, while still surfacing errors where the developer can see them.
+Consider moving build failure reporting to terminal-only output, with structured error messages (file path, line number, code snippet, pipeline stage) displayed in the terminal where `alloy dev` is running. The WebSocket dev client could optionally `console.error()` the details in the browser's DevTools instead of rendering an overlay. This keeps the browser output clean and avoids injecting any HTML the user didn't author, while still surfacing errors where the developer can see them.
 
 ### Alternative Template Engine: pongo2
 

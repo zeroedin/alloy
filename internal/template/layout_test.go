@@ -1,6 +1,7 @@
 package template_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -262,6 +263,101 @@ var _ = Describe("ResolveLayout", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("circular"),
 				"error must describe the circular reference")
+		})
+	})
+
+	// ── Layout chaining (issue #276) ──────────────────────────────────
+	// Layouts can reference a parent layout via front matter layout:
+	// directive. The pipeline renders inside-out, stripping front matter.
+
+	Describe("Layout chaining", func() {
+		It("extractLayoutParent reads layout: from layout front matter", func() {
+			dir, err := os.MkdirTemp("", "layout-chain-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(dir) })
+
+			// Layout with front matter referencing a parent
+			layoutPath := filepath.Join(dir, "child.liquid")
+			err = os.WriteFile(layoutPath, []byte("---\nlayout: \"base\"\n---\n<main>{{ content }}</main>"), 0644)
+			Expect(err).NotTo(HaveOccurred())
+
+			parent := tmpl.ExtractLayoutParent(layoutPath)
+			Expect(parent).To(Equal("base"),
+				"extractLayoutParent must read the layout: directive from layout front matter")
+		})
+
+		It("extractLayoutParent returns empty for layouts without parent", func() {
+			dir, err := os.MkdirTemp("", "layout-chain-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(dir) })
+
+			// Root layout — no front matter
+			layoutPath := filepath.Join(dir, "base.liquid")
+			err = os.WriteFile(layoutPath, []byte("<html><body>{{ content }}</body></html>"), 0644)
+			Expect(err).NotTo(HaveOccurred())
+
+			parent := tmpl.ExtractLayoutParent(layoutPath)
+			Expect(parent).To(Equal(""),
+				"layouts without front matter layout: directive must return empty parent")
+		})
+
+		It("StripLayoutFrontMatter removes front matter from layout content", func() {
+			input := "---\nlayout: \"base\"\n---\n<main>{{ content }}</main>"
+			stripped := tmpl.StripLayoutFrontMatter(input)
+			Expect(stripped).NotTo(ContainSubstring("---"),
+				"front matter delimiters must be stripped from layout content")
+			Expect(stripped).NotTo(ContainSubstring("layout:"),
+				"front matter directives must not appear in rendered output")
+			Expect(stripped).To(ContainSubstring("<main>"),
+				"layout body content must be preserved after stripping front matter")
+		})
+
+		It("ResolveLayoutChain follows parent references to build ordered chain", func() {
+			dir, err := os.MkdirTemp("", "layout-chain-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(dir) })
+
+			// base.liquid — root layout (no parent)
+			err = os.WriteFile(filepath.Join(dir, "base.liquid"),
+				[]byte("<html><body>{{ content }}</body></html>"), 0644)
+			Expect(err).NotTo(HaveOccurred())
+
+			// has-toc.liquid — references base as parent
+			err = os.WriteFile(filepath.Join(dir, "has-toc.liquid"),
+				[]byte("---\nlayout: \"base\"\n---\n<div class=\"toc-layout\">{{ content }}</div>"), 0644)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Render: page content → has-toc → base
+			chain, err := tmpl.ResolveLayoutChain(filepath.Join(dir, "has-toc.liquid"), dir, "liquid")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(chain).To(HaveLen(2),
+				"layout chain must include has-toc and base (2 levels)")
+			Expect(chain[0]).To(ContainSubstring("has-toc"),
+				"first in chain is the innermost layout")
+			Expect(chain[1]).To(ContainSubstring("base"),
+				"last in chain is the root layout")
+		})
+
+		It("layout chain depth exceeding 10 levels returns error", func() {
+			dir, err := os.MkdirTemp("", "layout-chain-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(dir) })
+
+			// Create a chain of 12 levels: level-0 → level-1 → ... → level-11
+			for i := 0; i < 12; i++ {
+				var content string
+				if i < 11 {
+					content = fmt.Sprintf("---\nlayout: \"level-%d\"\n---\n<div>{{ content }}</div>", i+1)
+				} else {
+					content = "<div>{{ content }}</div>" // root
+				}
+				err = os.WriteFile(filepath.Join(dir, fmt.Sprintf("level-%d.liquid", i)), []byte(content), 0644)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			_, err = tmpl.ResolveLayoutChain(filepath.Join(dir, "level-0.liquid"), dir, "liquid")
+			Expect(err).To(HaveOccurred(),
+				"layout chain exceeding 10 levels must return an error")
 		})
 	})
 

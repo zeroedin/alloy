@@ -94,7 +94,8 @@ func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
 	}
 
 	opts := &liquid.TemplateOptions{
-		Environment: e.env,
+		Environment:   e.env,
+		StrictFilters: true,
 	}
 	tpl, err := liquid.ParseTemplate(src, opts)
 	if err != nil {
@@ -183,25 +184,20 @@ func (e *liquidEngine) AddTag(name string, fn TagFunc) error {
 }
 
 func (t *liquidTemplate) Render(ctx map[string]interface{}) ([]byte, error) {
-	var opts *liquid.RenderOptions
+	opts := &liquid.RenderOptions{
+		StrictFilters: true,
+	}
 	if t.includesDir != "" {
-		opts = &liquid.RenderOptions{
-			Registers: map[string]interface{}{
-				"file_system": &alloyFileSystem{root: t.includesDir},
-			},
+		opts.Registers = map[string]interface{}{
+			"file_system": &alloyFileSystem{root: t.includesDir},
 		}
 	}
 	result := t.tpl.Render(ctx, opts)
-	if errs := t.tpl.Errors(); len(errs) > 0 {
-		// In lax mode, liquidgo captures errors into tpl.Errors() rather than
-		// returning them from Render. Errors like missing partials produce error
-		// messages inline in the output — this is standard Liquid behavior.
-		// We only propagate when the template produced no output at all, which
-		// indicates a hard failure rather than graceful degradation.
-		// TODO: add strict error mode for build (vs. lax for dev server) per §2.
-		if result == "" {
-			return nil, fmt.Errorf("liquid render error in %s: %s", t.name, errs[0].Error())
+	for _, err := range t.tpl.Errors() {
+		if _, ok := err.(*liquid.FileSystemError); ok {
+			continue
 		}
+		return nil, fmt.Errorf("liquid render error in %s: %s", t.name, err.Error())
 	}
 	return []byte(result), nil
 }
@@ -434,7 +430,7 @@ func (t *alloyBlockTag) Parse(tokenizer *liquid.Tokenizer) error {
 	for {
 		token := tokenizer.Shift()
 		if token == "" {
-			return fmt.Errorf("Liquid syntax error: '%s' tag was never closed", t.TagName())
+			return fmt.Errorf("liquid syntax error: '%s' tag was never closed", t.TagName())
 		}
 		if strings.HasPrefix(token, "{%") && strings.HasSuffix(token, "%}") {
 			content := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(token, "{%"), "%}"))

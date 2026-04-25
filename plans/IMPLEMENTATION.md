@@ -119,11 +119,15 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 
 **discovery.go**:
 - `Discover`: Walk `contentDir`, create `Page` per .md/.html/.txt. Set `Section` from first path segment. Handle page bundles. Ignore `_data.yaml`.
-- `DiscoverWithFormats`: Same but filter by allowed extensions.
+- `DiscoverWithFormats`: Same but filter by allowed extensions. Returns content pages only — unchanged signature.
+- `DiscoverWithPassthrough(contentDir string, formats []string) ([]*Page, []string, error)`: New function (issue #287). Same discovery as `DiscoverWithFormats` but also collects non-format files as passthrough paths. Excludes `_data.yaml`/`_data.yml`, directories, and dot-prefixed files (`.DS_Store`, `.gitkeep`, etc.). Returns content pages + passthrough relative paths. The passthrough files are copied to the output directory during Phase 3, preserving their path relative to `content/`. Non-format files must NOT be passed to `BuildPage` — they have no front matter and would error.
 
 **markdown.go**:
 - `RenderMarkdown`: Configure goldmark with extensions (tables, task lists, typographer, footnotes). Handle `Unsafe` (raw HTML passthrough). Handle `TemplateTags` (preserve `{{ }}`/`{% %}` through rendering via placeholder substitution). Handle `TemplateBlocks` (issue #202): register a block-level parser that detects `{% tagname %}...{% endtagname %}` when the opening tag starts a line. Emit the opening/closing tags as custom AST block nodes with a custom renderer that outputs the tag text verbatim — do NOT use `ast.RawHTML` which is gated by the `unsafe` setting. Template tags must be preserved regardless of whether `unsafe` is true or false (same as the inline TemplateTags extension). Inner content between the tags is parsed as normal markdown. This prevents block shortcodes producing `<div>` from being wrapped in `<p>` tags.
 - `RenderText`: Wrap in `<pre>` tags.
+- **Auto heading IDs + heading attributes (issue #274, #306)**: Add `AutoHeadingID bool` to `MarkdownOptions` (default true from `cfg.Content.Markdown.AutoHeadingID`). When true, enable `parser.WithAutoHeadingID()` and `parser.WithAttribute()` in goldmark parser options. When false, skip both — headings render without `id` attributes. These are goldmark core options, not extensions. Heading attributes (`{#custom-id .class}`) only work when `AutoHeadingID` is true.
+- **TOC extraction (issue #274)**: Add a `TOC` field to `MarkdownOptions` (bool, default true from `cfg.Content.Markdown.TOC`). When true, `RenderMarkdown` walks the goldmark AST after parsing (before HTML rendering) and collects heading nodes (h2-h6, excluding h1) into a nested `[]TOCEntry` structure. `TOCEntry` has `ID`, `Text`, `Level`, `Children`. Returns the TOC alongside the rendered HTML — change return to `([]byte, []TOCEntry, error)` or add a `TOCResult` wrapper. The pipeline stores the result on `page.TOC` so templates can access `page.toc`. The `onContentTransformed` hook receives the page with `TOC` populated — plugins can mutate it.
+- **Render hooks (issue #273)**: Add a `Hooks map[string]string` field to `MarkdownOptions` (keyed by type: `"codeblock"`, `"link"`, `"image"`, `"heading"`, `"blockquote"`, `"table"`, and `"codeblock-{language}"` for language-specific overrides). `RenderMarkdown` checks `opts.Hooks` — for each provided hook, register a custom goldmark `renderer.NodeRenderer` that calls the Liquid engine with the node's context instead of emitting default HTML. The pipeline scans `layouts/_markup/` at startup for `render-{type}.liquid` files and populates `opts.Hooks`. Language-specific code block hooks (`render-codeblock-{language}.liquid`) use keys like `"codeblock-mermaid"` and are checked before the generic `"codeblock"` key. Each template is parsed once and reused across all pages. The render hook context (`markup.*`) is built from the goldmark AST node: `inner` from rendered children, `language` from `ast.FencedCodeBlock.Language()`, `level` from `ast.Heading.Level`, `id` from slugified heading text, etc. `page.*` and `site.*` are passed through from the render call's context.
 
 **lifecycle.go**:
 - `FilterByLifecycle`: Exclude drafts (unless includeDrafts), future publishDate, past expiryDate.
@@ -251,7 +255,7 @@ Key points:
 ### 4D: `internal/pipeline` — 19 tests
 **File**: `internal/pipeline/build.go`
 
-- `BuildWithContent`: Accept injected content, render through pipeline. Error messages must contain source file path + "template rendering" stage. Always renders all pages (no cache-based skipping — same as `alloy build`).
+- `BuildWithContent(cfg, contentMap, opts ...BuildOptions)`: Thin wrapper around `Build()`. Writes `contentMap` entries to a temp directory preserving path structure (e.g., `"content/index.md"` → `tmpDir/content/index.md`, `"layouts/default.liquid"` → `tmpDir/layouts/default.liquid`), sets `cfg.ProjectRoot = tmpDir`, and calls `Build(cfg, opts...)`. This ensures every pipeline stage runs — plugins, hooks, data cascade, collections, lifecycle filtering, layout chaining, SSR, validation, output. Zero divergence from `Build()`. The temp directory is cleaned up after `Build()` returns. `BuildWithContent` must NOT duplicate any pipeline logic — it is purely file setup + delegation (issue #283).
 - `BuildIncremental(cfg, contentMap, previousCache, changedFiles)`: Serve-mode incremental rebuild. Accepts a previous `*cache.Cache` (loaded by the caller, not by this function) and list of changed file paths. Discovers all pages, skips pages where `cache.ShouldSkipFile` returns true (unchanged), and renders pages where it returns false (changed) or that were invalidated via `cache.InvalidatedPages` for layout changes. Returns `BuildResult` with `PagesSkipped` count. When `previousCache` is nil, renders all pages (equivalent to full build).
 - `BuildResult.PagesSkipped int`: Number of pages skipped via cache comparison during incremental rebuild. Always 0 for `Build` and `BuildWithContent` (full rebuild).
 - `BuildPhase1`/`BuildPhase2`: Phase separation. Phase 2 operates entirely in memory:
@@ -269,6 +273,26 @@ Key points:
 - **`validateOutputDir`** (issue #9): Uses path equality + parent/child overlap detection (not substring matching). Only rejects exact matches (`output == content`) and nesting (`output = content/build` or `content` inside `output`). Names like `my_content_site` are valid output directories.
 - **Render ordering** (issue #10): Markdown renders first, then template tags — per spec §6 steps 3-4. Goldmark's TemplateTags extension preserves `{{ }}`/`{% %}` through markdown rendering. After markdown rendering and before Liquid processing, `escapeTemplateTagsInCode` converts template tags inside `<code>` elements to HTML entities so Liquid ignores them (issue #46). Markdown errors use stage name `"content transformation"`, template errors use `"template rendering"`.
 
+#### `BuildOptions` (issue #264)
+
+`Build()` accepts an optional `BuildOptions` to control pipeline behavior without changing config:
+
+```go
+type BuildOptions struct {
+    SkipSSR bool // true = skip Phase 2 entirely, regardless of cfg.SSR
+}
+
+func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error)
+```
+
+The variadic pattern keeps existing callers working (`Build(cfg)` still compiles). When `opts` is provided and `SkipSSR` is true, the pipeline skips Phase 2 entirely and sets `result.SSRSkipped = true`. The SSR check becomes:
+
+```go
+ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
+```
+
+`cmd/dev.go` always passes `pipeline.BuildOptions{SkipSSR: true}`. `cmd/build.go` and `cmd/serve.go` call `Build(cfg)` with no options (SSR runs if configured). `BuildIncremental` gets the same variadic parameter.
+
 #### `Build()` full orchestration (issue #30)
 
 `Build()` must orchestrate all pipeline stages from §2. Currently it stops after markdown+template rendering. The individual packages for each stage are implemented and pass tests — they need to be called in order:
@@ -278,23 +302,47 @@ Key points:
  2. validateOutputDir(cfg)                               ✅ done
  3. content.DiscoverWithFormats(contentDir, formats)      ✅ done
  4. content.FilterByLifecycle(pages, now, includeDrafts)  ✅ done (issue #108: must pass includeDrafts from server mode, not hardcode false)
- 5. permalink.ResolveForSection(page, cfg.Permalinks)     ✅ done
- 6. cascade.LoadDirectoryCascade + FindCascadeData + PageContext ✅ done
+ 5. cascade.LoadDirectoryCascade + FindCascadeData + PageContext ✅ done (was step 6, reordered for #302)
+ 6. permalink.ResolveFromCascade(page, cascadeData)       ← CHANGED (issue #302)
+    Permalink pattern comes from _data.yaml cascade (step 5), not cfg.Permalinks.
+    Remove `Permalinks map[string]string` from Config struct.
+    Remove `ResolveForSection` — replaced by `ResolveFromCascade`.
+    Update all callers in build.go (batch loop, i18n prefix logic).
  7. data.LoadDirectory(dataDir) → siteData                ✅ done
- 8. collection.BuildCollections(pages, permalinks)        ✅ done
+ 8. collection.BuildCollections(pages, cascadeData)       ← CHANGED (issue #302)
+    Date-based section detection reads permalink from each section's
+    _data.yaml cascade instead of cfg.Permalinks map.
+    `isDateBasedSection` in layout.go also needs cascade data.
  9. collection.BuildTaxonomies(pages, taxonomies)         ✅ done
 10. template.RegisterBuiltinFilters(engine)               ✅ done
 11. renderPages (markdown → template tags)                ✅ done
 12. template.ResolveLayout(page, layoutsDir, engine)      ✅ done
+12a. Layout chaining (issue #276)                          ← MISSING
+     After resolving the initial layout, render page content through it,
+     then check the layout file for front matter `layout:` directive.
+     If present, resolve the parent layout and render again with the
+     previous result as `{{ content }}`. Repeat until a root layout
+     (no `layout:` front matter) is reached. Max depth: 10 levels.
+     Strip layout front matter before rendering (must not appear in output).
+     Call `DetectCircularLayouts(layoutsDir)` once during Phase 0.
 12b. cache.TrackTemplateUsage(page.RelPath, normalizedLayoutPath)   ← MISSING (issue #229)
      layoutPath must be relative to project root and slash-normalized (filepath.ToSlash),
      e.g. "layouts/default.liquid" — not an absolute filesystem path.
-13. Render page through layout ({{ content }} injection)  ✅ done
+     For chained layouts, track ALL layouts in the chain (not just the innermost).
+13. Render page through layout chain ({{ content }} injection)  ✅ done (single level only, chaining missing)
 14. output.ComputeOutputPath(page) → output path          ✅ done
 15. output.WriteFile(outputPath, html)                    ✅ done
 16. static.CopyStatic(staticDir, outputDir)               ✅ done
 17. assets.CopyAssets(assetsDir, outputDir)                ✅ done
 18. static.CopyPassthroughWithValidation(...)             ✅ done
+18b. Copy content-colocated passthrough files (issue #300)  ← MISSING
+     `Build()` step 3 must switch from `DiscoverWithFormats` to `DiscoverWithPassthrough`.
+     The returned passthrough paths are carried through the pipeline and copied
+     to outputDir preserving their relative path: `content/about/diagram.svg`
+     → `_site/about/diagram.svg`. Use `static.CopyFile(src, dst)` or equivalent.
+     Add `ContentPassthroughs []string` to `BuildResult` — relative paths of
+     non-content files copied from `content/` to output.
+     In dev mode (alloy dev), skip the copy — files are served from source.
 19. output.GenerateSitemap(pages, baseURL, outputDir)     ✅ done
 20. cache.SaveTo(cacheFile)                               ✅ done
 ```
@@ -303,10 +351,33 @@ Key points:
 - Steps 5-9 happen before rendering (step 11) so templates can access `page.url`, `collections.*`, filters, etc.
 - **Multi-format output (issue #71)**: Steps 12-15 (layout resolution → render → compute path → write) must loop over `page.Outputs` when present. Content rendering (step 11) happens once; layout rendering happens per format. See Phase 3D wiring guidance.
 - Step 12-13 happen after step 11: content is rendered first, then injected into the layout via `{{ content }}`.
+- **Layout chaining (issue #276)**: After rendering content through the initial layout, check the layout file for front matter with a `layout:` directive using `extractLayoutParent()`. If a parent is found, resolve it via `ResolveLayout` (using the parent name), render the current result as `{{ content }}` into the parent, and repeat. Loop until a root layout (no `layout:` in front matter) is reached, or max depth (10) is exceeded. Strip front matter from layout content before parsing/rendering. Call `DetectCircularLayouts(layoutsDir)` once after layout discovery (Phase 0) to fail fast on cycles. Track all layouts in the chain for cache invalidation (`cache.TrackTemplateUsage` for each level).
 - Steps 15-20 are post-render: write files, copy assets, generate sitemap, persist cache.
 - If content directory doesn't exist or is empty, `Build()` should return a successful zero-page result (not error). This is required for `alloy init && alloy build` to work and for cmd tests to pass.
-- **i18n (issue #70)**: When `cfg.Languages` is present, the pipeline uses a two-pass per-language loop (see Phase 5C wiring). Pass 1 runs steps 3-11 (discovery through content rendering) per language. Then `LinkTranslations` runs once across all languages. Pass 2 runs steps 12-15 (layout resolution through output writing) per language — this ensures `page.Translations` is populated before templates render. Steps 1-2 (config/validation) and 16-20 (static/assets/sitemap/cache) run once outside the loop.
+- **Unified pipeline (issue #280)**: `Build()` must have ONE code path, not separate multi-language and single-language forks. A site without `languages:` config produces a single language batch with defaults (`{code: cfg.Language, root: true}`). The pipeline always:
+  1. Builds language batches (1 for single-language, N for multi-language)
+  2. Pass 1: discover + render content per batch (steps 3-11)
+  3. `LinkTranslations` between passes (no-op for single batch)
+  4. Pass 2: layout resolution + rendering per batch (steps 12-15)
+  5. SSR, output, static copy (shared, after all batches)
+  
+  This eliminates the current `if len(cfg.Languages) > 0 / else` fork that duplicates content discovery, lifecycle filtering, permalink resolution, cascade, collections, taxonomy, layout rendering, and layout chaining logic. Every feature (layout chaining #276, progress reporting #255, BuildOptions #264) is wired once.
+  
+  `BuildWithContent()` delegates to `Build()` entirely (issue #283) — no separate engine, no duplicate logic.
+  
+  Helper functions to extract: `renderPageThroughLayouts(page, layoutChain, engine, ctx)`, `generateTaxonomyPages(taxonomies, engine, cfg, ...)`.
+  
+  The two-pass design ensures `page.Translations` is populated before layout templates render, enabling `{% for trans in page.translations %}` for hreflang tags.
 - **Plugin filter bridging (issue #93)**: After `registry.LoadPlugins(hooks)` (step 0) and engine creation (step 10), bridge plugin-discovered filters to the template engine. For each filter name from `LoadPlugins()`, call `engine.AddFilter(name, wrapperFn)` where `wrapperFn` routes through `QuickJSRuntime.CallFilter()`. This must happen before content rendering (step 11) so templates can use plugin filters. Similarly, `alloy.hook()`/`alloy.on()` registrations discovered by `EvalFile()` must be wired into the `HookRegistry` during `LoadPlugins()`.
+- **`{% inline %}` tag (issue #288, wiring #295)**: `createEngine()` in `build.go` must call `tmpl.RegisterInlineTag(engine)` after `RegisterBuiltinFilters(engine)`. Without this, `{% inline %}` works in unit tests but fails with "unknown tag" in actual builds. Register `inline` as a custom tag via `engine.AddTag("inline", inlineTagFunc)`. The tag function:
+  1. Extracts the path argument (first positional arg, string)
+  2. Validates path starts with `./` or `../` — error if absolute
+  3. Checks file extension against an allowlist (`.svg`, `.html`, `.htm`, `.txt`, `.css`, `.js`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`, `.md`) — error with guidance for binary types
+  4. Resolves the path relative to the current content file's directory (passed via render context as `_contentDir`)
+  5. **Sandboxes** the resolved path: `filepath.Rel(contentRoot, resolved)` must not start with `..`. Rejects paths that escape the content directory (e.g., `../../../../etc/passwd`). The content root is passed via `_contentRoot` in the render context.
+  6. Reads the file and returns raw contents (no template processing)
+  
+  The template context must include both keys before rendering each page: `ctx["_contentDir"] = filepath.Dir(filepath.Join(contentDir, page.RelPath))` and `ctx["_contentRoot"] = contentDir`. These are internal context keys (prefixed with `_`) — accessible in templates but unsupported/unstable.
 - **Plugin shortcode bridging (issue #139)**: Same pattern as filter bridging. After engine creation, iterate `rt.RegisteredShortcodes()` and call `engine.AddTag(name, wrapperFn)` where `wrapperFn` routes through `QuickJSRuntime.CallShortcode(name, args, innerContent)`. Both inline and block shortcodes must be supported. `CallShortcode()` is currently a stub (returns input unchanged) and must be implemented to actually invoke the JS shortcode function.
 - **Plugin filter shadowing (issue #140)**: When a plugin registers a filter with the same name as a built-in liquidgo filter (e.g., `reverse`), the plugin's version must take precedence. Per spec §4: "the last one loaded wins." The current implementation fails because `knownLiquidFilters` prevents plugin filters from being treated as dynamic filters, so liquidgo's native implementation intercepts the call. The fix must ensure plugin-registered filters override built-in filters in the template engine's dispatch chain.
 - **Hook payload contract (issue #182)**: All hook payloads must be JSON-serializable for JS/WASM plugins. Four categories:
@@ -442,77 +513,70 @@ After `loadSiteData()` loads local data files, the pipeline must iterate `cfg.So
 The pipeline needs a language-aware outer loop. When `cfg.Languages` is nil/empty, the pipeline runs once (current behavior — single-language site). When `cfg.Languages` is present, the pipeline iterates over each language:
 
 ```
+// ── Build language batches (issue #280) ──
+// Single-language sites produce one batch. Multi-language produces N batches.
+// No if/else fork — the pipeline always iterates batches.
+var langContexts []i18n.LanguageContext
 if cfg.Languages != nil {
-    langContexts := i18n.BuildLanguageContexts(cfg.Languages)
-    allLangPages := []*content.Page{}  // collect across languages for translation linking
-
-    // ── Pass 1: discover + content-render per language (steps 3-11) ──
-    // Each language's pages are discovered, filtered, collected, and
-    // content-rendered (Markdown → HTML). Layout resolution and output
-    // writing are deferred so that page.Translations is populated first.
-    type langBatch struct {
-        ctx         LanguageContext
-        pages       []*content.Page
-        collections map[string]interface{}
-        siteData    map[string]interface{} // per-language copy
-    }
-    var batches []langBatch
-
-    for _, langCtx := range langContexts {
-        // Scope content discovery to content/<lang>/
-        contentDir := filepath.Join(projectRoot, "content", langCtx.Code)
-        pages := content.DiscoverWithFormats(contentDir, formats)
-
-        // Set lang on each page's front matter
-        for _, page := range pages {
-            page.FrontMatter["lang"] = langCtx.Code
-        }
-
-        // Apply output prefix to permalinks
-        prefix := i18n.OutputPrefix(langCtx.Code, langCtx.Root)
-        // prefix permalinks: page.URL = prefix + page.URL
-        //
-        // IMPORTANT (issue #113): permalink resolution must use the
-        // ORIGINAL relPath (without language prefix), not the prefixed
-        // one. The language prefix is added for translation linking,
-        // but DefaultFromPath("en/index.md") returns "/en/" instead of
-        // "/", causing double-prefixing for index pages. Resolve the
-        // permalink first, then prefix RelPath for translation linking.
-
-        // Inject site.language into per-language site data copy
-        langSiteData := copyMap(siteData)
-        langSiteData["language"] = i18n.LanguageData(langCtx)
-        langSiteData["title"] = i18n.LanguageSiteTitle(cfg.Title, cfg.Languages[langCtx.Code])
-
-        // Run steps 4-11 (lifecycle filter, cascade, permalinks,
-        // collections, taxonomies, content rendering) per language
-        // Collections and taxonomies are per-language (scoped to langPages)
-
-        allLangPages = append(allLangPages, pages...)
-        batches = append(batches, langBatch{ctx: langCtx, pages: pages, collections: langCollections, siteData: langSiteData})
-    }
-
-    // ── Link translations across all language trees ──
-    langCodes := make([]string, len(langContexts))
-    for i, ctx := range langContexts { langCodes[i] = ctx.Code }
-    i18n.LinkTranslations(allLangPages, langCodes)
-
-    // ── Pass 2: layout resolution + output writing (steps 12-15) ──
-    // page.Translations is now populated, so templates can render
-    // {% for trans in page.translations %} correctly.
-    for _, batch := range batches {
-        // Run steps 12-15 (layout resolution, template context build,
-        // layout rendering, output writing) with batch.pages, batch.siteData
-    }
-
-    // Steps 16-20 (static copy, assets, sitemap, cache) run once after all languages
+    langContexts = i18n.BuildLanguageContexts(cfg.Languages)
 } else {
-    // Single-language build (current behavior, no changes)
+    // Single-language default: one batch with cfg.Language (default "en")
+    langContexts = []i18n.LanguageContext{{Code: cfg.Language, Root: true}}
 }
+
+allLangPages := []*content.Page{}
+
+type langBatch struct {
+    ctx         LanguageContext
+    pages       []*content.Page
+    collections map[string]interface{}
+    siteData    map[string]interface{}
+}
+var batches []langBatch
+
+// ── Pass 1: discover + content-render per batch (steps 3-11) ──
+for _, langCtx := range langContexts {
+    // For multi-language: content/<lang>/. For single: content/.
+    contentDir := resolveContentDir(langCtx, cfg)
+    pages := content.DiscoverWithFormats(contentDir, formats)
+
+    // Set lang on each page's front matter
+    for _, page := range pages {
+        page.FrontMatter["lang"] = langCtx.Code
+    }
+
+    // Apply output prefix (empty for root language)
+    prefix := i18n.OutputPrefix(langCtx.Code, langCtx.Root)
+    //
+    // IMPORTANT (issue #113): permalink resolution must use the
+    // ORIGINAL relPath (without language prefix), not the prefixed
+    // one. Resolve permalink first, then prefix RelPath.
+
+    langSiteData := copyMap(siteData)
+    langSiteData["language"] = i18n.LanguageData(langCtx)
+
+    // Steps 4-11 per batch
+
+    allLangPages = append(allLangPages, pages...)
+    batches = append(batches, langBatch{...})
+}
+
+// ── Link translations (no-op for single batch) ──
+langCodes := make([]string, len(langContexts))
+for i, ctx := range langContexts { langCodes[i] = ctx.Code }
+i18n.LinkTranslations(allLangPages, langCodes)
+
+// ── Pass 2: layout resolution + output (steps 12-15) per batch ──
+for _, batch := range batches {
+    renderPageThroughLayouts(page, chain, engine, batch.siteData, ...)
+    generateTaxonomyPages(batch.taxonomies, engine, cfg, ...)
+}
+
+// Steps 16-20 (static copy, assets, sitemap, cache) run once
 ```
 
 Key points:
-- **Two-pass per-language loop**: Pass 1 (steps 3-11) discovers and content-renders each language. `LinkTranslations` runs between passes. Pass 2 (steps 12-15) resolves layouts and writes output. This ensures `page.Translations` is populated before templates render, enabling `{% for trans in page.translations %}` for `<link rel="alternate" hreflang="...">` tags.
+- **Unified two-pass pipeline (issue #280)**: Always operates on language batches. Single-language sites produce one batch. Pass 1 (steps 3-11) discovers and content-renders each batch. `LinkTranslations` runs between passes (no-op for single batch). Pass 2 (steps 12-15) resolves layouts and writes output. No `if/else` fork.
 - `layouts/` is shared across all languages — never scoped
 - `data/` globals are shared, but `site.language` and `site.title` are overridden per-language iteration via a shallow copy
 - Collections and taxonomies are per-language: `collections.blog` for English only contains English posts
@@ -522,7 +586,7 @@ Key points:
 **Files**: `main.go`, `root.go`, `build.go`, `serve.go`, `init.go`, `version.go`
 
 - **`main.go` exit code handling (issue #28)**: `main()` must check the error return from `cmd.Execute()` and call `os.Exit(1)` on failure. Without this, all CLI errors exit 0, breaking scripts and CI. Current code discards the error.
-- Register Cobra flags (--config, --output, --root, --verbose, --quiet, --port, --preview, --no-drafts, --refetch) ✅ done (except --root)
+- Register Cobra flags (--config, --output, --root, --verbose, --quiet) on root; (--port, --no-drafts, --refetch) on dev; (--port, --refetch) on serve ✅ done (except --root, dev/serve split)
 - `Version`: Set to non-empty string ✅ done
 
 #### `cmd/init.go` (issue #26)
@@ -544,17 +608,38 @@ Key points:
 
 **Test note**: The existing cmd test `"build command executes the build pipeline successfully"` runs without a project fixture. Build must handle missing content directory gracefully (return zero-page success, not error) for this test to pass.
 
-#### `cmd/serve.go` (issue #29)
+#### `cmd/dev.go` (issue #256, was #29)
 
-`RunE` is an empty stub. Must wire to server:
+Dev server command (`alloy dev`). Uses `ModeDev` — Phase 1 only, in-memory, drafts visible.
+
 1. Load config (same as build).
-2. Run initial build via `pipeline.Build(cfg)`.
-3. Read `--port`, `--preview`, `--no-drafts`, `--refetch` flags.
-4. Call `server.NewWithMode(cfg, mode)` and `server.Start()`.
-5. Start file watcher.
-6. Block until interrupt.
+2. Set `cfg.IncludeDrafts = true` (unless `--no-drafts`).
+3. Run initial build via `pipeline.Build(cfg)`.
+4. Read `--port`, `--no-drafts`, `--refetch` flags.
+5. Call `server.NewWithMode(cfg, server.ModeDev)` and `server.Start()`.
+6. Start file watcher.
+7. Block until interrupt.
 
-**Test note**: The cmd test `"serve command is registered and callable"` verifies command registration via `root.Find()` without calling `Execute()`, since the serve command blocks on `Wait()`. Server startup behavior is tested directly in `internal/server/server_test.go`.
+#### `cmd/serve.go` (issue #256)
+
+Production server command (`alloy serve`). Uses `ModePreview` — same pipeline as `alloy build`, writes to `_site/`, SSR if configured, excludes drafts.
+
+1. Load config (same as build).
+2. Set `cfg.IncludeDrafts = false`.
+3. Run initial build via `pipeline.Build(cfg)`.
+4. Read `--port`, `--refetch` flags. No `--no-drafts` (production always excludes drafts). No `--preview` (removed).
+5. Call `server.NewWithMode(cfg, server.ModePreview)` and `server.Start()`.
+6. **Start file watcher (issue #291)** — same setup as `cmd/dev.go`: call `server.WatchDirs(cfg)`, `addRecursiveWatch` on each directory, fsnotify event loop with `ClassifyChange` and debouncer. On file change, dispatch by `ChangeType`:
+   - `ContentChange`/`LayoutChange`/`DataChange` → `pipeline.Build(cfg)` (full rebuild, serve mode has no incremental)
+   - `AssetChange`/`StaticChange` → recopy changed files to `_site/`
+   - `PassthroughChange` → `server.RecopyPassthroughFile(changedPath, cfg)` — copies only the changed file to `_site/<to>/<relative-path>`
+   - `ComponentChange` → full rebuild (SSR re-render)
+   - All types → `srv.BroadcastReload()` after rebuild/recopy
+7. Block until interrupt.
+
+**`server.RecopyPassthroughFile(changedPath string, cfg *config.Config) (string, error)`** — Finds the matching passthrough mapping by checking which `from:` directory the `changedPath` is under. Computes the relative path within `from:`, constructs the output path as `_site/<to>/<relative-path>`, copies the single file, and returns the output path. Returns error if no matching mapping is found or the copy fails.
+
+**Test note**: The cmd tests verify both `dev` and `serve` commands are registered via `root.Find()` without calling `Execute()`. Server startup behavior is tested directly in `internal/server/server_test.go`.
 
 #### `--root` flag (issue #75)
 
@@ -616,12 +701,28 @@ Two implementations:
 - `--verbose` → `VerboseProgress`
 - default → `TTYProgress` if terminal, nil if piped
 
-The pipeline must nil-guard every progress call since the reporter may be nil:
+Both `cmd/dev.go` and `cmd/serve.go` must attach a progress reporter before the initial `pipeline.Build(cfg)` call using the same flag-based logic. This is where progress matters most — the user is watching the terminal waiting for the server to start. Without a reporter, there is no output between running the command and seeing `Serving at http://localhost:3000`. The reporter must be cleaned up after the initial build completes (`defer pipeline.SetReporter(nil)` scoped to the initial build, not the entire serve lifetime).
+
+For file-watcher rebuilds, the command should also attach a reporter before calling `pipeline.Build(cfg)` or `pipeline.BuildIncremental(...)`. The reporter is set and cleared around each rebuild call.
+
+`BuildIncremental()` only calls `Summary` on the reporter — no `StartStage`, `Update`, or `EndStage`. Incremental rebuilds are typically 1-3 pages in under 100ms; a multi-stage progress bar would be visual noise. The `Summary` call uses `pagesSkipped` to show cached page count (e.g., "Rebuilt 3 pages in 47ms (417 cached)").
+
+Full rebuilds in serve mode (config changes, 10+ files) go through `Build()`, which uses the full multi-stage reporter sequence.
+
+The pipeline must nil-guard every progress call since the reporter may be nil.
+
+`Build()` reporter calls:
 ```go
 if reporter != nil { reporter.StartStage("Rendering", len(pages)) }
 // per page (1-based current):
 if reporter != nil { reporter.Update(i+1, page.RelPath, elapsed) }
 if reporter != nil { reporter.EndStage() }
+if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.PagesSkipped) }
+```
+
+`BuildIncremental()` reporter calls:
+```go
+// No StartStage/Update/EndStage — compact summary only
 if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.PagesSkipped) }
 ```
 
@@ -639,6 +740,8 @@ if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.
 
 - HTTP server with mode-aware behavior (dev/preview)
 - File watcher with debouncing and change classification
+- **Passthrough watching (issue #275)**: `WatchDirs(cfg)` must iterate `cfg.Passthrough` and append each `from:` path. `ClassifyChange(path, cfg)` must add a `PassthroughChange` type for files matching passthrough source directories. The serve rebuild handler should recopy only the changed file to `_site/<to>/<relative-path>` on `PassthroughChange` instead of triggering a full pipeline rebuild. In `alloy dev`, passthrough changes only trigger a browser reload (files are served from source). `addRecursiveWatch` must be called on each passthrough `from:` directory.
+- **Content-colocated file serving (issue #300)**: In dev mode, the server's request handler must fall back to the content directory for URLs that don't match a rendered page in memory. `ServeContentFile(urlPath string) ([]byte, error)` reads the file from `content/<urlPath>` and returns its bytes. Returns error if the file doesn't exist. This is only used in dev mode — serve mode has the files in `_site/` from the build.
 - Error overlay injection
 - `WebSocketReloadMessage()`: Return `{"type": "reload"}` JSON string for connected browser reload
 - `DebounceInterval()`: Return configurable debounce interval in milliseconds for file watcher
