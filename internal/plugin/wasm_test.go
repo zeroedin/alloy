@@ -92,6 +92,52 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 					"reverse uses split/reverse/join which simulateJSFilter cannot pattern-match")
 		})
 
+		// ── CallFilter with arguments (issue #318) ──────────────────
+		// Filter functions must receive additional Liquid arguments,
+		// not just the input value.
+
+		It("CallFilter passes additional arguments to JS function", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(filepath.Join(testdataDir(), "single-files", "lookup.js"))).To(Succeed())
+
+			// {{ "ready" | lookup: {"ready": "Done", "pending": "In Progress"} }}
+			hash := map[string]interface{}{
+				"ready":   "Done",
+				"pending": "In Progress",
+			}
+			result, err := rt.CallFilter("lookup", "ready", hash)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("Done"),
+				"CallFilter must pass additional args to the JS function — "+
+					"the hash argument must reach the filter as the second parameter")
+		})
+
+		It("CallFilter passes multiple arguments to JS function", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(filepath.Join(testdataDir(), "single-files", "lookup.js"))).To(Succeed())
+
+			// {{ "hello world" | replace_custom: "world", "alloy" }}
+			result, err := rt.CallFilter("replace_custom", "hello world", "world", "alloy")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("hello alloy"),
+				"CallFilter must pass all arguments — "+
+					"replace_custom needs input + two string args")
+		})
+
+		It("CallFilter works with zero additional arguments (backward compat)", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(filepath.Join(testdataDir(), "single-files", "reverse.js"))).To(Succeed())
+
+			// {{ "hello" | reverse }} — no extra args
+			result, err := rt.CallFilter("reverse", "hello")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("olleh"),
+				"CallFilter with no additional args must still work")
+		})
+
 		It("parses alloy.hook() registrations from JS plugin", func() {
 			rt := plugin.NewQuickJSRuntime()
 			Expect(rt.Init()).To(Succeed())
