@@ -306,10 +306,19 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
 10. template.RegisterBuiltinFilters(engine)               ✅ done
 11. renderPages (markdown → template tags)                ✅ done
 12. template.ResolveLayout(page, layoutsDir, engine)      ✅ done
+12a. Layout chaining (issue #276)                          ← MISSING
+     After resolving the initial layout, render page content through it,
+     then check the layout file for front matter `layout:` directive.
+     If present, resolve the parent layout and render again with the
+     previous result as `{{ content }}`. Repeat until a root layout
+     (no `layout:` front matter) is reached. Max depth: 10 levels.
+     Strip layout front matter before rendering (must not appear in output).
+     Call `DetectCircularLayouts(layoutsDir)` once during Phase 0.
 12b. cache.TrackTemplateUsage(page.RelPath, normalizedLayoutPath)   ← MISSING (issue #229)
      layoutPath must be relative to project root and slash-normalized (filepath.ToSlash),
      e.g. "layouts/default.liquid" — not an absolute filesystem path.
-13. Render page through layout ({{ content }} injection)  ✅ done
+     For chained layouts, track ALL layouts in the chain (not just the innermost).
+13. Render page through layout chain ({{ content }} injection)  ✅ done (single level only, chaining missing)
 14. output.ComputeOutputPath(page) → output path          ✅ done
 15. output.WriteFile(outputPath, html)                    ✅ done
 16. static.CopyStatic(staticDir, outputDir)               ✅ done
@@ -323,6 +332,7 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
 - Steps 5-9 happen before rendering (step 11) so templates can access `page.url`, `collections.*`, filters, etc.
 - **Multi-format output (issue #71)**: Steps 12-15 (layout resolution → render → compute path → write) must loop over `page.Outputs` when present. Content rendering (step 11) happens once; layout rendering happens per format. See Phase 3D wiring guidance.
 - Step 12-13 happen after step 11: content is rendered first, then injected into the layout via `{{ content }}`.
+- **Layout chaining (issue #276)**: After rendering content through the initial layout, check the layout file for front matter with a `layout:` directive using `extractLayoutParent()`. If a parent is found, resolve it via `ResolveLayout` (using the parent name), render the current result as `{{ content }}` into the parent, and repeat. Loop until a root layout (no `layout:` in front matter) is reached, or max depth (10) is exceeded. Strip front matter from layout content before parsing/rendering. Call `DetectCircularLayouts(layoutsDir)` once after layout discovery (Phase 0) to fail fast on cycles. Track all layouts in the chain for cache invalidation (`cache.TrackTemplateUsage` for each level).
 - Steps 15-20 are post-render: write files, copy assets, generate sitemap, persist cache.
 - If content directory doesn't exist or is empty, `Build()` should return a successful zero-page result (not error). This is required for `alloy init && alloy build` to work and for cmd tests to pass.
 - **i18n (issue #70)**: When `cfg.Languages` is present, the pipeline uses a two-pass per-language loop (see Phase 5C wiring). Pass 1 runs steps 3-11 (discovery through content rendering) per language. Then `LinkTranslations` runs once across all languages. Pass 2 runs steps 12-15 (layout resolution through output writing) per language — this ensures `page.Translations` is populated before templates render. Steps 1-2 (config/validation) and 16-20 (static/assets/sitemap/cache) run once outside the loop.

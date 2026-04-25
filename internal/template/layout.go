@@ -167,8 +167,9 @@ func DetectCircularLayouts(layoutsDir string) error {
 	return nil
 }
 
-// extractLayoutParent reads a layout file and looks for a parent reference.
-func extractLayoutParent(path string) string {
+// ExtractLayoutParent reads a layout file and looks for a parent layout reference
+// in its front matter. Returns the parent layout name, or "" if none found.
+func ExtractLayoutParent(path string) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
@@ -176,10 +177,17 @@ func extractLayoutParent(path string) string {
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
+	inFrontMatter := false
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		// Look for {% layout "parent" %} or layout: parent in front matter
-		if strings.Contains(line, "layout:") {
+		if line == "---" {
+			if inFrontMatter {
+				break // end of front matter
+			}
+			inFrontMatter = true
+			continue
+		}
+		if inFrontMatter && strings.HasPrefix(line, "layout:") {
 			parts := strings.SplitN(line, ":", 2)
 			if len(parts) == 2 {
 				return strings.TrimSpace(strings.Trim(parts[1], `"' `))
@@ -187,6 +195,24 @@ func extractLayoutParent(path string) string {
 		}
 	}
 	return ""
+}
+
+// extractLayoutParent is the unexported wrapper for internal callers.
+func extractLayoutParent(path string) string {
+	return ExtractLayoutParent(path)
+}
+
+// StripLayoutFrontMatter removes YAML front matter (--- delimited) from layout content.
+// Returns the content after the closing --- delimiter.
+func StripLayoutFrontMatter(content string) string {
+	return content // stub — developer implements
+}
+
+// ResolveLayoutChain follows layout: directives in layout front matter to build
+// the full chain from innermost to root. Returns the ordered list of layout file paths.
+// Returns error if the chain exceeds maxDepth (10) or if a referenced layout is not found.
+func ResolveLayoutChain(layoutPath string, layoutsDir string, engine string) ([]string, error) {
+	return nil, fmt.Errorf("not implemented")
 }
 
 // ResolveLayoutWithCascade resolves layout considering cascade data.
