@@ -282,7 +282,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	var pages []*content.Page
 	var rendered []string
 
-	// ── Pass 1: discover + content-render per batch (steps 3-11) ──
+	// ── Pass 1a: discover + prepare per batch (steps 3-9) ──
 	reportStartStage("Discovering", -1)
 	for _, lc := range langContexts {
 		// Content directory: content/<lang>/ for multi-language, content/ for single
@@ -358,20 +358,25 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		// Pagination
 		batchPages = processPagination(batchPages, cfg, siteData, batchColls)
 
-		// Content rendering
-		batchRendered, renderErr := renderPages(batchPages, cfg, siteData, batchColls, engine, langContexts)
-		if renderErr != nil {
-			return nil, renderErr
-		}
-
 		pages = append(pages, batchPages...)
-		rendered = append(rendered, batchRendered...)
 		batches = append(batches, langBatch{
 			ctx:         lc,
 			pages:       batchPages,
 			collections: batchColls,
 			taxonomies:  batchTax,
 		})
+	}
+	reportEndStage()
+
+	// ── Pass 1b: content rendering per batch (steps 10-11) ──
+	reportMessage(fmt.Sprintf("%d pages found", len(pages)))
+	reportStartStage("Rendering", len(pages))
+	for i := range batches {
+		batchRendered, renderErr := renderPages(batches[i].pages, cfg, siteData, batches[i].collections, engine, langContexts)
+		if renderErr != nil {
+			return nil, renderErr
+		}
+		rendered = append(rendered, batchRendered...)
 	}
 	reportEndStage()
 
@@ -393,17 +398,16 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		return nil, fmt.Errorf("plugin hook onDataCascadeReady: %w", err)
 	}
 
-	// Link translations across all language trees (no-op for single batch)
-	if err := i18n.LinkTranslations(pages, langCodes); err != nil {
-		log.Printf("warning: translation linking: %v", err)
+	// Link translations across all language trees (only for multi-language builds)
+	if len(langCodes) > 1 {
+		if err := i18n.LinkTranslations(pages, langCodes); err != nil {
+			log.Printf("warning: translation linking: %v", err)
+		}
 	}
 
 	if err := fireContentTransformedHooks(pages, hooks); err != nil {
 		return nil, err
 	}
-
-	reportMessage(fmt.Sprintf("%d pages found", len(pages)))
-	reportStartStage("Rendering", len(pages))
 
 	// ── Pass 2: layout resolution + rendering per batch (steps 12-15) ──
 	for _, batch := range batches {
@@ -433,7 +437,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			pages = append(pages, taxPages...)
 		}
 	}
-	reportEndStage()
 
 	// Fire onPageRendered hook per-page with HTML string payload.
 	// The hook receives a string and may return string or []byte.
