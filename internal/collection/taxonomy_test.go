@@ -238,4 +238,50 @@ var _ = Describe("Taxonomy", func() {
 				"custom permalink /topics/:slug/ must produce /topics/go/")
 		})
 	})
+
+	// ── render: false (issue #319) ──────────────────────────────────
+	// Taxonomies with render: false build collection data but do not
+	// generate output pages.
+
+	Describe("render: false", func() {
+		It("taxonomy data is built even when render is false", func() {
+			tagsCfg := map[string]*config.TaxonomyConfig{
+				"tags": {Render: false},
+			}
+			taxonomies := collection.BuildTaxonomies(pages, tagsCfg)
+			Expect(taxonomies).To(HaveKey("tags"),
+				"taxonomy data must be built even with render: false — "+
+					"collections.taxonomies.tags.* must be available in templates")
+			tc := taxonomies["tags"]
+			Expect(tc.Terms).NotTo(BeEmpty(),
+				"terms must be populated for collection access")
+		})
+
+		It("does not generate pages when render is false", func() {
+			tagsCfg := &config.TaxonomyConfig{Render: false}
+			tc := collection.BuildTaxonomies(pages, map[string]*config.TaxonomyConfig{
+				"tags": tagsCfg,
+			})["tags"]
+
+			taxPages := collection.GenerateTaxonomyPages(tc, tagsCfg)
+			Expect(taxPages).To(BeEmpty(),
+				"GenerateTaxonomyPages must return no pages when render is false")
+		})
+
+		// NOTE: Duplicate term slug checking is skipped in the pipeline
+		// (generateTaxonomyPages in build.go) for render: false taxonomies.
+		// DetectDuplicateTermSlugs itself is unchanged — the pipeline
+		// simply doesn't call it when render is false.
+
+		It("generates pages when render is true (default)", func() {
+			tagsCfg := &config.TaxonomyConfig{Render: true, Layout: "tags"}
+			tc := collection.BuildTaxonomies(pages, map[string]*config.TaxonomyConfig{
+				"tags": tagsCfg,
+			})["tags"]
+
+			taxPages := collection.GenerateTaxonomyPages(tc, tagsCfg)
+			Expect(taxPages).NotTo(BeEmpty(),
+				"GenerateTaxonomyPages must generate pages when render is true")
+		})
+	})
 })

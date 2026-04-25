@@ -166,8 +166,9 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 - `SortPages`/`SortByFrontMatter`: Stable sort, dateless pages sort after dated ones
 - `Freeze`/`IsFrozen`/`AddPage`: Add `frozen bool` field, error if frozen
 - `BuildTaxonomies`: Group pages by declared taxonomy keys from front matter
-- `GenerateTaxonomyPages`: Index + per-term pages with configured permalinks
+- `GenerateTaxonomyPages`: Index + per-term pages with configured permalinks. **Skip when `TaxonomyConfig.Render == false` (issue #319)**. Also skip `DetectDuplicateTermSlugs` for non-rendered taxonomies.
 - `BuildTaxonomyPageContext`/`DetectDuplicateTermSlugs`
+- **`TaxonomyConfig.Render bool` (issue #319)**: Add `Render bool` field to `TaxonomyConfig` with `yaml:"render"`. Default must be `true` (set in `ApplyDefaults`). When `false`, `generateTaxonomyPages` in `build.go` skips that taxonomy entirely — no layout resolution, no page generation, no duplicate slug check. The taxonomy data is still built by `BuildTaxonomies` and available in `collections.taxonomies.*`.
 
 ### 3C: `internal/template` — context, layout, shortcodes (~27 tests)
 **Files**: `context.go`, `layout.go`, `shortcodes.go`
