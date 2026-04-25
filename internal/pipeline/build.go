@@ -1462,6 +1462,10 @@ func renderPageThroughLayouts(page *content.Page, layoutPath, layoutsDir, engine
 
 func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection, cfg *config.Config, layoutsDir, engineName string, engine tmpl.TemplateEngine, siteData map[string]interface{}, langContexts []i18n.LanguageContext, pages []*content.Page, collectionsCtx map[string]interface{}, langCtx *i18n.LanguageContext) ([]*content.Page, error) {
 	for taxName, tc := range taxonomies {
+		taxCfg := cfg.Taxonomies[taxName]
+		if taxCfg != nil && !taxCfg.ShouldRender() {
+			continue
+		}
 		dupes := collection.DetectDuplicateTermSlugs(tc)
 		if len(dupes) > 0 {
 			return nil, fmt.Errorf("taxonomy %q has duplicate term slugs: %v", taxName, dupes)
@@ -1478,6 +1482,9 @@ func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection,
 	var result []*content.Page
 	for taxName, tc := range taxonomies {
 		taxCfg := cfg.Taxonomies[taxName]
+		if !taxCfg.ShouldRender() {
+			continue
+		}
 		layoutPath, err := tmpl.ResolveTaxonomyLayout(taxName, taxCfg.Layout, layoutsDir, engineName)
 		if err != nil {
 			return nil, fmt.Errorf("taxonomy %q layout: %w", taxName, err)
