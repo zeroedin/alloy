@@ -33,6 +33,7 @@ type PageContext struct {
 	Collection   string
 	FrontMatter  map[string]interface{}
 	Translations []map[string]interface{} // translation info: url, lang
+	TOC          []content.TOCEntry
 }
 
 // BuildTemplateContext assembles the complete template context for rendering a page.
@@ -73,6 +74,7 @@ func BuildTemplateContext(page *content.Page, siteData map[string]interface{}, a
 	ctx.Page.URL = page.URL
 	ctx.Page.Collection = page.Collection
 	ctx.Page.FrontMatter = page.FrontMatter
+	ctx.Page.TOC = page.TOC
 	if !page.Date.IsZero() {
 		ctx.Page.Date = page.Date
 	}
@@ -138,6 +140,13 @@ func (tc *TemplateContext) ToMap() map[string]interface{} {
 	if tc.Page.Translations != nil {
 		pageCtx["translations"] = tc.Page.Translations
 	}
+	if len(tc.Page.TOC) > 0 {
+		tocList := make([]map[string]interface{}, len(tc.Page.TOC))
+		for i, entry := range tc.Page.TOC {
+			tocList[i] = tocEntryToMap(entry)
+		}
+		pageCtx["toc"] = tocList
+	}
 
 	// Site context
 	site := map[string]interface{}{
@@ -200,4 +209,22 @@ func (tc *TemplateContext) ToMap() map[string]interface{} {
 	}
 
 	return ctx
+}
+
+func tocEntryToMap(entry content.TOCEntry) map[string]interface{} {
+	m := map[string]interface{}{
+		"id":    entry.ID,
+		"text":  entry.Text,
+		"level": entry.Level,
+	}
+	if len(entry.Children) > 0 {
+		children := make([]map[string]interface{}, len(entry.Children))
+		for i, child := range entry.Children {
+			children[i] = tocEntryToMap(child)
+		}
+		m["children"] = children
+	} else {
+		m["children"] = []map[string]interface{}{}
+	}
+	return m
 }
