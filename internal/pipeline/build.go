@@ -1100,20 +1100,18 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 	if err != nil {
 		return nil, fmt.Errorf("render hook discovery: %w", err)
 	}
-	if len(hooks) > 0 {
+	if len(hooks) > 0 && engine != nil {
 		mdOpts.Hooks = hooks
-		if engine != nil {
-			mdOpts.HookRenderer = func(source string, ctx map[string]interface{}) (string, error) {
-				tpl, err := engine.Parse("_markup/hook", []byte(source))
-				if err != nil {
-					return "", err
-				}
-				out, err := tpl.Render(ctx)
-				if err != nil {
-					return "", err
-				}
-				return string(out), nil
+		mdOpts.HookRenderer = func(source string, ctx map[string]interface{}) (string, error) {
+			tpl, err := engine.Parse("_markup/hook", []byte(source))
+			if err != nil {
+				return "", err
 			}
+			out, err := tpl.Render(ctx)
+			if err != nil {
+				return "", err
+			}
+			return string(out), nil
 		}
 	}
 
