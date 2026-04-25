@@ -9,9 +9,10 @@ import (
 
 var _ = Describe("RenderMarkdown", func() {
 	defaultOpts := content.MarkdownOptions{
-		Unsafe:       true,
-		Typographer:  true,
-		TemplateTags: true,
+		Unsafe:        true,
+		Typographer:   true,
+		TemplateTags:  true,
+		AutoHeadingID: true,
 	}
 
 	// ── Basic Markdown ─────────────────────────────────────────────────
@@ -310,17 +311,12 @@ var _ = Describe("RenderMarkdown", func() {
 	// Goldmark must generate id attributes on all headings by default.
 
 	Describe("Auto heading IDs", func() {
-		autoIDOpts := content.MarkdownOptions{
-			Unsafe:        true,
-			Typographer:   true,
-			TemplateTags:  true,
-			AutoHeadingID: true,
-		}
+		// defaultOpts has AutoHeadingID: true (production default)
 
 		It("generates id attributes on headings", func() {
 			out, err := content.RenderMarkdown(
 				[]byte("## Getting Started\n\n### Installation"),
-				autoIDOpts)
+				defaultOpts)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`id="getting-started"`),
@@ -332,7 +328,7 @@ var _ = Describe("RenderMarkdown", func() {
 		It("handles duplicate headings with numeric suffix", func() {
 			out, err := content.RenderMarkdown(
 				[]byte("## Overview\n\nText.\n\n## Overview\n\nMore text.\n\n## Overview"),
-				autoIDOpts)
+				defaultOpts)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`id="overview"`),
@@ -346,7 +342,7 @@ var _ = Describe("RenderMarkdown", func() {
 		It("respects manual heading attributes override", func() {
 			out, err := content.RenderMarkdown(
 				[]byte("## My Section {#custom-id}"),
-				autoIDOpts)
+				defaultOpts)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`id="custom-id"`),
