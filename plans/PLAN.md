@@ -1424,8 +1424,49 @@ The pipeline strips layout front matter before rendering (it is not output as li
 **Max depth** — Layout chains are capped at 10 levels. If a chain exceeds this depth without reaching a root layout (one with no `layout:` front matter), the build fails with an error identifying the chain. This prevents infinite loops from malformed layouts that escape cycle detection.
 
 **Partials and includes** are delegated to each engine's native capabilities:
-- **Liquid:** `{% include "partial" %}` and `{% render "partial" %}` for partials.
+- **Liquid:** `{% include "partial" %}` and `{% render "partial" %}` for partials. Resolves from the layouts directory.
 - **Go:** `{{ block "name" . }}` / `{{ define "name" }}` for layout inheritance, `{{ template "name" . }}` for includes. Full layout chaining is built into the engine.
+
+**Content-relative file inlining** — `{% inline "./path" %}` reads a file relative to the current content file's directory and inserts its raw contents into the output. No template processing — the file is inserted verbatim. This is an Alloy-specific tag, not part of the Liquid spec.
+
+```markdown
+<!-- content/about/index.md -->
+# About
+
+{% inline "./about-diagram.svg" %}
+```
+
+With the directory structure:
+```
+content/about/
+├── index.md
+└── about-diagram.svg
+```
+
+The SVG markup is inlined directly into the rendered HTML. This is essential for SVGs that need to respond to CSS custom properties (theming) and cannot be loaded as `<img>` tags.
+
+**Path rules:**
+- Path must start with `./` or `../` — always relative to the content file's directory
+- Absolute paths are a build error
+- File not found is a build error (not silent empty output)
+
+**Allowed file types** (text-based only):
+`.svg`, `.html`, `.htm`, `.txt`, `.css`, `.js`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`, `.md`
+
+Binary file types (`.png`, `.jpg`, `.gif`, `.webp`, `.woff2`, `.pdf`, etc.) produce a build error with guidance: `"inline: binary file type .png not supported — use <img> instead"`.
+
+**Future option:** The allowlist is hardcoded for v1. If users need custom text extensions (e.g., `.glsl`, `.webc`), a config-driven allowlist can be added later:
+```yaml
+templates:
+  inline:
+    allow: [".svg", ".html", ".glsl", ".webc"]
+```
+
+**Raw insertion** — The inlined content is NOT processed through Markdown or Liquid. No template tag interpretation, no Markdown rendering. The raw file bytes (as UTF-8 text) are inserted at the tag position. This prevents accidental Liquid parsing of content like `{{x}}` in SVG attributes or JavaScript files.
+
+**Registration** — `{% inline %}` is registered via `engine.AddTag("inline", inlineTagFunc)` during engine setup, the same mechanism used for plugin shortcodes. The tag function receives the content file's directory path from the render context to resolve relative paths.
+
+**Scope** — `{% inline %}` is intended for content files. Using it in a layout file would resolve relative to the layout file's directory (within `layouts/`), which is what `{% include %}` already does — so there is no practical reason to use `{% inline %}` in layouts.
 
 **Shortcodes** are reusable content snippets that accept arguments and output HTML. They're used in content files to embed rich elements without writing raw HTML.
 

@@ -2,6 +2,8 @@ package template_test
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -250,6 +252,149 @@ var _ = Describe("LiquidEngine", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(result)).To(ContainSubstring("<br"),
 				"newline_to_br must produce <br> tags in Liquid template")
+		})
+	})
+
+	// ── {% inline %} tag (issue #288) ──────────────────────────────
+	// Content-relative file inlining. Reads a file relative to the
+	// content file's directory and inserts raw contents. No template
+	// processing — raw UTF-8 text insertion.
+
+	Describe("inline tag", func() {
+		It("inlines an SVG file from the content directory", func() {
+			// Set up a temp content directory with an SVG file
+			tmpDir, err := os.MkdirTemp("", "inline-test-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+			contentDir := filepath.Join(tmpDir, "content", "about")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			svgContent := `<svg xmlns="http://www.w3.org/2000/svg"><circle r="10"/></svg>`
+			Expect(os.WriteFile(filepath.Join(contentDir, "diagram.svg"), []byte(svgContent), 0644)).To(Succeed())
+
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterInlineTag(engine)
+
+			tpl, err := engine.Parse("test", []byte(`Before {% inline "./diagram.svg" %} After`))
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := tpl.Render(map[string]interface{}{
+				"_contentDir": contentDir,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(result)).To(ContainSubstring(`<svg xmlns=`),
+				"inline tag must insert raw SVG content into output")
+			Expect(string(result)).To(ContainSubstring("Before"),
+				"content before the inline tag must be preserved")
+			Expect(string(result)).To(ContainSubstring("After"),
+				"content after the inline tag must be preserved")
+		})
+
+		It("inserts content raw without template processing", func() {
+			tmpDir, err := os.MkdirTemp("", "inline-test-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+			contentDir := filepath.Join(tmpDir, "content")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			// File contains Liquid-like syntax that must NOT be processed
+			fileContent := `<div data-x="{{value}}">{% if true %}yes{% endif %}</div>`
+			Expect(os.WriteFile(filepath.Join(contentDir, "raw.html"), []byte(fileContent), 0644)).To(Succeed())
+
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterInlineTag(engine)
+
+			tpl, err := engine.Parse("test", []byte(`{% inline "./raw.html" %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := tpl.Render(map[string]interface{}{
+				"_contentDir": contentDir,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(result)).To(ContainSubstring("{{value}}"),
+				"inline must insert raw content — Liquid expressions must NOT be evaluated")
+			Expect(string(result)).To(ContainSubstring("{% if true %}"),
+				"inline must insert raw content — Liquid tags must NOT be processed")
+		})
+
+		It("returns error for binary file types", func() {
+			tmpDir, err := os.MkdirTemp("", "inline-test-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+			contentDir := filepath.Join(tmpDir, "content")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "photo.png"), []byte("fake png"), 0644)).To(Succeed())
+
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterInlineTag(engine)
+
+			tpl, err := engine.Parse("test", []byte(`{% inline "./photo.png" %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = tpl.Render(map[string]interface{}{
+				"_contentDir": contentDir,
+			})
+			Expect(err).To(HaveOccurred(),
+				"inline must reject binary file types")
+			Expect(err.Error()).To(ContainSubstring(".png"),
+				"error must mention the rejected file extension")
+		})
+
+		It("returns error for absolute paths", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterInlineTag(engine)
+
+			tpl, err := engine.Parse("test", []byte(`{% inline "/etc/passwd" %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = tpl.Render(map[string]interface{}{
+				"_contentDir": "/some/dir",
+			})
+			Expect(err).To(HaveOccurred(),
+				"inline must reject absolute paths")
+		})
+
+		It("returns error when file not found", func() {
+			tmpDir, err := os.MkdirTemp("", "inline-test-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterInlineTag(engine)
+
+			tpl, err := engine.Parse("test", []byte(`{% inline "./nonexistent.svg" %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = tpl.Render(map[string]interface{}{
+				"_contentDir": tmpDir,
+			})
+			Expect(err).To(HaveOccurred(),
+				"inline must error when file is not found — not silently produce empty output")
+		})
+
+		It("resolves parent directory paths", func() {
+			tmpDir, err := os.MkdirTemp("", "inline-test-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+			// Shared SVG one level up from content subdir
+			Expect(os.MkdirAll(filepath.Join(tmpDir, "content", "about"), 0755)).To(Succeed())
+			sharedSvg := `<svg><rect width="100" height="100"/></svg>`
+			Expect(os.WriteFile(filepath.Join(tmpDir, "content", "shared.svg"), []byte(sharedSvg), 0644)).To(Succeed())
+
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterInlineTag(engine)
+
+			tpl, err := engine.Parse("test", []byte(`{% inline "../shared.svg" %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := tpl.Render(map[string]interface{}{
+				"_contentDir": filepath.Join(tmpDir, "content", "about"),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(result)).To(ContainSubstring("<svg>"),
+				"inline must resolve ../ paths relative to the content file's directory")
 		})
 	})
 })

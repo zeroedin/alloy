@@ -350,6 +350,14 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
   
   The two-pass design ensures `page.Translations` is populated before layout templates render, enabling `{% for trans in page.translations %}` for hreflang tags.
 - **Plugin filter bridging (issue #93)**: After `registry.LoadPlugins(hooks)` (step 0) and engine creation (step 10), bridge plugin-discovered filters to the template engine. For each filter name from `LoadPlugins()`, call `engine.AddFilter(name, wrapperFn)` where `wrapperFn` routes through `QuickJSRuntime.CallFilter()`. This must happen before content rendering (step 11) so templates can use plugin filters. Similarly, `alloy.hook()`/`alloy.on()` registrations discovered by `EvalFile()` must be wired into the `HookRegistry` during `LoadPlugins()`.
+- **`{% inline %}` tag (issue #288)**: Register `inline` as a custom tag via `engine.AddTag("inline", inlineTagFunc)` during engine setup (after `RegisterBuiltinFilters`, before content rendering). The tag function:
+  1. Extracts the path argument (first positional arg, string)
+  2. Validates path starts with `./` or `../` — error if absolute
+  3. Checks file extension against an allowlist (`.svg`, `.html`, `.htm`, `.txt`, `.css`, `.js`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`, `.md`) — error with guidance for binary types
+  4. Resolves the path relative to the current content file's directory (passed via render context as `_contentDir`)
+  5. Reads the file and returns raw contents (no template processing)
+  
+  The `_contentDir` key must be set in the template context before rendering each page: `ctx["_contentDir"] = filepath.Dir(filepath.Join(contentDir, page.RelPath))`. This is an internal context key (prefixed with `_`) not exposed to templates.
 - **Plugin shortcode bridging (issue #139)**: Same pattern as filter bridging. After engine creation, iterate `rt.RegisteredShortcodes()` and call `engine.AddTag(name, wrapperFn)` where `wrapperFn` routes through `QuickJSRuntime.CallShortcode(name, args, innerContent)`. Both inline and block shortcodes must be supported. `CallShortcode()` is currently a stub (returns input unchanged) and must be implemented to actually invoke the JS shortcode function.
 - **Plugin filter shadowing (issue #140)**: When a plugin registers a filter with the same name as a built-in liquidgo filter (e.g., `reverse`), the plugin's version must take precedence. Per spec §4: "the last one loaded wins." The current implementation fails because `knownLiquidFilters` prevents plugin filters from being treated as dynamic filters, so liquidgo's native implementation intercepts the call. The fix must ensure plugin-registered filters override built-in filters in the template engine's dispatch chain.
 - **Hook payload contract (issue #182)**: All hook payloads must be JSON-serializable for JS/WASM plugins. Four categories:
