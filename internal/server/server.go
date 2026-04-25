@@ -318,6 +318,40 @@ func (s *Server) ServeStaticFile(path string) ([]byte, error) {
 	return []byte("static file content"), nil
 }
 
+// ServeContentFile reads a non-content file from the content directory.
+// Used in dev mode to serve colocated files (SVGs, images, etc.) directly
+// from source without writing to _site/.
+func (s *Server) ServeContentFile(urlPath string) ([]byte, error) {
+	contentDir := s.config.Structure.Content
+	if contentDir == "" {
+		contentDir = "content"
+	}
+	if s.config.ProjectRoot != "" {
+		contentDir = filepath.Join(s.config.ProjectRoot, contentDir)
+	}
+	filePath := filepath.Join(contentDir, filepath.FromSlash(urlPath))
+	filePath = filepath.Clean(filePath)
+
+	absContent, err := filepath.Abs(contentDir)
+	if err != nil {
+		return nil, fmt.Errorf("content file not found: %s", urlPath)
+	}
+	absFile, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("content file not found: %s", urlPath)
+	}
+	rel, err := filepath.Rel(absContent, absFile)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return nil, fmt.Errorf("content file path escapes content directory: %s", urlPath)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("content file not found: %s", urlPath)
+	}
+	return data, nil
+}
+
 // ResolvePassthrough maps a URL path to a passthrough source directory file.
 func (s *Server) ResolvePassthrough(urlPath string) (string, error) {
 	return urlPath, nil
