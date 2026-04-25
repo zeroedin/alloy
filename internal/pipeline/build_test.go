@@ -780,6 +780,63 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Layout chaining (issue #276) ────────────────────────────────
+	// Layout files can reference a parent layout via front matter.
+	// The pipeline renders inside-out: content → child → parent → root.
+	// Front matter in layout files must be stripped, not output as text.
+
+	Describe("Layout chaining", func() {
+		It("renders content through a chain of layouts", func() {
+			cfg := &config.Config{
+				Title:   "Chain Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			content := map[string]string{
+				"content/page.md":          "---\ntitle: Test\nlayout: has-toc\n---\n# Hello",
+				"layouts/has-toc.liquid":   "---\nlayout: \"base\"\n---\n<div class=\"toc\">{{ content }}</div>",
+				"layouts/base.liquid":      "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(1))
+
+			html := result.RenderedContent["page.md"]
+			Expect(html).To(ContainSubstring("<html>"),
+				"output must include root layout (base.liquid) wrapper")
+			Expect(html).To(ContainSubstring("<div class=\"toc\">"),
+				"output must include middle layout (has-toc.liquid) wrapper")
+			Expect(html).To(ContainSubstring("Hello"),
+				"output must include the page content")
+			Expect(html).NotTo(ContainSubstring("---"),
+				"layout front matter must be stripped — not output as literal text")
+			Expect(html).NotTo(ContainSubstring("layout:"),
+				"layout: directive must not appear in rendered output")
+		})
+
+		It("layout front matter is not rendered as literal text", func() {
+			cfg := &config.Config{
+				Title:   "FrontMatter Strip Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			content := map[string]string{
+				"content/page.md":         "---\ntitle: Test\nlayout: child\n---\nContent here",
+				"layouts/child.liquid":    "---\nlayout: \"parent\"\n---\n<main>{{ content }}</main>",
+				"layouts/parent.liquid":   "<html>{{ content }}</html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["page.md"]
+			Expect(html).NotTo(ContainSubstring("layout: \"parent\""),
+				"layout front matter must be stripped before rendering — "+
+					"this is the bug reported in #276")
+		})
+	})
+
 	// ── BuildOptions: SkipSSR (issue #264) ──────────────────────────
 	// alloy dev always skips SSR. Build() accepts BuildOptions with
 	// SkipSSR to skip Phase 2 regardless of ssr: config.

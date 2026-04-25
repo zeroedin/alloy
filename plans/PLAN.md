@@ -1404,8 +1404,27 @@ The `post.liquid` convention only applies to children of sections with date-base
 
 Same layout directory, same lookup order, same data context — different syntax.
 
-**Layout composition** is delegated to each engine's native capabilities — Alloy does not implement its own layout inheritance layer:
-- **Liquid:** `{% include "partial" %}` and `{% render "partial" %}` for partials. Liquid (Shopify spec) does not have `extends`/`block` — layout wrapping is handled by Alloy's two-pass rendering, which injects rendered content into the layout via `{{ content }}`.
+**Layout chaining** — Layouts can reference a parent layout via front matter `layout:` directives. The build pipeline renders inside-out: page content → innermost layout → parent layout → ... → root layout. Each level injects `{{ content }}` from the level below. This enables multi-level composition (e.g., `page → has-toc → base`):
+
+```liquid
+<!-- layouts/has-toc.liquid -->
+---
+layout: "base"
+---
+<div class="with-toc">
+  <aside>{% include "partials/toc" %}</aside>
+  <main>{{ content }}</main>
+</div>
+```
+
+The pipeline strips layout front matter before rendering (it is not output as literal text). Layout front matter is only used for the `layout:` directive — other front matter keys in layouts are ignored.
+
+**Circular layout detection** — Before rendering, `DetectCircularLayouts(layoutsDir)` scans all layout files for parent references and fails the build if a cycle is found (e.g., `a → b → a`). This runs once during Phase 0 validation, not per-page.
+
+**Max depth** — Layout chains are capped at 10 levels. If a chain exceeds this depth without reaching a root layout (one with no `layout:` front matter), the build fails with an error identifying the chain. This prevents infinite loops from malformed layouts that escape cycle detection.
+
+**Partials and includes** are delegated to each engine's native capabilities:
+- **Liquid:** `{% include "partial" %}` and `{% render "partial" %}` for partials.
 - **Go:** `{{ block "name" . }}` / `{{ define "name" }}` for layout inheritance, `{{ template "name" . }}` for includes. Full layout chaining is built into the engine.
 
 **Shortcodes** are reusable content snippets that accept arguments and output HTML. They're used in content files to embed rich elements without writing raw HTML.
