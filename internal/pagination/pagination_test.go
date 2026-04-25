@@ -1,12 +1,11 @@
 package pagination_test
 
 import (
-	"strings"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/zeroedin/alloy/internal/pagination"
+	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
 var _ = Describe("Paginate", func() {
@@ -210,11 +209,18 @@ var _ = Describe("Paginate", func() {
 				map[string]interface{}{"name": "Alice", "slug": "alice"},
 				map[string]interface{}{"name": "Bob", "slug": "bob"},
 			}
-			// Mock renderer that does simple slug substitution
-			renderer := func(tmplSrc string, ctx map[string]interface{}) (string, error) {
-				member, _ := ctx["member"].(map[string]interface{})
-				slug, _ := member["slug"].(string)
-				return strings.ReplaceAll(tmplSrc, "{{ member.slug }}", slug), nil
+			// Use the real Liquid engine — matches the production path
+			renderer := func(src string, ctx map[string]interface{}) (string, error) {
+				engine := tmpl.NewLiquidEngine()
+				tpl, err := engine.Parse("permalink", []byte(src))
+				if err != nil {
+					return "", err
+				}
+				result, err := tpl.Render(ctx)
+				if err != nil {
+					return "", err
+				}
+				return string(result), nil
 			}
 			contexts, paths, err := pagination.PaginateWithTemplatePermalink(
 				data,

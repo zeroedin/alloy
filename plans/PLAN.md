@@ -258,9 +258,11 @@ title: "My Post"
 # Liquid engine:
 permalink: "/{{ page.customField | slugify }}/{{ page.date | date: '%Y' }}/"
 # Go template engine:
-# permalink: "/{{ .page.customField | slugify }}/{{ .page.date | date '%Y' }}/"
+# permalink: "/{{ .page.customField | slugify }}/{{ .page.date | date "%Y" }}/"
 ---
 ```
+
+The permalink template syntax must match the configured engine. A Liquid permalink (`{{ page.slug }}`) in a Go template project will fail — and vice versa. Detection uses `{{` which is shared by both engines, but rendering uses the configured engine.
 
 **Static front matter overrides** are also token-free fast path:
 
