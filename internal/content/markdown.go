@@ -28,22 +28,8 @@ type MarkdownOptions struct {
 // including those containing newlines (e.g., {{ "hello\nworld" | filter }}).
 var templateTagPattern = regexp.MustCompile(`(?s)(\{\{.*?\}\}|\{%.*?%\})`)
 
-// RenderMarkdown converts Markdown source to HTML.
-func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
-	src := source
-
-	// Template tag preservation: replace {{ }} and {% %} with placeholders
-	// before goldmark processing, then restore them after.
-	var placeholders []string
-	if opts.TemplateTags {
-		src, placeholders = protectTemplateTags(src)
-	} else {
-		// When template tags are disabled, escape braces so they don't
-		// pass through as literal template syntax.
-		src = escapeTemplateTags(src)
-	}
-
-	// Build goldmark with extensions
+// createGoldmark builds a configured goldmark instance from options.
+func createGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) goldmark.Markdown {
 	extensions := []goldmark.Extender{
 		extension.Table,
 		extension.TaskList,
@@ -62,12 +48,27 @@ func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
 	if opts.AutoHeadingID {
 		parserOpts = append(parserOpts, parser.WithAutoHeadingID(), parser.WithAttribute())
 	}
+	parserOpts = append(parserOpts, extraParserOpts...)
 
-	md := goldmark.New(
+	return goldmark.New(
 		goldmark.WithExtensions(extensions...),
 		goldmark.WithRendererOptions(rendererOpts...),
 		goldmark.WithParserOptions(parserOpts...),
 	)
+}
+
+// preprocessSource handles template tag protection/escaping before goldmark processing.
+func preprocessSource(source []byte, opts MarkdownOptions) ([]byte, []string) {
+	if opts.TemplateTags {
+		return protectTemplateTags(source)
+	}
+	return escapeTemplateTags(source), nil
+}
+
+// RenderMarkdown converts Markdown source to HTML.
+func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
+	src, placeholders := preprocessSource(source, opts)
+	md := createGoldmark(opts)
 
 	var buf bytes.Buffer
 	if err := md.Convert(src, &buf); err != nil {
@@ -75,9 +76,7 @@ func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
 	}
 
 	result := buf.Bytes()
-
-	// Restore template tags from placeholders
-	if opts.TemplateTags && len(placeholders) > 0 {
+	if len(placeholders) > 0 {
 		result = restoreTemplateTags(result, placeholders)
 	}
 
@@ -164,38 +163,16 @@ type TOCEntry struct {
 
 // RenderMarkdownWithTOC renders markdown and extracts a nested table of contents
 // from the heading structure. h1 headings are excluded from the TOC.
+// Auto heading IDs are always enabled regardless of opts.AutoHeadingID,
+// since TOC entries require IDs to be useful.
 func RenderMarkdownWithTOC(source []byte, opts MarkdownOptions) ([]byte, []TOCEntry, error) {
-	src := source
+	src, placeholders := preprocessSource(source, opts)
 
-	var placeholders []string
-	if opts.TemplateTags {
-		src, placeholders = protectTemplateTags(src)
-	} else {
-		src = escapeTemplateTags(src)
+	extraOpts := []parser.Option{}
+	if !opts.AutoHeadingID {
+		extraOpts = append(extraOpts, parser.WithAutoHeadingID(), parser.WithAttribute())
 	}
-
-	extensions := []goldmark.Extender{
-		extension.Table,
-		extension.TaskList,
-		extension.NewFootnote(),
-	}
-	if opts.Typographer {
-		extensions = append(extensions, extension.NewTypographer())
-	}
-
-	rendererOpts := []renderer.Option{}
-	if opts.Unsafe {
-		rendererOpts = append(rendererOpts, html.WithUnsafe())
-	}
-
-	md := goldmark.New(
-		goldmark.WithExtensions(extensions...),
-		goldmark.WithRendererOptions(rendererOpts...),
-		goldmark.WithParserOptions(
-			parser.WithAutoHeadingID(),
-			parser.WithAttribute(),
-		),
-	)
+	md := createGoldmark(opts, extraOpts...)
 
 	reader := text.NewReader(src)
 	doc := md.Parser().Parse(reader)
@@ -206,7 +183,7 @@ func RenderMarkdownWithTOC(source []byte, opts MarkdownOptions) ([]byte, []TOCEn
 	}
 
 	result := buf.Bytes()
-	if opts.TemplateTags && len(placeholders) > 0 {
+	if len(placeholders) > 0 {
 		result = restoreTemplateTags(result, placeholders)
 	}
 
