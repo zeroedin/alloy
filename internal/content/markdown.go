@@ -16,6 +16,11 @@ import (
 	"github.com/yuin/goldmark/util"
 )
 
+// HookRenderer renders a hook template with the given context variables.
+// name is a cache key (e.g. "heading"), source is the template source,
+// and ctx contains the template variables (e.g. {"markup": {...}}).
+type HookRenderer func(name, source string, ctx map[string]interface{}) (string, error)
+
 // MarkdownOptions controls goldmark rendering behavior.
 type MarkdownOptions struct {
 	Unsafe        bool
@@ -23,6 +28,7 @@ type MarkdownOptions struct {
 	TemplateTags  bool
 	AutoHeadingID bool
 	Hooks         map[string]string
+	HookRenderer  HookRenderer
 }
 
 // templateTagPattern matches {{ ... }} and {% ... %} template expressions,
@@ -49,7 +55,7 @@ func createGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) gold
 		noHookOpts := opts
 		noHookOpts.Hooks = nil
 		childMD := createGoldmark(noHookOpts, extraParserOpts...)
-		hookRenderer := newHookNodeRenderer(opts.Hooks, childMD.Renderer())
+		hookRenderer := newHookNodeRenderer(opts.Hooks, childMD.Renderer(), opts.HookRenderer)
 		rendererOpts = append(rendererOpts, renderer.WithNodeRenderers(util.Prioritized(hookRenderer, 100)))
 	}
 

@@ -18,10 +18,11 @@ import (
 type hookNodeRenderer struct {
 	hooks         map[string]string
 	childRenderer renderer.Renderer
+	renderHook    HookRenderer
 }
 
-func newHookNodeRenderer(hooks map[string]string, childRenderer renderer.Renderer) *hookNodeRenderer {
-	return &hookNodeRenderer{hooks: hooks, childRenderer: childRenderer}
+func newHookNodeRenderer(hooks map[string]string, childRenderer renderer.Renderer, renderHook HookRenderer) *hookNodeRenderer {
+	return &hookNodeRenderer{hooks: hooks, childRenderer: childRenderer, renderHook: renderHook}
 }
 
 func (r *hookNodeRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
@@ -62,9 +63,11 @@ func (r *hookNodeRenderer) renderFencedCodeBlock(
 	n := node.(*ast.FencedCodeBlock)
 	language := string(n.Language(source))
 
-	hookTemplate, found := r.hooks["codeblock-"+language]
+	hookName := "codeblock-" + language
+	hookTemplate, found := r.hooks[hookName]
 	if !found {
-		hookTemplate, found = r.hooks["codeblock"]
+		hookName = "codeblock"
+		hookTemplate, found = r.hooks[hookName]
 	}
 	if !found {
 		return ast.WalkContinue, nil
@@ -83,7 +86,7 @@ func (r *hookNodeRenderer) renderFencedCodeBlock(
 			"inner":    codeBuf.String(),
 		},
 	}
-	rendered, err := renderHookTemplate(hookTemplate, ctx)
+	rendered, err := r.renderHookTemplate(hookName, hookTemplate, ctx)
 	if err != nil {
 		return ast.WalkStop, err
 	}
@@ -111,7 +114,7 @@ func (r *hookNodeRenderer) renderLink(
 			"is_external": isExternal,
 		},
 	}
-	rendered, err := renderHookTemplate(r.hooks["link"], ctx)
+	rendered, err := r.renderHookTemplate("link", r.hooks["link"], ctx)
 	if err != nil {
 		return ast.WalkStop, err
 	}
@@ -137,7 +140,7 @@ func (r *hookNodeRenderer) renderHeading(
 			"inner": inner,
 		},
 	}
-	rendered, err := renderHookTemplate(r.hooks["heading"], ctx)
+	rendered, err := r.renderHookTemplate("heading", r.hooks["heading"], ctx)
 	if err != nil {
 		return ast.WalkStop, err
 	}
@@ -162,7 +165,7 @@ func (r *hookNodeRenderer) renderImage(
 			"title": string(n.Title),
 		},
 	}
-	rendered, err := renderHookTemplate(r.hooks["image"], ctx)
+	rendered, err := r.renderHookTemplate("image", r.hooks["image"], ctx)
 	if err != nil {
 		return ast.WalkStop, err
 	}
@@ -186,7 +189,7 @@ func (r *hookNodeRenderer) renderBlockquote(
 			"inner": inner,
 		},
 	}
-	rendered, err := renderHookTemplate(r.hooks["blockquote"], ctx)
+	rendered, err := r.renderHookTemplate("blockquote", r.hooks["blockquote"], ctx)
 	if err != nil {
 		return ast.WalkStop, err
 	}
@@ -210,7 +213,7 @@ func (r *hookNodeRenderer) renderTable(
 			"inner": buf.String(),
 		},
 	}
-	rendered, err := renderHookTemplate(r.hooks["table"], ctx)
+	rendered, err := r.renderHookTemplate("table", r.hooks["table"], ctx)
 	if err != nil {
 		return ast.WalkStop, err
 	}
@@ -243,7 +246,14 @@ func slugifyHeading(text string) string {
 	return s
 }
 
-func renderHookTemplate(tmplSource string, ctx map[string]interface{}) (string, error) {
+func (r *hookNodeRenderer) renderHookTemplate(name, tmplSource string, ctx map[string]interface{}) (string, error) {
+	if r.renderHook != nil {
+		return r.renderHook(name, tmplSource, ctx)
+	}
+	return renderHookTemplateLiquid(tmplSource, ctx)
+}
+
+func renderHookTemplateLiquid(tmplSource string, ctx map[string]interface{}) (string, error) {
 	env := liquid.NewEnvironment()
 	liquidtags.RegisterStandardTags(env)
 
