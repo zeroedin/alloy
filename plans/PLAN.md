@@ -1449,6 +1449,7 @@ The SVG markup is inlined directly into the rendered HTML. This is essential for
 - Path must start with `./` or `../` — always relative to the content file's directory
 - Absolute paths are a build error
 - File not found is a build error (not silent empty output)
+- **Path sandboxing** — After resolving the relative path, the result must be within the content root directory. Paths that traverse outside content (e.g., `../../../../etc/passwd`) are a build error. The check: `filepath.Rel(contentRoot, resolvedPath)` must not start with `..`. This allows `../shared.svg` when it stays inside `content/` but blocks escaping to the filesystem.
 
 **Allowed file types** (text-based only):
 `.svg`, `.html`, `.htm`, `.txt`, `.css`, `.js`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`, `.md`
@@ -1466,7 +1467,7 @@ templates:
 
 **Registration** — `{% inline %}` is registered via `engine.AddTag("inline", inlineTagFunc)` during engine setup, the same mechanism used for plugin shortcodes. The tag function receives the content file's directory path from the render context to resolve relative paths.
 
-**Scope** — `{% inline %}` is intended for content files. Using it in a layout file would resolve relative to the layout file's directory (within `layouts/`), which is what `{% include %}` already does — so there is no practical reason to use `{% inline %}` in layouts.
+**Scope** — `{% inline %}` is content-scoped: relative paths are always resolved from the current content file's directory via the render context. If `{% inline %}` appears inside a layout while rendering a page, it still resolves against that page's content directory, not the layout file's directory. For layout-relative partials, use `{% include %}` instead.
 
 **Shortcodes** are reusable content snippets that accept arguments and output HTML. They're used in content files to embed rich elements without writing raw HTML.
 

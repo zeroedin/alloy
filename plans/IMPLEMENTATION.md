@@ -355,9 +355,10 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
   2. Validates path starts with `./` or `../` — error if absolute
   3. Checks file extension against an allowlist (`.svg`, `.html`, `.htm`, `.txt`, `.css`, `.js`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`, `.md`) — error with guidance for binary types
   4. Resolves the path relative to the current content file's directory (passed via render context as `_contentDir`)
-  5. Reads the file and returns raw contents (no template processing)
+  5. **Sandboxes** the resolved path: `filepath.Rel(contentRoot, resolved)` must not start with `..`. Rejects paths that escape the content directory (e.g., `../../../../etc/passwd`). The content root is passed via `_contentRoot` in the render context.
+  6. Reads the file and returns raw contents (no template processing)
   
-  The `_contentDir` key must be set in the template context before rendering each page: `ctx["_contentDir"] = filepath.Dir(filepath.Join(contentDir, page.RelPath))`. This is an internal context key (prefixed with `_`) not exposed to templates.
+  The template context must include both keys before rendering each page: `ctx["_contentDir"] = filepath.Dir(filepath.Join(contentDir, page.RelPath))` and `ctx["_contentRoot"] = contentDir`. These are internal context keys (prefixed with `_`) — accessible in templates but unsupported/unstable.
 - **Plugin shortcode bridging (issue #139)**: Same pattern as filter bridging. After engine creation, iterate `rt.RegisteredShortcodes()` and call `engine.AddTag(name, wrapperFn)` where `wrapperFn` routes through `QuickJSRuntime.CallShortcode(name, args, innerContent)`. Both inline and block shortcodes must be supported. `CallShortcode()` is currently a stub (returns input unchanged) and must be implemented to actually invoke the JS shortcode function.
 - **Plugin filter shadowing (issue #140)**: When a plugin registers a filter with the same name as a built-in liquidgo filter (e.g., `reverse`), the plugin's version must take precedence. Per spec §4: "the last one loaded wins." The current implementation fails because `knownLiquidFilters` prevents plugin filters from being treated as dynamic filters, so liquidgo's native implementation intercepts the call. The fix must ensure plugin-registered filters override built-in filters in the template engine's dispatch chain.
 - **Hook payload contract (issue #182)**: All hook payloads must be JSON-serializable for JS/WASM plugins. Four categories:

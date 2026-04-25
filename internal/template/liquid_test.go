@@ -373,15 +373,16 @@ var _ = Describe("LiquidEngine", func() {
 				"inline must error when file is not found — not silently produce empty output")
 		})
 
-		It("resolves parent directory paths", func() {
+		It("resolves parent directory paths within content root", func() {
 			tmpDir, err := os.MkdirTemp("", "inline-test-*")
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(func() { os.RemoveAll(tmpDir) })
 
 			// Shared SVG one level up from content subdir
-			Expect(os.MkdirAll(filepath.Join(tmpDir, "content", "about"), 0755)).To(Succeed())
+			contentRoot := filepath.Join(tmpDir, "content")
+			Expect(os.MkdirAll(filepath.Join(contentRoot, "about"), 0755)).To(Succeed())
 			sharedSvg := `<svg><rect width="100" height="100"/></svg>`
-			Expect(os.WriteFile(filepath.Join(tmpDir, "content", "shared.svg"), []byte(sharedSvg), 0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentRoot, "shared.svg"), []byte(sharedSvg), 0644)).To(Succeed())
 
 			engine := tmpl.NewLiquidEngine()
 			tmpl.RegisterInlineTag(engine)
@@ -390,11 +391,35 @@ var _ = Describe("LiquidEngine", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			result, err := tpl.Render(map[string]interface{}{
-				"_contentDir": filepath.Join(tmpDir, "content", "about"),
+				"_contentDir":  filepath.Join(contentRoot, "about"),
+				"_contentRoot": contentRoot,
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(result)).To(ContainSubstring("<svg>"),
-				"inline must resolve ../ paths relative to the content file's directory")
+				"inline must resolve ../ paths that stay within the content root")
+		})
+
+		It("rejects paths that escape the content directory", func() {
+			tmpDir, err := os.MkdirTemp("", "inline-test-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+			contentRoot := filepath.Join(tmpDir, "content")
+			Expect(os.MkdirAll(filepath.Join(contentRoot, "about"), 0755)).To(Succeed())
+
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterInlineTag(engine)
+
+			tpl, err := engine.Parse("test", []byte(`{% inline "../../../../etc/passwd" %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = tpl.Render(map[string]interface{}{
+				"_contentDir":  filepath.Join(contentRoot, "about"),
+				"_contentRoot": contentRoot,
+			})
+			Expect(err).To(HaveOccurred(),
+				"inline must reject paths that traverse outside the content root — "+
+					"this is a security boundary preventing arbitrary file reads")
 		})
 	})
 })
