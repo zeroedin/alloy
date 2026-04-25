@@ -335,7 +335,20 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
 - **Layout chaining (issue #276)**: After rendering content through the initial layout, check the layout file for front matter with a `layout:` directive using `extractLayoutParent()`. If a parent is found, resolve it via `ResolveLayout` (using the parent name), render the current result as `{{ content }}` into the parent, and repeat. Loop until a root layout (no `layout:` in front matter) is reached, or max depth (10) is exceeded. Strip front matter from layout content before parsing/rendering. Call `DetectCircularLayouts(layoutsDir)` once after layout discovery (Phase 0) to fail fast on cycles. Track all layouts in the chain for cache invalidation (`cache.TrackTemplateUsage` for each level).
 - Steps 15-20 are post-render: write files, copy assets, generate sitemap, persist cache.
 - If content directory doesn't exist or is empty, `Build()` should return a successful zero-page result (not error). This is required for `alloy init && alloy build` to work and for cmd tests to pass.
-- **i18n (issue #70)**: When `cfg.Languages` is present, the pipeline uses a two-pass per-language loop (see Phase 5C wiring). Pass 1 runs steps 3-11 (discovery through content rendering) per language. Then `LinkTranslations` runs once across all languages. Pass 2 runs steps 12-15 (layout resolution through output writing) per language — this ensures `page.Translations` is populated before templates render. Steps 1-2 (config/validation) and 16-20 (static/assets/sitemap/cache) run once outside the loop.
+- **Unified pipeline (issue #280)**: `Build()` must have ONE code path, not separate multi-language and single-language forks. A site without `languages:` config produces a single language batch with defaults (`{code: cfg.Language, root: true}`). The pipeline always:
+  1. Builds language batches (1 for single-language, N for multi-language)
+  2. Pass 1: discover + render content per batch (steps 3-11)
+  3. `LinkTranslations` between passes (no-op for single batch)
+  4. Pass 2: layout resolution + rendering per batch (steps 12-15)
+  5. SSR, output, static copy (shared, after all batches)
+  
+  This eliminates the current `if len(cfg.Languages) > 0 / else` fork that duplicates content discovery, lifecycle filtering, permalink resolution, cascade, collections, taxonomy, layout rendering, and layout chaining logic. Every feature (layout chaining #276, progress reporting #255, BuildOptions #264) is wired once.
+  
+  `BuildWithContent()` must also use the same engine creation path as `Build()` — no separate engine setup.
+  
+  Helper functions to extract: `renderPageThroughLayouts(page, layoutChain, engine, ctx)`, `generateTaxonomyPages(taxonomies, engine, cfg, ...)`.
+  
+  The two-pass design ensures `page.Translations` is populated before layout templates render, enabling `{% for trans in page.translations %}` for hreflang tags.
 - **Plugin filter bridging (issue #93)**: After `registry.LoadPlugins(hooks)` (step 0) and engine creation (step 10), bridge plugin-discovered filters to the template engine. For each filter name from `LoadPlugins()`, call `engine.AddFilter(name, wrapperFn)` where `wrapperFn` routes through `QuickJSRuntime.CallFilter()`. This must happen before content rendering (step 11) so templates can use plugin filters. Similarly, `alloy.hook()`/`alloy.on()` registrations discovered by `EvalFile()` must be wired into the `HookRegistry` during `LoadPlugins()`.
 - **Plugin shortcode bridging (issue #139)**: Same pattern as filter bridging. After engine creation, iterate `rt.RegisteredShortcodes()` and call `engine.AddTag(name, wrapperFn)` where `wrapperFn` routes through `QuickJSRuntime.CallShortcode(name, args, innerContent)`. Both inline and block shortcodes must be supported. `CallShortcode()` is currently a stub (returns input unchanged) and must be implemented to actually invoke the JS shortcode function.
 - **Plugin filter shadowing (issue #140)**: When a plugin registers a filter with the same name as a built-in liquidgo filter (e.g., `reverse`), the plugin's version must take precedence. Per spec §4: "the last one loaded wins." The current implementation fails because `knownLiquidFilters` prevents plugin filters from being treated as dynamic filters, so liquidgo's native implementation intercepts the call. The fix must ensure plugin-registered filters override built-in filters in the template engine's dispatch chain.
@@ -472,77 +485,70 @@ After `loadSiteData()` loads local data files, the pipeline must iterate `cfg.So
 The pipeline needs a language-aware outer loop. When `cfg.Languages` is nil/empty, the pipeline runs once (current behavior — single-language site). When `cfg.Languages` is present, the pipeline iterates over each language:
 
 ```
+// ── Build language batches (issue #280) ──
+// Single-language sites produce one batch. Multi-language produces N batches.
+// No if/else fork — the pipeline always iterates batches.
+var langContexts []i18n.LanguageContext
 if cfg.Languages != nil {
-    langContexts := i18n.BuildLanguageContexts(cfg.Languages)
-    allLangPages := []*content.Page{}  // collect across languages for translation linking
-
-    // ── Pass 1: discover + content-render per language (steps 3-11) ──
-    // Each language's pages are discovered, filtered, collected, and
-    // content-rendered (Markdown → HTML). Layout resolution and output
-    // writing are deferred so that page.Translations is populated first.
-    type langBatch struct {
-        ctx         LanguageContext
-        pages       []*content.Page
-        collections map[string]interface{}
-        siteData    map[string]interface{} // per-language copy
-    }
-    var batches []langBatch
-
-    for _, langCtx := range langContexts {
-        // Scope content discovery to content/<lang>/
-        contentDir := filepath.Join(projectRoot, "content", langCtx.Code)
-        pages := content.DiscoverWithFormats(contentDir, formats)
-
-        // Set lang on each page's front matter
-        for _, page := range pages {
-            page.FrontMatter["lang"] = langCtx.Code
-        }
-
-        // Apply output prefix to permalinks
-        prefix := i18n.OutputPrefix(langCtx.Code, langCtx.Root)
-        // prefix permalinks: page.URL = prefix + page.URL
-        //
-        // IMPORTANT (issue #113): permalink resolution must use the
-        // ORIGINAL relPath (without language prefix), not the prefixed
-        // one. The language prefix is added for translation linking,
-        // but DefaultFromPath("en/index.md") returns "/en/" instead of
-        // "/", causing double-prefixing for index pages. Resolve the
-        // permalink first, then prefix RelPath for translation linking.
-
-        // Inject site.language into per-language site data copy
-        langSiteData := copyMap(siteData)
-        langSiteData["language"] = i18n.LanguageData(langCtx)
-        langSiteData["title"] = i18n.LanguageSiteTitle(cfg.Title, cfg.Languages[langCtx.Code])
-
-        // Run steps 4-11 (lifecycle filter, cascade, permalinks,
-        // collections, taxonomies, content rendering) per language
-        // Collections and taxonomies are per-language (scoped to langPages)
-
-        allLangPages = append(allLangPages, pages...)
-        batches = append(batches, langBatch{ctx: langCtx, pages: pages, collections: langCollections, siteData: langSiteData})
-    }
-
-    // ── Link translations across all language trees ──
-    langCodes := make([]string, len(langContexts))
-    for i, ctx := range langContexts { langCodes[i] = ctx.Code }
-    i18n.LinkTranslations(allLangPages, langCodes)
-
-    // ── Pass 2: layout resolution + output writing (steps 12-15) ──
-    // page.Translations is now populated, so templates can render
-    // {% for trans in page.translations %} correctly.
-    for _, batch := range batches {
-        // Run steps 12-15 (layout resolution, template context build,
-        // layout rendering, output writing) with batch.pages, batch.siteData
-    }
-
-    // Steps 16-20 (static copy, assets, sitemap, cache) run once after all languages
+    langContexts = i18n.BuildLanguageContexts(cfg.Languages)
 } else {
-    // Single-language build (current behavior, no changes)
+    // Single-language default: one batch with cfg.Language (default "en")
+    langContexts = []i18n.LanguageContext{{Code: cfg.Language, Root: true}}
 }
+
+allLangPages := []*content.Page{}
+
+type langBatch struct {
+    ctx         LanguageContext
+    pages       []*content.Page
+    collections map[string]interface{}
+    siteData    map[string]interface{}
+}
+var batches []langBatch
+
+// ── Pass 1: discover + content-render per batch (steps 3-11) ──
+for _, langCtx := range langContexts {
+    // For multi-language: content/<lang>/. For single: content/.
+    contentDir := resolveContentDir(langCtx, cfg)
+    pages := content.DiscoverWithFormats(contentDir, formats)
+
+    // Set lang on each page's front matter
+    for _, page := range pages {
+        page.FrontMatter["lang"] = langCtx.Code
+    }
+
+    // Apply output prefix (empty for root language)
+    prefix := i18n.OutputPrefix(langCtx.Code, langCtx.Root)
+    //
+    // IMPORTANT (issue #113): permalink resolution must use the
+    // ORIGINAL relPath (without language prefix), not the prefixed
+    // one. Resolve permalink first, then prefix RelPath.
+
+    langSiteData := copyMap(siteData)
+    langSiteData["language"] = i18n.LanguageData(langCtx)
+
+    // Steps 4-11 per batch
+
+    allLangPages = append(allLangPages, pages...)
+    batches = append(batches, langBatch{...})
+}
+
+// ── Link translations (no-op for single batch) ──
+langCodes := make([]string, len(langContexts))
+for i, ctx := range langContexts { langCodes[i] = ctx.Code }
+i18n.LinkTranslations(allLangPages, langCodes)
+
+// ── Pass 2: layout resolution + output (steps 12-15) per batch ──
+for _, batch := range batches {
+    renderPageThroughLayouts(page, chain, engine, batch.siteData, ...)
+    generateTaxonomyPages(batch.taxonomies, engine, cfg, ...)
+}
+
+// Steps 16-20 (static copy, assets, sitemap, cache) run once
 ```
 
 Key points:
-- **Two-pass per-language loop**: Pass 1 (steps 3-11) discovers and content-renders each language. `LinkTranslations` runs between passes. Pass 2 (steps 12-15) resolves layouts and writes output. This ensures `page.Translations` is populated before templates render, enabling `{% for trans in page.translations %}` for `<link rel="alternate" hreflang="...">` tags.
+- **Unified two-pass pipeline (issue #280)**: Always operates on language batches. Single-language sites produce one batch. Pass 1 (steps 3-11) discovers and content-renders each batch. `LinkTranslations` runs between passes (no-op for single batch). Pass 2 (steps 12-15) resolves layouts and writes output. No `if/else` fork.
 - `layouts/` is shared across all languages — never scoped
 - `data/` globals are shared, but `site.language` and `site.title` are overridden per-language iteration via a shallow copy
 - Collections and taxonomies are per-language: `collections.blog` for English only contains English posts
