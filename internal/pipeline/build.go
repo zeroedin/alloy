@@ -257,8 +257,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Pass 2 (steps 12-15): layout resolution + rendering per batch.
 
 	var langContexts []i18n.LanguageContext
-	multiLang := len(cfg.Languages) > 0
-	if multiLang {
+	multiLang := len(cfg.Languages) > 1
+	if len(cfg.Languages) > 0 {
 		var langErr error
 		langContexts, langErr = i18n.BuildLanguageContexts(cfg.Languages)
 		if langErr != nil {
@@ -656,21 +656,17 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 // BuildWithContent runs the pipeline with injected content for testing.
 // The content map keys are source paths, values are raw file content.
-func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildResult, error) {
-	start := time.Now()
-
-	config.ApplyDefaults(cfg)
-
+func BuildWithContent(cfg *config.Config, contentMap map[string]string, opts ...BuildOptions) (*BuildResult, error) {
 	if len(contentMap) == 0 {
+		config.ApplyDefaults(cfg)
 		return &BuildResult{
 			OutputDir:  cfg.Build.Output,
 			PageCount:  0,
-			Duration:   time.Since(start),
+			Duration:   0,
 			SSRSkipped: cfg.SSR == nil,
 		}, nil
 	}
 
-	// Create temp directory with content files
 	tmpDir, err := os.MkdirTemp("", "alloy-build-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %w", err)
@@ -687,82 +683,8 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string) (*BuildR
 		}
 	}
 
-	// Discover from the temp content directory
-	contentDir := filepath.Join(tmpDir, "content")
-	pages, err := content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
-	if err != nil {
-		return nil, fmt.Errorf("content discovery: %w", err)
-	}
-
-	// Render each page (no data files, collections, or engine in injected content mode)
-	rendered, renderErr := renderPages(pages, cfg, nil, nil, nil, nil)
-	if renderErr != nil {
-		return nil, renderErr
-	}
-
-	// Layout resolution + chaining
-	layoutsDir := filepath.Join(tmpDir, "layouts")
-	engineName := cfg.Templates.Engine
-	if engineName == "" {
-		engineName = "liquid"
-	}
-	engine, engineErr := createEngine(cfg)
-	if engineErr != nil {
-		return nil, engineErr
-	}
-
-	if info, err := os.Stat(layoutsDir); err == nil && info.IsDir() {
-		for _, page := range pages {
-			layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, engineName, cfg.Permalinks)
-			if err != nil {
-				continue
-			}
-			if layoutPath == "" {
-				continue
-			}
-
-			if err := renderPageThroughLayouts(page, layoutPath, layoutsDir, engineName, engine, cfg, nil, nil, pages, nil, nil); err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	// Phase 2: SSR (if configured)
-	ssrSkipped := cfg.SSR == nil
-	if cfg.SSR != nil {
-		intermediateHTML := make(map[string]string, len(pages))
-		for _, page := range pages {
-			if len(page.RenderedBody) > 0 {
-				intermediateHTML[page.RelPath] = string(page.RenderedBody)
-			}
-		}
-		finalHTML, err := BuildPhase2(intermediateHTML, cfg.SSR)
-		if err != nil {
-			return nil, fmt.Errorf("ssr phase 2: %w", err)
-		}
-		for _, page := range pages {
-			if transformed, ok := finalHTML[page.RelPath]; ok {
-				page.RenderedBody = []byte(transformed)
-			}
-		}
-		ssrSkipped = false
-	}
-
-	renderedContent := make(map[string]string, len(pages))
-	for _, page := range pages {
-		if len(page.RenderedBody) > 0 {
-			renderedContent[page.RelPath] = string(page.RenderedBody)
-		}
-	}
-
-	return &BuildResult{
-		OutputDir:       cfg.Build.Output,
-		PageCount:       len(rendered),
-		Duration:        time.Since(start),
-		SSRSkipped:      ssrSkipped,
-		PagesRendered:   rendered,
-		RenderedContent: renderedContent,
-	}, nil
+	cfg.ProjectRoot = tmpDir
+	return Build(cfg, opts...)
 }
 
 // BuildIncremental renders only pages that have changed since the previous
