@@ -7,9 +7,12 @@ import (
 	"strings"
 
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer"
 	"github.com/yuin/goldmark/renderer/html"
+	"github.com/yuin/goldmark/text"
 )
 
 // MarkdownOptions controls goldmark rendering behavior.
@@ -17,6 +20,7 @@ type MarkdownOptions struct {
 	Unsafe       bool
 	Typographer  bool
 	TemplateTags bool
+	Hooks        map[string]string
 }
 
 // templateTagPattern matches {{ ... }} and {% ... %} template expressions,
@@ -56,6 +60,10 @@ func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
 	md := goldmark.New(
 		goldmark.WithExtensions(extensions...),
 		goldmark.WithRendererOptions(rendererOpts...),
+		goldmark.WithParserOptions(
+			parser.WithAutoHeadingID(),
+			parser.WithAttribute(),
+		),
 	)
 
 	var buf bytes.Buffer
@@ -140,6 +148,104 @@ func escapeTemplateTags(src []byte) []byte {
 		s = strings.ReplaceAll(s, "%}", "%\u200B}")
 		return []byte(s)
 	})
+	return result
+}
+
+// TOCEntry represents a heading in the table of contents.
+type TOCEntry struct {
+	ID       string
+	Text     string
+	Level    int
+	Children []TOCEntry
+}
+
+// RenderMarkdownWithTOC renders markdown and extracts a nested table of contents
+// from the heading structure. h1 headings are excluded from the TOC.
+func RenderMarkdownWithTOC(source []byte, opts MarkdownOptions) ([]byte, []TOCEntry, error) {
+	html, err := RenderMarkdown(source, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	extensions := []goldmark.Extender{
+		extension.Table,
+		extension.TaskList,
+		extension.NewFootnote(),
+	}
+	if opts.Typographer {
+		extensions = append(extensions, extension.NewTypographer())
+	}
+
+	md := goldmark.New(
+		goldmark.WithExtensions(extensions...),
+		goldmark.WithParserOptions(
+			parser.WithAutoHeadingID(),
+			parser.WithAttribute(),
+		),
+	)
+
+	reader := text.NewReader(source)
+	doc := md.Parser().Parse(reader)
+
+	var flat []TOCEntry
+	ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		heading, ok := n.(*ast.Heading)
+		if !ok || heading.Level < 2 {
+			return ast.WalkContinue, nil
+		}
+
+		id := ""
+		if rawID, found := heading.AttributeString("id"); found {
+			id = string(rawID.([]byte))
+		}
+
+		var textBuf bytes.Buffer
+		for child := heading.FirstChild(); child != nil; child = child.NextSibling() {
+			if t, ok := child.(*ast.Text); ok {
+				textBuf.Write(t.Segment.Value(source))
+			}
+		}
+
+		flat = append(flat, TOCEntry{
+			ID:    id,
+			Text:  textBuf.String(),
+			Level: heading.Level,
+		})
+		return ast.WalkContinue, nil
+	})
+
+	toc := nestTOCEntries(flat)
+	return html, toc, nil
+}
+
+func nestTOCEntries(flat []TOCEntry) []TOCEntry {
+	if len(flat) == 0 {
+		return nil
+	}
+
+	var result []TOCEntry
+	var stack []*TOCEntry
+
+	for i := range flat {
+		entry := flat[i]
+
+		for len(stack) > 0 && stack[len(stack)-1].Level >= entry.Level {
+			stack = stack[:len(stack)-1]
+		}
+
+		if len(stack) == 0 {
+			result = append(result, entry)
+			stack = []*TOCEntry{&result[len(result)-1]}
+		} else {
+			parent := stack[len(stack)-1]
+			parent.Children = append(parent.Children, entry)
+			stack = append(stack, &parent.Children[len(parent.Children)-1])
+		}
+	}
+
 	return result
 }
 

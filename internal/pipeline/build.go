@@ -85,9 +85,10 @@ type BuildResult struct {
 	SSRPagesRendered int               // pages that went through Phase 2 SSR
 	Duration         time.Duration
 	Errors           []error
-	SSRSkipped       bool              // true when Phase 2 was skipped (no ssr: config or SkipSSR)
-	PagesRendered    []string          // source paths of pages that were rendered
-	RenderedContent  map[string]string // source path → final rendered HTML
+	SSRSkipped            bool              // true when Phase 2 was skipped (no ssr: config or SkipSSR)
+	PagesRendered         []string          // source paths of pages that were rendered
+	RenderedContent       map[string]string // source path → final rendered HTML
+	ContentPassthroughs   []string          // relative paths of non-content files copied from content/ to output
 }
 
 // Build runs the complete build pipeline (Phase 0 through Phase 3).
@@ -1087,7 +1088,11 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 		var err error
 		switch ext {
 		case ".md":
-			html, err = content.RenderMarkdown(body, mdOpts)
+			var toc []content.TOCEntry
+			html, toc, err = content.RenderMarkdownWithTOC(body, mdOpts)
+			if err == nil {
+				page.TOC = toc
+			}
 		case ".txt":
 			html, err = content.RenderText(body)
 		default:

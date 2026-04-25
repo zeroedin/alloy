@@ -30,6 +30,7 @@ type Page struct {
 	Pagination   *PaginationFrontMatter
 	Bundle       bool
 	BundleAssets []string
+	TOC          []TOCEntry
 }
 
 // ToTemplateMap converts a Page to a map with lowercase keys for reliable
