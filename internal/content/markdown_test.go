@@ -314,14 +314,16 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("handles duplicate headings with numeric suffix", func() {
 			out, err := content.RenderMarkdown(
-				[]byte("## Overview\n\nText.\n\n## Overview"),
+				[]byte("## Overview\n\nText.\n\n## Overview\n\nMore text.\n\n## Overview"),
 				defaultOpts)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`id="overview"`),
 				"first heading must have the base id")
 			Expect(html).To(ContainSubstring(`id="overview-1"`),
-				"duplicate heading must get a numeric suffix")
+				"second duplicate must get suffix -1")
+			Expect(html).To(ContainSubstring(`id="overview-2"`),
+				"third duplicate must get suffix -2")
 		})
 
 		It("respects manual heading attributes override", func() {

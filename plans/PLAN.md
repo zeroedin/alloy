@@ -604,10 +604,11 @@ Manual `{#id}` overrides take precedence over auto-generated IDs. Alloy enables 
 
 ```yaml
 content:
-  toc: true     # default: true — generate page.toc for all pages
+  markdown:
+    toc: true     # default: true — generate page.toc for all pages
 ```
 
-Set `content.toc: false` to disable TOC generation entirely (skips the AST walk for sites that don't use TOC).
+Set `content.markdown.toc: false` to disable TOC generation entirely (skips the AST walk for sites that don't use TOC).
 
 **Future option:** Configurable ID generation algorithm via a custom `parser.IDs` implementation, exposed as a config option. For v1, goldmark's default slugification is used.
 
