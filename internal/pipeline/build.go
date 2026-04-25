@@ -79,16 +79,16 @@ type BuildOptions struct {
 
 // BuildResult holds the outcome of a build.
 type BuildResult struct {
-	OutputDir        string
-	PageCount        int
-	PagesSkipped     int               // pages skipped via cache (incremental only)
-	SSRPagesRendered int               // pages that went through Phase 2 SSR
-	Duration         time.Duration
-	Errors           []error
-	SSRSkipped            bool              // true when Phase 2 was skipped (no ssr: config or SkipSSR)
-	PagesRendered         []string          // source paths of pages that were rendered
-	RenderedContent       map[string]string // source path → final rendered HTML
-	ContentPassthroughs   []string          // relative paths of non-content files copied from content/ to output
+	OutputDir           string
+	PageCount           int
+	PagesSkipped        int // pages skipped via cache (incremental only)
+	SSRPagesRendered    int // pages that went through Phase 2 SSR
+	Duration            time.Duration
+	Errors              []error
+	SSRSkipped          bool              // true when Phase 2 was skipped (no ssr: config or SkipSSR)
+	PagesRendered       []string          // source paths of pages that were rendered
+	RenderedContent     map[string]string // source path → final rendered HTML
+	ContentPassthroughs []string          // relative paths of non-content files copied from content/ to output
 }
 
 // Build runs the complete build pipeline (Phase 0 through Phase 3).
@@ -1599,4 +1599,3 @@ func validateOutputDir(cfg *config.Config) error {
 
 	return nil
 }
-
