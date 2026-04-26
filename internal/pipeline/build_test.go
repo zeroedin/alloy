@@ -961,7 +961,7 @@ var _ = Describe("Build Pipeline", func() {
 			contentMap := map[string]string{
 				"content/about.md":   "---\ntitle: About\ntags: [\"about\"]\n---\n# About",
 				"content/roadmap.md": "---\ntitle: Roadmap\ntags: [\"about\"]\n---\n# Roadmap",
-				"layouts/default.liquid": `<html><body>{{ content }}{% for p in collections.tags.about %}<span class="item">{{ p.title }}|{{ p.url }}</span>{% endfor %}</body></html>`,
+				"layouts/default.liquid": `<html><body>{{ content }}{% for p in collections.taxonomies.tags.about %}<span class="item">{{ p.title }}|{{ p.url }}</span>{% endfor %}</body></html>`,
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred())
