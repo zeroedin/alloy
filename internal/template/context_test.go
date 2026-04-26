@@ -54,55 +54,55 @@ var _ = Describe("Template Context Shape (§3)", func() {
 	})
 
 	It("{{ site.title }} is available from config", func() {
-		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, "")
+		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, nil, "")
 		Expect(ctx).NotTo(BeNil())
 		Expect(ctx.Site.Title).To(Equal("Test Site"))
 	})
 
 	It("{{ site.data.navigation }} is available from data files", func() {
-		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, "")
+		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, nil, "")
 		Expect(ctx).NotTo(BeNil())
 		Expect(ctx.Site.Data).To(HaveKey("navigation"))
 	})
 
 	It("{{ page.title }} is available from front matter", func() {
-		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, "")
+		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, nil, "")
 		Expect(ctx).NotTo(BeNil())
 		Expect(ctx.Page.Title).To(Equal("My Post"))
 	})
 
 	It("{{ page.content }} is rendered HTML", func() {
-		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, "")
+		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, nil, "")
 		Expect(ctx).NotTo(BeNil())
 		Expect(ctx.Content).To(ContainSubstring("<h1>"))
 	})
 
 	It("{{ page.url }} is the computed permalink", func() {
-		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, "")
+		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, nil, "")
 		Expect(ctx).NotTo(BeNil())
 		Expect(ctx.Page.URL).To(Equal("/blog/my-post/"))
 	})
 
 	It("{{ page.collection }} identifies collection membership", func() {
-		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, "")
+		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, nil, "")
 		Expect(ctx).NotTo(BeNil())
 		Expect(ctx.Page.Collection).To(Equal("blog"))
 	})
 
 	It("{{ site.pages }} contains all pages", func() {
-		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, "")
+		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, nil, "")
 		Expect(ctx).NotTo(BeNil())
 		Expect(ctx.Site.Pages).To(HaveLen(1))
 	})
 
 	It("{{ collections.blog }} is the section collection", func() {
-		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, "")
+		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, nil, "")
 		Expect(ctx).NotTo(BeNil())
 		Expect(ctx.Collections).To(HaveKey("blog"))
 	})
 
 	It("{{ collections.taxonomies.tags.go }} is the taxonomy collection", func() {
-		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, "")
+		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, nil, "")
 		Expect(ctx).NotTo(BeNil())
 		taxonomies, ok := ctx.Collections["taxonomies"].(map[string]interface{})
 		Expect(ok).To(BeTrue())
@@ -123,7 +123,7 @@ var _ = Describe("Template Context Shape (§3)", func() {
 			Last:         "/articles/page/3/",
 			Items:        []interface{}{"a", "b", "c"},
 		}
-		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, pagCtx, "articles")
+		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, pagCtx, "articles")
 		Expect(ctx).NotTo(BeNil())
 		Expect(ctx.Pagination).NotTo(BeNil())
 		Expect(ctx.Pagination.PageNumber).To(Equal(1))
@@ -143,7 +143,7 @@ var _ = Describe("Template Context Shape (§3)", func() {
 			TotalPages: 1,
 			Items:      items,
 		}
-		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, pagCtx, "articles")
+		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, pagCtx, "articles")
 		Expect(ctx).NotTo(BeNil())
 		Expect(ctx.Custom).To(HaveKey("articles"),
 			"as variable must appear in Custom map")
@@ -152,7 +152,7 @@ var _ = Describe("Template Context Shape (§3)", func() {
 	})
 
 	It("non-paginated pages have nil Pagination and nil Custom", func() {
-		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, "")
+		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, nil, "")
 		Expect(ctx).NotTo(BeNil())
 		Expect(ctx.Pagination).To(BeNil(),
 			"non-paginated pages must not have pagination context")
@@ -169,7 +169,7 @@ var _ = Describe("Template Context Shape (§3)", func() {
 			First:      "/team/alice/",
 			Last:       "/team/eve/",
 		}
-		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, pagCtx, "member")
+		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, pagCtx, "member")
 		Expect(ctx).NotTo(BeNil())
 		Expect(ctx.Custom).To(HaveKey("member"))
 		memberItems, ok := ctx.Custom["member"].([]interface{})

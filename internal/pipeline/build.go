@@ -1118,8 +1118,8 @@ func buildPhase2Stream(intermediateHTML map[string]string, ssrCfg *config.SSRCon
 
 // renderPages renders all pages through the markdown and template pipeline.
 // When engine is non-nil, it is used for template rendering (with custom filters).
-// When engine is nil (BuildWithContent path), the standalone RenderTemplate is
-// used with strict filters to catch undefined filter usage in tests.
+// When engine is nil (incremental/SSR-on-demand paths), the standalone
+// RenderTemplate is used with strict filters.
 func renderPages(pages []*content.Page, rc *RenderContext) ([]string, error) {
 	cfg := rc.Cfg
 	mdOpts := content.MarkdownOptions{
@@ -1182,8 +1182,7 @@ func renderPages(pages []*content.Page, rc *RenderContext) ([]string, error) {
 		html = escapeTemplateTagsInCode(html)
 
 		if hasTemplateSyntax(html) {
-			tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, nil, "")
-			tc.Taxonomies = rc.TaxonomiesCtx
+			tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "")
 			tc.Content = string(html)
 			ctx := tc.ToMap()
 			if page.SourcePath != "" {
@@ -1435,9 +1434,7 @@ func renderPageFormats(page *content.Page, layoutsDir, engineName string, rc *Re
 		if err != nil {
 			return fmt.Errorf("parsing format layout %s: %w", fmtLayoutPath, err)
 		}
-		fmtTC := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, nil, "")
-		fmtTC.Taxonomies = rc.TaxonomiesCtx
-		fmtCtx := fmtTC.ToMap()
+		fmtCtx := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "").ToMap()
 		fmtCtx["content"] = string(page.RenderedBody)
 		fmtResult, err := fmtTpl.Render(fmtCtx)
 		if err != nil {
@@ -1478,8 +1475,7 @@ func renderPageThroughLayouts(page *content.Page, layoutPath, layoutsDir, engine
 			return fmt.Errorf("parsing layout %s: %w", lp, err)
 		}
 
-		tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, nil, "")
-		tc.Taxonomies = rc.TaxonomiesCtx
+		tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "")
 		ctx := tc.ToMap()
 		ctx["content"] = string(page.RenderedBody)
 		layoutResult, err := tpl.Render(ctx)
@@ -1538,9 +1534,7 @@ func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection,
 				taxPage.URL = "/" + urlPrefix + strings.TrimPrefix(taxPage.URL, "/")
 			}
 
-			taxTC := tmpl.BuildTemplateContext(taxPage, combinedSiteDataForPage(cfg, rc.SiteData, rc.LangContexts, taxPage), rc.Pages, rc.CollectionsCtx, nil, "")
-			taxTC.Taxonomies = rc.TaxonomiesCtx
-			ctx := taxTC.ToMap()
+			ctx := tmpl.BuildTemplateContext(taxPage, combinedSiteDataForPage(cfg, rc.SiteData, rc.LangContexts, taxPage), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "").ToMap()
 			term := ""
 			if taxPage.Kind == "taxonomy_term" {
 				if t, ok := taxPage.FrontMatter["title"].(string); ok {
@@ -1608,6 +1602,9 @@ func buildCollectionsContext(pages []*content.Page, cfg *config.Config) map[stri
 // map for the top-level taxonomies.* namespace. Each term's pages are converted
 // via ToTemplateMap() so Liquid can access fields like {{ p.title }}.
 func buildTaxonomiesContext(taxonomies map[string]*collection.TaxonomyCollection) map[string]interface{} {
+	if len(taxonomies) == 0 {
+		return nil
+	}
 	taxMap := make(map[string]interface{})
 	for name, tc := range taxonomies {
 		termMap := make(map[string]interface{})
