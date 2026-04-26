@@ -1562,9 +1562,24 @@ func buildCollectionsContext(pages []*content.Page, cfg *config.Config, taxonomi
 		result[name] = items
 	}
 
-	// Taxonomy collections
+	// Taxonomy collections — nested under "taxonomies" so templates
+	// access them as collections.taxonomies.tags.* per PLAN.md spec.
+	// Each term's pages are converted via ToTemplateMap() so Liquid
+	// can access fields like {{ p.title }} and {{ p.url }}.
+	taxMap := make(map[string]interface{})
 	for name, tc := range taxonomies {
-		result[name] = tc.Terms
+		termMap := make(map[string]interface{})
+		for term, termPages := range tc.Terms {
+			items := make([]interface{}, len(termPages))
+			for i, p := range termPages {
+				items[i] = p.ToTemplateMap()
+			}
+			termMap[term] = items
+		}
+		taxMap[name] = termMap
+	}
+	if len(taxMap) > 0 {
+		result["taxonomies"] = taxMap
 	}
 
 	if len(result) == 0 {
