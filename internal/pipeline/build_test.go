@@ -1,7 +1,6 @@
 package pipeline_test
 
 import (
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -961,30 +960,27 @@ var _ = Describe("Build Pipeline", func() {
 			contentMap := map[string]string{
 				"content/about.md":   "---\ntitle: About\ntags: [\"about\"]\n---\n# About",
 				"content/roadmap.md": "---\ntitle: Roadmap\ntags: [\"about\"]\n---\n# Roadmap",
-				"layouts/default.liquid": `<html><body>{{ content }}{% for p in collections.tags.about %}<span class="item">{{ p.title }}|{{ p.url }}</span>{% endfor %}</body></html>`,
+				"layouts/default.liquid": `<html><body>{{ content }}{% for p in collections.taxonomies.tags.about %}<span class="item">{{ p.title }}|{{ p.url }}</span>{% endfor %}</body></html>`,
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 
-			// Check rendered content for the collection loop output
-			found := false
+			// Collect all rendered HTML into a single string so assertions
+			// fire unconditionally — no if-guard that could silently pass.
+			var allHTML string
 			for _, html := range result.RenderedContent {
-				if strings.Contains(html, "item") {
-					found = true
-					Expect(html).To(ContainSubstring("About|"),
-						"taxonomy collection items must expose title via ToTemplateMap()")
-					Expect(html).To(ContainSubstring("Roadmap|"),
-						"all pages tagged 'about' must appear with their title")
-					// Verify url is also populated (not just title)
-					Expect(html).To(MatchRegexp(`About\|/about`),
-						"taxonomy collection items must expose url via ToTemplateMap()")
-					break
-				}
+				allHTML += html
 			}
-			Expect(found).To(BeTrue(),
+			Expect(allHTML).To(ContainSubstring(`class="item"`),
 				"at least one page must render the taxonomy collection loop — "+
 					"if this fails, the layout didn't render or the collection is empty")
+			Expect(allHTML).To(ContainSubstring("About|"),
+				"taxonomy collection items must expose title via ToTemplateMap()")
+			Expect(allHTML).To(ContainSubstring("Roadmap|"),
+				"all pages tagged 'about' must appear with their title")
+			Expect(allHTML).To(MatchRegexp(`About\|/about`),
+				"taxonomy collection items must expose url via ToTemplateMap()")
 		})
 	})
 
