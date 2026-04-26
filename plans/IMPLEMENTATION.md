@@ -169,7 +169,8 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 - `BuildTaxonomies`: Group pages by declared taxonomy keys from front matter
 - `GenerateTaxonomyPages`: Index + per-term pages with configured permalinks. **Skip when `TaxonomyConfig.Render == false` (issue #319)**. Also skip `DetectDuplicateTermSlugs` for non-rendered taxonomies.
 - `BuildTaxonomyPageContext`/`DetectDuplicateTermSlugs`
-- **`TaxonomyConfig.Render bool` (issue #319)**: Add `Render bool` field to `TaxonomyConfig` with `yaml:"render"`. Default must be `true` (set in `ApplyDefaults`). When `false`, `generateTaxonomyPages` in `build.go` skips that taxonomy entirely — no layout resolution, no page generation, no duplicate slug check. The taxonomy data is still built by `BuildTaxonomies` and available in `collections.taxonomies.*`.
+- **Taxonomy namespace separation (issue #333)**: `buildCollectionsContext` must NOT add taxonomies to the `collections` map. Taxonomies get their own top-level template variable `taxonomies`. In `BuildTemplateContext`, add `taxonomies` alongside `collections`, `page`, `site`. Templates access `taxonomies.tags.about` not `collections.tags.about`. This prevents collisions between section names and taxonomy names (e.g., a `content/taxonomies/` directory).
+- **`TaxonomyConfig.Render bool` (issue #319)**: Add `Render bool` field to `TaxonomyConfig` with `yaml:"render"`. Default must be `true` (set in `ApplyDefaults`). When `false`, `generateTaxonomyPages` in `build.go` skips that taxonomy entirely — no layout resolution, no page generation, no duplicate slug check. The taxonomy data is still built by `BuildTaxonomies` and available in `taxonomies.*`.
 
 ### 3C: `internal/template` — context, layout, shortcodes (~27 tests)
 **Files**: `context.go`, `layout.go`, `shortcodes.go`
