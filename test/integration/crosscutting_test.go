@@ -52,6 +52,7 @@ var _ = Describe("Cross-Cutting Integration", func() {
 				nil,
 				nil,
 				nil,
+				nil,
 				"",
 			)
 			Expect(ctx).NotTo(BeNil())
@@ -460,7 +461,7 @@ var _ = Describe("Cross-Cutting Integration", func() {
 				},
 			}
 
-			ctx := template.BuildTemplateContext(page, siteData, nil, nil, nil, "")
+			ctx := template.BuildTemplateContext(page, siteData, nil, nil, nil, nil, "")
 			Expect(ctx).NotTo(BeNil())
 			Expect(ctx.Site.Data).NotTo(BeNil())
 
@@ -721,7 +722,7 @@ var _ = Describe("Cross-Cutting Integration", func() {
 
 			// 4. Template context must see it as site.data.api_posts
 			page := &content.Page{RelPath: "index.md"}
-			ctx := template.BuildTemplateContext(page, siteData, nil, nil, nil, "")
+			ctx := template.BuildTemplateContext(page, siteData, nil, nil, nil, nil, "")
 			Expect(ctx).NotTo(BeNil())
 			Expect(ctx.Site.Data).To(HaveKey("api_posts"),
 				"fetched REST data must be available as site.data.api_posts")
@@ -759,7 +760,7 @@ var _ = Describe("Cross-Cutting Integration", func() {
 
 			// Template context must see cached data identically to fresh-fetched data
 			page := &content.Page{RelPath: "index.md"}
-			ctx := template.BuildTemplateContext(page, siteData, nil, nil, nil, "")
+			ctx := template.BuildTemplateContext(page, siteData, nil, nil, nil, nil, "")
 			Expect(ctx.Site.Data).To(HaveKey("posts"),
 				"cached source data must be available in site.data just like fetched data")
 		})

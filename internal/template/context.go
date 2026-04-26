@@ -10,6 +10,7 @@ type TemplateContext struct {
 	Site        SiteContext
 	Page        PageContext
 	Collections map[string]interface{}
+	Taxonomies  map[string]interface{}
 	Content     string // rendered HTML body
 	Pagination  *pagination.PaginationContext
 	Custom      map[string]interface{} // dynamic top-level variables (e.g., pagination "as" alias)
@@ -39,9 +40,10 @@ type PageContext struct {
 // BuildTemplateContext assembles the complete template context for rendering a page.
 // For paginated pages, pass the PaginationContext and the "as" variable name.
 // For non-paginated pages, pass nil and "".
-func BuildTemplateContext(page *content.Page, siteData map[string]interface{}, allPages []*content.Page, collections map[string]interface{}, pagCtx *pagination.PaginationContext, asName string) *TemplateContext {
+func BuildTemplateContext(page *content.Page, siteData map[string]interface{}, allPages []*content.Page, collections map[string]interface{}, taxonomies map[string]interface{}, pagCtx *pagination.PaginationContext, asName string) *TemplateContext {
 	ctx := &TemplateContext{
 		Collections: collections,
+		Taxonomies:  taxonomies,
 	}
 	ctx.Site.Pages = allPages
 
@@ -118,7 +120,7 @@ func BuildTemplateContext(page *content.Page, siteData map[string]interface{}, a
 // ToMap converts the TemplateContext to a raw map[string]interface{} for use
 // with template engines (e.g., osteele/liquid) that require a plain map.
 // The map shape matches the spec §3 context: page.*, site.*, collections.*,
-// with pagination and custom "as" variables hoisted to the top level.
+// taxonomies.*, with pagination and custom "as" variables hoisted to the top level.
 func (tc *TemplateContext) ToMap() map[string]interface{} {
 	// Page context: start with all front matter, overlay computed fields.
 	pageCtx := make(map[string]interface{}, len(tc.Page.FrontMatter)+5)
@@ -176,6 +178,9 @@ func (tc *TemplateContext) ToMap() map[string]interface{} {
 	}
 	if tc.Collections != nil {
 		ctx["collections"] = tc.Collections
+	}
+	if tc.Taxonomies != nil {
+		ctx["taxonomies"] = tc.Taxonomies
 	}
 
 	// Hoist pagination to top level per spec §1c.
