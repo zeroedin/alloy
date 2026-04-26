@@ -1,6 +1,7 @@
 package pipeline_test
 
 import (
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -939,6 +940,51 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(result.ContentPassthroughs).To(HaveLen(1),
 				"_data.yaml must not be copied as passthrough")
 			Expect(result.ContentPassthroughs).To(ContainElement("blog/icon.svg"))
+		})
+	})
+
+	// ── Taxonomy collection page properties (issue #328) ────────────
+	// Pages in taxonomy collections must expose title, url, slug via
+	// ToTemplateMap() — not raw *content.Page structs.
+
+	Describe("Taxonomy collection page properties", func() {
+		It("taxonomy collection items expose title and url in templates", func() {
+			renderFalse := false
+			cfg := &config.Config{
+				Title:   "Taxonomy Props Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags": {Render: &renderFalse},
+				},
+			}
+			contentMap := map[string]string{
+				"content/about.md":   "---\ntitle: About\ntags: [\"about\"]\n---\n# About",
+				"content/roadmap.md": "---\ntitle: Roadmap\ntags: [\"about\"]\n---\n# Roadmap",
+				"layouts/default.liquid": `<html><body>{{ content }}{% for p in collections.tags.about %}<span class="item">{{ p.title }}|{{ p.url }}</span>{% endfor %}</body></html>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			// Check rendered content for the collection loop output
+			found := false
+			for _, html := range result.RenderedContent {
+				if strings.Contains(html, "item") {
+					found = true
+					Expect(html).To(ContainSubstring("About|"),
+						"taxonomy collection items must expose title via ToTemplateMap()")
+					Expect(html).To(ContainSubstring("Roadmap|"),
+						"all pages tagged 'about' must appear with their title")
+					// Verify url is also populated (not just title)
+					Expect(html).To(MatchRegexp(`About\|/about`),
+						"taxonomy collection items must expose url via ToTemplateMap()")
+					break
+				}
+			}
+			Expect(found).To(BeTrue(),
+				"at least one page must render the taxonomy collection loop — "+
+					"if this fails, the layout didn't render or the collection is empty")
 		})
 	})
 
