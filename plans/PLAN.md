@@ -1245,7 +1245,7 @@ taxonomies:
     render: false                  # no /tags/ or /tags/:slug/ pages generated
 ```
 
-When `render: false`, the taxonomy data is still built and available in templates as `collections.taxonomies.tags.*`, but no output pages are generated and no layout is required. Useful for tags that organize content into navigation sections without needing browsable taxonomy pages.
+When `render: false`, the taxonomy data is still built and available in templates as `taxonomies.tags.*`, but no output pages are generated and no layout is required. Useful for tags that organize content into navigation sections without needing browsable taxonomy pages.
 
 Duplicate term slugs are not an error when `render: false` — since no pages are generated, there are no output path conflicts.
 
@@ -1272,14 +1272,14 @@ categories: ["tutorials"]
 ```
 
 This populates:
-- `collections.taxonomies.tags.javascript` — all pages tagged "javascript"
-- `collections.taxonomies.tags.web-components` — all pages tagged "web-components"
-- `collections.taxonomies.tags.lit` — all pages tagged "lit"
-- `collections.taxonomies.categories.tutorials` — all pages in "tutorials"
+- `taxonomies.tags.javascript` — all pages tagged "javascript"
+- `taxonomies.tags.web-components` — all pages tagged "web-components"
+- `taxonomies.tags.lit` — all pages tagged "lit"
+- `taxonomies.categories.tutorials` — all pages in "tutorials"
 
 The taxonomy index (all terms) is also available:
-- `collections.taxonomies.tags` — map of all tags, each with its list of pages
-- `collections.taxonomies.categories` — map of all categories
+- `taxonomies.tags` — map of all tags, each with its list of pages
+- `taxonomies.categories` — map of all categories
 
 ### Taxonomy Page Generation
 
@@ -1339,7 +1339,7 @@ Every template receives:
 {{ page.collection }}     -- the collection this page belongs to
 {{ site.pages }}          -- all pages (for cross-referencing)
 {{ collections.blog }}    -- blog section collection (date-based permalink)
-{{ collections.taxonomies.tags.javascript }} -- taxonomy collection (cross-cutting)
+{{ taxonomies.tags.javascript }} -- taxonomy collection (cross-cutting)
 ```
 
 Paginated pages additionally receive:
