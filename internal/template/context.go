@@ -10,6 +10,7 @@ type TemplateContext struct {
 	Site        SiteContext
 	Page        PageContext
 	Collections map[string]interface{}
+	Taxonomies  map[string]interface{}
 	Content     string // rendered HTML body
 	Pagination  *pagination.PaginationContext
 	Custom      map[string]interface{} // dynamic top-level variables (e.g., pagination "as" alias)
@@ -176,6 +177,9 @@ func (tc *TemplateContext) ToMap() map[string]interface{} {
 	}
 	if tc.Collections != nil {
 		ctx["collections"] = tc.Collections
+	}
+	if tc.Taxonomies != nil {
+		ctx["taxonomies"] = tc.Taxonomies
 	}
 
 	// Hoist pagination to top level per spec §1c.
