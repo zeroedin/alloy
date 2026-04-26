@@ -91,6 +91,19 @@ type BuildResult struct {
 	ContentPassthroughs []string          // relative paths of non-content files copied from content/ to output
 }
 
+// RenderContext bundles shared rendering state passed through the render call
+// chain, reducing parameter counts on renderPages and related functions.
+type RenderContext struct {
+	Cfg            *config.Config
+	SiteData       map[string]interface{}
+	CollectionsCtx map[string]interface{}
+	TaxonomiesCtx  map[string]interface{}
+	LangContexts   []i18n.LanguageContext
+	Pages          []*content.Page
+	Engine         tmpl.TemplateEngine
+	TemplateUsage  map[string][]string
+}
+
 // Build runs the complete build pipeline (Phase 0 through Phase 3).
 // Pass BuildOptions to control pipeline behavior (e.g., SkipSSR for dev mode).
 func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
@@ -386,7 +399,17 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	reportMessage(fmt.Sprintf("%d pages found", len(pages)))
 	reportStartStage("Rendering", len(pages))
 	for i := range batches {
-		batchRendered, renderErr := renderPages(batches[i].pages, cfg, siteData, batches[i].collections, batches[i].taxonomiesCtx, engine, renderLangContexts)
+		rc := &RenderContext{
+			Cfg:            cfg,
+			SiteData:       siteData,
+			CollectionsCtx: batches[i].collections,
+			TaxonomiesCtx:  batches[i].taxonomiesCtx,
+			LangContexts:   renderLangContexts,
+			Pages:          pages,
+			Engine:         engine,
+			TemplateUsage:  templateUsage,
+		}
+		batchRendered, renderErr := renderPages(batches[i].pages, rc)
 		if renderErr != nil {
 			return nil, renderErr
 		}
@@ -425,6 +448,16 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// ── Pass 2: layout resolution + rendering per batch (steps 12-15) ──
 	for _, batch := range batches {
+		rc := &RenderContext{
+			Cfg:            cfg,
+			SiteData:       siteData,
+			CollectionsCtx: batch.collections,
+			TaxonomiesCtx:  batch.taxonomiesCtx,
+			LangContexts:   renderLangContexts,
+			Pages:          pages,
+			Engine:         engine,
+			TemplateUsage:  templateUsage,
+		}
 		for _, page := range batch.pages {
 			layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, engineName, cfg.Permalinks)
 			if err != nil {
@@ -434,11 +467,11 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				continue
 			}
 
-			if err := renderPageThroughLayouts(page, layoutPath, layoutsDir, engineName, engine, cfg, siteData, renderLangContexts, pages, batch.collections, batch.taxonomiesCtx, templateUsage); err != nil {
+			if err := renderPageThroughLayouts(page, layoutPath, layoutsDir, engineName, rc); err != nil {
 				return nil, err
 			}
 
-			if err := renderPageFormats(page, layoutsDir, engineName, engine, cfg, siteData, renderLangContexts, pages, batch.collections, batch.taxonomiesCtx); err != nil {
+			if err := renderPageFormats(page, layoutsDir, engineName, rc); err != nil {
 				return nil, err
 			}
 		}
@@ -448,7 +481,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			if multiLang {
 				taxLangCtx = &batch.ctx
 			}
-			taxPages, err := generateTaxonomyPages(batch.taxonomies, cfg, layoutsDir, engineName, engine, siteData, renderLangContexts, pages, batch.collections, batch.taxonomiesCtx, taxLangCtx)
+			taxPages, err := generateTaxonomyPages(batch.taxonomies, layoutsDir, engineName, rc, taxLangCtx)
 			if err != nil {
 				return nil, err
 			}
@@ -829,7 +862,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	activeReporter = nil
 	defer func() { activeReporter = savedReporter }()
 
-	rendered, renderErr := renderPages(pagesToRender, cfg, nil, nil, nil, nil, nil)
+	rendered, renderErr := renderPages(pagesToRender, &RenderContext{Cfg: cfg})
 	if renderErr != nil {
 		return nil, renderErr
 	}
@@ -890,7 +923,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 									// Page was skipped in Phase 1 — render on-demand for SSR
 									for _, p := range allPages {
 										if p.RelPath == relPath {
-											onDemand, renderErr := renderPages([]*content.Page{p}, cfg, nil, nil, nil, nil, nil)
+											onDemand, renderErr := renderPages([]*content.Page{p}, &RenderContext{Cfg: cfg})
 											if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
 												ssrHTML[relPath] = string(p.RenderedBody)
 											}
@@ -1087,7 +1120,8 @@ func buildPhase2Stream(intermediateHTML map[string]string, ssrCfg *config.SSRCon
 // When engine is non-nil, it is used for template rendering (with custom filters).
 // When engine is nil (BuildWithContent path), the standalone RenderTemplate is
 // used with strict filters to catch undefined filter usage in tests.
-func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]interface{}, collectionsCtx map[string]interface{}, taxonomiesCtx map[string]interface{}, engine tmpl.TemplateEngine, langContexts []i18n.LanguageContext) ([]string, error) {
+func renderPages(pages []*content.Page, rc *RenderContext) ([]string, error) {
+	cfg := rc.Cfg
 	mdOpts := content.MarkdownOptions{
 		Unsafe:        cfg.Content.Markdown.Goldmark.Unsafe,
 		Typographer:   cfg.Content.Markdown.Goldmark.Typographer,
@@ -1102,10 +1136,10 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 	if err != nil {
 		return nil, fmt.Errorf("render hook discovery: %w", err)
 	}
-	if len(hooks) > 0 && engine != nil {
+	if len(hooks) > 0 && rc.Engine != nil {
 		mdOpts.Hooks = hooks
 		mdOpts.HookRenderer = func(source string, ctx map[string]interface{}) (string, error) {
-			tpl, err := engine.Parse("_markup/hook", []byte(source))
+			tpl, err := rc.Engine.Parse("_markup/hook", []byte(source))
 			if err != nil {
 				return "", err
 			}
@@ -1126,10 +1160,6 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 		}
 		body := page.Body
 
-		// Step 1: Render markdown first per spec §6 Phase 1 steps 3–4.
-		// Goldmark's TemplateTags extension preserves {{ }} and {% %} as
-		// raw nodes. Code fences protect their contents automatically
-		// (goldmark's parsers take precedence over the template tag extension).
 		ext := filepath.Ext(page.RelPath)
 		var html []byte
 		var err error
@@ -1149,15 +1179,11 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 			return nil, fmt.Errorf("content transformation: %s: %w", page.RelPath, err)
 		}
 
-		// Protect template tags inside <code> blocks from Liquid processing.
-		// After markdown rendering, template tags in code fences are literal text
-		// inside <code> elements — escape their braces so Liquid ignores them.
 		html = escapeTemplateTagsInCode(html)
 
-		// Step 2: Render template tags with full page/site context.
 		if hasTemplateSyntax(html) {
-			tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, siteData, langContexts, page), pages, collectionsCtx, nil, "")
-			tc.Taxonomies = taxonomiesCtx
+			tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, nil, "")
+			tc.Taxonomies = rc.TaxonomiesCtx
 			tc.Content = string(html)
 			ctx := tc.ToMap()
 			if page.SourcePath != "" {
@@ -1165,8 +1191,8 @@ func renderPages(pages []*content.Page, cfg *config.Config, siteData map[string]
 				contentRoot := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
 				ctx["_contentRoot"] = contentRoot
 			}
-			if engine != nil {
-				tpl, err := engine.Parse(page.RelPath, html)
+			if rc.Engine != nil {
+				tpl, err := rc.Engine.Parse(page.RelPath, html)
 				if err != nil {
 					return nil, fmt.Errorf("template rendering: %s", err.Error())
 				}
@@ -1388,7 +1414,7 @@ func formatOutputPath(htmlPath string, format string) string {
 // For each non-HTML format in page.Outputs, resolves a format-specific layout,
 // renders through it, and stores the result in page.FormatBodies.
 // Returns a build error if a declared format has no matching layout.
-func renderPageFormats(page *content.Page, layoutsDir, engineName string, engine tmpl.TemplateEngine, cfg *config.Config, siteData map[string]interface{}, langContexts []i18n.LanguageContext, pages []*content.Page, collectionsCtx map[string]interface{}, taxonomiesCtx map[string]interface{}) error {
+func renderPageFormats(page *content.Page, layoutsDir, engineName string, rc *RenderContext) error {
 	if len(page.Outputs) <= 1 {
 		return nil
 	}
@@ -1405,12 +1431,12 @@ func renderPageFormats(page *content.Page, layoutsDir, engineName string, engine
 		if err != nil {
 			return fmt.Errorf("reading format layout %s: %w", fmtLayoutPath, err)
 		}
-		fmtTpl, err := engine.Parse(fmtLayoutPath, []byte(tmpl.StripLayoutFrontMatter(string(fmtContent))))
+		fmtTpl, err := rc.Engine.Parse(fmtLayoutPath, []byte(tmpl.StripLayoutFrontMatter(string(fmtContent))))
 		if err != nil {
 			return fmt.Errorf("parsing format layout %s: %w", fmtLayoutPath, err)
 		}
-		fmtTC := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, siteData, langContexts, page), pages, collectionsCtx, nil, "")
-		fmtTC.Taxonomies = taxonomiesCtx
+		fmtTC := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, nil, "")
+		fmtTC.Taxonomies = rc.TaxonomiesCtx
 		fmtCtx := fmtTC.ToMap()
 		fmtCtx["content"] = string(page.RenderedBody)
 		fmtResult, err := fmtTpl.Render(fmtCtx)
@@ -1425,19 +1451,19 @@ func renderPageFormats(page *content.Page, layoutsDir, engineName string, engine
 // renderPageThroughLayouts resolves the layout chain for a page, strips front
 // matter from each layout, and renders inside-out. Updates page.RenderedBody
 // and tracks all layouts in templateUsage for cache invalidation.
-func renderPageThroughLayouts(page *content.Page, layoutPath, layoutsDir, engineName string, engine tmpl.TemplateEngine, cfg *config.Config, siteData map[string]interface{}, langContexts []i18n.LanguageContext, pages []*content.Page, collectionsCtx map[string]interface{}, taxonomiesCtx map[string]interface{}, templateUsage map[string][]string) error {
+func renderPageThroughLayouts(page *content.Page, layoutPath, layoutsDir, engineName string, rc *RenderContext) error {
 	chain, err := tmpl.ResolveLayoutChain(layoutPath, layoutsDir, engineName)
 	if err != nil {
 		return fmt.Errorf("layout chain for %s: %w", page.RelPath, err)
 	}
 
-	if templateUsage != nil {
+	if rc.TemplateUsage != nil {
 		for _, lp := range chain {
 			trackedLayout := filepath.ToSlash(filepath.Clean(lp))
-			if relLayout, relErr := filepath.Rel(cfg.ProjectRoot, lp); relErr == nil {
+			if relLayout, relErr := filepath.Rel(rc.Cfg.ProjectRoot, lp); relErr == nil {
 				trackedLayout = filepath.ToSlash(relLayout)
 			}
-			templateUsage[page.RelPath] = append(templateUsage[page.RelPath], trackedLayout)
+			rc.TemplateUsage[page.RelPath] = append(rc.TemplateUsage[page.RelPath], trackedLayout)
 		}
 	}
 
@@ -1447,13 +1473,13 @@ func renderPageThroughLayouts(page *content.Page, layoutPath, layoutsDir, engine
 			return fmt.Errorf("reading layout %s: %w", lp, err)
 		}
 		stripped := tmpl.StripLayoutFrontMatter(string(layoutContent))
-		tpl, err := engine.Parse(lp, []byte(stripped))
+		tpl, err := rc.Engine.Parse(lp, []byte(stripped))
 		if err != nil {
 			return fmt.Errorf("parsing layout %s: %w", lp, err)
 		}
 
-		tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, siteData, langContexts, page), pages, collectionsCtx, nil, "")
-		tc.Taxonomies = taxonomiesCtx
+		tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, nil, "")
+		tc.Taxonomies = rc.TaxonomiesCtx
 		ctx := tc.ToMap()
 		ctx["content"] = string(page.RenderedBody)
 		layoutResult, err := tpl.Render(ctx)
@@ -1466,7 +1492,8 @@ func renderPageThroughLayouts(page *content.Page, layoutPath, layoutsDir, engine
 	return nil
 }
 
-func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection, cfg *config.Config, layoutsDir, engineName string, engine tmpl.TemplateEngine, siteData map[string]interface{}, langContexts []i18n.LanguageContext, pages []*content.Page, collectionsCtx map[string]interface{}, taxonomiesCtx map[string]interface{}, langCtx *i18n.LanguageContext) ([]*content.Page, error) {
+func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection, layoutsDir, engineName string, rc *RenderContext, langCtx *i18n.LanguageContext) ([]*content.Page, error) {
+	cfg := rc.Cfg
 	for taxName, tc := range taxonomies {
 		taxCfg := cfg.Taxonomies[taxName]
 		if taxCfg != nil && !taxCfg.ShouldRender() {
@@ -1499,7 +1526,7 @@ func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection,
 		if err != nil {
 			return nil, fmt.Errorf("reading taxonomy layout %s: %w", layoutPath, err)
 		}
-		tpl, err := engine.Parse(layoutPath, layoutContent)
+		tpl, err := rc.Engine.Parse(layoutPath, layoutContent)
 		if err != nil {
 			return nil, fmt.Errorf("parsing taxonomy layout %s: %w", layoutPath, err)
 		}
@@ -1511,8 +1538,8 @@ func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection,
 				taxPage.URL = "/" + urlPrefix + strings.TrimPrefix(taxPage.URL, "/")
 			}
 
-			taxTC := tmpl.BuildTemplateContext(taxPage, combinedSiteDataForPage(cfg, siteData, langContexts, taxPage), pages, collectionsCtx, nil, "")
-			taxTC.Taxonomies = taxonomiesCtx
+			taxTC := tmpl.BuildTemplateContext(taxPage, combinedSiteDataForPage(cfg, rc.SiteData, rc.LangContexts, taxPage), rc.Pages, rc.CollectionsCtx, nil, "")
+			taxTC.Taxonomies = rc.TaxonomiesCtx
 			ctx := taxTC.ToMap()
 			term := ""
 			if taxPage.Kind == "taxonomy_term" {
@@ -1527,7 +1554,7 @@ func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection,
 				return nil, fmt.Errorf("rendering taxonomy page %s: %w", taxPage.URL, err)
 			}
 			taxPage.RenderedBody = out
-			if err := renderPageFormats(taxPage, layoutsDir, engineName, engine, cfg, siteData, langContexts, pages, collectionsCtx, taxonomiesCtx); err != nil {
+			if err := renderPageFormats(taxPage, layoutsDir, engineName, rc); err != nil {
 				return nil, err
 			}
 			result = append(result, taxPage)
