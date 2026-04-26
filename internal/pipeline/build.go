@@ -1569,9 +1569,9 @@ func buildCollectionsContext(pages []*content.Page, cfg *config.Config, taxonomi
 	taxMap := make(map[string]interface{})
 	for name, tc := range taxonomies {
 		termMap := make(map[string]interface{})
-		for term, pages := range tc.Terms {
-			items := make([]interface{}, len(pages))
-			for i, p := range pages {
+		for term, termPages := range tc.Terms {
+			items := make([]interface{}, len(termPages))
+			for i, p := range termPages {
 				items[i] = p.ToTemplateMap()
 			}
 			termMap[term] = items
