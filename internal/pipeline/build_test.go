@@ -967,16 +967,24 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 
-			// Check either page's rendered content for the collection loop output
+			// Check rendered content for the collection loop output
+			found := false
 			for _, html := range result.RenderedContent {
 				if strings.Contains(html, "item") {
+					found = true
 					Expect(html).To(ContainSubstring("About|"),
 						"taxonomy collection items must expose title via ToTemplateMap()")
 					Expect(html).To(ContainSubstring("Roadmap|"),
 						"all pages tagged 'about' must appear with their title")
+					// Verify url is also populated (not just title)
+					Expect(html).To(MatchRegexp(`About\|/about`),
+						"taxonomy collection items must expose url via ToTemplateMap()")
 					break
 				}
 			}
+			Expect(found).To(BeTrue(),
+				"at least one page must render the taxonomy collection loop — "+
+					"if this fails, the layout didn't render or the collection is empty")
 		})
 	})
 
