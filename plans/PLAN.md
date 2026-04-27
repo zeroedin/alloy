@@ -91,7 +91,7 @@ build:
   clean: true                  # Clean output before build
 
 content:
-  formats: ["md", "html"]     # Enabled content formats
+  formats: ["md", "html"]     # Enabled content formats (default)
   markdown:
     goldmark:                  # Goldmark options
       unsafe: true             # Required: pass through raw HTML blocks
@@ -189,9 +189,35 @@ content/about/
 ├── index.md              ← content file (processed through pipeline)
 ├── diagram.svg           ← passthrough (copied to _site/about/diagram.svg)
 ├── hero.png              ← passthrough (copied to _site/about/hero.png)
-└── patterns/
-    └── demo.html         ← content file if .html is in formats (front matter required)
+├── page.html             ← has front matter → content file (processed)
+├── standalone.html       ← NO front matter + <!DOCTYPE> → passthrough (full doc)
+└── fragment.html         ← NO front matter + no DOCTYPE → content (fragment, wrapped by cascade layout)
 ```
+
+**HTML front matter detection** — `.html` files matching `content.formats` are classified based on their content:
+
+1. **Has front matter** (`---`, `+++`, `{`) → content page, processed normally
+2. **No front matter + full HTML document** (starts with `<!DOCTYPE` or `<html>`) → passthrough, copied to output as-is
+3. **No front matter + HTML fragment** (no DOCTYPE, no `<html>`) → content page with empty front matter. The file body is the page content, rendered into the cascade layout via `{{ content }}`. All metadata (layout, tags, etc.) comes from the `_data.yaml` cascade. **Note:** HTML fragments go through template processing — Liquid/Go template tags ARE evaluated.
+
+**Engine-specific content extensions** — `content.formats` controls which extensions are eligible to be content, but `templates.engine` controls which template syntax Alloy can render. Both must agree:
+
+- `templates.engine: "liquid"` + `liquid` in `content.formats` → `.liquid` files processed as content
+- `templates.engine: "gotemplate"` → `.liquid` files are always passthrough, even if `liquid` is in `content.formats` (the Go template engine cannot render Liquid syntax)
+- `.liquid` is NOT in the default `content.formats` list — with default settings, `.liquid` files in `content/` are passthrough
+
+Fragments inherit layout from the cascade chain: `_data.yaml` `layout:` → filename match → `default.liquid` fallback. A `_data.yaml` with `layout: element` wraps every fragment in that directory with the element layout, producing full HTML documents in the output. `layout: false` in `_data.yaml` skips layout wrapping — the fragment passes through unwrapped.
+
+```
+content/patterns/card/
+├── _data.yaml           ← layout: "element"
+├── index.html           ← has front matter → content page
+└── patterns/
+    ├── themes.html      ← fragment → wrapped in element layout
+    └── image.html       ← fragment → wrapped in element layout
+```
+
+`.md` files always require front matter — they are always content. A markdown file without front matter delimiters is a build error.
 
 During content discovery, `DiscoverWithPassthrough` collects two lists: content pages (matching formats) and passthrough files (everything else). Excluded from passthrough: `_data.yaml`/`_data.yml` (cascade data), dot-prefixed files (`.DS_Store`, `.gitkeep`, etc.), and directories. The pipeline copies passthrough files to the output directory during Phase 3 (output writing), alongside static and passthrough-config files. In dev mode, passthrough files in `content/` are served directly from source (no copy needed).
 

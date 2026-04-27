@@ -338,6 +338,217 @@ var _ = Describe("Discovery", func() {
 			})
 		})
 
+		// ── HTML front matter detection (issue #337) ────────────────
+		// Three-way classification for .html files:
+		// 1. Has front matter → content page
+		// 2. No front matter + DOCTYPE/html → full document passthrough
+		// 3. No front matter + no DOCTYPE → fragment, content with empty FM
+
+		Context("HTML front matter detection", func() {
+			It("HTML with front matter is processed as content", func() {
+				tmpDir, err := os.MkdirTemp("", "html-fm-test-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				Expect(os.WriteFile(filepath.Join(contentDir, "page.html"),
+					[]byte("---\ntitle: My Page\n---\n<h1>Hello</h1>"), 0644)).To(Succeed())
+
+				pages, passthroughs, err := content.DiscoverWithPassthrough(
+					contentDir, []string{"md", "html"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(pages).To(HaveLen(1),
+					"HTML file with front matter must be processed as content")
+				Expect(pages[0].RelPath).To(Equal("page.html"))
+				Expect(passthroughs).To(BeEmpty())
+			})
+
+			It("full HTML document without front matter is passthrough", func() {
+				tmpDir, err := os.MkdirTemp("", "html-fm-test-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				Expect(os.WriteFile(filepath.Join(contentDir, "standalone.html"),
+					[]byte("<!DOCTYPE html><html><body><h1>Full doc</h1></body></html>"), 0644)).To(Succeed())
+
+				pages, passthroughs, err := content.DiscoverWithPassthrough(
+					contentDir, []string{"md", "html"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(pages).To(BeEmpty(),
+					"full HTML document without front matter must be passthrough — "+
+						"it is already a complete document, no layout wrapping needed")
+				Expect(passthroughs).To(ContainElement("standalone.html"))
+			})
+
+			It("HTML document starting with <html> (no DOCTYPE) is passthrough", func() {
+				tmpDir, err := os.MkdirTemp("", "html-fm-test-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				Expect(os.WriteFile(filepath.Join(contentDir, "legacy.html"),
+					[]byte("<html><body><p>No doctype but full doc</p></body></html>"), 0644)).To(Succeed())
+
+				pages, passthroughs, err := content.DiscoverWithPassthrough(
+					contentDir, []string{"md", "html"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(pages).To(BeEmpty(),
+					"HTML starting with <html> is a full document — passthrough")
+				Expect(passthroughs).To(ContainElement("legacy.html"))
+			})
+
+			It("HTML fragment without front matter is content with empty front matter", func() {
+				tmpDir, err := os.MkdirTemp("", "html-fm-test-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				Expect(os.WriteFile(filepath.Join(contentDir, "fragment.html"),
+					[]byte("<rh-card><p>Demo</p></rh-card>"), 0644)).To(Succeed())
+
+				pages, passthroughs, err := content.DiscoverWithPassthrough(
+					contentDir, []string{"md", "html"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(pages).To(HaveLen(1),
+					"HTML fragment must be processed as content with empty front matter — "+
+						"it inherits layout from _data.yaml cascade")
+				Expect(pages[0].RelPath).To(Equal("fragment.html"))
+				Expect(pages[0].FrontMatter).To(BeEmpty(),
+					"fragment must have empty front matter — all metadata from cascade")
+				Expect(passthroughs).To(BeEmpty(),
+					"fragment must not be in passthrough — it goes through the pipeline")
+			})
+
+			It("three-way classification in same directory", func() {
+				tmpDir, err := os.MkdirTemp("", "html-fm-test-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content", "patterns")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				// 1. Content page with front matter
+				Expect(os.WriteFile(filepath.Join(contentDir, "index.html"),
+					[]byte("---\ntitle: Patterns\n---\n<h1>Patterns</h1>"), 0644)).To(Succeed())
+				// 2. Full document without front matter → passthrough
+				Expect(os.WriteFile(filepath.Join(contentDir, "standalone.html"),
+					[]byte("<!DOCTYPE html><html><body>Full doc</body></html>"), 0644)).To(Succeed())
+				// 3. Fragment without front matter → content with empty FM
+				Expect(os.WriteFile(filepath.Join(contentDir, "demo.html"),
+					[]byte("<rh-card><p>Demo</p></rh-card>"), 0644)).To(Succeed())
+
+				pages, passthroughs, err := content.DiscoverWithPassthrough(
+					filepath.Join(tmpDir, "content"), []string{"md", "html"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(pages).To(HaveLen(2),
+					"front matter page + fragment = 2 content pages")
+				Expect(passthroughs).To(ContainElement("patterns/standalone.html"),
+					"full document must be passthrough")
+				Expect(passthroughs).NotTo(ContainElement("patterns/demo.html"),
+					"fragment must NOT be passthrough — it is content")
+			})
+
+			It("markdown files always require front matter", func() {
+				tmpDir, err := os.MkdirTemp("", "html-fm-test-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				Expect(os.WriteFile(filepath.Join(contentDir, "no-fm.md"),
+					[]byte("# Just markdown, no front matter"), 0644)).To(Succeed())
+
+				_, _, err = content.DiscoverWithPassthrough(
+					contentDir, []string{"md", "html"})
+				Expect(err).To(HaveOccurred(),
+					"markdown files must always require front matter — "+
+						"they are never passthrough or fragment")
+			})
+		})
+
+		// ── Liquid content files (issue #337) ────────────────────────
+		// .liquid is a valid content format when engine is liquid, but
+		// NOT in the default formats list. User adds it explicitly.
+		// When engine is gotemplate, .liquid files are passthrough.
+
+		Context("Liquid content files", func() {
+			It("Liquid with front matter is content when liquid is in formats", func() {
+				tmpDir, err := os.MkdirTemp("", "liquid-content-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				Expect(os.WriteFile(filepath.Join(contentDir, "team.liquid"),
+					[]byte("---\ntitle: Team\nlayout: default\n---\n<h1>{{ page.title }}</h1>"), 0644)).To(Succeed())
+
+				// User explicitly adds "liquid" to formats
+				pages, passthroughs, err := content.DiscoverWithPassthrough(
+					contentDir, []string{"md", "html", "liquid"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(pages).To(HaveLen(1),
+					"Liquid file with front matter must be processed as content "+
+						"when liquid is in formats")
+				Expect(pages[0].RelPath).To(Equal("team.liquid"))
+				Expect(passthroughs).To(BeEmpty())
+			})
+
+			It("Liquid without front matter is fragment when liquid is in formats", func() {
+				tmpDir, err := os.MkdirTemp("", "liquid-content-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				Expect(os.WriteFile(filepath.Join(contentDir, "widget.liquid"),
+					[]byte("<rh-widget>{{ site.data.config.name }}</rh-widget>"), 0644)).To(Succeed())
+
+				pages, passthroughs, err := content.DiscoverWithPassthrough(
+					contentDir, []string{"md", "html", "liquid"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(pages).To(HaveLen(1),
+					"Liquid without front matter must be content (fragment) — "+
+						"always processed through template engine, never passthrough")
+				Expect(pages[0].FrontMatter).To(BeEmpty(),
+					"Liquid fragment must have empty front matter — all metadata from cascade")
+				Expect(passthroughs).To(BeEmpty())
+			})
+
+			It("Liquid is passthrough when not in formats", func() {
+				tmpDir, err := os.MkdirTemp("", "liquid-content-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				Expect(os.WriteFile(filepath.Join(contentDir, "widget.liquid"),
+					[]byte("<rh-widget>{{ site.data.config.name }}</rh-widget>"), 0644)).To(Succeed())
+
+				// Default formats — no "liquid"
+				pages, passthroughs, err := content.DiscoverWithPassthrough(
+					contentDir, []string{"md", "html"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(pages).To(BeEmpty(),
+					"Liquid file must not be processed when liquid is not in formats — "+
+						"e.g., when engine is gotemplate")
+				Expect(passthroughs).To(ContainElement("widget.liquid"),
+					"Liquid file must be passthrough when not in formats")
+			})
+		})
+
 		// ── Deeply nested directories (3+ levels) ────────────────────
 
 		Context("deeply nested directories", func() {
