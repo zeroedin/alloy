@@ -190,8 +190,13 @@ content/about/
 ├── diagram.svg           ← passthrough (copied to _site/about/diagram.svg)
 ├── hero.png              ← passthrough (copied to _site/about/hero.png)
 └── patterns/
-    └── demo.html         ← content file if .html is in formats (front matter required)
+    ├── demo.html         ← NO front matter → passthrough (copied as-is)
+    └── page.html         ← has front matter → content file (processed)
 ```
+
+**HTML front matter detection** — `.html` files matching `content.formats` are checked for front matter delimiters (`---`, `+++`, or `{`) before processing. If the file starts with a front matter delimiter, it's processed as a content page. If not, it's treated as passthrough and copied to output unchanged. This allows HTML content pages and HTML fragments to coexist in the content directory.
+
+`.md` files always require front matter — they are always content, never passthrough. The front matter check only applies to `.html` files.
 
 During content discovery, `DiscoverWithPassthrough` collects two lists: content pages (matching formats) and passthrough files (everything else). Excluded from passthrough: `_data.yaml`/`_data.yml` (cascade data), dot-prefixed files (`.DS_Store`, `.gitkeep`, etc.), and directories. The pipeline copies passthrough files to the output directory during Phase 3 (output writing), alongside static and passthrough-config files. In dev mode, passthrough files in `content/` are served directly from source (no copy needed).
 
