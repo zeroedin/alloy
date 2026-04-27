@@ -1250,11 +1250,32 @@ collections:
 
 Templates can also sort inline using built-in array filters:
 
+**Liquid:**
 ```liquid
 {% assign alphabetical = collections.blog | sort: "title" %}
 {% assign by_author = collections.blog | sort: "author" %}
 {% assign recent = collections.blog | sort: "date" | reverse %}
+
+<!-- Sort taxonomy collection by a front matter field -->
+{% assign sorted_nav = taxonomies.tags.foundations | sort: "order" %}
+{% for page in sorted_nav %}
+  <a href="{{ page.url }}">{{ page.title }}</a>
+{% endfor %}
 ```
+
+**Go templates:**
+```html
+{{ $alphabetical := sort .collections.blog "title" }}
+{{ $recent := sort .collections.blog "date" | reverse }}
+
+<!-- Sort taxonomy collection by a front matter field -->
+{{ $sorted := sort .taxonomies.tags.foundations "order" }}
+{{ range $sorted }}
+  <a href="{{ .url }}">{{ .title }}</a>
+{{ end }}
+```
+
+Note: the `sort` filter compares values as strings. Numeric fields like `order: 10` sort lexicographically (`"10" < "2"`). See issue #348 for numeric sorting support.
 
 ### Taxonomies
 
