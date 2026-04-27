@@ -224,7 +224,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	if cascadeErr != nil {
 		log.Printf("warning: loading cascade data: %v", cascadeErr)
 	}
-	siteData := loadSiteData(cfg)
+	siteData, siteDataErr := loadSiteData(cfg)
+	if siteDataErr != nil {
+		return nil, siteDataErr
+	}
 
 	// Fetch external data sources and merge into siteData
 	if len(cfg.Sources) > 0 {
@@ -1557,22 +1560,44 @@ func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection,
 	return result, nil
 }
 
-// loadSiteData loads data files from the configured data directory.
-// Returns nil if the directory doesn't exist. Logs a warning if the
-// directory exists but contains files that fail to parse.
-func loadSiteData(cfg *config.Config) map[string]interface{} {
+// loadSiteData loads data files from the configured data directory and
+// merges any external file mappings from data.files config.
+// Returns an error if an external file is missing or collides with a
+// data directory entry.
+func loadSiteData(cfg *config.Config) (map[string]interface{}, error) {
+	var result map[string]interface{}
+
 	dataDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Data)
-	if dataDir == "" {
-		return nil
-	}
-	loaded, err := data.LoadDirectory(dataDir)
-	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			log.Printf("warning: failed to load data directory %s: %v", dataDir, err)
+	if dataDir != "" {
+		loaded, err := data.LoadDirectory(dataDir)
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				log.Printf("warning: failed to load data directory %s: %v", dataDir, err)
+			}
+		} else {
+			result = loaded
 		}
-		return nil
 	}
-	return loaded
+
+	if len(cfg.Data.Files) > 0 {
+		external, err := data.LoadExternalFiles(cfg.Data.Files, cfg.ProjectRoot)
+		if err != nil {
+			return nil, fmt.Errorf("external data files: %w", err)
+		}
+		if len(external) > 0 {
+			if result == nil {
+				result = make(map[string]interface{})
+			}
+			for k, v := range external {
+				if _, exists := result[k]; exists {
+					return nil, fmt.Errorf("data.files key %q collides with data directory entry", k)
+				}
+				result[k] = v
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // buildCollectionsContext builds section collections (directory-based),

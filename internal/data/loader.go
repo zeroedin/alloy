@@ -100,6 +100,25 @@ func LoadDirectory(dir string) (map[string]interface{}, error) {
 	return result, nil
 }
 
+// LoadExternalFiles loads individual data files by key→path mapping.
+// Paths are resolved relative to projectRoot. Each file is loaded via
+// LoadFileAny and stored under the given key in the result map.
+func LoadExternalFiles(files map[string]string, projectRoot string) (map[string]interface{}, error) {
+	if len(files) == 0 {
+		return nil, nil
+	}
+	result := make(map[string]interface{}, len(files))
+	for key, relPath := range files {
+		absPath := filepath.Join(projectRoot, relPath)
+		v, err := LoadFileAny(absPath)
+		if err != nil {
+			return nil, fmt.Errorf("loading data file %q (%s): %w", key, relPath, err)
+		}
+		result[key] = v
+	}
+	return result, nil
+}
+
 // LoadCSV loads a CSV file and returns an array of maps (header row = keys).
 func LoadCSV(path string) ([]map[string]string, error) {
 	f, err := os.Open(path)

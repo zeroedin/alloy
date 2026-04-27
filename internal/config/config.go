@@ -25,6 +25,7 @@ type Config struct {
 	Quiet         bool                         `yaml:"-" toml:"-" json:"-"` // CLI-only, set via MergeFlags
 	Refetch       bool                         `yaml:"-" toml:"-" json:"-"` // CLI-only: --refetch bypasses fetch cache
 	IncludeDrafts bool                         `yaml:"-" toml:"-" json:"-"` // CLI-only: dev server includes drafts
+	Data        DataConfig                   `yaml:"data" toml:"data" json:"data"`
 	Build       BuildConfig                  `yaml:"build" toml:"build" json:"build"`
 	Content     ContentConfig                `yaml:"content" toml:"content" json:"content"`
 	Templates   TemplatesConfig              `yaml:"templates" toml:"templates" json:"templates"`
@@ -45,6 +46,12 @@ type Config struct {
 type BuildConfig struct {
 	Output string `yaml:"output" toml:"output" json:"output"`
 	Clean  bool   `yaml:"clean" toml:"clean" json:"clean"`
+}
+
+// DataConfig holds external data file mappings.
+// Files maps a data key to a file path relative to the project root.
+type DataConfig struct {
+	Files map[string]string `yaml:"files" toml:"files" json:"files"`
 }
 
 // StructureConfig holds custom directory paths for project structure.
