@@ -1013,6 +1013,57 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── External data files (issue #271) ────────────────────────────
+	// Files outside data/ can be mapped into site.data via config.
+
+	Describe("External data files", func() {
+		It("loads external data file into site.data namespace", func() {
+			cfg := &config.Config{
+				Title:   "External Data Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Data: config.DataConfig{
+					Files: map[string]string{
+						"cem": "external/custom-elements.json",
+					},
+				},
+			}
+			contentMap := map[string]string{
+				"content/index.md":              "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"external/custom-elements.json": `{"schemaVersion":"1.0","modules":[{"kind":"javascript-module"}]}`,
+				"layouts/default.liquid":         `<html><body>{{ content }}<p>Schema: {{ site.data.cem.schemaVersion }}</p></body></html>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("Schema: 1.0"),
+				"external data file must be loaded into site.data.cem — "+
+					"template must access site.data.cem.schemaVersion")
+		})
+
+		It("errors when external data file not found", func() {
+			cfg := &config.Config{
+				Title:   "Missing Data Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Data: config.DataConfig{
+					Files: map[string]string{
+						"missing": "nonexistent/file.json",
+					},
+				},
+			}
+			contentMap := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"missing external data file must be a build error — "+
+					"not silently skipped")
+		})
+	})
+
 	// ── Render hook pipeline wiring (issues #310, #311) ─────────────
 	// The pipeline must discover render hook templates from
 	// layouts/_markup/ and wire them into MarkdownOptions.

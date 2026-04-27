@@ -50,6 +50,7 @@ These packages depend only on stdlib or already-defined types.
 - `LoadFile`: Detect format by extension (.yaml/.yml, .toml, .json), parse with appropriate library
 - `LoadDirectory`: Walk dir, `LoadFile` each, key by filename without extension. **Stem collision detection**: Track seen stem names. If two files share a stem (e.g., `team.csv` and `team.yaml`), return an error listing both files. No silent overwrites — consistent with output path conflict philosophy (§2).
 - `LoadCSV`: `encoding/csv`, first row = headers, subsequent rows = `[]map[string]string`
+- **External data files (issue #271)**: `loadSiteData` in `build.go` must also load files from `cfg.Data.Files` (a `map[string]string` of key → path). For each entry, resolve the path relative to `cfg.ProjectRoot`, call `data.LoadFile`, and add the result to `siteData[key]`. Check for collisions with `data/` directory keys. File not found is a build error. Add `DataConfig` struct to `config.go` with `Files map[string]string` field.
 
 ### 1C: `internal/cascade` — 28 tests
 **Files**: `internal/cascade/merge.go`, `internal/cascade/context.go`
