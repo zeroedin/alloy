@@ -80,7 +80,8 @@ These packages depend only on stdlib or already-defined types.
 Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key implementations:
 - **String**: Slugify, Upcase, Downcase, Capitalize, Truncate, TruncateWords, StripHTML, Escape, Replace, ReplaceFirst, Split, Join, Strip, Append, Prepend, NewlineToBr, Contains
 - **Date**: DateFormat (strftime-style: `%B %d, %Y`)
-- **Array**: Sort, Reverse, First, Last, Where, GroupBy, Size, Map, Uniq, Compact, Concat
+- **Array**: Sort (numeric-aware, issue #348), Reverse, First, Last, Where, GroupBy, Size, Map, Uniq, Compact, Concat
+- **`Sort` numeric awareness (issue #348)**: Update `Sort` comparison to use `isWholeNumber(v)` helper: type-switch on `int` (direct), `float64` (no fractional part, non-negative → int), `string` (all digits → `strconv.Atoi`). Both values whole numbers → compare as `int`. Either not → fall back to `toString` comparison. Nil/missing values sort to end. No new filter — `sort` itself becomes numeric-aware.
 - **Set**: Intersect, Union, Complement
 - **URL**: URLEncode, URLDecode, AbsoluteURL
 - **Math**: Plus, Minus, Times, DividedBy (guard div-by-zero), Modulo, Ceil, Floor, Round, Abs
