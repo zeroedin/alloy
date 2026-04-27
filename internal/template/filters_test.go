@@ -410,6 +410,21 @@ var _ = Describe("Built-in Filters", func() {
 			"sort must parse digit-only strings as numbers: \"1\", \"2\", \"10\"")
 	})
 
+	It("sort by key handles mixed int and string-digit types", func() {
+		input := []interface{}{
+			map[string]interface{}{"title": "C", "order": "10"},
+			map[string]interface{}{"title": "A", "order": 1},
+			map[string]interface{}{"title": "B", "order": "2"},
+		}
+		result := tmpl.Sort(input, "order")
+		arr := result.([]interface{})
+		Expect(arr[0].(map[string]interface{})["title"]).To(Equal("A"))
+		Expect(arr[1].(map[string]interface{})["title"]).To(Equal("B"))
+		Expect(arr[2].(map[string]interface{})["title"]).To(Equal("C"),
+			"sort must handle mixed int and string-digit values — "+
+				"YAML parses bare 1 as int but quoted \"2\" as string")
+	})
+
 	It("sort by key falls back to string for non-numeric values", func() {
 		input := []interface{}{
 			map[string]interface{}{"title": "Banana"},
