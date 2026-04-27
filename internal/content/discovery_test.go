@@ -339,7 +339,10 @@ var _ = Describe("Discovery", func() {
 		})
 
 		// ── HTML front matter detection (issue #337) ────────────────
-		// .html files with front matter are content; without are passthrough.
+		// Three-way classification for .html files:
+		// 1. Has front matter → content page
+		// 2. No front matter + DOCTYPE/html → full document passthrough
+		// 3. No front matter + no DOCTYPE → fragment, content with empty FM
 
 		Context("HTML front matter detection", func() {
 			It("HTML with front matter is processed as content", func() {
@@ -359,11 +362,49 @@ var _ = Describe("Discovery", func() {
 				Expect(pages).To(HaveLen(1),
 					"HTML file with front matter must be processed as content")
 				Expect(pages[0].RelPath).To(Equal("page.html"))
-				Expect(passthroughs).To(BeEmpty(),
-					"HTML with front matter must not be in passthrough")
+				Expect(passthroughs).To(BeEmpty())
 			})
 
-			It("HTML without front matter is treated as passthrough", func() {
+			It("full HTML document without front matter is passthrough", func() {
+				tmpDir, err := os.MkdirTemp("", "html-fm-test-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				Expect(os.WriteFile(filepath.Join(contentDir, "standalone.html"),
+					[]byte("<!DOCTYPE html><html><body><h1>Full doc</h1></body></html>"), 0644)).To(Succeed())
+
+				pages, passthroughs, err := content.DiscoverWithPassthrough(
+					contentDir, []string{"md", "html"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(pages).To(BeEmpty(),
+					"full HTML document without front matter must be passthrough — "+
+						"it is already a complete document, no layout wrapping needed")
+				Expect(passthroughs).To(ContainElement("standalone.html"))
+			})
+
+			It("HTML document starting with <html> (no DOCTYPE) is passthrough", func() {
+				tmpDir, err := os.MkdirTemp("", "html-fm-test-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				Expect(os.WriteFile(filepath.Join(contentDir, "legacy.html"),
+					[]byte("<html><body><p>No doctype but full doc</p></body></html>"), 0644)).To(Succeed())
+
+				pages, passthroughs, err := content.DiscoverWithPassthrough(
+					contentDir, []string{"md", "html"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(pages).To(BeEmpty(),
+					"HTML starting with <html> is a full document — passthrough")
+				Expect(passthroughs).To(ContainElement("legacy.html"))
+			})
+
+			It("HTML fragment without front matter is content with empty front matter", func() {
 				tmpDir, err := os.MkdirTemp("", "html-fm-test-*")
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() { os.RemoveAll(tmpDir) })
@@ -372,19 +413,22 @@ var _ = Describe("Discovery", func() {
 				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
 
 				Expect(os.WriteFile(filepath.Join(contentDir, "fragment.html"),
-					[]byte("<div class=\"demo\"><p>No front matter</p></div>"), 0644)).To(Succeed())
+					[]byte("<rh-card><p>Demo</p></rh-card>"), 0644)).To(Succeed())
 
 				pages, passthroughs, err := content.DiscoverWithPassthrough(
 					contentDir, []string{"md", "html"})
 				Expect(err).NotTo(HaveOccurred())
-				Expect(pages).To(BeEmpty(),
-					"HTML without front matter must NOT be processed as content — "+
-						"it must not cause a 'missing front matter' build error")
-				Expect(passthroughs).To(ContainElement("fragment.html"),
-					"HTML without front matter must be treated as passthrough")
+				Expect(pages).To(HaveLen(1),
+					"HTML fragment must be processed as content with empty front matter — "+
+						"it inherits layout from _data.yaml cascade")
+				Expect(pages[0].RelPath).To(Equal("fragment.html"))
+				Expect(pages[0].FrontMatter).To(BeEmpty(),
+					"fragment must have empty front matter — all metadata from cascade")
+				Expect(passthroughs).To(BeEmpty(),
+					"fragment must not be in passthrough — it goes through the pipeline")
 			})
 
-			It("mixed HTML files: with and without front matter", func() {
+			It("three-way classification in same directory", func() {
 				tmpDir, err := os.MkdirTemp("", "html-fm-test-*")
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() { os.RemoveAll(tmpDir) })
@@ -392,21 +436,25 @@ var _ = Describe("Discovery", func() {
 				contentDir := filepath.Join(tmpDir, "content", "patterns")
 				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
 
-				// Content page with front matter
+				// 1. Content page with front matter
 				Expect(os.WriteFile(filepath.Join(contentDir, "index.html"),
 					[]byte("---\ntitle: Patterns\n---\n<h1>Patterns</h1>"), 0644)).To(Succeed())
-				// Fragment without front matter
+				// 2. Full document without front matter → passthrough
+				Expect(os.WriteFile(filepath.Join(contentDir, "standalone.html"),
+					[]byte("<!DOCTYPE html><html><body>Full doc</body></html>"), 0644)).To(Succeed())
+				// 3. Fragment without front matter → content with empty FM
 				Expect(os.WriteFile(filepath.Join(contentDir, "demo.html"),
 					[]byte("<rh-card><p>Demo</p></rh-card>"), 0644)).To(Succeed())
 
 				pages, passthroughs, err := content.DiscoverWithPassthrough(
 					filepath.Join(tmpDir, "content"), []string{"md", "html"})
 				Expect(err).NotTo(HaveOccurred())
-				Expect(pages).To(HaveLen(1),
-					"only the HTML with front matter should be a content page")
-				Expect(pages[0].RelPath).To(Equal("patterns/index.html"))
-				Expect(passthroughs).To(ContainElement("patterns/demo.html"),
-					"HTML without front matter must be passthrough")
+				Expect(pages).To(HaveLen(2),
+					"front matter page + fragment = 2 content pages")
+				Expect(passthroughs).To(ContainElement("patterns/standalone.html"),
+					"full document must be passthrough")
+				Expect(passthroughs).NotTo(ContainElement("patterns/demo.html"),
+					"fragment must NOT be passthrough — it is content")
 			})
 
 			It("markdown files always require front matter", func() {
@@ -424,7 +472,7 @@ var _ = Describe("Discovery", func() {
 					contentDir, []string{"md", "html"})
 				Expect(err).To(HaveOccurred(),
 					"markdown files must always require front matter — "+
-						"they are never passthrough")
+						"they are never passthrough or fragment")
 			})
 		})
 

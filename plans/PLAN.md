@@ -194,9 +194,24 @@ content/about/
     └── page.html         ← has front matter → content file (processed)
 ```
 
-**HTML front matter detection** — `.html` files matching `content.formats` are checked for front matter delimiters (`---`, `+++`, or `{`) before processing. If the file starts with a front matter delimiter, it's processed as a content page. If not, it's treated as passthrough and copied to output unchanged. This allows HTML content pages and HTML fragments to coexist in the content directory.
+**HTML front matter detection** — `.html` files matching `content.formats` are classified based on their content:
 
-`.md` files always require front matter — they are always content, never passthrough. The front matter check only applies to `.html` files.
+1. **Has front matter** (`---`, `+++`, `{`) → content page, processed normally
+2. **No front matter + full HTML document** (starts with `<!DOCTYPE` or `<html>`) → passthrough, copied to output as-is
+3. **No front matter + HTML fragment** (no DOCTYPE, no `<html>`) → content page with empty front matter. The file body becomes `{{ content }}`. All metadata (layout, tags, etc.) comes from the `_data.yaml` cascade.
+
+Fragments inherit layout from the cascade chain: `_data.yaml` `layout:` → filename match → `default.liquid` fallback. A `_data.yaml` with `layout: element` wraps every fragment in that directory with the element layout, producing full HTML documents in the output. `layout: false` in `_data.yaml` skips layout wrapping — the fragment passes through unwrapped.
+
+```
+content/patterns/card/
+├── _data.yaml           ← layout: "element"
+├── index.html           ← has front matter → content page
+└── patterns/
+    ├── themes.html      ← fragment → wrapped in element layout
+    └── image.html       ← fragment → wrapped in element layout
+```
+
+`.md` files always require front matter — they are always content. A markdown file without front matter delimiters is a build error.
 
 During content discovery, `DiscoverWithPassthrough` collects two lists: content pages (matching formats) and passthrough files (everything else). Excluded from passthrough: `_data.yaml`/`_data.yml` (cascade data), dot-prefixed files (`.DS_Store`, `.gitkeep`, etc.), and directories. The pipeline copies passthrough files to the output directory during Phase 3 (output writing), alongside static and passthrough-config files. In dev mode, passthrough files in `content/` are served directly from source (no copy needed).
 
