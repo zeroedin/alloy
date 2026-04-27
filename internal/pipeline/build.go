@@ -266,6 +266,17 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	if _, err := hooks.RunWithTimeout(plugin.OnDataFetched, siteData); err != nil {
 		return nil, fmt.Errorf("plugin hook onDataFetched: %w", err)
 	}
+
+	// Propagate loaded site data to plugin runtimes so alloy.data is
+	// available in filters and shortcodes (issue #339).
+	for _, rt := range registry.Runtimes() {
+		if setter, ok := rt.(interface{ SetSiteData(map[string]interface{}) error }); ok {
+			if err := setter.SetSiteData(siteData); err != nil {
+				return nil, fmt.Errorf("setting plugin site data for runtime %T: %w", rt, err)
+			}
+		}
+	}
+
 	contentBase := filepath.Base(contentDir)
 
 	// ═══ Unified two-pass pipeline (issue #280) ═══
