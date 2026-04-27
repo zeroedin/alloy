@@ -110,6 +110,45 @@ func discoverInternal(contentDir string, formats []string, collectPassthrough bo
 			return err
 		}
 
+		if !hasFrontMatter(raw) && ext != ".md" {
+			if ext == ".html" && isFullHTMLDocument(raw) {
+				if collectPassthrough {
+					passthroughs = append(passthroughs, rel)
+				}
+				return nil
+			}
+			page := &Page{
+				RelPath:     rel,
+				FrontMatter: map[string]interface{}{},
+				Body:        raw,
+				Content:     raw,
+			}
+			page.SourcePath = path
+			parts := strings.SplitN(rel, "/", 2)
+			if len(parts) > 1 {
+				page.Section = parts[0]
+			}
+			dir := filepath.Dir(path)
+			if bundleDirs[dir] && (name == "index.md" || name == "index.html") {
+				page.Bundle = true
+				entries, err := os.ReadDir(dir)
+				if err == nil {
+					for _, entry := range entries {
+						if entry.IsDir() {
+							continue
+						}
+						entryName := entry.Name()
+						if entryName == name || entryName == "_data.yaml" || entryName == "_data.yml" {
+							continue
+						}
+						page.BundleAssets = append(page.BundleAssets, entryName)
+					}
+				}
+			}
+			pages = append(pages, page)
+			return nil
+		}
+
 		page, err := BuildPage(rel, raw)
 		if err != nil {
 			return err

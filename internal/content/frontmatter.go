@@ -11,6 +11,39 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// hasFrontMatter returns true if raw content starts with a recognized
+// front matter delimiter (---, +++, or {). Matches ParseFrontMatter's
+// detection logic — no whitespace trimming since ParseFrontMatter
+// expects delimiters at byte 0.
+func hasFrontMatter(raw []byte) bool {
+	return bytes.HasPrefix(raw, []byte("---")) ||
+		bytes.HasPrefix(raw, []byte("+++")) ||
+		bytes.HasPrefix(raw, []byte("{"))
+}
+
+// isFullHTMLDocument returns true if the content (after trimming
+// whitespace) starts with <!DOCTYPE or <html followed by a boundary
+// character (>, space, newline, tab). Bare <htmlfoo> does not match.
+func isFullHTMLDocument(raw []byte) bool {
+	s := bytes.TrimLeft(raw, " \t\r\n")
+	if len(s) < 5 {
+		return false
+	}
+	prefixLen := min(len(s), 10)
+	lower := bytes.ToLower(s[:prefixLen])
+	if bytes.HasPrefix(lower, []byte("<!doctype")) {
+		return true
+	}
+	if bytes.HasPrefix(lower, []byte("<html")) {
+		if len(lower) == 5 {
+			return true
+		}
+		next := lower[5]
+		return next == '>' || next == ' ' || next == '\n' || next == '\r' || next == '\t'
+	}
+	return false
+}
+
 // ParseFrontMatter extracts front matter and body from raw content.
 // Detects YAML (---), TOML (+++), or JSON ({) delimiters.
 func ParseFrontMatter(raw []byte) (map[string]interface{}, []byte, error) {
