@@ -216,6 +216,23 @@ All formats parse into `map[string]any` — the rest of the pipeline (data casca
 
 This follows the same principle as output path conflicts (§2): no silent overwrites, no priority system. The user must resolve collisions explicitly.
 
+**External data files** — Files outside the `data/` directory can be mapped into the data namespace via config:
+
+```yaml
+data:
+  files:
+    cem: "../custom-elements.json"
+    tokens: "node_modules/@rhds/tokens/json/rhds.tokens.json"
+```
+
+Each key becomes a `site.data.*` entry: `site.data.cem`, `site.data.tokens`. Paths are resolved relative to the project root. The file is parsed by extension (`.json`, `.yaml`, `.yml`, `.toml`, `.csv`) using the same parsers as `data/` directory files.
+
+External data files are loaded alongside `data/` directory files during the data loading step — they share the same `site.data.*` namespace. Templates access external data identically to local data (`{{ site.data.cem.schemaVersion }}`). Moving a file between `data/` and external config is a config change, not a template change.
+
+**Collision handling:** If an external file key matches a `data/` directory file stem (e.g., `cem` key in config AND `data/cem.json` on disk), the build fails with the same collision error as two `data/` files sharing a stem. The user controls key names — choose keys that don't conflict with filenames in `data/`.
+
+External file not found is a build error — not a warning, not silently skipped. The config explicitly declares the file; if it doesn't exist, the build fails.
+
 ---
 
 ## 1b. Permalinks and URL Customization
