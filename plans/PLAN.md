@@ -200,7 +200,11 @@ content/about/
 2. **No front matter + full HTML document** (starts with `<!DOCTYPE` or `<html>`) → passthrough, copied to output as-is
 3. **No front matter + HTML fragment** (no DOCTYPE, no `<html>`) → content page with empty front matter. The file body is the page content, rendered into the cascade layout via `{{ content }}`. All metadata (layout, tags, etc.) comes from the `_data.yaml` cascade. **Note:** HTML fragments go through template processing — Liquid/Go template tags ARE evaluated.
 
-**Engine-specific content extensions** — `.liquid` files in `content/` are only processed as content when `templates.engine` is `liquid` (the default). When the engine is `gotemplate`, `.liquid` files in `content/` are treated as passthrough. The user can add `liquid` to `content.formats` explicitly to opt in regardless of engine, but `.liquid` is NOT in the default formats list.
+**Engine-specific content extensions** — `content.formats` controls which extensions are eligible to be content, but `templates.engine` controls which template syntax Alloy can render. Both must agree:
+
+- `templates.engine: "liquid"` + `liquid` in `content.formats` → `.liquid` files processed as content
+- `templates.engine: "gotemplate"` → `.liquid` files are always passthrough, even if `liquid` is in `content.formats` (the Go template engine cannot render Liquid syntax)
+- `.liquid` is NOT in the default `content.formats` list — with default settings, `.liquid` files in `content/` are passthrough
 
 Fragments inherit layout from the cascade chain: `_data.yaml` `layout:` → filename match → `default.liquid` fallback. A `_data.yaml` with `layout: element` wraps every fragment in that directory with the element layout, producing full HTML documents in the output. `layout: false` in `_data.yaml` skips layout wrapping — the fragment passes through unwrapped.
 

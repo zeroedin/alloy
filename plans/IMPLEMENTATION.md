@@ -130,7 +130,9 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
   
   Detection: read first bytes, check for front matter delimiters first. If no delimiters, check for `<!DOCTYPE` or `<html` followed by `>`, ` `, or newline (case-insensitive, may have leading whitespace). Bare `<html` prefix without boundary must NOT match. `BuildPage` is bypassed for fragments — construct `Page` directly with empty `FrontMatter`. `.md` files always require front matter.
   
-  Default `content.formats`: `["md", "html"]`. `.liquid` is a valid content format when engine is `liquid` but is NOT in the default list — the user adds it explicitly or the pipeline adds it based on engine config. When engine is `gotemplate`, `.liquid` files in content/ are passthrough.
+  This classification must apply consistently across both `DiscoverWithPassthrough` and `DiscoverWithFormats` — extract shared classification logic so all discovery entry points behave identically.
+  
+  Default `content.formats`: `["md", "html"]`. `.liquid` is a valid content format only when engine is `liquid` — when engine is `gotemplate`, `.liquid` files are always passthrough even if in formats list.
 
 **markdown.go**:
 - `RenderMarkdown`: Configure goldmark with extensions (tables, task lists, typographer, footnotes). Handle `Unsafe` (raw HTML passthrough). Handle `TemplateTags` (preserve `{{ }}`/`{% %}` through rendering via placeholder substitution). Handle `TemplateBlocks` (issue #202): register a block-level parser that detects `{% tagname %}...{% endtagname %}` when the opening tag starts a line. Emit the opening/closing tags as custom AST block nodes with a custom renderer that outputs the tag text verbatim — do NOT use `ast.RawHTML` which is gated by the `unsafe` setting. Template tags must be preserved regardless of whether `unsafe` is true or false (same as the inline TemplateTags extension). Inner content between the tags is parsed as normal markdown. This prevents block shortcodes producing `<div>` from being wrapped in `<p>` tags.
