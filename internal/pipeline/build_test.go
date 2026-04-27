@@ -1043,6 +1043,28 @@ var _ = Describe("Build Pipeline", func() {
 					"template must access site.data.cem.schemaVersion")
 		})
 
+		It("errors when external key collides with data/ directory file", func() {
+			cfg := &config.Config{
+				Title:   "Collision Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Data: config.DataConfig{
+					Files: map[string]string{
+						"nav": "external/nav.json",
+					},
+				},
+			}
+			contentMap := map[string]string{
+				"content/index.md":   "---\ntitle: Home\n---\n# Home",
+				"data/nav.yaml":      "- title: Home\n  url: /",
+				"external/nav.json":  `[{"title":"About","url":"/about/"}]`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"external data key 'nav' collides with data/nav.yaml — "+
+					"must be a build error, not silent overwrite")
+		})
+
 		It("errors when external data file not found", func() {
 			cfg := &config.Config{
 				Title:   "Missing Data Test",

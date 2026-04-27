@@ -225,7 +225,7 @@ data:
     tokens: "node_modules/@rhds/tokens/json/rhds.tokens.json"
 ```
 
-Each key becomes a `site.data.*` entry: `site.data.cem`, `site.data.tokens`. Paths are resolved relative to the project root. The file is parsed by extension (`.json`, `.yaml`, `.toml`, `.csv`) using the same parsers as `data/` directory files.
+Each key becomes a `site.data.*` entry: `site.data.cem`, `site.data.tokens`. Paths are resolved relative to the project root. The file is parsed by extension (`.json`, `.yaml`, `.yml`, `.toml`, `.csv`) using the same parsers as `data/` directory files.
 
 External data files are loaded alongside `data/` directory files during the data loading step — they share the same `site.data.*` namespace. Templates access external data identically to local data (`{{ site.data.cem.schemaVersion }}`). Moving a file between `data/` and external config is a config change, not a template change.
 
