@@ -266,6 +266,15 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	if _, err := hooks.RunWithTimeout(plugin.OnDataFetched, siteData); err != nil {
 		return nil, fmt.Errorf("plugin hook onDataFetched: %w", err)
 	}
+
+	for _, rt := range registry.Runtimes() {
+		if setter, ok := rt.(interface{ SetSiteData(map[string]interface{}) error }); ok {
+			if err := setter.SetSiteData(siteData); err != nil {
+				return nil, fmt.Errorf("setting plugin site data for runtime %T: %w", rt, err)
+			}
+		}
+	}
+
 	contentBase := filepath.Base(contentDir)
 
 	// ═══ Unified two-pass pipeline (issue #280) ═══
@@ -682,10 +691,24 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
+	relPathCount := make(map[string]int, len(pages))
+	for _, page := range pages {
+		if len(page.RenderedBody) > 0 {
+			relPathCount[page.RelPath]++
+		}
+	}
 	renderedContent := make(map[string]string, len(pages))
 	for _, page := range pages {
 		if len(page.RenderedBody) > 0 {
-			renderedContent[page.RelPath] = string(page.RenderedBody)
+			key := page.RelPath
+			if relPathCount[key] > 1 {
+				if page.URL != "" {
+					key = page.URL
+				} else {
+					log.Printf("warning: virtual page %q has no URL — RenderedContent entry will be overwritten", key)
+				}
+			}
+			renderedContent[key] = string(page.RenderedBody)
 		}
 	}
 
