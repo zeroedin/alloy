@@ -100,7 +100,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 **File**: `internal/config/config.go`
 
 - `Load`: Read file, detect format by extension, unmarshal into `Config` struct. Return parse errors (not `ErrNotImplemented`) for invalid files.
-- `LoadWithDefaults`: Call `Load`, then apply defaults: `Build.Output="_site"`, `Templates.Engine="liquid"`, `Content.Markdown.Goldmark.TemplateTags=true`, `Pagination.Path="page"`, `Plugins.Timeout=5000`, `Content.Formats=["md","html"]`, `Language="en"`, `Build.Clean=true`, `Structure.Content="content"`, `Structure.Layouts="layouts"`, `Structure.Assets="assets"`, `Structure.Static="static"`, `Structure.Data="data"`
+- `LoadWithDefaults`: Call `Load`, then apply defaults: `Build.Output="_site"`, `Templates.Engine="liquid"`, `Content.Markdown.Goldmark.TemplateTags=true`, `Pagination.Path="page"`, `Plugins.Timeout=5000`, `Content.Formats=["md","html","liquid"]`, `Language="en"`, `Build.Clean=true`, `Structure.Content="content"`, `Structure.Layouts="layouts"`, `Structure.Assets="assets"`, `Structure.Static="static"`, `Structure.Data="data"`
 - **Note**: `FeedConfig` type still exists but is no longer a field on `Config`. Feed generation is now opt-in via template placement (see Phase 3D). Do not apply feed defaults here.
 - `DetectConfigFile`: Check for `alloy.config.{yaml,yml,toml,json}` in order. Error if none found.
 - `MergeFlags`: Map keys `"output"` -> `cfg.Build.Output`, `"verbose"` -> `cfg.Verbose`, `"quiet"` -> `cfg.Quiet`
@@ -123,12 +123,14 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 - `Discover`: Walk `contentDir`, create `Page` per .md/.html/.txt. Set `Section` from first path segment. Handle page bundles. Ignore `_data.yaml`.
 - `DiscoverWithFormats`: Same but filter by allowed extensions. Returns content pages only — unchanged signature.
 - `DiscoverWithPassthrough(contentDir string, formats []string) ([]*Page, []string, error)`: New function (issue #287). Same discovery as `DiscoverWithFormats` but also collects non-format files as passthrough paths. Excludes `_data.yaml`/`_data.yml`, directories, and dot-prefixed files (`.DS_Store`, `.gitkeep`, etc.). Returns content pages + passthrough relative paths. The passthrough files are copied to the output directory during Phase 3, preserving their path relative to `content/`. Non-format files must NOT be passed to `BuildPage` — they have no front matter and would error.
-- **HTML front matter detection (issue #337)**: For `.html` files matching `content.formats`, three-way classification based on file content:
+- **HTML/Liquid front matter detection (issue #337)**: For `.html` and `.liquid` files matching `content.formats`, classification based on file content:
   1. **Has front matter** (`---`, `+++`, `{`) → call `BuildPage` normally
-  2. **No front matter + has `<!DOCTYPE` or `<html`** → full document, add to passthroughs (copy as-is)
-  3. **No front matter + no DOCTYPE/html** → fragment, create `Page` with empty `FrontMatter` and entire file as `Body`. Inherits layout from `_data.yaml` cascade (`layout: element` wraps it, `layout: false` passes through unwrapped, no cascade → `default.liquid` fallback).
+  2. **No front matter + has `<!DOCTYPE` or `<html`** (`.html` only) → full document, add to passthroughs (copy as-is)
+  3. **No front matter + fragment** (no DOCTYPE/html, or `.liquid` file) → create `Page` with empty `FrontMatter` and entire file as `Body`. Inherits layout from `_data.yaml` cascade. `.liquid` without front matter is always a fragment (no full-document passthrough case).
   
-  Detection: read first bytes, check for front matter delimiters first. If no delimiters, check for `<!DOCTYPE` or `<html` followed by `>`, ` `, or newline (case-insensitive, may have leading whitespace). Bare `<html` prefix without a boundary character must NOT match (prevents `<htmlfoo>` false positive). `BuildPage` is bypassed for fragments — construct `Page` directly with empty `FrontMatter`. `.md` files always require front matter — `BuildPage` errors for markdown without delimiters.
+  Detection: read first bytes, check for front matter delimiters first. If no delimiters and `.html`, check for `<!DOCTYPE` or `<html` followed by `>`, ` `, or newline (case-insensitive, may have leading whitespace). Bare `<html` prefix without boundary must NOT match. `BuildPage` is bypassed for fragments — construct `Page` directly with empty `FrontMatter`. `.md` files always require front matter.
+  
+  Default `content.formats`: `["md", "html", "liquid"]`. When `templates.engine` is `gotemplate`, the default format extension changes accordingly.
 
 **markdown.go**:
 - `RenderMarkdown`: Configure goldmark with extensions (tables, task lists, typographer, footnotes). Handle `Unsafe` (raw HTML passthrough). Handle `TemplateTags` (preserve `{{ }}`/`{% %}` through rendering via placeholder substitution). Handle `TemplateBlocks` (issue #202): register a block-level parser that detects `{% tagname %}...{% endtagname %}` when the opening tag starts a line. Emit the opening/closing tags as custom AST block nodes with a custom renderer that outputs the tag text verbatim — do NOT use `ast.RawHTML` which is gated by the `unsafe` setting. Template tags must be preserved regardless of whether `unsafe` is true or false (same as the inline TemplateTags extension). Inner content between the tags is parsed as normal markdown. This prevents block shortcodes producing `<div>` from being wrapped in `<p>` tags.

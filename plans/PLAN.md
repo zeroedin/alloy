@@ -91,7 +91,7 @@ build:
   clean: true                  # Clean output before build
 
 content:
-  formats: ["md", "html"]     # Enabled content formats
+  formats: ["md", "html", "liquid"]   # Enabled content formats
   markdown:
     goldmark:                  # Goldmark options
       unsafe: true             # Required: pass through raw HTML blocks
@@ -194,11 +194,13 @@ content/about/
 └── fragment.html         ← NO front matter + no DOCTYPE → content (fragment, wrapped by cascade layout)
 ```
 
-**HTML front matter detection** — `.html` files matching `content.formats` are classified based on their content:
+**HTML and Liquid front matter detection** — `.html` and `.liquid` files matching `content.formats` are classified based on their content:
 
 1. **Has front matter** (`---`, `+++`, `{`) → content page, processed normally
-2. **No front matter + full HTML document** (starts with `<!DOCTYPE` or `<html>`) → passthrough, copied to output as-is
-3. **No front matter + HTML fragment** (no DOCTYPE, no `<html>`) → content page with empty front matter. The file body is the page content, rendered into the cascade layout via `{{ content }}`. All metadata (layout, tags, etc.) comes from the `_data.yaml` cascade. **Note:** HTML fragments go through template processing — Liquid/Go template tags in the fragment ARE evaluated.
+2. **No front matter + full HTML document** (`.html` only, starts with `<!DOCTYPE` or `<html>`) → passthrough, copied to output as-is
+3. **No front matter + HTML fragment or Liquid file** (no DOCTYPE, no `<html>`) → content page with empty front matter. The file body is the page content, rendered into the cascade layout via `{{ content }}`. All metadata (layout, tags, etc.) comes from the `_data.yaml` cascade. **Note:** fragments go through template processing — Liquid/Go template tags ARE evaluated.
+
+`.liquid` files without front matter are always fragments (case 3) — there is no "full document" passthrough for Liquid files since they are always meant to be processed through the template engine.
 
 Fragments inherit layout from the cascade chain: `_data.yaml` `layout:` → filename match → `default.liquid` fallback. A `_data.yaml` with `layout: element` wraps every fragment in that directory with the element layout, producing full HTML documents in the output. `layout: false` in `_data.yaml` skips layout wrapping — the fragment passes through unwrapped.
 

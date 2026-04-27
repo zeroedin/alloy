@@ -476,6 +476,56 @@ var _ = Describe("Discovery", func() {
 			})
 		})
 
+		// ── Liquid content files (issue #337) ────────────────────────
+		// .liquid files are a default content format. Same rules as HTML
+		// fragments — no full-document passthrough case.
+
+		Context("Liquid content files", func() {
+			It("Liquid with front matter is processed as content", func() {
+				tmpDir, err := os.MkdirTemp("", "liquid-content-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				Expect(os.WriteFile(filepath.Join(contentDir, "team.liquid"),
+					[]byte("---\ntitle: Team\nlayout: default\n---\n<h1>{{ page.title }}</h1>\n{% for m in site.data.team %}<p>{{ m.name }}</p>{% endfor %}"), 0644)).To(Succeed())
+
+				pages, passthroughs, err := content.DiscoverWithPassthrough(
+					contentDir, []string{"md", "html", "liquid"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(pages).To(HaveLen(1),
+					"Liquid file with front matter must be processed as content")
+				Expect(pages[0].RelPath).To(Equal("team.liquid"))
+				Expect(passthroughs).To(BeEmpty())
+			})
+
+			It("Liquid without front matter is content with empty front matter", func() {
+				tmpDir, err := os.MkdirTemp("", "liquid-content-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				Expect(os.WriteFile(filepath.Join(contentDir, "widget.liquid"),
+					[]byte("<rh-widget>{{ site.data.config.name }}</rh-widget>"), 0644)).To(Succeed())
+
+				pages, passthroughs, err := content.DiscoverWithPassthrough(
+					contentDir, []string{"md", "html", "liquid"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(pages).To(HaveLen(1),
+					"Liquid without front matter must be content (fragment) — "+
+						"never passthrough, always processed through template engine")
+				Expect(pages[0].RelPath).To(Equal("widget.liquid"))
+				Expect(pages[0].FrontMatter).To(BeEmpty(),
+					"Liquid fragment must have empty front matter — all metadata from cascade")
+				Expect(passthroughs).To(BeEmpty(),
+					"Liquid files are never passthrough — always processed")
+			})
+		})
+
 		// ── Deeply nested directories (3+ levels) ────────────────────
 
 		Context("deeply nested directories", func() {
