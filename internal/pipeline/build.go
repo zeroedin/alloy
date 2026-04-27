@@ -272,7 +272,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	for _, rt := range registry.Runtimes() {
 		if setter, ok := rt.(interface{ SetSiteData(map[string]interface{}) error }); ok {
 			if err := setter.SetSiteData(siteData); err != nil {
-				return nil, fmt.Errorf("setting plugin site data: %w", err)
+				return nil, fmt.Errorf("setting plugin site data for runtime %T: %w", rt, err)
 			}
 		}
 	}
