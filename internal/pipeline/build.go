@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -1588,11 +1589,16 @@ func loadSiteData(cfg *config.Config) (map[string]interface{}, error) {
 			if result == nil {
 				result = make(map[string]interface{})
 			}
-			for k, v := range external {
+			sortedKeys := make([]string, 0, len(external))
+			for k := range external {
+				sortedKeys = append(sortedKeys, k)
+			}
+			sort.Strings(sortedKeys)
+			for _, k := range sortedKeys {
 				if _, exists := result[k]; exists {
 					return nil, fmt.Errorf("external data files: key %q collides with data directory entry", k)
 				}
-				result[k] = v
+				result[k] = external[k]
 			}
 		}
 	}
