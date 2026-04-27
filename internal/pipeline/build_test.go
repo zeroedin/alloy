@@ -1113,6 +1113,34 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── SetSiteData pipeline wiring (issue #339) ────────────────────
+	// Build() must call rt.SetSiteData(siteData) for each plugin runtime
+	// after data loading so alloy.data is available in plugins.
+
+	Describe("SetSiteData pipeline wiring", func() {
+		It("plugin filter can access site.data via alloy.data during build", func() {
+			cfg := &config.Config{
+				Title:   "SiteData Wiring Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":        "---\ntitle: Home\nlayout: default\n---\n{{ \"space\" | tokenType }}",
+				"data/tokens.json":        `{"space":{"type":"dimension","value":"16px"}}`,
+				"plugins/token-reader.js": "export default function(alloy) { alloy.filter('tokenType', function(name) { return alloy.data.tokens[name].type; }); }",
+				"layouts/default.liquid":  "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("dimension"),
+				"plugin filter must access alloy.data.tokens.space.type — "+
+					"proves SetSiteData is called in the pipeline after data loading")
+		})
+	})
+
 	// ── {% inline %} pipeline wiring (issue #295) ──────────────────
 	// RegisterInlineTag must be called in createEngine() so the tag
 	// works in actual builds, not just unit tests.
