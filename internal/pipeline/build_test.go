@@ -1,6 +1,7 @@
 package pipeline_test
 
 import (
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -1110,6 +1111,44 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(html).To(ContainSubstring(`class="custom-link"`),
 				"render hook from layouts/_markup/render-link.liquid must be applied "+
 					"during the build pipeline — proves discovery + wiring works end-to-end")
+		})
+	})
+
+	// ── Pagination 'as' variable in template body (issue #340) ──────
+	// The pagination 'as' alias must be available in the template body,
+	// not just in the permalink pattern.
+
+	Describe("Pagination as variable in body", func() {
+		It("pagination as variable is accessible in rendered content", func() {
+			cfg := &config.Config{
+				Title:   "Pagination As Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"data/categories.json": `[{"slug":"color","title":"Color"},{"slug":"space","title":"Space"}]`,
+				"content/tokens.md": "---\ntitle: Tokens\nlayout: default\npagination:\n  data: site.data.categories\n  perPage: 1\n  as: category\npermalink: \"/tokens/{{ category.slug }}/\"\n---\n## {{ category.title }}\n\nSlug: {{ category.slug }}",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			// Find a virtual page that rendered the category data
+			found := false
+			for _, html := range result.RenderedContent {
+				if strings.Contains(html, "Color") {
+					found = true
+					Expect(html).To(ContainSubstring("Color"),
+						"category.title must resolve in the template body")
+					Expect(html).To(ContainSubstring("Slug: color"),
+						"category.slug must also resolve in the body")
+					break
+				}
+			}
+			Expect(found).To(BeTrue(),
+				"at least one virtual page must render with the pagination as variable — "+
+					"if this fails, the as variable resolves in permalink but not body")
 		})
 	})
 
