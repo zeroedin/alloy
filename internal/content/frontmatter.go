@@ -11,6 +11,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// HasFrontMatter returns true if raw content starts with a recognized
+// front matter delimiter (---, +++, or {).
+func HasFrontMatter(raw []byte) bool {
+	s := strings.TrimLeft(string(raw), " \t\r\n")
+	return strings.HasPrefix(s, "---") || strings.HasPrefix(s, "+++") || strings.HasPrefix(s, "{")
+}
+
 // ParseFrontMatter extracts front matter and body from raw content.
 // Detects YAML (---), TOML (+++), or JSON ({) delimiters.
 func ParseFrontMatter(raw []byte) (map[string]interface{}, []byte, error) {

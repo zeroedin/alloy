@@ -110,6 +110,13 @@ func discoverInternal(contentDir string, formats []string, collectPassthrough bo
 			return err
 		}
 
+		if ext == ".html" && !HasFrontMatter(raw) {
+			if collectPassthrough {
+				passthroughs = append(passthroughs, rel)
+			}
+			return nil
+		}
+
 		page, err := BuildPage(rel, raw)
 		if err != nil {
 			return err
