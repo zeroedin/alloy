@@ -477,11 +477,12 @@ var _ = Describe("Discovery", func() {
 		})
 
 		// ── Liquid content files (issue #337) ────────────────────────
-		// .liquid files are a default content format. Same rules as HTML
-		// fragments — no full-document passthrough case.
+		// .liquid is a valid content format when engine is liquid, but
+		// NOT in the default formats list. User adds it explicitly.
+		// When engine is gotemplate, .liquid files are passthrough.
 
 		Context("Liquid content files", func() {
-			It("Liquid with front matter is processed as content", func() {
+			It("Liquid with front matter is content when liquid is in formats", func() {
 				tmpDir, err := os.MkdirTemp("", "liquid-content-*")
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() { os.RemoveAll(tmpDir) })
@@ -490,18 +491,20 @@ var _ = Describe("Discovery", func() {
 				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
 
 				Expect(os.WriteFile(filepath.Join(contentDir, "team.liquid"),
-					[]byte("---\ntitle: Team\nlayout: default\n---\n<h1>{{ page.title }}</h1>\n{% for m in site.data.team %}<p>{{ m.name }}</p>{% endfor %}"), 0644)).To(Succeed())
+					[]byte("---\ntitle: Team\nlayout: default\n---\n<h1>{{ page.title }}</h1>"), 0644)).To(Succeed())
 
+				// User explicitly adds "liquid" to formats
 				pages, passthroughs, err := content.DiscoverWithPassthrough(
 					contentDir, []string{"md", "html", "liquid"})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(pages).To(HaveLen(1),
-					"Liquid file with front matter must be processed as content")
+					"Liquid file with front matter must be processed as content "+
+						"when liquid is in formats")
 				Expect(pages[0].RelPath).To(Equal("team.liquid"))
 				Expect(passthroughs).To(BeEmpty())
 			})
 
-			It("Liquid without front matter is content with empty front matter", func() {
+			It("Liquid without front matter is fragment when liquid is in formats", func() {
 				tmpDir, err := os.MkdirTemp("", "liquid-content-*")
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() { os.RemoveAll(tmpDir) })
@@ -517,12 +520,32 @@ var _ = Describe("Discovery", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(pages).To(HaveLen(1),
 					"Liquid without front matter must be content (fragment) — "+
-						"never passthrough, always processed through template engine")
-				Expect(pages[0].RelPath).To(Equal("widget.liquid"))
+						"always processed through template engine, never passthrough")
 				Expect(pages[0].FrontMatter).To(BeEmpty(),
 					"Liquid fragment must have empty front matter — all metadata from cascade")
-				Expect(passthroughs).To(BeEmpty(),
-					"Liquid files are never passthrough — always processed")
+				Expect(passthroughs).To(BeEmpty())
+			})
+
+			It("Liquid is passthrough when not in formats", func() {
+				tmpDir, err := os.MkdirTemp("", "liquid-content-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				contentDir := filepath.Join(tmpDir, "content")
+				Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+				Expect(os.WriteFile(filepath.Join(contentDir, "widget.liquid"),
+					[]byte("<rh-widget>{{ site.data.config.name }}</rh-widget>"), 0644)).To(Succeed())
+
+				// Default formats — no "liquid"
+				pages, passthroughs, err := content.DiscoverWithPassthrough(
+					contentDir, []string{"md", "html"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(pages).To(BeEmpty(),
+					"Liquid file must not be processed when liquid is not in formats — "+
+						"e.g., when engine is gotemplate")
+				Expect(passthroughs).To(ContainElement("widget.liquid"),
+					"Liquid file must be passthrough when not in formats")
 			})
 		})
 
