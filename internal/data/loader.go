@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -96,6 +97,38 @@ func LoadDirectory(dir string) (map[string]interface{}, error) {
 			}
 			result[name] = rows
 		}
+	}
+	return result, nil
+}
+
+// LoadExternalFiles loads individual data files by key→path mapping.
+// Paths must be relative and are resolved against projectRoot. Keys are
+// processed in sorted order for deterministic error reporting.
+func LoadExternalFiles(files map[string]string, projectRoot string) (map[string]interface{}, error) {
+	if len(files) == 0 {
+		return nil, nil
+	}
+	keys := make([]string, 0, len(files))
+	for k := range files {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	result := make(map[string]interface{}, len(files))
+	for _, key := range keys {
+		relPath := files[key]
+		if key == "" || relPath == "" {
+			return nil, fmt.Errorf("data.files: empty key or path (key=%q, path=%q)", key, relPath)
+		}
+		if filepath.IsAbs(relPath) {
+			return nil, fmt.Errorf("data.files %q: path must be relative, got %q", key, relPath)
+		}
+		absPath := filepath.Join(projectRoot, relPath)
+		v, err := LoadFileAny(absPath)
+		if err != nil {
+			return nil, fmt.Errorf("loading data file %q (%s): %w", key, relPath, err)
+		}
+		result[key] = v
 	}
 	return result, nil
 }
