@@ -691,11 +691,17 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
+	relPathCount := make(map[string]int, len(pages))
+	for _, page := range pages {
+		if len(page.RenderedBody) > 0 {
+			relPathCount[page.RelPath]++
+		}
+	}
 	renderedContent := make(map[string]string, len(pages))
 	for _, page := range pages {
 		if len(page.RenderedBody) > 0 {
 			key := page.RelPath
-			if _, exists := renderedContent[key]; exists && page.URL != "" {
+			if relPathCount[key] > 1 && page.URL != "" {
 				key = page.URL
 			}
 			renderedContent[key] = string(page.RenderedBody)
