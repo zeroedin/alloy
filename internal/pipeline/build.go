@@ -266,6 +266,15 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	if _, err := hooks.RunWithTimeout(plugin.OnDataFetched, siteData); err != nil {
 		return nil, fmt.Errorf("plugin hook onDataFetched: %w", err)
 	}
+
+	for _, rt := range registry.Runtimes() {
+		if setter, ok := rt.(interface{ SetSiteData(map[string]interface{}) error }); ok {
+			if err := setter.SetSiteData(siteData); err != nil {
+				return nil, fmt.Errorf("setting plugin site data for runtime %T: %w", rt, err)
+			}
+		}
+	}
+
 	contentBase := filepath.Base(contentDir)
 
 	// ═══ Unified two-pass pipeline (issue #280) ═══
@@ -685,7 +694,11 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	renderedContent := make(map[string]string, len(pages))
 	for _, page := range pages {
 		if len(page.RenderedBody) > 0 {
-			renderedContent[page.RelPath] = string(page.RenderedBody)
+			key := page.RelPath
+			if _, exists := renderedContent[key]; exists && page.URL != "" {
+				key = page.URL
+			}
+			renderedContent[key] = string(page.RenderedBody)
 		}
 	}
 
