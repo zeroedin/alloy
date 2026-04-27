@@ -701,8 +701,12 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	for _, page := range pages {
 		if len(page.RenderedBody) > 0 {
 			key := page.RelPath
-			if relPathCount[key] > 1 && page.URL != "" {
-				key = page.URL
+			if relPathCount[key] > 1 {
+				if page.URL != "" {
+					key = page.URL
+				} else {
+					log.Printf("warning: virtual page %q has no URL — RenderedContent entry will be overwritten", key)
+				}
 			}
 			renderedContent[key] = string(page.RenderedBody)
 		}
