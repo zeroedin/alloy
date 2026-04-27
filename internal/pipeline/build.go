@@ -1590,7 +1590,7 @@ func loadSiteData(cfg *config.Config) (map[string]interface{}, error) {
 			}
 			for k, v := range external {
 				if _, exists := result[k]; exists {
-					return nil, fmt.Errorf("data.files key %q collides with data directory entry", k)
+					return nil, fmt.Errorf("external data files: key %q collides with data directory entry", k)
 				}
 				result[k] = v
 			}

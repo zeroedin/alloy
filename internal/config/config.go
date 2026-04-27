@@ -17,29 +17,29 @@ var ErrNotImplemented = errors.New("not implemented")
 
 // Config represents the full alloy.config.yaml structure.
 type Config struct {
-	ProjectRoot string                       `yaml:"-" toml:"-" json:"-"` // set by Load; directory containing the config file
-	Title       string                       `yaml:"title" toml:"title" json:"title"`
-	BaseURL     string                       `yaml:"baseURL" toml:"baseURL" json:"baseURL"`
-	Language    string                       `yaml:"language" toml:"language" json:"language"`
+	ProjectRoot   string                       `yaml:"-" toml:"-" json:"-"` // set by Load; directory containing the config file
+	Title         string                       `yaml:"title" toml:"title" json:"title"`
+	BaseURL       string                       `yaml:"baseURL" toml:"baseURL" json:"baseURL"`
+	Language      string                       `yaml:"language" toml:"language" json:"language"`
 	Verbose       bool                         `yaml:"-" toml:"-" json:"-"` // CLI-only, set via MergeFlags
 	Quiet         bool                         `yaml:"-" toml:"-" json:"-"` // CLI-only, set via MergeFlags
 	Refetch       bool                         `yaml:"-" toml:"-" json:"-"` // CLI-only: --refetch bypasses fetch cache
 	IncludeDrafts bool                         `yaml:"-" toml:"-" json:"-"` // CLI-only: dev server includes drafts
-	Data        DataConfig                   `yaml:"data" toml:"data" json:"data"`
-	Build       BuildConfig                  `yaml:"build" toml:"build" json:"build"`
-	Content     ContentConfig                `yaml:"content" toml:"content" json:"content"`
-	Templates   TemplatesConfig              `yaml:"templates" toml:"templates" json:"templates"`
-	Plugins     PluginsConfig                `yaml:"plugins" toml:"plugins" json:"plugins"`
-	Taxonomies  map[string]*TaxonomyConfig   `yaml:"taxonomies" toml:"taxonomies" json:"taxonomies"`
-	Permalinks  map[string]string            `yaml:"permalinks" toml:"permalinks" json:"permalinks"`
-	Pagination  PaginationConfig             `yaml:"pagination" toml:"pagination" json:"pagination"`
-	Passthrough []PassthroughMapping         `yaml:"passthrough" toml:"passthrough" json:"passthrough"`
-	Sources     map[string]*SourceConfig     `yaml:"sources" toml:"sources" json:"sources"`
-	Sitemap     SitemapConfig                `yaml:"sitemap" toml:"sitemap" json:"sitemap"`
-	Structure   StructureConfig              `yaml:"structure" toml:"structure" json:"structure"`
-	Languages   map[string]*LanguageConfig   `yaml:"languages" toml:"languages" json:"languages"`
-	Collections map[string]*CollectionConfig `yaml:"collections" toml:"collections" json:"collections"`
-	SSR         *SSRConfig                   `yaml:"ssr" toml:"ssr" json:"ssr"`
+	Data          DataConfig                   `yaml:"data" toml:"data" json:"data"`
+	Build         BuildConfig                  `yaml:"build" toml:"build" json:"build"`
+	Content       ContentConfig                `yaml:"content" toml:"content" json:"content"`
+	Templates     TemplatesConfig              `yaml:"templates" toml:"templates" json:"templates"`
+	Plugins       PluginsConfig                `yaml:"plugins" toml:"plugins" json:"plugins"`
+	Taxonomies    map[string]*TaxonomyConfig   `yaml:"taxonomies" toml:"taxonomies" json:"taxonomies"`
+	Permalinks    map[string]string            `yaml:"permalinks" toml:"permalinks" json:"permalinks"`
+	Pagination    PaginationConfig             `yaml:"pagination" toml:"pagination" json:"pagination"`
+	Passthrough   []PassthroughMapping         `yaml:"passthrough" toml:"passthrough" json:"passthrough"`
+	Sources       map[string]*SourceConfig     `yaml:"sources" toml:"sources" json:"sources"`
+	Sitemap       SitemapConfig                `yaml:"sitemap" toml:"sitemap" json:"sitemap"`
+	Structure     StructureConfig              `yaml:"structure" toml:"structure" json:"structure"`
+	Languages     map[string]*LanguageConfig   `yaml:"languages" toml:"languages" json:"languages"`
+	Collections   map[string]*CollectionConfig `yaml:"collections" toml:"collections" json:"collections"`
+	SSR           *SSRConfig                   `yaml:"ssr" toml:"ssr" json:"ssr"`
 }
 
 // BuildConfig holds output directory and clean settings.
@@ -59,9 +59,9 @@ type DataConfig struct {
 type StructureConfig struct {
 	Content string `yaml:"content" toml:"content" json:"content"` // default: "content"
 	Layouts string `yaml:"layouts" toml:"layouts" json:"layouts"` // default: "layouts"
-	Assets  string `yaml:"assets" toml:"assets" json:"assets"`   // default: "assets"
-	Static  string `yaml:"static" toml:"static" json:"static"`   // default: "static"
-	Data    string `yaml:"data" toml:"data" json:"data"`         // default: "data"
+	Assets  string `yaml:"assets" toml:"assets" json:"assets"`    // default: "assets"
+	Static  string `yaml:"static" toml:"static" json:"static"`    // default: "static"
+	Data    string `yaml:"data" toml:"data" json:"data"`          // default: "data"
 }
 
 // ContentConfig holds content format and Markdown settings.
