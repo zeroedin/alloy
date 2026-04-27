@@ -375,4 +375,81 @@ var _ = Describe("Built-in Filters", func() {
 		Expect(result).To(Equal("hi"),
 			"truncate with length > input must return full string")
 	})
+
+	// ── sort numeric awareness (issue #348) ──────────────────────
+	// sort must compare whole numbers numerically, not lexicographically.
+
+	It("sort by key compares integers numerically", func() {
+		input := []interface{}{
+			map[string]interface{}{"title": "C", "order": 10},
+			map[string]interface{}{"title": "A", "order": 1},
+			map[string]interface{}{"title": "B", "order": 2},
+			map[string]interface{}{"title": "D", "order": 20},
+		}
+		result := tmpl.Sort(input, "order")
+		arr := result.([]interface{})
+		Expect(arr[0].(map[string]interface{})["title"]).To(Equal("A"))
+		Expect(arr[1].(map[string]interface{})["title"]).To(Equal("B"))
+		Expect(arr[2].(map[string]interface{})["title"]).To(Equal("C"))
+		Expect(arr[3].(map[string]interface{})["title"]).To(Equal("D"),
+			"sort must compare integers numerically: 1, 2, 10, 20 — "+
+				"not lexicographically: 1, 10, 2, 20")
+	})
+
+	It("sort by key compares string digits numerically", func() {
+		input := []interface{}{
+			map[string]interface{}{"title": "C", "order": "10"},
+			map[string]interface{}{"title": "A", "order": "1"},
+			map[string]interface{}{"title": "B", "order": "2"},
+		}
+		result := tmpl.Sort(input, "order")
+		arr := result.([]interface{})
+		Expect(arr[0].(map[string]interface{})["title"]).To(Equal("A"))
+		Expect(arr[1].(map[string]interface{})["title"]).To(Equal("B"))
+		Expect(arr[2].(map[string]interface{})["title"]).To(Equal("C"),
+			"sort must parse digit-only strings as numbers: \"1\", \"2\", \"10\"")
+	})
+
+	It("sort by key handles mixed int and string-digit types", func() {
+		input := []interface{}{
+			map[string]interface{}{"title": "C", "order": "10"},
+			map[string]interface{}{"title": "A", "order": 1},
+			map[string]interface{}{"title": "B", "order": "2"},
+		}
+		result := tmpl.Sort(input, "order")
+		arr := result.([]interface{})
+		Expect(arr[0].(map[string]interface{})["title"]).To(Equal("A"))
+		Expect(arr[1].(map[string]interface{})["title"]).To(Equal("B"))
+		Expect(arr[2].(map[string]interface{})["title"]).To(Equal("C"),
+			"sort must handle mixed int and string-digit values — "+
+				"YAML parses bare 1 as int but quoted \"2\" as string")
+	})
+
+	It("sort by key falls back to string for non-numeric values", func() {
+		input := []interface{}{
+			map[string]interface{}{"title": "Banana"},
+			map[string]interface{}{"title": "Apple"},
+			map[string]interface{}{"title": "Cherry"},
+		}
+		result := tmpl.Sort(input, "title")
+		arr := result.([]interface{})
+		Expect(arr[0].(map[string]interface{})["title"]).To(Equal("Apple"))
+		Expect(arr[1].(map[string]interface{})["title"]).To(Equal("Banana"))
+		Expect(arr[2].(map[string]interface{})["title"]).To(Equal("Cherry"),
+			"non-numeric values must sort as strings (alphabetical)")
+	})
+
+	It("sort puts nil/missing values at the end", func() {
+		input := []interface{}{
+			map[string]interface{}{"title": "B", "order": 2},
+			map[string]interface{}{"title": "No Order"},
+			map[string]interface{}{"title": "A", "order": 1},
+		}
+		result := tmpl.Sort(input, "order")
+		arr := result.([]interface{})
+		Expect(arr[0].(map[string]interface{})["title"]).To(Equal("A"))
+		Expect(arr[1].(map[string]interface{})["title"]).To(Equal("B"))
+		Expect(arr[2].(map[string]interface{})["title"]).To(Equal("No Order"),
+			"items without the sort key must sort to the end")
+	})
 })

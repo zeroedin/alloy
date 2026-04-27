@@ -1275,7 +1275,14 @@ Templates can also sort inline using built-in array filters:
 {{ end }}
 ```
 
-Note: the `sort` filter compares values as strings. Numeric fields like `order: 10` sort lexicographically (`"10" < "2"`). See issue #348 for numeric sorting support.
+The `sort` filter is numeric-aware — it compares values as whole numbers when possible, falling back to string comparison otherwise. `{{ collection | sort: "order" }}` correctly sorts `order: 1, 2, 10, 20` (not `1, 10, 2, 20`).
+
+**Numeric detection rules:**
+- `int` values (YAML `order: 10` or `order: -1`) → compared as integers (negatives included)
+- `float64` with no fractional part (JSON `"order": 10` or `"order": -5.0`) → compared as integers
+- String values containing only digits (`order: "10"`) → parsed and compared as integers (negative strings like `"-1"` are NOT parsed — string comparison)
+- Everything else (strings, bools, floats with decimals, scientific notation) → compared as strings
+- Nil/missing values → sorted to the end of the list
 
 ### Taxonomies
 
