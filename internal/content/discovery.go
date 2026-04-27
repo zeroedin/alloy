@@ -110,10 +110,29 @@ func discoverInternal(contentDir string, formats []string, collectPassthrough bo
 			return err
 		}
 
-		if ext == ".html" && !HasFrontMatter(raw) {
-			if collectPassthrough {
-				passthroughs = append(passthroughs, rel)
+		if !hasFrontMatter(raw) && ext != ".md" {
+			if ext == ".html" && isFullHTMLDocument(raw) {
+				if collectPassthrough {
+					passthroughs = append(passthroughs, rel)
+				}
+				return nil
 			}
+			page := &Page{
+				RelPath:     rel,
+				FrontMatter: map[string]interface{}{},
+				Body:        raw,
+				Content:     raw,
+			}
+			page.SourcePath = path
+			parts := strings.SplitN(rel, "/", 2)
+			if len(parts) > 1 {
+				page.Section = parts[0]
+			}
+			dir := filepath.Dir(path)
+			if bundleDirs[dir] && (name == "index.md" || name == "index.html") {
+				page.Bundle = true
+			}
+			pages = append(pages, page)
 			return nil
 		}
 
