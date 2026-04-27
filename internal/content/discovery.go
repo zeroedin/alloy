@@ -131,6 +131,19 @@ func discoverInternal(contentDir string, formats []string, collectPassthrough bo
 			dir := filepath.Dir(path)
 			if bundleDirs[dir] && (name == "index.md" || name == "index.html") {
 				page.Bundle = true
+				entries, err := os.ReadDir(dir)
+				if err == nil {
+					for _, entry := range entries {
+						if entry.IsDir() {
+							continue
+						}
+						entryName := entry.Name()
+						if entryName == name || entryName == "_data.yaml" || entryName == "_data.yml" {
+							continue
+						}
+						page.BundleAssets = append(page.BundleAssets, entryName)
+					}
+				}
 			}
 			pages = append(pages, page)
 			return nil

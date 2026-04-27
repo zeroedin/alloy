@@ -22,13 +22,26 @@ func hasFrontMatter(raw []byte) bool {
 }
 
 // isFullHTMLDocument returns true if the content (after trimming
-// whitespace) starts with <!DOCTYPE or <html, indicating a complete
-// HTML document that should passthrough rather than be wrapped.
+// whitespace) starts with <!DOCTYPE or <html followed by a boundary
+// character (>, space, newline, tab). Bare <htmlfoo> does not match.
 func isFullHTMLDocument(raw []byte) bool {
 	s := bytes.TrimLeft(raw, " \t\r\n")
-	lower := bytes.ToLower(s)
-	return bytes.HasPrefix(lower, []byte("<!doctype")) ||
-		bytes.HasPrefix(lower, []byte("<html"))
+	if len(s) < 5 {
+		return false
+	}
+	prefixLen := min(len(s), 10)
+	lower := bytes.ToLower(s[:prefixLen])
+	if bytes.HasPrefix(lower, []byte("<!doctype")) {
+		return true
+	}
+	if bytes.HasPrefix(lower, []byte("<html")) {
+		if len(lower) == 5 {
+			return true
+		}
+		next := lower[5]
+		return next == '>' || next == ' ' || next == '\n' || next == '\r' || next == '\t'
+	}
+	return false
 }
 
 // ParseFrontMatter extracts front matter and body from raw content.
