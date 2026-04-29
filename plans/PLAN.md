@@ -1804,7 +1804,7 @@ Built-in filters covering common SSG needs. Compiled Go functions registered wit
 - **Set operations**: `intersect`, `union`, `complement`
 - **URL**: `url`, `absolute_url`, `url_encode`, `url_decode`
 - **Math**: `plus`, `minus`, `times`, `divided_by`, `modulo`, `ceil`, `floor`, `round`, `abs`
-- **Content**: `markdownify`
+- **Content**: `markdownify` — renders a markdown string to HTML using the same goldmark configuration as the main content renderer, driven by the site's `content.markdown` config. Uses a shared goldmark instance, not per-call allocation. Does not run template tag protection (processes already-rendered values). Useful for rendering markdown in front matter fields (`{{ page.description | markdownify }}`), data file values, or any template string containing markdown syntax.
 - **Output safety**: `safeHTML` (bypass auto-escaping for trusted content — relevant for Go templates)
 - **Regex**: `findRE`, `replaceRE` (regex match and replace)
 - **Data**: `json` (serialize value to JSON), `default` (fallback value if nil/empty)
@@ -2391,6 +2391,7 @@ When a component source file changes (detected by file watcher or definition has
 - Pure Go, fast, CommonMark compliant
 - Extensible (custom renderers, AST transforms)
 - Used by Hugo — proven at scale
+- **Single shared instance** — goldmark is configured once from the site's `content.markdown` config, then reused across page body rendering (`RenderMarkdown`), TOC extraction (`RenderMarkdownWithTOC`), and the `markdownify` template filter. All three use the same config-driven extensions and parser options. If the site sets `autoHeadingID: false`, `markdownify` also skips heading IDs. `markdownify` does NOT run template tag protection (`protectTemplateTags`) or code escaping (`escapeTemplateTagsInCode`) — these are pipeline-level steps for raw content, not for already-rendered values that `markdownify` processes. `goldmark.Markdown.Convert` is safe for sequential reuse — no mutable state between calls.
 
 ---
 

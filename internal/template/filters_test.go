@@ -4,6 +4,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/zeroedin/alloy/internal/content"
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
@@ -299,6 +300,63 @@ var _ = Describe("Built-in Filters", func() {
 	It("markdownify converts markdown to HTML", func() {
 		result := tmpl.Markdownify("**bold**")
 		Expect(result.(string)).To(ContainSubstring("<strong>"))
+	})
+
+	// ── markdownify shared goldmark config (issue #366) ──────────
+
+	It("markdownify renders tables", func() {
+		input := "| A | B |\n|---|---|\n| 1 | 2 |"
+		result := tmpl.Markdownify(input)
+		html := result.(string)
+		Expect(html).To(ContainSubstring("<table>"),
+			"markdownify must support tables — uses same goldmark extensions as main renderer")
+		Expect(html).To(ContainSubstring("<td>1</td>"),
+			"table cells must render correctly")
+	})
+
+	It("markdownify generates heading IDs", func() {
+		result := tmpl.Markdownify("## Getting Started")
+		html := result.(string)
+		Expect(html).To(ContainSubstring(`id="getting-started"`),
+			"markdownify must generate auto heading IDs — "+
+				"uses same parser options as main renderer")
+	})
+
+	It("markdownify respects heading attributes", func() {
+		result := tmpl.Markdownify("## My Section {#custom-id}")
+		html := result.(string)
+		Expect(html).To(ContainSubstring(`id="custom-id"`),
+			"markdownify must support {#custom-id} heading attributes")
+	})
+
+	It("markdownify produces consistent output across multiple calls", func() {
+		result1 := tmpl.Markdownify("**first**").(string)
+		result2 := tmpl.Markdownify("**second**").(string)
+		result3 := tmpl.Markdownify("**first**").(string)
+		Expect(result1).To(Equal(result3),
+			"markdownify must produce identical output for identical input — "+
+				"proves shared instance has no mutable state between calls")
+		Expect(result2).To(ContainSubstring("<strong>second</strong>"),
+			"each call must render independently")
+	})
+
+	It("markdownify and RenderMarkdown use the same config-driven goldmark options", func() {
+		input := "## Heading\n\n| A | B |\n|---|---|\n| 1 | 2 |"
+		markdownifyResult := tmpl.Markdownify(input).(string)
+		// TemplateTags: false — markdownify doesn't run template tag
+		// protection (it processes already-rendered values).
+		opts := content.MarkdownOptions{
+			Unsafe:        true,
+			Typographer:   true,
+			TemplateTags:  false,
+			AutoHeadingID: true,
+		}
+		renderResult, err := content.RenderMarkdown([]byte(input), opts)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(markdownifyResult).To(Equal(string(renderResult)),
+			"markdownify and RenderMarkdown must use the same config-driven "+
+				"goldmark options — if they diverge, a table or heading ID works "+
+				"in the page body but not in {{ page.description | markdownify }}")
 	})
 
 	// ── Regex filters (individual — complex) ────────────────────────────
