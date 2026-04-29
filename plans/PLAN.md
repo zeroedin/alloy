@@ -452,6 +452,38 @@ Templates with pagination receive a `pagination` object:
 {{ pagination.items }}         -- items on current page (aliased via 'as' key)
 ```
 
+### Front Matter Interpolation
+
+When generating virtual pages (`perPage: 1`), string-valued front matter fields that contain template tags (`{{ }}` or `{% %}`) are interpolated using the pagination `as:` variable context. This allows dynamic page metadata:
+
+```yaml
+---
+title: "{{ member.name }}"
+heading: "About {{ member.name | upcase }}"
+description: "Profile page for {{ member.name }}"
+layout: default
+pagination:
+  data: site.data.team
+  perPage: 1
+  as: member
+permalink: "/team/{{ member.slug }}/"
+---
+```
+
+For a team member `{name: "Alice", slug: "alice"}`, the virtual page gets:
+- `page.title` → `"Alice"`
+- `page.heading` → `"About ALICE"`
+- `page.description` → `"Profile page for Alice"`
+- `page.url` → `"/team/alice/"`
+
+**Rules:**
+- Only string-valued front matter fields are interpolated. Non-string values (numbers, booleans, arrays, maps) are left unchanged.
+- Only fields containing `{{ }}` or `{% %}` markers are rendered through the template engine. Fields without markers skip the renderer entirely — no performance cost.
+- Interpolation uses the same template engine and renderer as permalink processing. Full Liquid (or Go template) syntax is supported, including filters.
+- The template context contains only the `as:` variable (e.g., `{member: item}`). `site.*`, `page.*`, and `collections.*` are not available during front matter interpolation — this runs at pagination time, before the full template context is built.
+- Skipped fields: `permalink` (already processed), `layout`, `pagination`, and any key starting with `_` (internal transport keys such as `_paginationCtx`, `_paginationAs`, `_paginationData`).
+- Only applies to virtual pages (`perPage: 1`). Paginated list pages (`perPage > 1`) do not interpolate front matter — the `as:` variable is a list, not a single item.
+
 ---
 
 ## 1d. Auto-Generated Output Files
