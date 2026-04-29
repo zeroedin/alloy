@@ -1180,6 +1180,76 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Template tags in <code> not escaped for HTML content (#352) ─
+	// escapeTemplateTagsInCode must only run on .md files, not .html.
+
+	Describe("Template tags in code elements", func() {
+		It("HTML content preserves Liquid expressions inside <code>", func() {
+			cfg := &config.Config{
+				Title:   "Code Escape Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/tokens.html": "---\ntitle: Tokens\nlayout: default\n---\n{% assign val = \"4px\" %}\n<td><code>{{ val }}</code></td>",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["tokens.html"]
+			Expect(html).To(ContainSubstring("<code>4px</code>"),
+				"Liquid expressions inside <code> in .html files must be interpolated — "+
+					"not entity-encoded. escapeTemplateTagsInCode must only run on .md files")
+			Expect(html).NotTo(ContainSubstring("&#123;"),
+				"template tags must NOT be entity-encoded in .html content")
+		})
+
+		It("Liquid content preserves Liquid expressions inside <code>", func() {
+			cfg := &config.Config{
+				Title:   "Code Escape Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Content: config.ContentConfig{Formats: []string{"liquid"}},
+			}
+			contentMap := map[string]string{
+				"content/tokens.liquid": "---\ntitle: Tokens\nlayout: default\n---\n{% assign val = \"4px\" %}\n<td><code>{{ val }}</code></td>",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["tokens.liquid"]
+			Expect(html).To(ContainSubstring("<code>4px</code>"),
+				"Liquid expressions inside <code> in .liquid files must be interpolated — "+
+					"not entity-encoded. escapeTemplateTagsInCode must only run on .md files")
+			Expect(html).NotTo(ContainSubstring("&#123;"),
+				"template tags must NOT be entity-encoded in .liquid content")
+		})
+
+		It("markdown content still escapes template tags in inline code", func() {
+			cfg := &config.Config{
+				Title:   "Code Escape Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/example.md":     "---\ntitle: Example\nlayout: default\n---\nUse `{{ page.title }}` in templates.",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["example.md"]
+			Expect(html).To(ContainSubstring("&#123;"),
+				"template tags inside inline code in .md files must be escaped — "+
+					"inline code should display template syntax literally")
+		})
+	})
+
 	// ── {% inline %} pipeline wiring (issue #295) ──────────────────
 	// RegisterInlineTag must be called in createEngine() so the tag
 	// works in actual builds, not just unit tests.
