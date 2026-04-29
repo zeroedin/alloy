@@ -89,7 +89,7 @@ type BuildResult struct {
 	Errors              []error
 	SSRSkipped          bool              // true when Phase 2 was skipped (no ssr: config or SkipSSR)
 	PagesRendered       []string          // source paths of pages that were rendered
-	RenderedContent     map[string]string // source path → final rendered HTML
+	RenderedContent     map[string]string // page key → final rendered HTML (RelPath for regular pages, URL for paginated virtual pages)
 	ContentPassthroughs []string          // relative paths of non-content files copied from content/ to output
 }
 
@@ -613,11 +613,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	renderedContent := make(map[string]string, len(pages))
 	for _, page := range pages {
 		if len(page.RenderedBody) > 0 {
-			key := page.RelPath
-			if _, ok := page.FrontMatter["_paginationCtx"]; ok && page.URL != "" {
-				key = page.URL
-			}
-			renderedContent[key] = string(page.RenderedBody)
+			renderedContent[renderedContentKey(page)] = string(page.RenderedBody)
 		}
 	}
 
@@ -898,11 +894,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	renderedContent := make(map[string]string, len(pagesToRender))
 	for _, page := range pagesToRender {
 		if len(page.RenderedBody) > 0 {
-			key := page.RelPath
-			if _, ok := page.FrontMatter["_paginationCtx"]; ok && page.URL != "" {
-				key = page.URL
-			}
-			renderedContent[key] = string(page.RenderedBody)
+			renderedContent[renderedContentKey(page)] = string(page.RenderedBody)
 		}
 	}
 
@@ -926,9 +918,9 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				rawContent = contentMap[filepath.ToSlash(filepath.Join(contentPrefix, page.RelPath))]
 			}
 			if tags := ssr.ScanComponents(rawContent); len(tags) > 0 {
-				html := renderedContent[page.RelPath]
-				if html != "" {
-					ssrHTML[page.RelPath] = html
+				key := renderedContentKey(page)
+				if html := renderedContent[key]; html != "" {
+					ssrHTML[key] = html
 				}
 			}
 		}
@@ -944,18 +936,19 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				if fsMode {
 					// Filesystem mode: scan all discovered pages for component usage
 					for _, p := range allPages {
-						if _, alreadyQueued := ssrHTML[p.RelPath]; alreadyQueued {
+						pKey := renderedContentKey(p)
+						if _, alreadyQueued := ssrHTML[pKey]; alreadyQueued {
 							continue
 						}
 						if tags := ssr.ScanComponents(string(p.Content)); len(tags) > 0 {
 							for _, tag := range tags {
 								if tag == componentTag {
-									if html := renderedContent[p.RelPath]; html != "" {
-										ssrHTML[p.RelPath] = html
+									if html := renderedContent[pKey]; html != "" {
+										ssrHTML[pKey] = html
 									} else {
 										onDemand, renderErr := renderPages([]*content.Page{p}, rc)
 										if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
-											ssrHTML[p.RelPath] = string(p.RenderedBody)
+											ssrHTML[pKey] = string(p.RenderedBody)
 										}
 									}
 									break
@@ -1393,6 +1386,15 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 		}
 	}
 	return result
+}
+
+// renderedContentKey returns the key to use in RenderedContent for a page.
+// Regular pages use RelPath; paginated virtual pages use URL to avoid collisions.
+func renderedContentKey(page *content.Page) string {
+	if _, ok := page.FrontMatter["_paginationCtx"]; ok && page.URL != "" {
+		return page.URL
+	}
+	return page.RelPath
 }
 
 // copyFrontMatter creates a shallow copy of front matter.
