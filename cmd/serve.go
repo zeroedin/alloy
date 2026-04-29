@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
-	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
@@ -107,123 +106,49 @@ func newServeCommand() *cobra.Command {
 			}
 
 			// Set up file watcher for live rebuild
-			watcher, err := fsnotify.NewWatcher()
-			if err != nil {
-				log.Printf("warning: file watcher unavailable: %v", err)
-			} else {
-				defer watcher.Close()
+			var watcher *fsnotify.Watcher
+			watcher = startWatcher(cfg, srv, func(events []server.ChangeEvent, _ server.RebuildScope) {
+				if !cfg.Quiet {
+					log.Printf("rebuilding (%d files changed)...", len(events))
+				}
 
-				watchDirs := server.WatchDirs(cfg)
-				for _, dir := range watchDirs {
-					absDir := dir
-					if cfg.ProjectRoot != "" {
-						absDir = filepath.Join(cfg.ProjectRoot, dir)
-					}
-					if info, err := os.Stat(absDir); err == nil && info.IsDir() {
-						if err := addRecursiveWatch(watcher, absDir); err != nil {
-							log.Printf("warning: watching %s: %v", dir, err)
+				needsRebuild := false
+				for _, ev := range events {
+					switch ev.ChangeType {
+					case server.ContentChange, server.LayoutChange, server.DataChange, server.ComponentChange:
+						needsRebuild = true
+					case server.AssetChange, server.StaticChange:
+						copyChangedFileToOutput(ev.Path, cfg)
+					case server.PassthroughChange:
+						if dest, err := server.RecopyPassthroughFile(ev.Path, cfg); err == nil {
+							srcPath := ev.Path
+							if cfg.ProjectRoot != "" {
+								srcPath = filepath.Join(cfg.ProjectRoot, ev.Path)
+								dest = filepath.Join(cfg.ProjectRoot, dest)
+							}
+							copyFileToPath(srcPath, dest, cfg)
 						}
 					}
 				}
 
-				debouncer := server.NewDebouncer(
-					time.Duration(srv.DebounceInterval())*time.Millisecond,
-					10,
-				)
-
-				go func() {
-					var pending []server.ChangeEvent
-					timer := time.NewTimer(time.Duration(srv.DebounceInterval()) * time.Millisecond)
-					timer.Stop()
-
-					for {
-						select {
-						case event, ok := <-watcher.Events:
-							if !ok {
-								return
-							}
-							if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) == 0 {
-								continue
-							}
-
-							relPath := event.Name
-							if cfg.ProjectRoot != "" {
-								if r, err := filepath.Rel(cfg.ProjectRoot, event.Name); err == nil {
-									relPath = r
-								}
-							}
-
-							changeType := server.ClassifyChange(relPath, cfg)
-							pending = append(pending, server.ChangeEvent{
-								Path:       relPath,
-								ChangeType: changeType,
-							})
-
-							if event.Op&fsnotify.Create != 0 {
-								if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
-									addRecursiveWatch(watcher, event.Name)
-								}
-							}
-
-							timer.Reset(time.Duration(srv.DebounceInterval()) * time.Millisecond)
-
-						case <-timer.C:
-							if len(pending) == 0 {
-								continue
-							}
-
-							events := pending
-							pending = nil
-
-							events, _ = debouncer.Debounce(events)
-
-							if !cfg.Quiet {
-								log.Printf("rebuilding (%d files changed)...", len(events))
-							}
-
-							needsRebuild := false
-							for _, ev := range events {
-								switch ev.ChangeType {
-								case server.ContentChange, server.LayoutChange, server.DataChange, server.ComponentChange:
-									needsRebuild = true
-								case server.AssetChange, server.StaticChange:
-									copyChangedFileToOutput(ev.Path, cfg)
-								case server.PassthroughChange:
-									if dest, err := server.RecopyPassthroughFile(ev.Path, cfg); err == nil {
-										srcPath := ev.Path
-										if cfg.ProjectRoot != "" {
-											srcPath = filepath.Join(cfg.ProjectRoot, ev.Path)
-											dest = filepath.Join(cfg.ProjectRoot, dest)
-										}
-										copyFileToPath(srcPath, dest, cfg)
-									}
-								}
-							}
-
-							if needsRebuild {
-								if _, err := pipeline.Build(cfg); err != nil {
-									log.Printf("rebuild failed: %v", err)
-									srv.Overlay().SetErrors([]server.BuildError{
-										{Message: err.Error(), Stage: "rebuild"},
-									})
-								} else {
-									srv.Overlay().ClearErrors()
-									if !cfg.Quiet {
-										log.Printf("rebuild complete")
-									}
-								}
-							}
-
-							srv.BroadcastReload()
-
-						case err, ok := <-watcher.Errors:
-							if !ok {
-								return
-							}
-							log.Printf("watcher error: %v", err)
+				if needsRebuild {
+					if _, err := pipeline.Build(cfg); err != nil {
+						log.Printf("rebuild failed: %v", err)
+						srv.Overlay().SetErrors([]server.BuildError{
+							{Message: err.Error(), Stage: "rebuild"},
+						})
+					} else {
+						srv.Overlay().ClearErrors()
+						if !cfg.Quiet {
+							log.Printf("rebuild complete")
 						}
 					}
-				}()
+				}
+
+				srv.BroadcastReload()
+			})
+			if watcher != nil {
+				defer watcher.Close()
 			}
 
 			sigCh := make(chan os.Signal, 1)
