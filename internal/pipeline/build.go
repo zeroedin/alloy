@@ -894,7 +894,73 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	activeReporter = nil
 	defer func() { activeReporter = savedReporter }()
 
-	rendered, renderErr := renderPages(pagesToRender, &RenderContext{Cfg: cfg})
+	// Pipeline setup: engine, data, permalinks, collections — same as Build()
+	engine, engineErr := createEngine(cfg)
+	if engineErr != nil {
+		return nil, engineErr
+	}
+
+	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
+	cascadeData, cascadeErr := cascade.LoadDirectoryCascade(contentDir)
+	if cascadeErr != nil {
+		log.Printf("warning: loading cascade data: %v", cascadeErr)
+	}
+
+	siteData, siteDataErr := loadSiteData(cfg)
+	if siteDataErr != nil {
+		return nil, siteDataErr
+	}
+
+	allPages = content.FilterByLifecycle(allPages, time.Now(), cfg.IncludeDrafts)
+
+	// Re-filter pagesToRender against lifecycle-filtered allPages
+	filtered := make(map[*content.Page]bool, len(allPages))
+	for _, p := range allPages {
+		filtered[p] = true
+	}
+	var filteredToRender []*content.Page
+	for _, p := range pagesToRender {
+		if filtered[p] {
+			filteredToRender = append(filteredToRender, p)
+		}
+	}
+	pagesToRender = filteredToRender
+
+	contentBase := filepath.Base(contentDir)
+	for _, page := range allPages {
+		url, err := permalink.ResolveForSection(page, cfg.Permalinks)
+		if err != nil {
+			return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
+		}
+		page.URL = url
+	}
+
+	for _, page := range allPages {
+		var dirData map[string]interface{}
+		if len(cascadeData) > 0 {
+			dirData = cascade.FindCascadeData(cascadeData, contentBase, page.RelPath)
+		}
+		pctx := cascade.BuildContext(siteData, dirData, page.FrontMatter)
+		page.FrontMatter = pctx.ToMap()
+	}
+
+	colls := buildCollectionsContext(allPages, cfg)
+	var taxCtx map[string]interface{}
+	if cfg.Taxonomies != nil {
+		taxCtx = buildTaxonomiesContext(collection.BuildTaxonomies(allPages, cfg.Taxonomies))
+	}
+
+	allPages = processPagination(allPages, cfg, siteData, colls, engine)
+
+	rc := &RenderContext{
+		Cfg:            cfg,
+		SiteData:       siteData,
+		CollectionsCtx: colls,
+		TaxonomiesCtx:  taxCtx,
+		Pages:          allPages,
+		Engine:         engine,
+	}
+	rendered, renderErr := renderPages(pagesToRender, rc)
 	if renderErr != nil {
 		return nil, renderErr
 	}
