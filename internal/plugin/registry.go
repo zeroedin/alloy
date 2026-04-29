@@ -49,6 +49,9 @@ type PluginFilterRuntime interface {
 	RegisteredShortcodes() []string
 	CallShortcode(name string, args []string, innerContent string) (string, error)
 	RegisteredHooks() []string
+	// SetSiteData injects site data so plugins can access it (e.g. alloy.data in JS).
+	// Implementations must treat nil as an empty map. Data values must be JSON-serializable.
+	SetSiteData(data map[string]interface{}) error
 }
 
 // Registry manages plugin discovery and loading.

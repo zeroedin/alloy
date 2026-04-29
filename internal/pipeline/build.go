@@ -210,6 +210,17 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		return nil, fmt.Errorf("plugin hook onDataFetched: %w", err)
 	}
 
+	// Keep PipelineState in sync after sources merge may have replaced the map
+	ps.SiteData = siteData
+
+	// Inject site data into plugin runtimes so alloy.data is available
+	// during template filter/shortcode calls and post-discovery hooks (issue #339).
+	for _, rt := range registry.Runtimes() {
+		if err := rt.SetSiteData(siteData); err != nil {
+			log.Printf("warning: setting site data for plugin: %v", err)
+		}
+	}
+
 	// ═══ Unified two-pass pipeline (issue #280) ═══
 	// Always operates on language batches. Single-language sites produce one batch.
 	// Pass 1 (steps 3-11): discover + content-render per batch.
@@ -833,6 +844,18 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		ps, psErr = InitPipelineState(cfg, registry, hooks)
 		if psErr != nil {
 			return nil, psErr
+		}
+	}
+
+	// Inject site data into plugin runtimes (issue #339).
+	// Skip when PipelineState was provided by the caller — site data was
+	// already injected during the initial full build, avoiding repeated
+	// JSON serialization on every incremental rebuild.
+	if options.PipelineState == nil && ps.Registry != nil {
+		for _, rt := range ps.Registry.Runtimes() {
+			if err := rt.SetSiteData(ps.SiteData); err != nil {
+				log.Printf("warning: setting site data for plugin: %v", err)
+			}
 		}
 	}
 
