@@ -14,6 +14,20 @@ import (
 	"time"
 
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
+	gmhtml "github.com/yuin/goldmark/renderer/html"
+)
+
+var markdownifyMD = goldmark.New(
+	goldmark.WithExtensions(
+		extension.Table,
+		extension.TaskList,
+		extension.NewFootnote(),
+		extension.NewTypographer(),
+	),
+	goldmark.WithRendererOptions(gmhtml.WithUnsafe()),
+	goldmark.WithParserOptions(parser.WithAutoHeadingID(), parser.WithAttribute()),
 )
 
 // RegisterBuiltinFilters registers all Tier 1 built-in filters on the given engine.
@@ -610,8 +624,7 @@ func Abs(input interface{}, args ...interface{}) interface{} {
 func Markdownify(input interface{}, args ...interface{}) interface{} {
 	s := toString(input)
 	var buf strings.Builder
-	md := goldmark.New()
-	if err := md.Convert([]byte(s), &buf); err != nil {
+	if err := markdownifyMD.Convert([]byte(s), &buf); err != nil {
 		return s
 	}
 	return buf.String()
