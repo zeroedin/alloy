@@ -964,22 +964,23 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 					}
 					for path, body := range contentMap {
 						relPath := strings.TrimPrefix(path, contentPrefix+"/")
-						if _, alreadyQueued := ssrHTML[relPath]; alreadyQueued {
-							continue
-						}
 						if tags := ssr.ScanComponents(body); len(tags) > 0 {
 							for _, tag := range tags {
 								if tag == componentTag {
-									if html := renderedContent[relPath]; html != "" {
-										ssrHTML[relPath] = html
-									} else {
-										for _, p := range allPages {
-											if p.RelPath == relPath {
-												onDemand, renderErr := renderPages([]*content.Page{p}, rc)
-												if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
-													ssrHTML[relPath] = string(p.RenderedBody)
-												}
-												break
+									for _, p := range allPages {
+										if p.RelPath != relPath {
+											continue
+										}
+										pKey := renderedContentKey(p)
+										if _, alreadyQueued := ssrHTML[pKey]; alreadyQueued {
+											continue
+										}
+										if html := renderedContent[pKey]; html != "" {
+											ssrHTML[pKey] = html
+										} else {
+											onDemand, renderErr := renderPages([]*content.Page{p}, rc)
+											if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
+												ssrHTML[pKey] = string(p.RenderedBody)
 											}
 										}
 									}
