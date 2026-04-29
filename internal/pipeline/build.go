@@ -1440,7 +1440,7 @@ func interpolateFrontMatter(vp *content.Page, asVar string, item interface{}, en
 	ctx := map[string]interface{}{asVar: item}
 	for k, v := range vp.FrontMatter {
 		s, ok := v.(string)
-		if !ok || !strings.Contains(s, "{{") {
+		if !ok || (!strings.Contains(s, "{{") && !strings.Contains(s, "{%")) {
 			continue
 		}
 		if skipKeys[k] || strings.HasPrefix(k, "_pagination") {
@@ -1449,15 +1449,17 @@ func interpolateFrontMatter(vp *content.Page, asVar string, item interface{}, en
 		if engine != nil {
 			tpl, err := engine.Parse("_fm_"+k, []byte(s))
 			if err != nil {
+				log.Printf("warning: front matter interpolation for %s.%s: %v", vp.RelPath, k, err)
 				continue
 			}
 			out, err := tpl.Render(ctx)
 			if err != nil {
+				log.Printf("warning: front matter interpolation for %s.%s: %v", vp.RelPath, k, err)
 				continue
 			}
 			vp.FrontMatter[k] = strings.TrimSpace(string(out))
 		} else {
-			vp.FrontMatter[k] = pagination.RenderSimpleLiquid(s, asVar, item)
+			vp.FrontMatter[k] = strings.TrimSpace(pagination.RenderSimpleLiquid(s, asVar, item))
 		}
 	}
 }
