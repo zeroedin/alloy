@@ -214,7 +214,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	ps.SiteData = siteData
 
 	// Inject site data into plugin runtimes so alloy.data is available
-	// during filter/shortcode/hook execution (issue #339).
+	// during template filter/shortcode calls and post-discovery hooks (issue #339).
 	for _, rt := range registry.Runtimes() {
 		if err := rt.SetSiteData(siteData); err != nil {
 			log.Printf("warning: setting site data for plugin: %v", err)
@@ -848,8 +848,10 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	}
 
 	// Inject site data into plugin runtimes (issue #339).
-	// Call unconditionally — SetSiteData treats nil as empty map.
-	if ps.Registry != nil {
+	// Skip when PipelineState was provided by the caller — site data was
+	// already injected during the initial full build, avoiding repeated
+	// JSON serialization on every incremental rebuild.
+	if options.PipelineState == nil && ps.Registry != nil {
 		for _, rt := range ps.Registry.Runtimes() {
 			if err := rt.SetSiteData(ps.SiteData); err != nil {
 				log.Printf("warning: setting site data for plugin: %v", err)
