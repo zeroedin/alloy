@@ -135,19 +135,24 @@ func protectTemplateTags(src []byte) ([]byte, []string) {
 
 
 // restoreTemplateTags replaces placeholders back with the original template tags.
-// Block-level placeholders end up in their own <p> tags from goldmark — strip
-// the <p> wrapper to leave the raw template tag at block level.
+// Block-level shortcode placeholders ({% %}) end up in their own <p> tags from
+// goldmark — strip the <p> wrapper so the shortcode output isn't wrapped in an
+// unwanted paragraph. Expression tags ({{ }}) keep any surrounding <p> tags
+// since those are either user-authored HTML or goldmark paragraph wrapping that
+// should be preserved.
 func restoreTemplateTags(html []byte, placeholders []string) []byte {
 	result := string(html)
 	for i, original := range placeholders {
 		placeholder := fmt.Sprintf("ALLOY_TPL_%d_ELPMT", i)
-		// Strip <p> wrapper if the placeholder is the sole content of a paragraph
-		wrapped := "<p>" + placeholder + "</p>"
-		if strings.Contains(result, wrapped) {
-			result = strings.ReplaceAll(result, wrapped, original)
-		} else {
-			result = strings.ReplaceAll(result, placeholder, original)
+		isBlockTag := strings.HasPrefix(strings.TrimSpace(original), "{%")
+		if isBlockTag {
+			wrapped := "<p>" + placeholder + "</p>"
+			if strings.Contains(result, wrapped) {
+				result = strings.ReplaceAll(result, wrapped, original)
+				continue
+			}
 		}
+		result = strings.ReplaceAll(result, placeholder, original)
 	}
 	return []byte(result)
 }

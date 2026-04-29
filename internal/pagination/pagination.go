@@ -120,8 +120,8 @@ func PaginateWithLiquidPermalink(data []interface{}, permalinkTemplate string, a
 
 	for i, item := range data {
 		// Render the permalink by simple template substitution
-		rendered := renderSimpleLiquid(permalinkTemplate, as, item)
-		paths[i] = rendered
+		rendered := RenderSimpleLiquid(permalinkTemplate, as, item)
+		paths[i] = strings.TrimSpace(rendered)
 		contexts[i] = PaginationContext{
 			PageNumber: i + 1,
 			TotalPages: len(data),
@@ -188,9 +188,9 @@ func PaginateWithTemplatePermalink(data []interface{}, permalinkTemplate string,
 	return contexts, paths, nil
 }
 
-// renderSimpleLiquid renders a simple Liquid-style template by replacing
+// RenderSimpleLiquid renders a simple Liquid-style template by replacing
 // {{ varName.field }} with the corresponding value from the item.
-func renderSimpleLiquid(tmpl string, varName string, item interface{}) string {
+func RenderSimpleLiquid(tmpl string, varName string, item interface{}) string {
 	result := tmpl
 	itemMap, isMap := item.(map[string]interface{})
 	if !isMap {

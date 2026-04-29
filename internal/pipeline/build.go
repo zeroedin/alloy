@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"io/fs"
 	"log"
 	"os"
@@ -1403,6 +1404,7 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 			// Make the data items available under the 'as' variable name
 			if perPage == 1 && len(pctx.Items) == 1 {
 				vp.FrontMatter["_paginationData"] = pctx.Items[0]
+				interpolateFrontMatter(vp, asVar, pctx.Items[0], engine)
 			} else {
 				vp.FrontMatter["_paginationData"] = pctx.Items
 			}
@@ -1428,6 +1430,39 @@ func copyFrontMatter(fm map[string]interface{}) map[string]interface{} {
 		result[k] = v
 	}
 	return result
+}
+
+// interpolateFrontMatter resolves template tags in string-valued front matter
+// fields for single-item paginated virtual pages.
+func interpolateFrontMatter(vp *content.Page, asVar string, item interface{}, engine tmpl.TemplateEngine) {
+	skipKeys := map[string]bool{
+		"permalink": true, "layout": true, "pagination": true,
+	}
+	ctx := map[string]interface{}{asVar: item}
+	for k, v := range vp.FrontMatter {
+		s, ok := v.(string)
+		if !ok || (!strings.Contains(s, "{{") && !strings.Contains(s, "{%")) {
+			continue
+		}
+		if skipKeys[k] || strings.HasPrefix(k, "_pagination") {
+			continue
+		}
+		if engine != nil {
+			tpl, err := engine.Parse("_fm_"+k, []byte(s))
+			if err != nil {
+				log.Printf("warning: front matter interpolation for %s.%s: %v", vp.RelPath, k, err)
+				continue
+			}
+			out, err := tpl.Render(ctx)
+			if err != nil {
+				log.Printf("warning: front matter interpolation for %s.%s: %v", vp.RelPath, k, err)
+				continue
+			}
+			vp.FrontMatter[k] = html.UnescapeString(strings.TrimSpace(string(out)))
+		} else {
+			vp.FrontMatter[k] = strings.TrimSpace(pagination.RenderSimpleLiquid(s, asVar, item))
+		}
+	}
 }
 
 // codeBlockPattern matches <code> elements (including those with attributes).
