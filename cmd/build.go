@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"runtime"
+	"runtime/pprof"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -32,7 +34,7 @@ func termWidth() int {
 }
 
 func newBuildCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "build",
 		Short: "Run the build pipeline and write _site/",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -80,6 +82,8 @@ func newBuildCommand() *cobra.Command {
 				}
 			}
 
+			profile, _ := cmd.Flags().GetBool("profile")
+
 			// Set up progress reporter based on flags + TTY detection
 			if !cfg.Quiet {
 				if cfg.Verbose {
@@ -91,9 +95,36 @@ func newBuildCommand() *cobra.Command {
 			}
 			defer pipeline.SetReporter(nil)
 
-			result, err := pipeline.Build(cfg)
+			// pprof CPU profiling
+			if profile {
+				cpuFile, err := os.Create("cpu.prof")
+				if err != nil {
+					return fmt.Errorf("creating cpu.prof: %w", err)
+				}
+				defer cpuFile.Close()
+				if err := pprof.StartCPUProfile(cpuFile); err != nil {
+					return fmt.Errorf("starting CPU profile: %w", err)
+				}
+				defer pprof.StopCPUProfile()
+			}
+
+			buildOpts := pipeline.BuildOptions{Profile: profile}
+			result, err := pipeline.Build(cfg, buildOpts)
 			if err != nil {
 				return err
+			}
+
+			// pprof memory profiling
+			if profile {
+				runtime.GC()
+				memFile, err := os.Create("mem.prof")
+				if err != nil {
+					return fmt.Errorf("creating mem.prof: %w", err)
+				}
+				defer memFile.Close()
+				if err := pprof.WriteHeapProfile(memFile); err != nil {
+					return fmt.Errorf("writing memory profile: %w", err)
+				}
 			}
 
 			// Non-TTY without --verbose: print summary line for CI/piped output
@@ -102,7 +133,15 @@ func newBuildCommand() *cobra.Command {
 					result.PageCount, result.Duration.Round(time.Millisecond))
 			}
 
+			// Print stage timing table when profiling
+			if profile && len(result.StageTimings) > 0 {
+				pipeline.PrintStageTimings(cmd.OutOrStdout(), result.StageTimings)
+				fmt.Fprintf(cmd.OutOrStdout(), "[alloy] Wrote cpu.prof and mem.prof\n")
+			}
+
 			return nil
 		},
 	}
+	cmd.Flags().Bool("profile", false, "Enable pprof profiling and print per-stage timing breakdown")
+	return cmd
 }
