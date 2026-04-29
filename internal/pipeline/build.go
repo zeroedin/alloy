@@ -849,7 +849,23 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	}
 
 	bc := applyBatchContext(allPages, cfg, ps)
+
+	// Track which RelPaths need rendering before pagination expands them
+	renderRelPaths := make(map[string]bool, len(pagesToRender))
+	for _, p := range pagesToRender {
+		renderRelPaths[p.RelPath] = true
+	}
+
 	allPages = processPagination(allPages, cfg, ps.SiteData, bc.Collections, ps.Engine)
+
+	// Rebuild pagesToRender from post-pagination allPages so virtual pages
+	// generated from a changed source page are included.
+	pagesToRender = nil
+	for _, p := range allPages {
+		if renderRelPaths[p.RelPath] {
+			pagesToRender = append(pagesToRender, p)
+		}
+	}
 
 	rc := &RenderContext{
 		Cfg:            cfg,

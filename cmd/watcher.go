@@ -69,7 +69,9 @@ func startWatcher(cfg *config.Config, srv *server.Server, dispatch watcherDispat
 
 				if event.Op&fsnotify.Create != 0 {
 					if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
-						addRecursiveWatch(watcher, event.Name)
+						if err := addRecursiveWatch(watcher, event.Name); err != nil {
+							log.Printf("warning: watching %s: %v", event.Name, err)
+						}
 					}
 				}
 
