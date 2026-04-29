@@ -268,7 +268,7 @@ Key points:
 **File**: `internal/pipeline/build.go`
 
 - `BuildWithContent(cfg, contentMap, opts ...BuildOptions)`: Thin wrapper around `Build()`. Writes `contentMap` entries to a temp directory preserving path structure (e.g., `"content/index.md"` → `tmpDir/content/index.md`, `"layouts/default.liquid"` → `tmpDir/layouts/default.liquid`), sets `cfg.ProjectRoot = tmpDir`, and calls `Build(cfg, opts...)`. This ensures every pipeline stage runs — plugins, hooks, data cascade, collections, lifecycle filtering, layout chaining, SSR, validation, output. Zero divergence from `Build()`. The temp directory is cleaned up after `Build()` returns. `BuildWithContent` must NOT duplicate any pipeline logic — it is purely file setup + delegation (issue #283).
-- `BuildIncremental(cfg, contentMap, previousCache, changedFiles)`: Serve-mode incremental rebuild. Accepts a previous `*cache.Cache` (loaded by the caller, not by this function) and list of changed file paths. Discovers all pages, skips pages where `cache.ShouldSkipFile` returns true (unchanged), and renders pages where it returns false (changed) or that were invalidated via `cache.InvalidatedPages` for layout changes. Returns `BuildResult` with `PagesSkipped` count. When `previousCache` is nil, renders all pages (equivalent to full build).
+- `BuildIncremental(cfg, contentMap, previousCache, changedFiles)`: Dev-mode incremental rebuild. Accepts a previous `*cache.Cache` (loaded by the caller, not by this function) and list of changed file paths. Discovers all pages, skips pages where `cache.ShouldSkipFile` returns true (unchanged), and renders pages where it returns false (changed) or that were invalidated via `cache.InvalidatedPages` for layout changes. Returns `BuildResult` with `PagesSkipped` count. When `previousCache` is nil, renders all pages (equivalent to full build).
 - `BuildResult.PagesSkipped int`: Number of pages skipped via cache comparison during incremental rebuild. Always 0 for `Build` and `BuildWithContent` (full rebuild).
 - `BuildPhase1`/`BuildPhase2`: Phase separation. Phase 2 operates entirely in memory:
   1. For each page, scan intermediate HTML for custom element tags (anything with a hyphen) and record in ComponentMap for cache invalidation
@@ -303,7 +303,7 @@ The variadic pattern keeps existing callers working (`Build(cfg)` still compiles
 ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
 ```
 
-`cmd/dev.go` always passes `pipeline.BuildOptions{SkipSSR: true}`. `cmd/build.go` and `cmd/serve.go` call `Build(cfg)` with no options (SSR runs if configured). `BuildIncremental` gets the same variadic parameter.
+`cmd/dev.go` always passes `pipeline.BuildOptions{SkipSSR: true}` — for both the initial `Build()` and watcher `BuildIncremental()` calls. `cmd/build.go` and `cmd/serve.go` call `Build(cfg)` with no options (SSR runs if configured). `BuildIncremental` gets the same variadic parameter.
 
 #### `Build()` full orchestration (issue #30)
 
@@ -455,7 +455,7 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
   - Payload serialization: Go `interface{}` → JSON → Node subprocess → JS function → JSON → Go `interface{}`. Same JSON-serializable contract as the hook payload spec (per-page HTML strings, `{path, content}` objects, etc.)
   - Timeout: each call respects `cfg.Plugins.Timeout` (default 5s). Node subprocess crash → error, not silent failure
   - Process lifecycle: spawned once at startup, kept alive for the build duration (or serve session). Killed on shutdown.
-- **Incremental build via cache (issue #105, #225)**: This applies to `BuildIncremental` only (serve mode). `Build()` and `BuildWithContent()` always do full rebuilds — they do not read the cache. **Cache ownership is caller-side**: the serve-mode loop in `cmd/serve.go` loads the previous build cache from disk via `cache.LoadFrom(cacheDir)`, passes it into `BuildIncremental` as `previousCache`, and persists the updated cache after the build. `BuildIncremental` itself does not own disk I/O for the cache. After discovering pages, use `previousCache.ShouldSkipFile(relPath, content)` to skip unchanged pages — no re-parse, no re-render. Template changes override content-hash skipping: if a layout file changed, `previousCache.InvalidatedPages(layoutPath)` returns the affected pages, which must be rebuilt even if their content hash is unchanged. Config changes (`previousCache.IsConfigChanged(currentHash)`) trigger a full rebuild. The `BuildResult.PagesSkipped` field reports the skip count (e.g., "Rebuilt 5 pages, 27 skipped (cached)").
+- **Incremental build via cache (issue #105, #225)**: This applies to `BuildIncremental` only (dev mode). `Build()` and `BuildWithContent()` always do full rebuilds — they do not read the cache. **Cache ownership is caller-side**: the dev-mode watcher loop in `cmd/dev.go` loads the previous build cache from disk via `cache.LoadFrom(cacheDir)`, passes it into `BuildIncremental` as `previousCache`, and persists the updated cache after the build. `BuildIncremental` itself does not own disk I/O for the cache. After discovering pages, use `previousCache.ShouldSkipFile(relPath, content)` to skip unchanged pages — no re-parse, no re-render. Template changes override content-hash skipping: if a layout file changed, `previousCache.InvalidatedPages(layoutPath)` returns the affected pages, which must be rebuilt even if their content hash is unchanged. Config changes (`previousCache.IsConfigChanged(currentHash)`) trigger a full rebuild. The `BuildResult.PagesSkipped` field reports the skip count (e.g., "Rebuilt 5 pages, 27 skipped (cached)").
 
 #### Cascade wiring (PR #55)
 
@@ -622,29 +622,35 @@ Key points:
 
 **Test note**: The existing cmd test `"build command executes the build pipeline successfully"` runs without a project fixture. Build must handle missing content directory gracefully (return zero-page success, not error) for this test to pass.
 
-#### `cmd/dev.go` (issue #256, was #29)
+#### `cmd/dev.go` (issue #256, was #29; watcher fix #371)
 
 Dev server command (`alloy dev`). Uses `ModeDev` — Phase 1 only, in-memory, drafts visible.
 
 1. Load config (same as build).
 2. Set `cfg.IncludeDrafts = true` (unless `--no-drafts`).
-3. Run initial build via `pipeline.Build(cfg)`.
+3. Run initial build via `pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})`. Store `BuildResult.Cache` as `previousCache`.
 4. Read `--port`, `--no-drafts`, `--refetch` flags.
 5. Call `server.NewWithMode(cfg, server.ModeDev)` and `server.Start()`.
-6. Start file watcher.
+6. **Start file watcher (issue #371)** — call `server.WatchDirs(cfg)`, `addRecursiveWatch` on each directory, fsnotify event loop with `ClassifyChange` and debouncer. On file change, dispatch by `ChangeType`:
+   - `ContentChange`/`LayoutChange`/`DataChange` → `pipeline.BuildIncremental(cfg, nil, previousCache, changedFiles, pipeline.BuildOptions{SkipSSR: true})` (incremental rebuild). Extract `changedFiles` from debounced events. Update `previousCache` from the returned `BuildResult.Cache`.
+   - `AssetChange`/`StaticChange` → no recopy needed in dev mode (served from source). Browser reload only.
+   - `PassthroughChange` → no recopy needed in dev mode (served from source). Browser reload only.
+   - `ComponentChange` → full rebuild via `pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})` (reset `previousCache`).
+   - All types → `srv.BroadcastReload()` after rebuild.
+   - **Bulk change protection**: If debouncer detects 10+ simultaneous changes (e.g., `git checkout`), fall back to full `pipeline.Build()` instead of `BuildIncremental()`. Reset `previousCache`.
 7. Block until interrupt.
 
-#### `cmd/serve.go` (issue #256)
+#### `cmd/serve.go` (issue #256; watcher #291, fix #371)
 
-Production server command (`alloy serve`). Uses `ModePreview` — same pipeline as `alloy build`, writes to `_site/`, SSR if configured, excludes drafts.
+Production server command (`alloy serve`). Uses `ModePreview` — same pipeline as `alloy build`, writes to `_site/`, SSR if configured, excludes drafts. **Must have a file watcher** — `alloy serve` is NOT a one-shot build (PLAN.md §8).
 
 1. Load config (same as build).
 2. Set `cfg.IncludeDrafts = false`.
 3. Run initial build via `pipeline.Build(cfg)`.
 4. Read `--port`, `--refetch` flags. No `--no-drafts` (production always excludes drafts). No `--preview` (removed).
 5. Call `server.NewWithMode(cfg, server.ModePreview)` and `server.Start()`.
-6. **Start file watcher (issue #291)** — same setup as `cmd/dev.go`: call `server.WatchDirs(cfg)`, `addRecursiveWatch` on each directory, fsnotify event loop with `ClassifyChange` and debouncer. On file change, dispatch by `ChangeType`:
-   - `ContentChange`/`LayoutChange`/`DataChange` → `pipeline.Build(cfg)` (full rebuild, serve mode has no incremental)
+6. **Start file watcher (issue #291, #371)** — same setup as `cmd/dev.go`: call `server.WatchDirs(cfg)`, `addRecursiveWatch` on each directory, fsnotify event loop with `ClassifyChange` and debouncer. On file change, dispatch by `ChangeType`:
+   - `ContentChange`/`LayoutChange`/`DataChange` → `pipeline.Build(cfg)` (full rebuild — serve mode always does full rebuilds, not incremental)
    - `AssetChange`/`StaticChange` → recopy changed files to `_site/`
    - `PassthroughChange` → `server.RecopyPassthroughFile(changedPath, cfg)` — copies only the changed file to `_site/<to>/<relative-path>`
    - `ComponentChange` → full rebuild (SSR re-render)
