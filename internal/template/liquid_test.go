@@ -158,6 +158,166 @@ var _ = Describe("LiquidEngine", func() {
 		})
 	})
 
+	// ── Issue #376: Plugin filters in {% include %} partials ────────
+	// Plugin-registered filters must work inside {% include %} partials.
+	// The Liquid engine rewrites novel filter names during Parse(), but
+	// included partials are parsed by liquidgo internally via
+	// ReadTemplateFile — which must also apply the rewriting.
+
+	Context("Plugin filters in {% include %} partials (issue #376)", func() {
+		It("plugin filter works in an included partial", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+
+			// Register a plugin filter (not in knownLiquidFilters)
+			err := engine.AddFilter("tokenType", func(input interface{}, args ...interface{}) interface{} {
+				return "leaf"
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Create a temp directory with a partial that uses the plugin filter
+			tmpDir := GinkgoT().TempDir()
+			partialDir := tmpDir
+			err = os.MkdirAll(partialDir, 0755)
+			Expect(err).NotTo(HaveOccurred())
+			err = os.WriteFile(
+				partialDir+"/token-info.liquid",
+				[]byte(`<span>{{ tokenPath | tokenType }}</span>`),
+				0644,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Set includes dir
+			if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
+				setter.SetIncludesDir(tmpDir)
+			}
+
+			// Parse a template that includes the partial
+			tpl, err := engine.Parse("test", []byte(
+				`<div>{% include "token-info" tokenPath: "color" %}</div>`,
+			))
+			Expect(err).NotTo(HaveOccurred())
+
+			out, err := tpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred(),
+				"plugin filter must not cause 'undefined filter' error in {% include %} partial — "+
+					"ReadTemplateFile must apply the same filter rewriting as Parse()")
+			Expect(string(out)).To(ContainSubstring("<span>leaf</span>"),
+				"plugin filter must execute and produce output inside partial")
+		})
+
+		It("multiple plugin filters work in an included partial", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+
+			err := engine.AddFilter("tokenType", func(input interface{}, args ...interface{}) interface{} {
+				return "leaf"
+			})
+			Expect(err).NotTo(HaveOccurred())
+			err = engine.AddFilter("tokenLabel", func(input interface{}, args ...interface{}) interface{} {
+				return "Color Token"
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			tmpDir := GinkgoT().TempDir()
+			err = os.WriteFile(
+				tmpDir+"/multi.liquid",
+				[]byte(`{{ path | tokenType }}-{{ path | tokenLabel }}`),
+				0644,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
+				setter.SetIncludesDir(tmpDir)
+			}
+
+			tpl, err := engine.Parse("test", []byte(
+				`{% include "multi" path: "color" %}`,
+			))
+			Expect(err).NotTo(HaveOccurred())
+
+			out, err := tpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred(),
+				"multiple plugin filters must work in partials")
+			Expect(string(out)).To(ContainSubstring("leaf-Color Token"))
+		})
+
+		It("built-in filters still work alongside plugin filters in partials", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+
+			err := engine.AddFilter("tokenType", func(input interface{}, args ...interface{}) interface{} {
+				return "leaf"
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			tmpDir := GinkgoT().TempDir()
+			err = os.WriteFile(
+				tmpDir+"/mixed.liquid",
+				[]byte(`{{ name | upcase }}-{{ name | tokenType }}`),
+				0644,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
+				setter.SetIncludesDir(tmpDir)
+			}
+
+			tpl, err := engine.Parse("test", []byte(
+				`{% include "mixed" name: "color" %}`,
+			))
+			Expect(err).NotTo(HaveOccurred())
+
+			out, err := tpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred(),
+				"built-in and plugin filters must coexist in partials")
+			Expect(string(out)).To(ContainSubstring("COLOR-leaf"),
+				"upcase (built-in) and tokenType (plugin) must both work")
+		})
+
+		It("plugin filter works in a recursively included partial", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+
+			err := engine.AddFilter("nodeType", func(input interface{}, args ...interface{}) interface{} {
+				return "branch"
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			tmpDir := GinkgoT().TempDir()
+			// Inner partial uses the plugin filter
+			err = os.WriteFile(
+				tmpDir+"/inner.liquid",
+				[]byte(`<em>{{ val | nodeType }}</em>`),
+				0644,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			// Outer partial includes the inner partial
+			err = os.WriteFile(
+				tmpDir+"/outer.liquid",
+				[]byte(`<div>{% include "inner" val: item %}</div>`),
+				0644,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
+				setter.SetIncludesDir(tmpDir)
+			}
+
+			tpl, err := engine.Parse("test", []byte(
+				`{% include "outer" item: "root" %}`,
+			))
+			Expect(err).NotTo(HaveOccurred())
+
+			out, err := tpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred(),
+				"plugin filter must work in recursively included partials — "+
+					"filter rewriting must apply at every include level")
+			Expect(string(out)).To(ContainSubstring("<em>branch</em>"),
+				"plugin filter must execute in the innermost partial")
+		})
+	})
+
 	// ── Issue #200: Plugin filter shadows built-in in Liquid engine ──
 	// RegisterBuiltinFilters registers built-ins first. Then AddFilter
 	// registers a plugin filter with the same name. The plugin must win.
