@@ -130,6 +130,13 @@ func newDevCommand() *cobra.Command {
 				log.Printf("warning: plugin hook onDevServerStart: %v", err)
 			}
 
+			// Create cached pipeline state for incremental rebuilds —
+			// avoids re-discovering plugins and re-creating the engine on every file change
+			ps, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			if psErr != nil {
+				log.Printf("warning: pipeline state init: %v", psErr)
+			}
+
 			// Set up file watcher for live rebuild
 			watcher := startWatcher(cfg, srv, func(events []server.ChangeEvent, rebuildScope server.RebuildScope) {
 				if _, err := hooks.RunWithTimeout(plugin.OnFileChanged, events); err != nil {
@@ -183,7 +190,7 @@ func newDevCommand() *cobra.Command {
 					for _, ev := range events {
 						changedFiles = append(changedFiles, ev.Path)
 					}
-					if _, err := pipeline.BuildIncremental(cfg, nil, previousCache, changedFiles, pipeline.BuildOptions{SkipSSR: true}); err != nil {
+					if _, err := pipeline.BuildIncremental(cfg, nil, previousCache, changedFiles, pipeline.BuildOptions{SkipSSR: true, PipelineState: ps}); err != nil {
 						log.Printf("rebuild failed: %v", err)
 						srv.Overlay().SetErrors([]server.BuildError{
 							{Message: err.Error(), Stage: "rebuild"},

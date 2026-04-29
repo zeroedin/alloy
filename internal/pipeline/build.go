@@ -75,7 +75,8 @@ func reportSummary(pageCount int, duration time.Duration, pagesSkipped int) {
 
 // BuildOptions controls optional pipeline behavior.
 type BuildOptions struct {
-	SkipSSR bool // true = skip Phase 2 entirely, regardless of cfg.SSR
+	SkipSSR       bool           // true = skip Phase 2 entirely, regardless of cfg.SSR
+	PipelineState *PipelineState // pre-built state to reuse (BuildIncremental only)
 }
 
 // BuildResult holds the outcome of a build.
@@ -125,7 +126,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	templateUsage := make(map[string][]string) // page.RelPath → layoutPaths (relative)
 
 	// Plugin system: discover plugins and set up hook registry
-	registry, hooks := discoverPlugins(cfg)
+	registry, hooks := DiscoverPlugins(cfg)
 	for _, w := range registry.ConflictWarnings() {
 		log.Printf("warning: %s", w)
 	}
@@ -156,7 +157,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 
 	// Stage 1: engine + plugins + cascade + site data
-	ps, err := initPipelineState(cfg, registry, hooks)
+	ps, err := InitPipelineState(cfg, registry, hooks)
 	if err != nil {
 		return nil, err
 	}
@@ -818,11 +819,15 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	activeReporter = nil
 	defer func() { activeReporter = savedReporter }()
 
-	// Pipeline setup — shared with Build() via initPipelineState/applyBatchContext
-	registry, hooks := discoverPlugins(cfg)
-	ps, psErr := initPipelineState(cfg, registry, hooks)
-	if psErr != nil {
-		return nil, psErr
+	// Reuse caller-provided pipeline state, or initialize from scratch
+	ps := options.PipelineState
+	if ps == nil {
+		registry, hooks := DiscoverPlugins(cfg)
+		var psErr error
+		ps, psErr = InitPipelineState(cfg, registry, hooks)
+		if psErr != nil {
+			return nil, psErr
+		}
 	}
 
 	allPages = content.FilterByLifecycle(allPages, time.Now(), cfg.IncludeDrafts)
@@ -1712,9 +1717,9 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 	return nil
 }
 
-// pipelineState holds shared state initialized once per build.
+// PipelineState holds shared state initialized once per build.
 // Used by both Build() and BuildIncremental() to avoid duplicating setup.
-type pipelineState struct {
+type PipelineState struct {
 	Engine      tmpl.TemplateEngine
 	Registry    *plugin.Registry
 	Hooks       *plugin.HookRegistry
@@ -1724,9 +1729,9 @@ type pipelineState struct {
 	ContentBase string
 }
 
-// discoverPlugins creates a plugin registry and hook system, discovers
+// DiscoverPlugins creates a plugin registry and hook system, discovers
 // plugins on disk, and loads them into the hook registry.
-func discoverPlugins(cfg *config.Config) (*plugin.Registry, *plugin.HookRegistry) {
+func DiscoverPlugins(cfg *config.Config) (*plugin.Registry, *plugin.HookRegistry) {
 	hooks := plugin.NewHookRegistry()
 	hooks.SetTimeout(cfg.Plugins.Timeout)
 	pluginsDir := resolveDir(cfg.ProjectRoot, "plugins")
@@ -1740,9 +1745,9 @@ func discoverPlugins(cfg *config.Config) (*plugin.Registry, *plugin.HookRegistry
 	return registry, hooks
 }
 
-// initPipelineState creates the template engine with plugin extensions,
+// InitPipelineState creates the template engine with plugin extensions,
 // loads cascade and site data. Shared by Build() and BuildIncremental().
-func initPipelineState(cfg *config.Config, registry *plugin.Registry, hooks *plugin.HookRegistry) (*pipelineState, error) {
+func InitPipelineState(cfg *config.Config, registry *plugin.Registry, hooks *plugin.HookRegistry) (*PipelineState, error) {
 	engine, err := createEngine(cfg)
 	if err != nil {
 		return nil, err
@@ -1765,7 +1770,7 @@ func initPipelineState(cfg *config.Config, registry *plugin.Registry, hooks *plu
 		return nil, siteDataErr
 	}
 
-	return &pipelineState{
+	return &PipelineState{
 		Engine:      engine,
 		Registry:    registry,
 		Hooks:       hooks,
@@ -1785,7 +1790,7 @@ type batchContext struct {
 
 // applyBatchContext applies cascade data, builds collections and taxonomies
 // for a set of pages. Used in both Build()'s per-batch loop and BuildIncremental().
-func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *pipelineState) *batchContext {
+func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineState) *batchContext {
 	for _, page := range pages {
 		var dirData map[string]interface{}
 		if len(ps.CascadeData) > 0 {
