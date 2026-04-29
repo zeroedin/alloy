@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yuin/goldmark"
+	"github.com/zeroedin/alloy/internal/content"
 )
 
 // RegisterBuiltinFilters registers all Tier 1 built-in filters on the given engine.
@@ -607,11 +607,16 @@ func Abs(input interface{}, args ...interface{}) interface{} {
 
 // --- Content filters ---
 
+var markdownifyMD = content.CreateGoldmark(content.MarkdownOptions{
+	Unsafe:        true,
+	Typographer:   true,
+	AutoHeadingID: true,
+})
+
 func Markdownify(input interface{}, args ...interface{}) interface{} {
 	s := toString(input)
 	var buf strings.Builder
-	md := goldmark.New()
-	if err := md.Convert([]byte(s), &buf); err != nil {
+	if err := markdownifyMD.Convert([]byte(s), &buf); err != nil {
 		return s
 	}
 	return buf.String()
