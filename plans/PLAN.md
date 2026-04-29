@@ -481,7 +481,7 @@ For a team member `{name: "Alice", slug: "alice"}`, the virtual page gets:
 - Only fields containing `{{ }}` or `{% %}` markers are rendered through the template engine. Fields without markers skip the renderer entirely — no performance cost.
 - Interpolation uses the same template engine and renderer as permalink processing. Full Liquid (or Go template) syntax is supported, including filters.
 - The template context contains only the `as:` variable (e.g., `{member: item}`). `site.*`, `page.*`, and `collections.*` are not available during front matter interpolation — this runs at pagination time, before the full template context is built.
-- Skipped fields: `permalink` (already processed), `layout`, `pagination`, and internal `_pagination*` keys.
+- Skipped fields: `permalink` (already processed), `layout`, `pagination`, and any key starting with `_` (internal transport keys such as `_paginationCtx`, `_paginationAs`, `_paginationData`).
 - Only applies to virtual pages (`perPage: 1`). Paginated list pages (`perPage > 1`) do not interpolate front matter — the `as:` variable is a list, not a single item.
 
 ---

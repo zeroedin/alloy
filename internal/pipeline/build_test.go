@@ -1282,8 +1282,8 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			contentMap := map[string]string{
 				"data/team.json": `[{"name":"Alice","slug":"alice"},{"name":"Bob","slug":"bob"}]`,
-				"content/team.md": "---\ntitle: \"{{ member.name }}\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 10\n  as: member\npermalink: \"/team/\"\n---\n{% for m in member %}<p>{{ m.name }}</p>{% endfor %}",
-				"layouts/default.liquid": "<html><head><title>{{ page.title }}</title></head><body>{{ content }}</body></html>",
+				"content/team.md": "---\ntitle: \"Team Members\"\nheading: \"{{ member.name }}\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 10\n  as: member\npermalink: \"/team/\"\n---\n{% for m in member %}<p>{{ m.name }}</p>{% endfor %}",
+				"layouts/default.liquid": "<html><head><title>{{ page.title }}</title></head><body><h1>{{ page.heading }}</h1>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred())
@@ -1291,11 +1291,15 @@ var _ = Describe("Build Pipeline", func() {
 
 			found := false
 			for _, html := range result.RenderedContent {
-				if strings.Contains(html, "Alice") || strings.Contains(html, "Bob") {
+				if strings.Contains(html, "<p>Alice</p>") {
 					found = true
-					Expect(html).To(ContainSubstring("{{ member.name }}"),
+					// page.heading should NOT have been interpolated to a member name
+					// because perPage > 1 means member is a slice, not a single item
+					Expect(html).NotTo(ContainSubstring("<h1>Alice</h1>"),
 						"paginated list pages (perPage > 1) must NOT interpolate front matter — "+
 							"the as: variable is a slice, not a single item")
+					Expect(html).NotTo(ContainSubstring("<h1>Bob</h1>"),
+						"paginated list pages must not interpolate to any individual item")
 					break
 				}
 			}
