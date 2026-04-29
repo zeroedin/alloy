@@ -2391,6 +2391,7 @@ When a component source file changes (detected by file watcher or definition has
 - Pure Go, fast, CommonMark compliant
 - Extensible (custom renderers, AST transforms)
 - Used by Hugo — proven at scale
+- **Single shared instance** — goldmark is configured once with all extensions and parser options, then reused across page body rendering (`RenderMarkdown`), TOC extraction (`RenderMarkdownWithTOC`), and the `markdownify` template filter. All three must produce identical output for the same input. `goldmark.Markdown.Convert` is safe for sequential reuse — no mutable state between calls.
 
 ---
 

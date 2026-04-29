@@ -4,6 +4,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/zeroedin/alloy/internal/content"
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
@@ -337,6 +338,21 @@ var _ = Describe("Built-in Filters", func() {
 				"proves shared instance has no mutable state between calls")
 		Expect(result2).To(ContainSubstring("<strong>second</strong>"),
 			"each call must render independently")
+	})
+
+	It("markdownify and RenderMarkdown produce identical output", func() {
+		input := "## Heading\n\n| A | B |\n|---|---|\n| 1 | 2 |"
+		markdownifyResult := tmpl.Markdownify(input).(string)
+		opts := content.MarkdownOptions{
+			Unsafe:        true,
+			Typographer:   true,
+			TemplateTags:  true,
+			AutoHeadingID: true,
+		}
+		renderResult, _ := content.RenderMarkdown([]byte(input), opts)
+		Expect(markdownifyResult).To(Equal(string(renderResult)),
+			"markdownify and RenderMarkdown must produce identical output — "+
+				"divergent output means different goldmark extensions or parser options")
 	})
 
 	// ── Regex filters (individual — complex) ────────────────────────────
