@@ -85,7 +85,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key impleme
 - **Set**: Intersect, Union, Complement
 - **URL**: URLEncode, URLDecode, AbsoluteURL
 - **Math**: Plus, Minus, Times, DividedBy (guard div-by-zero), Modulo, Ceil, Floor, Round, Abs
-- **Content**: Markdownify (issue #366) — must use the same goldmark configuration as the main content renderer: same extensions (Table, TaskList, Footnote, Typographer) and same parser options (WithAutoHeadingID, WithAttribute). Use a package-level shared goldmark instance (`var markdownifyMD = goldmark.New(...)`) instead of creating per call. `goldmark.Markdown.Convert` is safe for sequential reuse. The shared instance must be configured with the same options used in `content.RenderMarkdown`.
+- **Content**: Markdownify (issue #366) — must use the same goldmark extensions (Table, TaskList, Footnote, Typographer) and parser options (WithAutoHeadingID, WithAttribute) as the main content renderer. Use a package-level shared goldmark instance instead of creating per call. Does NOT run template tag protection or code escape — processes already-rendered values, not raw content. Fixed config (all extensions, auto heading IDs on) regardless of per-site `MarkdownOptions`.
 - **Regex**: FindRE, ReplaceRE
 - **Data**: JSONFilter, Default
 - **Assets**: Fingerprint, SafeHTML
