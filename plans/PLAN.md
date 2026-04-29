@@ -1831,7 +1831,7 @@ Alloy uses a tiered plugin runtime. Plugin authors write in their preferred lang
 Built-in filters covering common SSG needs. Compiled Go functions registered with both Liquid (via liquidgo) and Go templates (via `FuncMap`) — fastest possible execution:
 
 - **String**: `upcase`, `downcase`, `capitalize`, `slugify`, `truncate`, `truncatewords`, `strip_html`, `escape`, `replace`, `replace_first`, `split`, `join`, `strip`, `append`, `prepend`, `newline_to_br`, `contains`
-- **Date**: `date` (with format string, e.g. `{{ page.date | date: "%B %d, %Y" }}`)
+- **Date**: `date` (strftime format string, e.g. `{{ page.date | date: "%B %d, %Y" }}`). Powered by `github.com/lestrrat-go/strftime` for full POSIX compliance. Supports all standard directives (`%A` through `%z`, `%%`). Both Liquid and Go template engines use the same `DateFormat` implementation — overrides liquidgo's native `date` filter. Accepts `time.Time` or string input (parsed from ISO 8601, RFC 3339, `YYYY-MM-DD HH:MM:SS`, `YYYY-MM-DD`). Returns input unchanged when no format argument is provided.
 - **Array**: `sort`, `reverse`, `first`, `last`, `where`, `group_by`, `size`, `map`, `uniq`, `compact`, `concat`
 - **Set operations**: `intersect`, `union`, `complement`
 - **URL**: `url`, `absolute_url`, `url_encode`, `url_decode`
