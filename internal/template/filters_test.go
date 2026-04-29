@@ -340,12 +340,11 @@ var _ = Describe("Built-in Filters", func() {
 			"each call must render independently")
 	})
 
-	It("markdownify and RenderMarkdown share the same goldmark config", func() {
+	It("markdownify and RenderMarkdown use the same config-driven goldmark options", func() {
 		input := "## Heading\n\n| A | B |\n|---|---|\n| 1 | 2 |"
 		markdownifyResult := tmpl.Markdownify(input).(string)
-		// TemplateTags: false — compare only goldmark output, not the
-		// template tag protection layer which markdownify doesn't run
-		// (it processes already-rendered values, not raw content).
+		// TemplateTags: false — markdownify doesn't run template tag
+		// protection (it processes already-rendered values).
 		opts := content.MarkdownOptions{
 			Unsafe:        true,
 			Typographer:   true,
@@ -355,8 +354,9 @@ var _ = Describe("Built-in Filters", func() {
 		renderResult, err := content.RenderMarkdown([]byte(input), opts)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(markdownifyResult).To(Equal(string(renderResult)),
-			"markdownify and RenderMarkdown must share goldmark config — "+
-				"same extensions (tables, typographer) and parser options (heading IDs)")
+			"markdownify and RenderMarkdown must use the same config-driven "+
+				"goldmark options — if they diverge, a table or heading ID works "+
+				"in the page body but not in {{ page.description | markdownify }}")
 	})
 
 	// ── Regex filters (individual — complex) ────────────────────────────
