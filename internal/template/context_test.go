@@ -177,4 +177,34 @@ var _ = Describe("Template Context Shape (§3)", func() {
 		Expect(memberItems).To(HaveLen(1),
 			"per-item pagination must have exactly one item")
 	})
+
+	// ── Taxonomy context defaults (issue #380) ──────────────────────
+
+	It("taxonomies key is present in ToMap even when nil", func() {
+		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, nil, "")
+		m := ctx.ToMap()
+		Expect(m).To(HaveKey("taxonomies"),
+			"taxonomies must always be present in template context — "+
+				"nil taxonomies should default to empty map")
+		taxMap, ok := m["taxonomies"].(map[string]interface{})
+		Expect(ok).To(BeTrue(),
+			"taxonomies must be a map[string]interface{}")
+		Expect(taxMap).To(BeEmpty(),
+			"nil taxonomies must produce an empty map, not a populated one")
+	})
+
+	It("taxonomies key contains data when provided", func() {
+		taxCtx := map[string]interface{}{
+			"tags": map[string]interface{}{
+				"go": []interface{}{page.ToTemplateMap()},
+			},
+		}
+		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, taxCtx, nil, "")
+		m := ctx.ToMap()
+		Expect(m).To(HaveKey("taxonomies"))
+		taxMap, ok := m["taxonomies"].(map[string]interface{})
+		Expect(ok).To(BeTrue())
+		Expect(taxMap).To(HaveKey("tags"),
+			"provided taxonomy data must be accessible")
+	})
 })
