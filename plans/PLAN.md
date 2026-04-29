@@ -1601,7 +1601,7 @@ The pipeline strips layout front matter before rendering (it is not output as li
 **Max depth** — Layout chains are capped at 10 levels. If a chain exceeds this depth without reaching a root layout (one with no `layout:` front matter), the build fails with an error identifying the chain. This prevents infinite loops from malformed layouts that escape cycle detection.
 
 **Partials and includes** are delegated to each engine's native capabilities:
-- **Liquid:** `{% include "partial" %}` and `{% render "partial" %}` for partials. Resolves from the layouts directory.
+- **Liquid:** `{% include "partial" %}` and `{% render "partial" %}` for partials. Resolves from the layouts directory. **Plugin-registered filters must work in partials** — the same filter dispatch mechanism that applies to content templates and layouts must also apply to included files. If the engine uses template pre-processing (e.g., rewriting novel filter names for dispatch), that pre-processing must also run on partial source before parsing (issue #376).
 - **Go:** `{{ block "name" . }}` / `{{ define "name" }}` for layout inheritance, `{{ template "name" . }}` for includes. Full layout chaining is built into the engine.
 
 **Content-relative file inlining** — `{% inline "./path" %}` reads a file relative to the current content file's directory and inserts its raw contents into the output. No template processing — the file is inserted verbatim. This is an Alloy-specific tag, not part of the Liquid spec.
