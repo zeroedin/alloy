@@ -1531,6 +1531,64 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Gotemplate layout rendering (issue #385) ────────────────────
+	// Pages using gotemplate engine with layout: "default" must resolve
+	// layouts/default.html and render through it. Regression: gotemplate
+	// layouts stopped being applied in CLI builds.
+
+	Describe("Gotemplate layout rendering (issue #385)", func() {
+		It("gotemplate engine applies layout from .html file", func() {
+			cfg := &config.Config{
+				Title:   "Go Template Layout Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Templates: config.TemplatesConfig{Engine: "gotemplate"},
+			}
+			contentMap := map[string]string{
+				"content/about.md":    "---\ntitle: About\nlayout: default\n---\n# About\n\nThis uses Go templates.",
+				"layouts/default.html": `<!DOCTYPE html><html><head><title>{{ .page.title }}</title></head><body><main>{{ .content }}</main></body></html>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["about.md"]
+			Expect(html).NotTo(BeEmpty(),
+				"about page must render")
+			Expect(html).To(ContainSubstring("<!DOCTYPE html>"),
+				"gotemplate layout must wrap content with HTML document — "+
+					"if missing, layout resolution failed for .html files")
+			Expect(html).To(ContainSubstring("<title>About</title>"),
+				"layout must have access to .page.title from front matter")
+			Expect(html).To(ContainSubstring("<main>"),
+				"layout must render the <main> wrapper")
+			Expect(html).To(ContainSubstring("About"),
+				"rendered markdown content must appear inside the layout")
+		})
+
+		It("gotemplate engine renders page.title and site.title in layout", func() {
+			cfg := &config.Config{
+				Title:   "My Site",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Templates: config.TemplatesConfig{Engine: "gotemplate"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":     "---\ntitle: Home\nlayout: default\n---\n# Welcome",
+				"layouts/default.html": `<html><head><title>{{ .page.title }} - {{ .site.title }}</title></head><body>{{ .content }}</body></html>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).NotTo(BeEmpty(),
+				"index page must render")
+			Expect(html).To(ContainSubstring("<title>Home - My Site</title>"),
+				"gotemplate layout must resolve both .page.title and .site.title")
+		})
+	})
+
 	// ── Layout chaining (issue #276) ────────────────────────────────
 	// Layout files can reference a parent layout via front matter.
 	// The pipeline renders inside-out: content → child → parent → root.
