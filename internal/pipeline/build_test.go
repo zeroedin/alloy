@@ -1206,7 +1206,7 @@ var _ = Describe("Build Pipeline", func() {
 				"template tags must NOT be entity-encoded in .html content")
 		})
 
-		It("markdown content still escapes template tags in code fences", func() {
+		It("markdown content still escapes template tags in inline code", func() {
 			cfg := &config.Config{
 				Title:   "Code Escape Test",
 				BaseURL: "https://example.com",
@@ -1223,7 +1223,7 @@ var _ = Describe("Build Pipeline", func() {
 			html := result.RenderedContent["example.md"]
 			Expect(html).To(ContainSubstring("&#123;"),
 				"template tags inside inline code in .md files must be escaped — "+
-					"code fences should display template syntax literally")
+					"inline code should display template syntax literally")
 		})
 	})
 
