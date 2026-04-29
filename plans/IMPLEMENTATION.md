@@ -628,16 +628,16 @@ Dev server command (`alloy dev`). Uses `ModeDev` — Phase 1 only, in-memory, dr
 
 1. Load config (same as build).
 2. Set `cfg.IncludeDrafts = true` (unless `--no-drafts`).
-3. Run initial build via `pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})`. Store `BuildResult.Cache` as `previousCache`.
+3. Run initial build via `pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})`. `Build()` persists cache to disk at Stage 9 (`.alloy/cache.json`).
 4. Read `--port`, `--no-drafts`, `--refetch` flags.
 5. Call `server.NewWithMode(cfg, server.ModeDev)` and `server.Start()`.
 6. **Start file watcher (issue #371)** — call `server.WatchDirs(cfg)`, `addRecursiveWatch` on each directory, fsnotify event loop with `ClassifyChange` and debouncer. On file change, dispatch by `ChangeType`:
-   - `ContentChange`/`LayoutChange`/`DataChange` → `pipeline.BuildIncremental(cfg, nil, previousCache, changedFiles, pipeline.BuildOptions{SkipSSR: true})` (incremental rebuild). Extract `changedFiles` from debounced events. Update `previousCache` from the returned `BuildResult.Cache`.
+   - `ContentChange`/`LayoutChange`/`DataChange` → load previous cache via `cache.LoadFrom(cacheDir)`, then call `pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})` with incremental skip logic. Extract `changedFiles` from debounced events. **Design note**: `BuildIncremental` currently requires a `contentMap` parameter (designed for test injection). For filesystem-based rebuilds, the developer must either (a) add a filesystem-reading path to `BuildIncremental` when `contentMap` is nil, or (b) add incremental skip logic to `Build()` that accepts an optional `previousCache`. The cache is persisted to disk by `Build()` at Stage 9 and loaded by the next rebuild via `cache.LoadFrom()`.
    - `AssetChange`/`StaticChange` → no recopy needed in dev mode (served from source). Browser reload only.
    - `PassthroughChange` → no recopy needed in dev mode (served from source). Browser reload only.
-   - `ComponentChange` → full rebuild via `pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})` (reset `previousCache`).
+   - `ComponentChange` → full rebuild via `pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})`.
    - All types → `srv.BroadcastReload()` after rebuild.
-   - **Bulk change protection**: If debouncer detects 10+ simultaneous changes (e.g., `git checkout`), fall back to full `pipeline.Build()` instead of `BuildIncremental()`. Reset `previousCache`.
+   - **Bulk change protection**: If debouncer detects 10+ simultaneous changes (e.g., `git checkout`), always do a full rebuild. Cache is re-persisted by `Build()` Stage 9.
 7. Block until interrupt.
 
 #### `cmd/serve.go` (issue #256; watcher #291, fix #371)
