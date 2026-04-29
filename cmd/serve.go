@@ -3,12 +3,16 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/pipeline"
@@ -101,6 +105,52 @@ func newServeCommand() *cobra.Command {
 				fmt.Fprintf(cmd.OutOrStdout(), "Serving at http://localhost:%d\n", actualPort)
 			}
 
+			// Set up file watcher for live rebuild
+			var watcher *fsnotify.Watcher
+			watcher = startWatcher(cfg, srv, func(events []server.ChangeEvent, _ server.RebuildScope) {
+				if !cfg.Quiet {
+					log.Printf("rebuilding (%d files changed)...", len(events))
+				}
+
+				needsRebuild := false
+				for _, ev := range events {
+					switch ev.ChangeType {
+					case server.ContentChange, server.LayoutChange, server.DataChange, server.ComponentChange:
+						needsRebuild = true
+					case server.AssetChange, server.StaticChange:
+						copyChangedFileToOutput(ev.Path, cfg)
+					case server.PassthroughChange:
+						if dest, err := server.RecopyPassthroughFile(ev.Path, cfg); err == nil {
+							srcPath := ev.Path
+							if cfg.ProjectRoot != "" {
+								srcPath = filepath.Join(cfg.ProjectRoot, ev.Path)
+								dest = filepath.Join(cfg.ProjectRoot, dest)
+							}
+							copyFileToPath(srcPath, dest, cfg)
+						}
+					}
+				}
+
+				if needsRebuild {
+					if _, err := pipeline.Build(cfg); err != nil {
+						log.Printf("rebuild failed: %v", err)
+						srv.Overlay().SetErrors([]server.BuildError{
+							{Message: err.Error(), Stage: "rebuild"},
+						})
+					} else {
+						srv.Overlay().ClearErrors()
+						if !cfg.Quiet {
+							log.Printf("rebuild complete")
+						}
+					}
+				}
+
+				srv.BroadcastReload()
+			})
+			if watcher != nil {
+				defer watcher.Close()
+			}
+
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 			<-sigCh
@@ -116,4 +166,66 @@ func newServeCommand() *cobra.Command {
 	cmd.Flags().Bool("refetch", false, "Bypass fetch cache")
 
 	return cmd
+}
+
+func copyChangedFileToOutput(relPath string, cfg *config.Config) {
+	outputDir := cfg.Build.Output
+	if outputDir == "" {
+		outputDir = "_site"
+	}
+
+	changeType := server.ClassifyChange(relPath, cfg)
+	var sourceDir string
+	switch changeType {
+	case server.StaticChange:
+		sourceDir = cfg.Structure.Static
+		if sourceDir == "" {
+			sourceDir = "static"
+		}
+	case server.AssetChange:
+		sourceDir = cfg.Structure.Assets
+		if sourceDir == "" {
+			sourceDir = "assets"
+		}
+	default:
+		return
+	}
+
+	destRel, err := filepath.Rel(sourceDir, relPath)
+	if err != nil {
+		log.Printf("warning: computing relative path for %s: %v", relPath, err)
+		return
+	}
+
+	srcPath := relPath
+	if cfg.ProjectRoot != "" {
+		srcPath = filepath.Join(cfg.ProjectRoot, relPath)
+	}
+	destPath := filepath.Join(outputDir, destRel)
+	if cfg.ProjectRoot != "" {
+		destPath = filepath.Join(cfg.ProjectRoot, destPath)
+	}
+	copyFileToPath(srcPath, destPath, cfg)
+}
+
+func copyFileToPath(src, dest string, cfg *config.Config) {
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		log.Printf("warning: creating directory for %s: %v", dest, err)
+		return
+	}
+	srcFile, err := os.Open(src)
+	if err != nil {
+		log.Printf("warning: opening %s: %v", src, err)
+		return
+	}
+	defer srcFile.Close()
+	destFile, err := os.Create(dest)
+	if err != nil {
+		log.Printf("warning: creating %s: %v", dest, err)
+		return
+	}
+	defer destFile.Close()
+	if _, err := io.Copy(destFile, srcFile); err != nil {
+		log.Printf("warning: copying %s to %s: %v", src, dest, err)
+	}
 }

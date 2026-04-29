@@ -10,10 +10,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
-	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
+	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/pipeline"
 	"github.com/zeroedin/alloy/internal/plugin"
@@ -131,107 +130,82 @@ func newDevCommand() *cobra.Command {
 				log.Printf("warning: plugin hook onDevServerStart: %v", err)
 			}
 
-			// Set up file watcher for live rebuild
-			watcher, err := fsnotify.NewWatcher()
-			if err != nil {
-				log.Printf("warning: file watcher unavailable: %v", err)
-			} else {
-				defer watcher.Close()
+			// Create cached pipeline state for incremental rebuilds —
+			// avoids re-discovering plugins and re-creating the engine on every file change
+			ps, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			if psErr != nil {
+				log.Printf("warning: pipeline state init: %v", psErr)
+			}
 
-				watchDirs := server.WatchDirs(cfg)
-				for _, dir := range watchDirs {
-					absDir := dir
-					if cfg.ProjectRoot != "" {
-						absDir = filepath.Join(cfg.ProjectRoot, dir)
-					}
-					if info, err := os.Stat(absDir); err == nil && info.IsDir() {
-						if err := addRecursiveWatch(watcher, absDir); err != nil {
-							log.Printf("warning: watching %s: %v", dir, err)
-						}
+			// Set up file watcher for live rebuild
+			watcher := startWatcher(cfg, srv, func(events []server.ChangeEvent, rebuildScope server.RebuildScope) {
+				if _, err := hooks.RunWithTimeout(plugin.OnFileChanged, events); err != nil {
+					log.Printf("warning: plugin hook onFileChanged: %v", err)
+				}
+
+				needsRebuild := false
+				for _, ev := range events {
+					if server.RebuildScopeForChangeType(ev.ChangeType) == server.RebuildPipeline {
+						needsRebuild = true
+						break
 					}
 				}
 
-				debouncer := server.NewDebouncer(
-					time.Duration(srv.DebounceInterval())*time.Millisecond,
-					10,
-				)
+				if !needsRebuild {
+					srv.BroadcastReload()
+					return
+				}
 
-				go func() {
-					var pending []server.ChangeEvent
-					timer := time.NewTimer(time.Duration(srv.DebounceInterval()) * time.Millisecond)
-					timer.Stop()
+				if !cfg.Quiet {
+					log.Printf("rebuilding (%d files changed)...", len(events))
+				}
 
-					for {
-						select {
-						case event, ok := <-watcher.Events:
-							if !ok {
-								return
-							}
-							if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) == 0 {
-								continue
-							}
+				hasComponentChange := false
+				for _, ev := range events {
+					if ev.ChangeType == server.ComponentChange {
+						hasComponentChange = true
+						break
+					}
+				}
 
-							relPath := event.Name
-							if cfg.ProjectRoot != "" {
-								if r, err := filepath.Rel(cfg.ProjectRoot, event.Name); err == nil {
-									relPath = r
-								}
-							}
-
-							changeType := server.ClassifyChange(relPath, cfg)
-							pending = append(pending, server.ChangeEvent{
-								Path:       relPath,
-								ChangeType: changeType,
-							})
-
-							if event.Op&fsnotify.Create != 0 {
-								if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
-									addRecursiveWatch(watcher, event.Name)
-								}
-							}
-
-							timer.Reset(time.Duration(srv.DebounceInterval()) * time.Millisecond)
-
-						case <-timer.C:
-							if len(pending) == 0 {
-								continue
-							}
-
-							events := pending
-							pending = nil
-
-							events, _ = debouncer.Debounce(events)
-
-							if _, err := hooks.RunWithTimeout(plugin.OnFileChanged, events); err != nil {
-								log.Printf("warning: plugin hook onFileChanged: %v", err)
-							}
-
-							if !cfg.Quiet {
-								log.Printf("rebuilding (%d files changed)...", len(events))
-							}
-
-							if _, err := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true}); err != nil {
-								log.Printf("rebuild failed: %v", err)
-								srv.Overlay().SetErrors([]server.BuildError{
-									{Message: err.Error(), Stage: "rebuild"},
-								})
-								srv.BroadcastReload()
-							} else {
-								srv.Overlay().ClearErrors()
-								if !cfg.Quiet {
-									log.Printf("rebuild complete")
-								}
-								srv.BroadcastReload()
-							}
-
-						case err, ok := <-watcher.Errors:
-							if !ok {
-								return
-							}
-							log.Printf("watcher error: %v", err)
+				if hasComponentChange || rebuildScope == server.RebuildFull {
+					if _, err := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true}); err != nil {
+						log.Printf("rebuild failed: %v", err)
+						srv.Overlay().SetErrors([]server.BuildError{
+							{Message: err.Error(), Stage: "rebuild"},
+						})
+					} else {
+						srv.Overlay().ClearErrors()
+						if !cfg.Quiet {
+							log.Printf("rebuild complete")
 						}
 					}
-				}()
+				} else {
+					cacheDir := ".alloy"
+					if cfg.ProjectRoot != "" {
+						cacheDir = filepath.Join(cfg.ProjectRoot, ".alloy")
+					}
+					previousCache, _ := cache.LoadFrom(cacheDir)
+					var changedFiles []string
+					for _, ev := range events {
+						changedFiles = append(changedFiles, ev.Path)
+					}
+					if _, err := pipeline.BuildIncremental(cfg, nil, previousCache, changedFiles, pipeline.BuildOptions{SkipSSR: true, PipelineState: ps}); err != nil {
+						log.Printf("rebuild failed: %v", err)
+						srv.Overlay().SetErrors([]server.BuildError{
+							{Message: err.Error(), Stage: "rebuild"},
+						})
+					} else {
+						srv.Overlay().ClearErrors()
+						if !cfg.Quiet {
+							log.Printf("rebuild complete (incremental)")
+						}
+					}
+				}
+				srv.BroadcastReload()
+			})
+			if watcher != nil {
+				defer watcher.Close()
 			}
 
 			sigCh := make(chan os.Signal, 1)
@@ -250,17 +224,4 @@ func newDevCommand() *cobra.Command {
 	cmd.Flags().Bool("refetch", false, "Bypass fetch cache")
 
 	return cmd
-}
-
-// addRecursiveWatch adds a directory and all its subdirectories to the watcher.
-func addRecursiveWatch(watcher *fsnotify.Watcher, root string) error {
-	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil // skip inaccessible directories
-		}
-		if d.IsDir() {
-			return watcher.Add(path)
-		}
-		return nil
-	})
 }

@@ -75,7 +75,8 @@ func reportSummary(pageCount int, duration time.Duration, pagesSkipped int) {
 
 // BuildOptions controls optional pipeline behavior.
 type BuildOptions struct {
-	SkipSSR bool // true = skip Phase 2 entirely, regardless of cfg.SSR
+	SkipSSR       bool           // true = skip Phase 2 entirely, regardless of cfg.SSR
+	PipelineState *PipelineState // pre-built state to reuse (BuildIncremental only)
 }
 
 // BuildResult holds the outcome of a build.
@@ -125,20 +126,11 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	templateUsage := make(map[string][]string) // page.RelPath → layoutPaths (relative)
 
 	// Plugin system: discover plugins and set up hook registry
-	hooks := plugin.NewHookRegistry()
-	hooks.SetTimeout(cfg.Plugins.Timeout)
-
-	pluginsDir := resolveDir(cfg.ProjectRoot, "plugins")
-	registry := plugin.NewRegistry(pluginsDir)
-	if err := registry.DiscoverPlugins(); err != nil {
-		log.Printf("warning: plugin discovery: %v", err)
-	}
-	for _, w := range registry.ConflictWarnings() {
+	registry, hooks, pluginWarnings := DiscoverPlugins(cfg)
+	for _, w := range pluginWarnings {
 		log.Printf("warning: %s", w)
 	}
-
-	// Load discovered plugins into the hook registry
-	for _, w := range registry.LoadPlugins(hooks) {
+	for _, w := range registry.ConflictWarnings() {
 		log.Printf("warning: %s", w)
 	}
 
@@ -167,68 +159,19 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		return nil, fmt.Errorf("plugin hook onAfterValidation: %w", err)
 	}
 
-	// Stage 1: Create template engine and register built-in filters
-	engine, err := createEngine(cfg)
+	// Stage 1: engine + plugins + cascade + site data
+	ps, err := InitPipelineState(cfg, registry, hooks)
 	if err != nil {
 		return nil, err
 	}
-
-	// Bridge plugin-discovered filters into the template engine.
-	// Each plugin filter is wrapped so template rendering delegates to
-	// QuickJSRuntime.CallFilter() for the simulated JS execution.
-	for _, rt := range registry.Runtimes() {
-		for _, filterName := range rt.RegisteredFilters() {
-			name := filterName
-			runtime := rt
-			if err := engine.AddFilter(name, func(input interface{}, args ...interface{}) interface{} {
-				result, err := runtime.CallFilter(name, input, args...)
-				if err != nil {
-					return input
-				}
-				return result
-			}); err != nil {
-				return nil, fmt.Errorf("registering plugin filter %q: %w", name, err)
-			}
-		}
-	}
-
-	// Bridge plugin-discovered shortcodes into the template engine.
-	for _, rt := range registry.Runtimes() {
-		for _, scName := range rt.RegisteredShortcodes() {
-			name := scName
-			runtime := rt
-			if err := engine.AddTag(name, func(args []string, content string) string {
-				result, err := runtime.CallShortcode(name, args, content)
-				if err != nil {
-					return ""
-				}
-				return result
-			}); err != nil {
-				return nil, fmt.Errorf("registering plugin shortcode %q: %w", name, err)
-			}
-		}
-	}
-
-	// Configure include/render tag resolution from layouts directory
-	if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
-		setter.SetIncludesDir(resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts))
-	}
+	engine := ps.Engine
+	siteData := ps.SiteData
 
 	// ═══ Content pipeline ═══
 
-	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
+	contentDir := ps.ContentDir
 	layoutsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts)
 	engineName := cfg.Templates.Engine
-
-	// Load global data (shared across all languages)
-	cascadeData, cascadeErr := cascade.LoadDirectoryCascade(contentDir)
-	if cascadeErr != nil {
-		log.Printf("warning: loading cascade data: %v", cascadeErr)
-	}
-	siteData, siteDataErr := loadSiteData(cfg)
-	if siteDataErr != nil {
-		return nil, siteDataErr
-	}
 
 	// Fetch external data sources and merge into siteData
 	if len(cfg.Sources) > 0 {
@@ -263,10 +206,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
-	if _, err := hooks.RunWithTimeout(plugin.OnDataFetched, siteData); err != nil {
+	if _, err := ps.Hooks.RunWithTimeout(plugin.OnDataFetched, siteData); err != nil {
 		return nil, fmt.Errorf("plugin hook onDataFetched: %w", err)
 	}
-	contentBase := filepath.Base(contentDir)
 
 	// ═══ Unified two-pass pipeline (issue #280) ═══
 	// Always operates on language batches. Single-language sites produce one batch.
@@ -361,33 +303,19 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			}
 		}
 
-		// Cascade resolution
-		for _, page := range batchPages {
-			var dirData map[string]interface{}
-			if len(cascadeData) > 0 {
-				dirData = cascade.FindCascadeData(cascadeData, contentBase, page.RelPath)
-			}
-			pctx := cascade.BuildContext(siteData, dirData, page.FrontMatter)
-			page.FrontMatter = pctx.ToMap()
-		}
-
-		// Collections + taxonomies
-		var batchTax map[string]*collection.TaxonomyCollection
-		if cfg.Taxonomies != nil {
-			batchTax = collection.BuildTaxonomies(batchPages, cfg.Taxonomies)
-		}
-		batchColls := buildCollectionsContext(batchPages, cfg)
+		// Cascade + collections + taxonomies
+		bc := applyBatchContext(batchPages, cfg, ps)
 
 		// Pagination
-		batchPages = processPagination(batchPages, cfg, siteData, batchColls, engine)
+		batchPages = processPagination(batchPages, cfg, siteData, bc.Collections, engine)
 
 		pages = append(pages, batchPages...)
 		batches = append(batches, langBatch{
 			ctx:           lc,
 			pages:         batchPages,
-			collections:   batchColls,
-			taxonomies:    batchTax,
-			taxonomiesCtx: buildTaxonomiesContext(batchTax),
+			collections:   bc.Collections,
+			taxonomies:    bc.Taxonomies,
+			taxonomiesCtx: bc.TaxonomiesCtx,
 		})
 	}
 	reportEndStage()
@@ -432,10 +360,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 
 	// Hooks between passes — all pages discovered and content-rendered
-	if _, err := hooks.RunWithTimeout(plugin.OnContentLoaded, pages); err != nil {
+	if _, err := ps.Hooks.RunWithTimeout(plugin.OnContentLoaded, pages); err != nil {
 		return nil, fmt.Errorf("plugin hook onContentLoaded: %w", err)
 	}
-	if _, err := hooks.RunWithTimeout(plugin.OnDataCascadeReady, pages); err != nil {
+	if _, err := ps.Hooks.RunWithTimeout(plugin.OnDataCascadeReady, pages); err != nil {
 		return nil, fmt.Errorf("plugin hook onDataCascadeReady: %w", err)
 	}
 
@@ -446,7 +374,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
-	if err := fireContentTransformedHooks(pages, hooks); err != nil {
+	if err := fireContentTransformedHooks(pages, ps.Hooks); err != nil {
 		return nil, err
 	}
 
@@ -496,7 +424,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Fire onPageRendered hook per-page with HTML string payload.
 	// The hook receives a string and may return string or []byte.
 	for _, page := range pages {
-		result, err := hooks.RunWithTimeout(plugin.OnPageRendered, string(page.RenderedBody))
+		result, err := ps.Hooks.RunWithTimeout(plugin.OnPageRendered, string(page.RenderedBody))
 		if err != nil {
 			return nil, fmt.Errorf("plugin hook onPageRendered (%s): %w", page.RelPath, err)
 		}
@@ -609,7 +537,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		"assetsDir": resolveDir(cfg.ProjectRoot, cfg.Structure.Assets),
 		"outputDir": outputDir,
 	}
-	if _, err := hooks.RunWithTimeout(plugin.OnAssetProcess, assetInfo); err != nil {
+	if _, err := ps.Hooks.RunWithTimeout(plugin.OnAssetProcess, assetInfo); err != nil {
 		return nil, fmt.Errorf("plugin hook onAssetProcess: %w", err)
 	}
 
@@ -703,12 +631,12 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	reportSummary(result.PageCount, result.Duration, 0)
 
 	// Fire onBuildComplete hook — build is finished, plugins can run post-build tasks
-	if _, err := hooks.RunWithTimeout(plugin.OnBuildComplete, result); err != nil {
+	if _, err := ps.Hooks.RunWithTimeout(plugin.OnBuildComplete, result); err != nil {
 		return nil, fmt.Errorf("plugin hook onBuildComplete: %w", err)
 	}
 
 	// Log any plugin timeout warnings
-	for _, w := range hooks.Warnings() {
+	for _, w := range ps.Hooks.Warnings() {
 		log.Printf("warning: %s", w)
 	}
 
@@ -760,7 +688,8 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string, opts ...
 
 // BuildIncremental renders only pages that have changed since the previous
 // build (per the cache) or were invalidated by a layout/data change.
-// Used by alloy serve for incremental rebuilds on file watcher events.
+// Used by alloy dev for incremental rebuilds on file watcher events.
+// When contentMap is nil, content is discovered from the filesystem.
 // If previousCache is nil, all pages are rendered (equivalent to full build).
 func BuildIncremental(cfg *config.Config, contentMap map[string]string, previousCache *cache.Cache, changedFiles []string, opts ...BuildOptions) (*BuildResult, error) {
 	if len(opts) > 1 {
@@ -776,7 +705,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 
 	config.ApplyDefaults(cfg)
 
-	if len(contentMap) == 0 {
+	if contentMap != nil && len(contentMap) == 0 {
 		return &BuildResult{
 			OutputDir:  cfg.Build.Output,
 			PageCount:  0,
@@ -785,27 +714,49 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}, nil
 	}
 
-	// Create temp directory with content files
-	tmpDir, err := os.MkdirTemp("", "alloy-incremental-*")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	var allPages []*content.Page
+	var fsMode bool
 
-	for path, body := range contentMap {
-		fullPath := filepath.Join(tmpDir, path)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-			return nil, fmt.Errorf("failed to create dir for %s: %w", path, err)
+	if contentMap == nil {
+		// Filesystem mode: discover content from the real project directory
+		fsMode = true
+		contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
+		var err error
+		allPages, err = content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return &BuildResult{
+					OutputDir:  cfg.Build.Output,
+					PageCount:  0,
+					SSRSkipped: cfg.SSR == nil || options.SkipSSR,
+					Duration:   time.Since(start),
+				}, nil
+			}
+			return nil, fmt.Errorf("content discovery: %w", err)
 		}
-		if err := os.WriteFile(fullPath, []byte(body), 0644); err != nil {
-			return nil, fmt.Errorf("failed to write %s: %w", path, err)
+	} else {
+		// Test mode: create temp directory with content files
+		tmpDir, err := os.MkdirTemp("", "alloy-incremental-*")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create temp dir: %w", err)
 		}
-	}
+		defer os.RemoveAll(tmpDir)
 
-	contentDir := filepath.Join(tmpDir, "content")
-	allPages, err := content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
-	if err != nil {
-		return nil, fmt.Errorf("content discovery: %w", err)
+		for path, body := range contentMap {
+			fullPath := filepath.Join(tmpDir, path)
+			if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+				return nil, fmt.Errorf("failed to create dir for %s: %w", path, err)
+			}
+			if err := os.WriteFile(fullPath, []byte(body), 0644); err != nil {
+				return nil, fmt.Errorf("failed to write %s: %w", path, err)
+			}
+		}
+
+		contentDir := filepath.Join(tmpDir, "content")
+		allPages, err = content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
+		if err != nil {
+			return nil, fmt.Errorf("content discovery: %w", err)
+		}
 	}
 
 	// Determine which pages need rebuilding
@@ -844,12 +795,17 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				continue
 			}
 			// Content changed?
-			contentPrefix := cfg.Structure.Content
-			if contentPrefix == "" {
-				contentPrefix = "content"
+			var contentBytes []byte
+			if fsMode {
+				contentBytes = page.Content
+			} else {
+				contentPrefix := cfg.Structure.Content
+				if contentPrefix == "" {
+					contentPrefix = "content"
+				}
+				contentBytes = []byte(contentMap[filepath.ToSlash(filepath.Join(contentPrefix, page.RelPath))])
 			}
-			contentBody := contentMap[filepath.ToSlash(filepath.Join(contentPrefix, page.RelPath))]
-			if !previousCache.ShouldSkipFile(page.RelPath, []byte(contentBody)) {
+			if !previousCache.ShouldSkipFile(page.RelPath, contentBytes) {
 				pagesToRender = append(pagesToRender, page)
 				continue
 			}
@@ -866,7 +822,71 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	activeReporter = nil
 	defer func() { activeReporter = savedReporter }()
 
-	rendered, renderErr := renderPages(pagesToRender, &RenderContext{Cfg: cfg})
+	// Reuse caller-provided pipeline state, or initialize from scratch
+	ps := options.PipelineState
+	if ps == nil {
+		registry, hooks, pluginWarnings := DiscoverPlugins(cfg)
+		for _, w := range pluginWarnings {
+			log.Printf("warning: %s", w)
+		}
+		var psErr error
+		ps, psErr = InitPipelineState(cfg, registry, hooks)
+		if psErr != nil {
+			return nil, psErr
+		}
+	}
+
+	allPages = content.FilterByLifecycle(allPages, time.Now(), cfg.IncludeDrafts)
+
+	// Re-filter pagesToRender against lifecycle-filtered allPages
+	filtered := make(map[*content.Page]bool, len(allPages))
+	for _, p := range allPages {
+		filtered[p] = true
+	}
+	var filteredToRender []*content.Page
+	for _, p := range pagesToRender {
+		if filtered[p] {
+			filteredToRender = append(filteredToRender, p)
+		}
+	}
+	pagesToRender = filteredToRender
+
+	for _, page := range allPages {
+		url, err := permalink.ResolveForSection(page, cfg.Permalinks)
+		if err != nil {
+			return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
+		}
+		page.URL = url
+	}
+
+	bc := applyBatchContext(allPages, cfg, ps)
+
+	// Track which RelPaths need rendering before pagination expands them
+	renderRelPaths := make(map[string]bool, len(pagesToRender))
+	for _, p := range pagesToRender {
+		renderRelPaths[p.RelPath] = true
+	}
+
+	allPages = processPagination(allPages, cfg, ps.SiteData, bc.Collections, ps.Engine)
+
+	// Rebuild pagesToRender from post-pagination allPages so virtual pages
+	// generated from a changed source page are included.
+	pagesToRender = nil
+	for _, p := range allPages {
+		if renderRelPaths[p.RelPath] {
+			pagesToRender = append(pagesToRender, p)
+		}
+	}
+
+	rc := &RenderContext{
+		Cfg:            cfg,
+		SiteData:       ps.SiteData,
+		CollectionsCtx: bc.Collections,
+		TaxonomiesCtx:  bc.TaxonomiesCtx,
+		Pages:          allPages,
+		Engine:         ps.Engine,
+	}
+	rendered, renderErr := renderPages(pagesToRender, rc)
 	if renderErr != nil {
 		return nil, renderErr
 	}
@@ -891,7 +911,12 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 		ssrHTML := make(map[string]string)
 		for _, page := range pagesToRender {
-			rawContent := contentMap[filepath.ToSlash(filepath.Join(contentPrefix, page.RelPath))]
+			var rawContent string
+			if fsMode {
+				rawContent = string(page.Content)
+			} else {
+				rawContent = contentMap[filepath.ToSlash(filepath.Join(contentPrefix, page.RelPath))]
+			}
 			if tags := ssr.ScanComponents(rawContent); len(tags) > 0 {
 				html := renderedContent[page.RelPath]
 				if html != "" {
@@ -908,34 +933,57 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				// Extract component name from path (e.g., "components/ds-card/ds-card.js" → "ds-card")
 				parts := strings.SplitN(strings.TrimPrefix(normalized, "components/"), "/", 2)
 				componentTag := parts[0]
-				// Find all pages that use this component (from their content)
-				contentPrefix := cfg.Structure.Content
-				if contentPrefix == "" {
-					contentPrefix = "content"
-				}
-				for path, body := range contentMap {
-					relPath := strings.TrimPrefix(path, contentPrefix+"/")
-					if _, alreadyQueued := ssrHTML[relPath]; alreadyQueued {
-						continue
-					}
-					if tags := ssr.ScanComponents(body); len(tags) > 0 {
-						for _, tag := range tags {
-							if tag == componentTag {
-								if html := renderedContent[relPath]; html != "" {
-									ssrHTML[relPath] = html
-								} else {
-									// Page was skipped in Phase 1 — render on-demand for SSR
-									for _, p := range allPages {
-										if p.RelPath == relPath {
-											onDemand, renderErr := renderPages([]*content.Page{p}, &RenderContext{Cfg: cfg})
-											if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
-												ssrHTML[relPath] = string(p.RenderedBody)
-											}
-											break
+				if fsMode {
+					// Filesystem mode: scan all discovered pages for component usage
+					for _, p := range allPages {
+						if _, alreadyQueued := ssrHTML[p.RelPath]; alreadyQueued {
+							continue
+						}
+						if tags := ssr.ScanComponents(string(p.Content)); len(tags) > 0 {
+							for _, tag := range tags {
+								if tag == componentTag {
+									if html := renderedContent[p.RelPath]; html != "" {
+										ssrHTML[p.RelPath] = html
+									} else {
+										onDemand, renderErr := renderPages([]*content.Page{p}, rc)
+										if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
+											ssrHTML[p.RelPath] = string(p.RenderedBody)
 										}
 									}
+									break
 								}
-								break
+							}
+						}
+					}
+				} else {
+					// Test mode: scan contentMap for component usage
+					contentPrefix := cfg.Structure.Content
+					if contentPrefix == "" {
+						contentPrefix = "content"
+					}
+					for path, body := range contentMap {
+						relPath := strings.TrimPrefix(path, contentPrefix+"/")
+						if _, alreadyQueued := ssrHTML[relPath]; alreadyQueued {
+							continue
+						}
+						if tags := ssr.ScanComponents(body); len(tags) > 0 {
+							for _, tag := range tags {
+								if tag == componentTag {
+									if html := renderedContent[relPath]; html != "" {
+										ssrHTML[relPath] = html
+									} else {
+										for _, p := range allPages {
+											if p.RelPath == relPath {
+												onDemand, renderErr := renderPages([]*content.Page{p}, rc)
+												if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
+													ssrHTML[relPath] = string(p.RenderedBody)
+												}
+												break
+											}
+										}
+									}
+									break
+								}
 							}
 						}
 					}
@@ -1675,6 +1723,101 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 	return nil
 }
 
+// PipelineState holds shared state initialized once per build.
+// Used by both Build() and BuildIncremental() to avoid duplicating setup.
+type PipelineState struct {
+	Engine      tmpl.TemplateEngine
+	Registry    *plugin.Registry
+	Hooks       *plugin.HookRegistry
+	CascadeData map[string]map[string]interface{}
+	SiteData    map[string]interface{}
+	ContentDir  string
+	ContentBase string
+}
+
+// DiscoverPlugins creates a plugin registry and hook system, discovers
+// plugins on disk, and loads them into the hook registry.
+// Returns warnings for the caller to log (respects --quiet).
+func DiscoverPlugins(cfg *config.Config) (*plugin.Registry, *plugin.HookRegistry, []string) {
+	hooks := plugin.NewHookRegistry()
+	hooks.SetTimeout(cfg.Plugins.Timeout)
+	pluginsDir := resolveDir(cfg.ProjectRoot, "plugins")
+	registry := plugin.NewRegistry(pluginsDir)
+	var warnings []string
+	if err := registry.DiscoverPlugins(); err != nil {
+		warnings = append(warnings, fmt.Sprintf("plugin discovery: %v", err))
+	}
+	for _, w := range registry.LoadPlugins(hooks) {
+		warnings = append(warnings, w)
+	}
+	return registry, hooks, warnings
+}
+
+// InitPipelineState creates the template engine with plugin extensions,
+// loads cascade and site data. Shared by Build() and BuildIncremental().
+func InitPipelineState(cfg *config.Config, registry *plugin.Registry, hooks *plugin.HookRegistry) (*PipelineState, error) {
+	engine, err := createEngine(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := registerPluginExtensions(registry, engine); err != nil {
+		return nil, err
+	}
+	if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
+		setter.SetIncludesDir(resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts))
+	}
+
+	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
+	cascadeData, cascadeErr := cascade.LoadDirectoryCascade(contentDir)
+	if cascadeErr != nil {
+		log.Printf("warning: loading cascade data: %v", cascadeErr)
+	}
+
+	siteData, siteDataErr := loadSiteData(cfg)
+	if siteDataErr != nil {
+		return nil, siteDataErr
+	}
+
+	return &PipelineState{
+		Engine:      engine,
+		Registry:    registry,
+		Hooks:       hooks,
+		CascadeData: cascadeData,
+		SiteData:    siteData,
+		ContentDir:  contentDir,
+		ContentBase: filepath.Base(contentDir),
+	}, nil
+}
+
+// batchContext holds the per-batch pipeline state produced by applyBatchContext.
+type batchContext struct {
+	Collections   map[string]interface{}
+	Taxonomies    map[string]*collection.TaxonomyCollection
+	TaxonomiesCtx map[string]interface{}
+}
+
+// applyBatchContext applies cascade data, builds collections and taxonomies
+// for a set of pages. Used in both Build()'s per-batch loop and BuildIncremental().
+func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineState) *batchContext {
+	for _, page := range pages {
+		var dirData map[string]interface{}
+		if len(ps.CascadeData) > 0 {
+			dirData = cascade.FindCascadeData(ps.CascadeData, ps.ContentBase, page.RelPath)
+		}
+		pctx := cascade.BuildContext(ps.SiteData, dirData, page.FrontMatter)
+		page.FrontMatter = pctx.ToMap()
+	}
+
+	bc := &batchContext{
+		Collections: buildCollectionsContext(pages, cfg),
+	}
+	if cfg.Taxonomies != nil {
+		bc.Taxonomies = collection.BuildTaxonomies(pages, cfg.Taxonomies)
+		bc.TaxonomiesCtx = buildTaxonomiesContext(bc.Taxonomies)
+	}
+	return bc
+}
+
 func createEngine(cfg *config.Config) (tmpl.TemplateEngine, error) {
 	var engine tmpl.TemplateEngine
 	if cfg.Templates.Engine == "gotemplate" {
@@ -1687,6 +1830,38 @@ func createEngine(cfg *config.Config) (tmpl.TemplateEngine, error) {
 	}
 	tmpl.RegisterInlineTag(engine)
 	return engine, nil
+}
+
+func registerPluginExtensions(registry *plugin.Registry, engine tmpl.TemplateEngine) error {
+	for _, rt := range registry.Runtimes() {
+		for _, filterName := range rt.RegisteredFilters() {
+			name := filterName
+			runtime := rt
+			if err := engine.AddFilter(name, func(input interface{}, args ...interface{}) interface{} {
+				result, err := runtime.CallFilter(name, input, args...)
+				if err != nil {
+					return input
+				}
+				return result
+			}); err != nil {
+				return fmt.Errorf("registering plugin filter %q: %w", name, err)
+			}
+		}
+		for _, scName := range rt.RegisteredShortcodes() {
+			name := scName
+			runtime := rt
+			if err := engine.AddTag(name, func(args []string, content string) string {
+				result, err := runtime.CallShortcode(name, args, content)
+				if err != nil {
+					return ""
+				}
+				return result
+			}); err != nil {
+				return fmt.Errorf("registering plugin shortcode %q: %w", name, err)
+			}
+		}
+	}
+	return nil
 }
 
 // resolveDir resolves a relative directory against the project root.
