@@ -987,7 +987,8 @@ var _ = Describe("Build Pipeline", func() {
 
 	// ── Taxonomy template access (issue #380) ───────────────────────
 	// taxonomies.* must be populated and accessible in both layouts and
-	// content templates. The user reported taxonomies appearing empty.
+	// content templates. The user reported taxonomies appearing empty
+	// when content is in subdirectories (e.g., content/blog/post-a.md).
 
 	Describe("Taxonomy template access (issue #380)", func() {
 		It("taxonomies.tags is accessible in content templates", func() {
@@ -1049,6 +1050,48 @@ var _ = Describe("Build Pipeline", func() {
 				"layout nav must render")
 			Expect(allHTML).To(ContainSubstring("Post A"),
 				"Post A tagged 'go' must appear in layout taxonomy loop")
+		})
+
+		It("taxonomies work when content is in subdirectories", func() {
+			renderFalse := false
+			cfg := &config.Config{
+				Title:   "Taxonomy Subdir Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags":       {Render: &renderFalse},
+					"categories": {Render: &renderFalse},
+				},
+				Permalinks: map[string]string{
+					"blog":    "/:year/:month/:slug/",
+					"default": "/:slug/",
+				},
+			}
+			contentMap := map[string]string{
+				"content/blog/_data.yaml":  "layout: post",
+				"content/blog/post-a.md":   "---\ntitle: Post A\ndate: 2026-04-01\ntags: [\"go\", \"web\"]\ncategories: [\"tutorials\"]\nlayout: default\n---\n# Post A",
+				"content/blog/post-b.md":   "---\ntitle: Post B\ndate: 2026-04-02\ntags: [\"go\", \"testing\"]\ncategories: [\"tutorials\"]\nlayout: default\n---\n# Post B",
+				"content/blog/post-c.md":   "---\ntitle: Post C\ndate: 2026-04-03\ntags: [\"css\", \"web\"]\ncategories: [\"design\"]\nlayout: default\n---\n# Post C",
+				"content/series-test.md":   "---\ntitle: Series Test\nlayout: default\n---\n{% for post in taxonomies.tags.go %}<span class=\"go-tag\">{{ post.title }}</span>{% endfor %}",
+				"layouts/default.liquid":   "<html><body>{{ content }}</body></html>",
+				"layouts/post.liquid":      "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["series-test.md"]
+			Expect(html).NotTo(BeEmpty(),
+				"series-test page must render")
+			Expect(html).To(ContainSubstring(`class="go-tag"`),
+				"taxonomies.tags.go must be iterable when tagged content is in subdirectories — "+
+					"if empty, taxonomy building may not collect pages from nested content dirs")
+			Expect(html).To(ContainSubstring("Post A"),
+				"Post A is tagged 'go' and must appear")
+			Expect(html).To(ContainSubstring("Post B"),
+				"Post B is tagged 'go' and must appear")
+			Expect(html).NotTo(ContainSubstring("Post C"),
+				"Post C is NOT tagged 'go' — must not appear")
 		})
 
 		It("taxonomy with no matching pages produces empty collection", func() {

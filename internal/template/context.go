@@ -181,6 +181,8 @@ func (tc *TemplateContext) ToMap() map[string]interface{} {
 	}
 	if tc.Taxonomies != nil {
 		ctx["taxonomies"] = tc.Taxonomies
+	} else {
+		ctx["taxonomies"] = map[string]interface{}{}
 	}
 
 	// Hoist pagination to top level per spec §1c.

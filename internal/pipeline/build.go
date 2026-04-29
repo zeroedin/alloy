@@ -1883,6 +1883,15 @@ func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineSt
 	if cfg.Taxonomies != nil {
 		bc.Taxonomies = collection.BuildTaxonomies(pages, cfg.Taxonomies)
 		bc.TaxonomiesCtx = buildTaxonomiesContext(bc.Taxonomies)
+		if cfg.Verbose {
+			for taxName, tc := range bc.Taxonomies {
+				totalPages := 0
+				for _, termPages := range tc.Terms {
+					totalPages += len(termPages)
+				}
+				log.Printf("taxonomy %q: %d terms, %d page assignments", taxName, len(tc.Terms), totalPages)
+			}
+		}
 	}
 	return bc
 }
