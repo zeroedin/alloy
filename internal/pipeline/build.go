@@ -1183,7 +1183,9 @@ func renderPages(pages []*content.Page, rc *RenderContext) ([]string, error) {
 			return nil, fmt.Errorf("content transformation: %s: %w", page.RelPath, err)
 		}
 
-		html = escapeTemplateTagsInCode(html)
+		if ext == ".md" {
+			html = escapeTemplateTagsInCode(html)
+		}
 
 		if hasTemplateSyntax(html) {
 			tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "")
