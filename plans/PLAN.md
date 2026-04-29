@@ -1804,7 +1804,7 @@ Built-in filters covering common SSG needs. Compiled Go functions registered wit
 - **Set operations**: `intersect`, `union`, `complement`
 - **URL**: `url`, `absolute_url`, `url_encode`, `url_decode`
 - **Math**: `plus`, `minus`, `times`, `divided_by`, `modulo`, `ceil`, `floor`, `round`, `abs`
-- **Content**: `markdownify`
+- **Content**: `markdownify` — renders a markdown string to HTML using the same goldmark configuration as the main content renderer (tables, footnotes, task lists, typographer, auto heading IDs, heading attributes). Uses a shared goldmark instance, not per-call allocation. Useful for rendering markdown in front matter fields (`{{ page.description | markdownify }}`), data file values, or any template string containing markdown syntax.
 - **Output safety**: `safeHTML` (bypass auto-escaping for trusted content — relevant for Go templates)
 - **Regex**: `findRE`, `replaceRE` (regex match and replace)
 - **Data**: `json` (serialize value to JSON), `default` (fallback value if nil/empty)
