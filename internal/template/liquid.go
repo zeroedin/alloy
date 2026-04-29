@@ -47,9 +47,10 @@ func (e *liquidEngine) SetIncludesDir(dir string) {
 
 // liquidTemplate wraps a parsed liquidgo template.
 type liquidTemplate struct {
-	tpl         *liquid.Template
-	name        string
-	includesDir string
+	tpl            *liquid.Template
+	name           string
+	includesDir    string
+	dynamicFilters map[string]bool
 }
 
 func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
@@ -105,7 +106,11 @@ func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
 		return nil, fmt.Errorf("liquid parse error in %s: %s", name, errMsg)
 	}
 	tpl.SetName(name)
-	return &liquidTemplate{tpl: tpl, name: name, includesDir: e.includesDir}, nil
+	filterSnapshot := make(map[string]bool, len(e.dynamicFilters))
+	for k, v := range e.dynamicFilters {
+		filterSnapshot[k] = v
+	}
+	return &liquidTemplate{tpl: tpl, name: name, includesDir: e.includesDir, dynamicFilters: filterSnapshot}, nil
 }
 
 // rewriteFilterToPlugin replaces occurrences of a novel filter name in Liquid
@@ -189,7 +194,7 @@ func (t *liquidTemplate) Render(ctx map[string]interface{}) ([]byte, error) {
 	}
 	if t.includesDir != "" {
 		opts.Registers = map[string]interface{}{
-			"file_system": &alloyFileSystem{root: t.includesDir},
+			"file_system": &alloyFileSystem{root: t.includesDir, dynamicFilters: t.dynamicFilters},
 		}
 	}
 	result := t.tpl.Render(ctx, opts)
@@ -233,7 +238,8 @@ func RenderTemplate(source string, sourcePath string, ctx map[string]interface{}
 // ---------------------------------------------------------------------------
 
 type alloyFileSystem struct {
-	root string
+	root           string
+	dynamicFilters map[string]bool
 }
 
 func (fs *alloyFileSystem) ReadTemplateFile(templatePath string) (string, error) {
@@ -257,7 +263,13 @@ func (fs *alloyFileSystem) ReadTemplateFile(templatePath string) (string, error)
 		}
 		data, err := os.ReadFile(path)
 		if err == nil {
-			return string(data), nil
+			src := string(data)
+			for filterName := range fs.dynamicFilters {
+				if strings.Contains(src, filterName) {
+					src = rewriteFilterToPlugin(src, filterName)
+				}
+			}
+			return src, nil
 		}
 	}
 	return "", fmt.Errorf("no such template %q", templatePath)
