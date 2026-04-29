@@ -106,7 +106,11 @@ func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
 		return nil, fmt.Errorf("liquid parse error in %s: %s", name, errMsg)
 	}
 	tpl.SetName(name)
-	return &liquidTemplate{tpl: tpl, name: name, includesDir: e.includesDir, dynamicFilters: e.dynamicFilters}, nil
+	filterSnapshot := make(map[string]bool, len(e.dynamicFilters))
+	for k := range e.dynamicFilters {
+		filterSnapshot[k] = true
+	}
+	return &liquidTemplate{tpl: tpl, name: name, includesDir: e.includesDir, dynamicFilters: filterSnapshot}, nil
 }
 
 // rewriteFilterToPlugin replaces occurrences of a novel filter name in Liquid
@@ -261,7 +265,9 @@ func (fs *alloyFileSystem) ReadTemplateFile(templatePath string) (string, error)
 		if err == nil {
 			src := string(data)
 			for filterName := range fs.dynamicFilters {
-				src = rewriteFilterToPlugin(src, filterName)
+				if strings.Contains(src, filterName) {
+					src = rewriteFilterToPlugin(src, filterName)
+				}
 			}
 			return src, nil
 		}
