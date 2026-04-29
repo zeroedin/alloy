@@ -126,7 +126,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	templateUsage := make(map[string][]string) // page.RelPath → layoutPaths (relative)
 
 	// Plugin system: discover plugins and set up hook registry
-	registry, hooks := DiscoverPlugins(cfg)
+	registry, hooks, pluginWarnings := DiscoverPlugins(cfg)
+	for _, w := range pluginWarnings {
+		log.Printf("warning: %s", w)
+	}
 	for _, w := range registry.ConflictWarnings() {
 		log.Printf("warning: %s", w)
 	}
@@ -203,7 +206,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
-	if _, err := hooks.RunWithTimeout(plugin.OnDataFetched, siteData); err != nil {
+	if _, err := ps.Hooks.RunWithTimeout(plugin.OnDataFetched, siteData); err != nil {
 		return nil, fmt.Errorf("plugin hook onDataFetched: %w", err)
 	}
 
@@ -357,10 +360,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 
 	// Hooks between passes — all pages discovered and content-rendered
-	if _, err := hooks.RunWithTimeout(plugin.OnContentLoaded, pages); err != nil {
+	if _, err := ps.Hooks.RunWithTimeout(plugin.OnContentLoaded, pages); err != nil {
 		return nil, fmt.Errorf("plugin hook onContentLoaded: %w", err)
 	}
-	if _, err := hooks.RunWithTimeout(plugin.OnDataCascadeReady, pages); err != nil {
+	if _, err := ps.Hooks.RunWithTimeout(plugin.OnDataCascadeReady, pages); err != nil {
 		return nil, fmt.Errorf("plugin hook onDataCascadeReady: %w", err)
 	}
 
@@ -371,7 +374,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
-	if err := fireContentTransformedHooks(pages, hooks); err != nil {
+	if err := fireContentTransformedHooks(pages, ps.Hooks); err != nil {
 		return nil, err
 	}
 
@@ -421,7 +424,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Fire onPageRendered hook per-page with HTML string payload.
 	// The hook receives a string and may return string or []byte.
 	for _, page := range pages {
-		result, err := hooks.RunWithTimeout(plugin.OnPageRendered, string(page.RenderedBody))
+		result, err := ps.Hooks.RunWithTimeout(plugin.OnPageRendered, string(page.RenderedBody))
 		if err != nil {
 			return nil, fmt.Errorf("plugin hook onPageRendered (%s): %w", page.RelPath, err)
 		}
@@ -534,7 +537,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		"assetsDir": resolveDir(cfg.ProjectRoot, cfg.Structure.Assets),
 		"outputDir": outputDir,
 	}
-	if _, err := hooks.RunWithTimeout(plugin.OnAssetProcess, assetInfo); err != nil {
+	if _, err := ps.Hooks.RunWithTimeout(plugin.OnAssetProcess, assetInfo); err != nil {
 		return nil, fmt.Errorf("plugin hook onAssetProcess: %w", err)
 	}
 
@@ -628,12 +631,12 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	reportSummary(result.PageCount, result.Duration, 0)
 
 	// Fire onBuildComplete hook — build is finished, plugins can run post-build tasks
-	if _, err := hooks.RunWithTimeout(plugin.OnBuildComplete, result); err != nil {
+	if _, err := ps.Hooks.RunWithTimeout(plugin.OnBuildComplete, result); err != nil {
 		return nil, fmt.Errorf("plugin hook onBuildComplete: %w", err)
 	}
 
 	// Log any plugin timeout warnings
-	for _, w := range hooks.Warnings() {
+	for _, w := range ps.Hooks.Warnings() {
 		log.Printf("warning: %s", w)
 	}
 
@@ -822,7 +825,10 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	// Reuse caller-provided pipeline state, or initialize from scratch
 	ps := options.PipelineState
 	if ps == nil {
-		registry, hooks := DiscoverPlugins(cfg)
+		registry, hooks, pluginWarnings := DiscoverPlugins(cfg)
+		for _, w := range pluginWarnings {
+			log.Printf("warning: %s", w)
+		}
 		var psErr error
 		ps, psErr = InitPipelineState(cfg, registry, hooks)
 		if psErr != nil {
@@ -1731,18 +1737,20 @@ type PipelineState struct {
 
 // DiscoverPlugins creates a plugin registry and hook system, discovers
 // plugins on disk, and loads them into the hook registry.
-func DiscoverPlugins(cfg *config.Config) (*plugin.Registry, *plugin.HookRegistry) {
+// Returns warnings for the caller to log (respects --quiet).
+func DiscoverPlugins(cfg *config.Config) (*plugin.Registry, *plugin.HookRegistry, []string) {
 	hooks := plugin.NewHookRegistry()
 	hooks.SetTimeout(cfg.Plugins.Timeout)
 	pluginsDir := resolveDir(cfg.ProjectRoot, "plugins")
 	registry := plugin.NewRegistry(pluginsDir)
+	var warnings []string
 	if err := registry.DiscoverPlugins(); err != nil {
-		log.Printf("warning: plugin discovery: %v", err)
+		warnings = append(warnings, fmt.Sprintf("plugin discovery: %v", err))
 	}
 	for _, w := range registry.LoadPlugins(hooks) {
-		log.Printf("warning: %s", w)
+		warnings = append(warnings, w)
 	}
-	return registry, hooks
+	return registry, hooks, warnings
 }
 
 // InitPipelineState creates the template engine with plugin extensions,

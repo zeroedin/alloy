@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -56,7 +57,7 @@ func startWatcher(cfg *config.Config, srv *server.Server, dispatch watcherDispat
 
 				relPath := event.Name
 				if cfg.ProjectRoot != "" {
-					if r, err := filepath.Rel(cfg.ProjectRoot, event.Name); err == nil {
+					if r, err := filepath.Rel(cfg.ProjectRoot, event.Name); err == nil && !strings.HasPrefix(r, "..") {
 						relPath = r
 					}
 				}
