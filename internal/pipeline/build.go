@@ -173,40 +173,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		return nil, err
 	}
 
-	// Bridge plugin-discovered filters into the template engine.
-	// Each plugin filter is wrapped so template rendering delegates to
-	// QuickJSRuntime.CallFilter() for the simulated JS execution.
-	for _, rt := range registry.Runtimes() {
-		for _, filterName := range rt.RegisteredFilters() {
-			name := filterName
-			runtime := rt
-			if err := engine.AddFilter(name, func(input interface{}, args ...interface{}) interface{} {
-				result, err := runtime.CallFilter(name, input, args...)
-				if err != nil {
-					return input
-				}
-				return result
-			}); err != nil {
-				return nil, fmt.Errorf("registering plugin filter %q: %w", name, err)
-			}
-		}
-	}
-
-	// Bridge plugin-discovered shortcodes into the template engine.
-	for _, rt := range registry.Runtimes() {
-		for _, scName := range rt.RegisteredShortcodes() {
-			name := scName
-			runtime := rt
-			if err := engine.AddTag(name, func(args []string, content string) string {
-				result, err := runtime.CallShortcode(name, args, content)
-				if err != nil {
-					return ""
-				}
-				return result
-			}); err != nil {
-				return nil, fmt.Errorf("registering plugin shortcode %q: %w", name, err)
-			}
-		}
+	if err := registerPluginExtensions(registry, engine); err != nil {
+		return nil, err
 	}
 
 	// Configure include/render tag resolution from layouts directory
@@ -894,10 +862,24 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	activeReporter = nil
 	defer func() { activeReporter = savedReporter }()
 
-	// Pipeline setup: engine, data, permalinks, collections — same as Build()
+	// Pipeline setup: engine, plugins, data, permalinks, collections — same as Build()
 	engine, engineErr := createEngine(cfg)
 	if engineErr != nil {
 		return nil, engineErr
+	}
+
+	pluginsDir := resolveDir(cfg.ProjectRoot, "plugins")
+	registry := plugin.NewRegistry(pluginsDir)
+	if err := registry.DiscoverPlugins(); err != nil {
+		log.Printf("warning: plugin discovery: %v", err)
+	}
+	hooks := plugin.NewHookRegistry()
+	hooks.SetTimeout(cfg.Plugins.Timeout)
+	for _, w := range registry.LoadPlugins(hooks) {
+		log.Printf("warning: %s", w)
+	}
+	if err := registerPluginExtensions(registry, engine); err != nil {
+		return nil, err
 	}
 
 	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
@@ -1019,7 +1001,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 									if html := renderedContent[p.RelPath]; html != "" {
 										ssrHTML[p.RelPath] = html
 									} else {
-										onDemand, renderErr := renderPages([]*content.Page{p}, &RenderContext{Cfg: cfg})
+										onDemand, renderErr := renderPages([]*content.Page{p}, rc)
 										if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
 											ssrHTML[p.RelPath] = string(p.RenderedBody)
 										}
@@ -1046,10 +1028,9 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 									if html := renderedContent[relPath]; html != "" {
 										ssrHTML[relPath] = html
 									} else {
-										// Page was skipped in Phase 1 — render on-demand for SSR
 										for _, p := range allPages {
 											if p.RelPath == relPath {
-												onDemand, renderErr := renderPages([]*content.Page{p}, &RenderContext{Cfg: cfg})
+												onDemand, renderErr := renderPages([]*content.Page{p}, rc)
 												if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
 													ssrHTML[relPath] = string(p.RenderedBody)
 												}
@@ -1810,6 +1791,40 @@ func createEngine(cfg *config.Config) (tmpl.TemplateEngine, error) {
 	}
 	tmpl.RegisterInlineTag(engine)
 	return engine, nil
+}
+
+// registerPluginExtensions bridges plugin-discovered filters and shortcodes
+// into the template engine. Used by both Build() and BuildIncremental().
+func registerPluginExtensions(registry *plugin.Registry, engine tmpl.TemplateEngine) error {
+	for _, rt := range registry.Runtimes() {
+		for _, filterName := range rt.RegisteredFilters() {
+			name := filterName
+			runtime := rt
+			if err := engine.AddFilter(name, func(input interface{}, args ...interface{}) interface{} {
+				result, err := runtime.CallFilter(name, input, args...)
+				if err != nil {
+					return input
+				}
+				return result
+			}); err != nil {
+				return fmt.Errorf("registering plugin filter %q: %w", name, err)
+			}
+		}
+		for _, scName := range rt.RegisteredShortcodes() {
+			name := scName
+			runtime := rt
+			if err := engine.AddTag(name, func(args []string, content string) string {
+				result, err := runtime.CallShortcode(name, args, content)
+				if err != nil {
+					return ""
+				}
+				return result
+			}); err != nil {
+				return fmt.Errorf("registering plugin shortcode %q: %w", name, err)
+			}
+		}
+	}
+	return nil
 }
 
 // resolveDir resolves a relative directory against the project root.

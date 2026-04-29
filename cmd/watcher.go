@@ -24,7 +24,7 @@ func startWatcher(cfg *config.Config, srv *server.Server, dispatch watcherDispat
 	watchDirs := server.WatchDirs(cfg)
 	for _, dir := range watchDirs {
 		absDir := dir
-		if cfg.ProjectRoot != "" {
+		if cfg.ProjectRoot != "" && !filepath.IsAbs(dir) {
 			absDir = filepath.Join(cfg.ProjectRoot, dir)
 		}
 		if info, err := os.Stat(absDir); err == nil && info.IsDir() {
