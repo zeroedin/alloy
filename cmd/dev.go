@@ -207,34 +207,21 @@ func newDevCommand() *cobra.Command {
 								log.Printf("warning: plugin hook onFileChanged: %v", err)
 							}
 
-							needsPipelineRebuild := false
-							reloadOnly := true
+							needsRebuild := false
 							for _, ev := range events {
-								scope := server.RebuildScopeForChangeType(ev.ChangeType)
-								if scope == server.RebuildPipeline {
-									needsPipelineRebuild = true
-									reloadOnly = false
-									break
-								}
-								if ev.ChangeType == server.ComponentChange {
-									needsPipelineRebuild = true
-									reloadOnly = false
+								if server.RebuildScopeForChangeType(ev.ChangeType) == server.RebuildPipeline {
+									needsRebuild = true
 									break
 								}
 							}
 
-							if reloadOnly {
+							if !needsRebuild {
 								srv.BroadcastReload()
 								continue
 							}
 
 							if !cfg.Quiet {
 								log.Printf("rebuilding (%d files changed)...", len(events))
-							}
-
-							if !needsPipelineRebuild {
-								srv.BroadcastReload()
-								continue
 							}
 
 							hasComponentChange := false

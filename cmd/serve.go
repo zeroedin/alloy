@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -194,6 +193,7 @@ func newServeCommand() *cobra.Command {
 										srcPath := ev.Path
 										if cfg.ProjectRoot != "" {
 											srcPath = filepath.Join(cfg.ProjectRoot, ev.Path)
+											dest = filepath.Join(cfg.ProjectRoot, dest)
 										}
 										copyFileToPath(srcPath, dest, cfg)
 									}
@@ -248,13 +248,29 @@ func copyChangedFileToOutput(relPath string, cfg *config.Config) {
 	if outputDir == "" {
 		outputDir = "_site"
 	}
-	// Strip the source directory prefix (e.g., "static/foo.txt" → "foo.txt",
-	// "assets/css/main.css" → "css/main.css") to match CopyStatic/CopyAssets behavior.
-	parts := strings.SplitN(filepath.ToSlash(relPath), "/", 2)
-	if len(parts) < 2 {
+
+	changeType := server.ClassifyChange(relPath, cfg)
+	var sourceDir string
+	switch changeType {
+	case server.StaticChange:
+		sourceDir = cfg.Structure.Static
+		if sourceDir == "" {
+			sourceDir = "static"
+		}
+	case server.AssetChange:
+		sourceDir = cfg.Structure.Assets
+		if sourceDir == "" {
+			sourceDir = "assets"
+		}
+	default:
 		return
 	}
-	destRel := parts[1]
+
+	destRel, err := filepath.Rel(sourceDir, relPath)
+	if err != nil {
+		log.Printf("warning: computing relative path for %s: %v", relPath, err)
+		return
+	}
 
 	srcPath := relPath
 	if cfg.ProjectRoot != "" {
