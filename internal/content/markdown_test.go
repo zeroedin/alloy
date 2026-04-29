@@ -264,6 +264,38 @@ var _ = Describe("RenderMarkdown", func() {
 		})
 	})
 
+	// ── Expression tag paragraph preservation (issue #378) ───────────
+	// {{ }} expressions keep surrounding <p> wrappers (user-authored or
+	// goldmark-added), while {% %} block shortcodes have <p> stripped.
+
+	Context("Expression tag paragraph preservation", func() {
+		It("{{ }} expression on its own line keeps <p> wrapper", func() {
+			source := []byte("{{ page.title }}\n")
+			out, err := content.RenderMarkdown(source, defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(out)).To(ContainSubstring("<p>{{ page.title }}</p>"),
+				"expression tags on their own line must keep goldmark's paragraph wrapper")
+		})
+
+		It("{{ }} expression inside user-authored <p> keeps tags", func() {
+			source := []byte("<p>{{ member.name }}</p>\n")
+			out, err := content.RenderMarkdown(source, defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(out)).To(ContainSubstring("<p>{{ member.name }}</p>"),
+				"user-authored <p> tags around expressions must be preserved")
+		})
+
+		It("{% %} block shortcode on its own line has <p> stripped", func() {
+			source := []byte("{% hero %}\n")
+			out, err := content.RenderMarkdown(source, defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(out)).NotTo(ContainSubstring("<p>{% hero %}</p>"),
+				"block shortcode tags must not be wrapped in <p>")
+			Expect(string(out)).To(ContainSubstring("{% hero %}"),
+				"block shortcode tag must be preserved")
+		})
+	})
+
 	// ── Goldmark extensions (§6 footnotes, typographer) ──────────────
 
 	Context("Goldmark extensions", func() {
