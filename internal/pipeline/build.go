@@ -613,7 +613,11 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	renderedContent := make(map[string]string, len(pages))
 	for _, page := range pages {
 		if len(page.RenderedBody) > 0 {
-			renderedContent[page.RelPath] = string(page.RenderedBody)
+			key := page.RelPath
+			if _, ok := page.FrontMatter["_paginationCtx"]; ok && page.URL != "" {
+				key = page.URL
+			}
+			renderedContent[key] = string(page.RenderedBody)
 		}
 	}
 
@@ -894,7 +898,11 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	renderedContent := make(map[string]string, len(pagesToRender))
 	for _, page := range pagesToRender {
 		if len(page.RenderedBody) > 0 {
-			renderedContent[page.RelPath] = string(page.RenderedBody)
+			key := page.RelPath
+			if _, ok := page.FrontMatter["_paginationCtx"]; ok && page.URL != "" {
+				key = page.URL
+			}
+			renderedContent[key] = string(page.RenderedBody)
 		}
 	}
 
