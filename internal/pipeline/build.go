@@ -125,20 +125,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	templateUsage := make(map[string][]string) // page.RelPath → layoutPaths (relative)
 
 	// Plugin system: discover plugins and set up hook registry
-	hooks := plugin.NewHookRegistry()
-	hooks.SetTimeout(cfg.Plugins.Timeout)
-
-	pluginsDir := resolveDir(cfg.ProjectRoot, "plugins")
-	registry := plugin.NewRegistry(pluginsDir)
-	if err := registry.DiscoverPlugins(); err != nil {
-		log.Printf("warning: plugin discovery: %v", err)
-	}
+	registry, hooks := discoverPlugins(cfg)
 	for _, w := range registry.ConflictWarnings() {
-		log.Printf("warning: %s", w)
-	}
-
-	// Load discovered plugins into the hook registry
-	for _, w := range registry.LoadPlugins(hooks) {
 		log.Printf("warning: %s", w)
 	}
 
@@ -167,36 +155,19 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		return nil, fmt.Errorf("plugin hook onAfterValidation: %w", err)
 	}
 
-	// Stage 1: Create template engine and register built-in filters
-	engine, err := createEngine(cfg)
+	// Stage 1: engine + plugins + cascade + site data
+	ps, err := initPipelineState(cfg, registry, hooks)
 	if err != nil {
 		return nil, err
 	}
-
-	if err := registerPluginExtensions(registry, engine); err != nil {
-		return nil, err
-	}
-
-	// Configure include/render tag resolution from layouts directory
-	if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
-		setter.SetIncludesDir(resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts))
-	}
+	engine := ps.Engine
+	siteData := ps.SiteData
 
 	// ═══ Content pipeline ═══
 
-	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
+	contentDir := ps.ContentDir
 	layoutsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts)
 	engineName := cfg.Templates.Engine
-
-	// Load global data (shared across all languages)
-	cascadeData, cascadeErr := cascade.LoadDirectoryCascade(contentDir)
-	if cascadeErr != nil {
-		log.Printf("warning: loading cascade data: %v", cascadeErr)
-	}
-	siteData, siteDataErr := loadSiteData(cfg)
-	if siteDataErr != nil {
-		return nil, siteDataErr
-	}
 
 	// Fetch external data sources and merge into siteData
 	if len(cfg.Sources) > 0 {
@@ -234,7 +205,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	if _, err := hooks.RunWithTimeout(plugin.OnDataFetched, siteData); err != nil {
 		return nil, fmt.Errorf("plugin hook onDataFetched: %w", err)
 	}
-	contentBase := filepath.Base(contentDir)
 
 	// ═══ Unified two-pass pipeline (issue #280) ═══
 	// Always operates on language batches. Single-language sites produce one batch.
@@ -329,33 +299,19 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			}
 		}
 
-		// Cascade resolution
-		for _, page := range batchPages {
-			var dirData map[string]interface{}
-			if len(cascadeData) > 0 {
-				dirData = cascade.FindCascadeData(cascadeData, contentBase, page.RelPath)
-			}
-			pctx := cascade.BuildContext(siteData, dirData, page.FrontMatter)
-			page.FrontMatter = pctx.ToMap()
-		}
-
-		// Collections + taxonomies
-		var batchTax map[string]*collection.TaxonomyCollection
-		if cfg.Taxonomies != nil {
-			batchTax = collection.BuildTaxonomies(batchPages, cfg.Taxonomies)
-		}
-		batchColls := buildCollectionsContext(batchPages, cfg)
+		// Cascade + collections + taxonomies
+		bc := applyBatchContext(batchPages, cfg, ps)
 
 		// Pagination
-		batchPages = processPagination(batchPages, cfg, siteData, batchColls, engine)
+		batchPages = processPagination(batchPages, cfg, siteData, bc.Collections, engine)
 
 		pages = append(pages, batchPages...)
 		batches = append(batches, langBatch{
 			ctx:           lc,
 			pages:         batchPages,
-			collections:   batchColls,
-			taxonomies:    batchTax,
-			taxonomiesCtx: buildTaxonomiesContext(batchTax),
+			collections:   bc.Collections,
+			taxonomies:    bc.Taxonomies,
+			taxonomiesCtx: bc.TaxonomiesCtx,
 		})
 	}
 	reportEndStage()
@@ -862,35 +818,11 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	activeReporter = nil
 	defer func() { activeReporter = savedReporter }()
 
-	// Pipeline setup: engine, plugins, data, permalinks, collections — same as Build()
-	engine, engineErr := createEngine(cfg)
-	if engineErr != nil {
-		return nil, engineErr
-	}
-
-	pluginsDir := resolveDir(cfg.ProjectRoot, "plugins")
-	registry := plugin.NewRegistry(pluginsDir)
-	if err := registry.DiscoverPlugins(); err != nil {
-		log.Printf("warning: plugin discovery: %v", err)
-	}
-	hooks := plugin.NewHookRegistry()
-	hooks.SetTimeout(cfg.Plugins.Timeout)
-	for _, w := range registry.LoadPlugins(hooks) {
-		log.Printf("warning: %s", w)
-	}
-	if err := registerPluginExtensions(registry, engine); err != nil {
-		return nil, err
-	}
-
-	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
-	cascadeData, cascadeErr := cascade.LoadDirectoryCascade(contentDir)
-	if cascadeErr != nil {
-		log.Printf("warning: loading cascade data: %v", cascadeErr)
-	}
-
-	siteData, siteDataErr := loadSiteData(cfg)
-	if siteDataErr != nil {
-		return nil, siteDataErr
+	// Pipeline setup — shared with Build() via initPipelineState/applyBatchContext
+	registry, hooks := discoverPlugins(cfg)
+	ps, psErr := initPipelineState(cfg, registry, hooks)
+	if psErr != nil {
+		return nil, psErr
 	}
 
 	allPages = content.FilterByLifecycle(allPages, time.Now(), cfg.IncludeDrafts)
@@ -908,7 +840,6 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	}
 	pagesToRender = filteredToRender
 
-	contentBase := filepath.Base(contentDir)
 	for _, page := range allPages {
 		url, err := permalink.ResolveForSection(page, cfg.Permalinks)
 		if err != nil {
@@ -917,30 +848,16 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		page.URL = url
 	}
 
-	for _, page := range allPages {
-		var dirData map[string]interface{}
-		if len(cascadeData) > 0 {
-			dirData = cascade.FindCascadeData(cascadeData, contentBase, page.RelPath)
-		}
-		pctx := cascade.BuildContext(siteData, dirData, page.FrontMatter)
-		page.FrontMatter = pctx.ToMap()
-	}
-
-	colls := buildCollectionsContext(allPages, cfg)
-	var taxCtx map[string]interface{}
-	if cfg.Taxonomies != nil {
-		taxCtx = buildTaxonomiesContext(collection.BuildTaxonomies(allPages, cfg.Taxonomies))
-	}
-
-	allPages = processPagination(allPages, cfg, siteData, colls, engine)
+	bc := applyBatchContext(allPages, cfg, ps)
+	allPages = processPagination(allPages, cfg, ps.SiteData, bc.Collections, ps.Engine)
 
 	rc := &RenderContext{
 		Cfg:            cfg,
-		SiteData:       siteData,
-		CollectionsCtx: colls,
-		TaxonomiesCtx:  taxCtx,
+		SiteData:       ps.SiteData,
+		CollectionsCtx: bc.Collections,
+		TaxonomiesCtx:  bc.TaxonomiesCtx,
 		Pages:          allPages,
-		Engine:         engine,
+		Engine:         ps.Engine,
 	}
 	rendered, renderErr := renderPages(pagesToRender, rc)
 	if renderErr != nil {
@@ -1779,6 +1696,99 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 	return nil
 }
 
+// pipelineState holds shared state initialized once per build.
+// Used by both Build() and BuildIncremental() to avoid duplicating setup.
+type pipelineState struct {
+	Engine      tmpl.TemplateEngine
+	Registry    *plugin.Registry
+	Hooks       *plugin.HookRegistry
+	CascadeData map[string]map[string]interface{}
+	SiteData    map[string]interface{}
+	ContentDir  string
+	ContentBase string
+}
+
+// discoverPlugins creates a plugin registry and hook system, discovers
+// plugins on disk, and loads them into the hook registry.
+func discoverPlugins(cfg *config.Config) (*plugin.Registry, *plugin.HookRegistry) {
+	hooks := plugin.NewHookRegistry()
+	hooks.SetTimeout(cfg.Plugins.Timeout)
+	pluginsDir := resolveDir(cfg.ProjectRoot, "plugins")
+	registry := plugin.NewRegistry(pluginsDir)
+	if err := registry.DiscoverPlugins(); err != nil {
+		log.Printf("warning: plugin discovery: %v", err)
+	}
+	for _, w := range registry.LoadPlugins(hooks) {
+		log.Printf("warning: %s", w)
+	}
+	return registry, hooks
+}
+
+// initPipelineState creates the template engine with plugin extensions,
+// loads cascade and site data. Shared by Build() and BuildIncremental().
+func initPipelineState(cfg *config.Config, registry *plugin.Registry, hooks *plugin.HookRegistry) (*pipelineState, error) {
+	engine, err := createEngine(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := registerPluginExtensions(registry, engine); err != nil {
+		return nil, err
+	}
+	if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
+		setter.SetIncludesDir(resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts))
+	}
+
+	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
+	cascadeData, cascadeErr := cascade.LoadDirectoryCascade(contentDir)
+	if cascadeErr != nil {
+		log.Printf("warning: loading cascade data: %v", cascadeErr)
+	}
+
+	siteData, siteDataErr := loadSiteData(cfg)
+	if siteDataErr != nil {
+		return nil, siteDataErr
+	}
+
+	return &pipelineState{
+		Engine:      engine,
+		Registry:    registry,
+		Hooks:       hooks,
+		CascadeData: cascadeData,
+		SiteData:    siteData,
+		ContentDir:  contentDir,
+		ContentBase: filepath.Base(contentDir),
+	}, nil
+}
+
+// batchContext holds the per-batch pipeline state produced by applyBatchContext.
+type batchContext struct {
+	Collections   map[string]interface{}
+	Taxonomies    map[string]*collection.TaxonomyCollection
+	TaxonomiesCtx map[string]interface{}
+}
+
+// applyBatchContext applies cascade data, builds collections and taxonomies
+// for a set of pages. Used in both Build()'s per-batch loop and BuildIncremental().
+func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *pipelineState) *batchContext {
+	for _, page := range pages {
+		var dirData map[string]interface{}
+		if len(ps.CascadeData) > 0 {
+			dirData = cascade.FindCascadeData(ps.CascadeData, ps.ContentBase, page.RelPath)
+		}
+		pctx := cascade.BuildContext(ps.SiteData, dirData, page.FrontMatter)
+		page.FrontMatter = pctx.ToMap()
+	}
+
+	bc := &batchContext{
+		Collections: buildCollectionsContext(pages, cfg),
+	}
+	if cfg.Taxonomies != nil {
+		bc.Taxonomies = collection.BuildTaxonomies(pages, cfg.Taxonomies)
+		bc.TaxonomiesCtx = buildTaxonomiesContext(bc.Taxonomies)
+	}
+	return bc
+}
+
 func createEngine(cfg *config.Config) (tmpl.TemplateEngine, error) {
 	var engine tmpl.TemplateEngine
 	if cfg.Templates.Engine == "gotemplate" {
@@ -1793,8 +1803,6 @@ func createEngine(cfg *config.Config) (tmpl.TemplateEngine, error) {
 	return engine, nil
 }
 
-// registerPluginExtensions bridges plugin-discovered filters and shortcodes
-// into the template engine. Used by both Build() and BuildIncremental().
 func registerPluginExtensions(registry *plugin.Registry, engine tmpl.TemplateEngine) error {
 	for _, rt := range registry.Runtimes() {
 		for _, filterName := range rt.RegisteredFilters() {
