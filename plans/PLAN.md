@@ -2563,9 +2563,9 @@ Runs the full build pipeline and writes output to `_site/` (or the configured ou
 Starts the development server with live reload. Phase 1 only, in-memory, drafts visible.
 
 1. Load config (same as build).
-2. Run initial build via `pipeline.Build(cfg)` with `cfg.IncludeDrafts = true` (unless `--no-drafts`).
+2. Run initial build via `pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})` with `cfg.IncludeDrafts = true` (unless `--no-drafts`). Build persists cache to disk for subsequent incremental rebuilds.
 3. Start HTTP server on `--port` (default 3000). If the port is occupied, auto-increment up to 10 consecutive ports. If all 10 are occupied, exit 1 with an error listing the range tried.
-4. Start file watcher for live reload.
+4. Start file watcher for live reload. On file changes, rebuild incrementally — only re-render changed/invalidated pages using the persisted build cache. Falls back to full rebuild for bulk changes (10+ files) or component changes. Always passes `SkipSSR: true`.
 5. Print startup message: `Serving at http://localhost:<actual-port>` (always shows the actual port, which may differ from `--port` if auto-increment kicked in).
 6. Block until interrupted (Ctrl+C).
 
@@ -2576,7 +2576,7 @@ Starts the production server. Same pipeline as `alloy build` but keeps serving w
 1. Load config (same as build).
 2. Run initial build via `pipeline.Build(cfg)` with `cfg.IncludeDrafts = false`.
 3. Start HTTP server on `--port` (default 3000) with port auto-increment.
-4. Start file watcher for live reload.
+4. Start file watcher for live reload. On file changes, call `pipeline.Build(cfg)` — always full rebuild (no incremental in serve mode). Dispatch by change type: content/layout/data → pipeline rebuild, asset/static → recopy, passthrough → targeted recopy, component → full rebuild with SSR.
 5. Print startup message.
 6. Block until interrupted (Ctrl+C).
 

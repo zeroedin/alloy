@@ -340,6 +340,45 @@ var _ = Describe("CLI Commands", func() {
 		})
 	})
 
+	// ── Dev/Serve watcher wiring (issue #371) ───────────────────────
+	// The CLI split (#256) moved the watcher from serve.go to dev.go but
+	// broke two things: dev calls Build() instead of BuildIncremental(),
+	// and serve lost its watcher entirely. These tests verify the fix.
+	//
+	// These tests check for qualified call patterns (e.g., "pipeline.BuildIncremental")
+	// rather than bare substrings to avoid false positives from comments.
+
+	Describe("Dev watcher uses BuildIncremental (issue #371)", func() {
+		It("dev command calls pipeline.BuildIncremental", func() {
+			devSource, err := os.ReadFile("dev.go")
+			Expect(err).NotTo(HaveOccurred(),
+				"dev.go must exist in cmd/ package")
+			Expect(string(devSource)).To(ContainSubstring("pipeline.BuildIncremental("),
+				"dev.go must call pipeline.BuildIncremental() for watcher rebuilds — "+
+					"not pipeline.Build(). Dev mode uses incremental rebuilds (PLAN.md §8)")
+		})
+	})
+
+	Describe("Serve command has file watcher (issue #371)", func() {
+		It("serve command imports fsnotify", func() {
+			serveSource, err := os.ReadFile("serve.go")
+			Expect(err).NotTo(HaveOccurred(),
+				"serve.go must exist in cmd/ package")
+			Expect(string(serveSource)).To(ContainSubstring("\"github.com/fsnotify/fsnotify\""),
+				"serve.go must import fsnotify for file watching — "+
+					"alloy serve is NOT a one-shot build (PLAN.md §8). "+
+					"The CLI split (#256) removed the watcher; it must be restored")
+		})
+
+		It("serve command calls BroadcastReload", func() {
+			serveSource, err := os.ReadFile("serve.go")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(serveSource)).To(ContainSubstring(".BroadcastReload("),
+				"serve.go must call srv.BroadcastReload() after rebuilds — "+
+					"file changes must trigger browser reload via WebSocket")
+		})
+	})
+
 	// ── alloy version ────────────────────────────────────────────────
 
 	Describe("alloy version", func() {
