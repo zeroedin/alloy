@@ -107,8 +107,8 @@ func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
 	}
 	tpl.SetName(name)
 	filterSnapshot := make(map[string]bool, len(e.dynamicFilters))
-	for k := range e.dynamicFilters {
-		filterSnapshot[k] = true
+	for k, v := range e.dynamicFilters {
+		filterSnapshot[k] = v
 	}
 	return &liquidTemplate{tpl: tpl, name: name, includesDir: e.includesDir, dynamicFilters: filterSnapshot}, nil
 }
