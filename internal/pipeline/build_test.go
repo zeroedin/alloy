@@ -985,6 +985,102 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Taxonomy template access (issue #380) ───────────────────────
+	// taxonomies.* must be populated and accessible in both layouts and
+	// content templates. The user reported taxonomies appearing empty.
+
+	Describe("Taxonomy template access (issue #380)", func() {
+		It("taxonomies.tags is accessible in content templates", func() {
+			renderFalse := false
+			cfg := &config.Config{
+				Title:   "Taxonomy Access Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags": {Render: &renderFalse},
+				},
+			}
+			contentMap := map[string]string{
+				"content/post-a.md": "---\ntitle: Post A\ntags: [\"go\", \"web\"]\nlayout: default\n---\n# Post A",
+				"content/post-b.md": "---\ntitle: Post B\ntags: [\"go\"]\nlayout: default\n---\n# Post B",
+				"content/index.md":  "---\ntitle: Index\nlayout: default\n---\n{% for post in taxonomies.tags.go %}<span class=\"tagged\">{{ post.title }}</span>{% endfor %}",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).NotTo(BeEmpty(),
+				"index page must render")
+			Expect(html).To(ContainSubstring(`class="tagged"`),
+				"taxonomies.tags.go must be iterable in content templates — "+
+					"if missing, taxonomies are not injected into the content render context")
+			Expect(html).To(ContainSubstring("Post A"),
+				"Post A is tagged 'go' and must appear in taxonomies.tags.go")
+			Expect(html).To(ContainSubstring("Post B"),
+				"Post B is tagged 'go' and must appear in taxonomies.tags.go")
+		})
+
+		It("taxonomies are accessible in layouts, not just content", func() {
+			renderFalse := false
+			cfg := &config.Config{
+				Title:   "Taxonomy Layout Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags": {Render: &renderFalse},
+				},
+			}
+			contentMap := map[string]string{
+				"content/post-a.md": "---\ntitle: Post A\ntags: [\"go\"]\nlayout: default\n---\n# Post A",
+				"content/post-b.md": "---\ntitle: Post B\ntags: [\"go\"]\nlayout: default\n---\n# Post B",
+				"layouts/default.liquid": "<html><body>{{ content }}<nav>{% for post in taxonomies.tags.go %}<a href=\"{{ post.url }}\">{{ post.title }}</a>{% endfor %}</nav></body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			var allHTML string
+			for _, html := range result.RenderedContent {
+				allHTML += html
+			}
+			Expect(allHTML).To(ContainSubstring("<nav>"),
+				"layout nav must render")
+			Expect(allHTML).To(ContainSubstring("Post A"),
+				"Post A tagged 'go' must appear in layout taxonomy loop")
+		})
+
+		It("taxonomy with no matching pages produces empty collection", func() {
+			renderFalse := false
+			cfg := &config.Config{
+				Title:   "Empty Taxonomy Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags":       {Render: &renderFalse},
+					"categories": {Render: &renderFalse},
+				},
+			}
+			contentMap := map[string]string{
+				"content/post-a.md": "---\ntitle: Post A\ntags: [\"go\"]\nlayout: default\n---\n# Post A",
+				"content/index.md":  "---\ntitle: Index\nlayout: default\n---\n{% for post in taxonomies.categories.news %}{{ post.title }}{% endfor %}\n\nDONE_MARKER",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).NotTo(BeEmpty(),
+				"index page must render")
+			Expect(html).To(ContainSubstring("DONE_MARKER"),
+				"index page must render even when taxonomy term has no pages")
+			Expect(html).NotTo(ContainSubstring("Post A"),
+				"Post A is not in categories.news — must not appear")
+		})
+	})
+
 	// ── page.toc pipeline wiring (issue #274) ───────────────────────
 	// page.toc must be populated during Build and accessible in templates.
 
