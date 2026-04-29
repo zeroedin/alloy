@@ -760,7 +760,8 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string, opts ...
 
 // BuildIncremental renders only pages that have changed since the previous
 // build (per the cache) or were invalidated by a layout/data change.
-// Used by alloy serve for incremental rebuilds on file watcher events.
+// Used by alloy dev for incremental rebuilds on file watcher events.
+// When contentMap is nil, content is discovered from the filesystem.
 // If previousCache is nil, all pages are rendered (equivalent to full build).
 func BuildIncremental(cfg *config.Config, contentMap map[string]string, previousCache *cache.Cache, changedFiles []string, opts ...BuildOptions) (*BuildResult, error) {
 	if len(opts) > 1 {
@@ -776,7 +777,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 
 	config.ApplyDefaults(cfg)
 
-	if len(contentMap) == 0 {
+	if contentMap != nil && len(contentMap) == 0 {
 		return &BuildResult{
 			OutputDir:  cfg.Build.Output,
 			PageCount:  0,
@@ -785,27 +786,49 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}, nil
 	}
 
-	// Create temp directory with content files
-	tmpDir, err := os.MkdirTemp("", "alloy-incremental-*")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	var allPages []*content.Page
+	var fsMode bool
 
-	for path, body := range contentMap {
-		fullPath := filepath.Join(tmpDir, path)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-			return nil, fmt.Errorf("failed to create dir for %s: %w", path, err)
+	if contentMap == nil {
+		// Filesystem mode: discover content from the real project directory
+		fsMode = true
+		contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
+		var err error
+		allPages, err = content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return &BuildResult{
+					OutputDir:  cfg.Build.Output,
+					PageCount:  0,
+					SSRSkipped: cfg.SSR == nil || options.SkipSSR,
+					Duration:   time.Since(start),
+				}, nil
+			}
+			return nil, fmt.Errorf("content discovery: %w", err)
 		}
-		if err := os.WriteFile(fullPath, []byte(body), 0644); err != nil {
-			return nil, fmt.Errorf("failed to write %s: %w", path, err)
+	} else {
+		// Test mode: create temp directory with content files
+		tmpDir, err := os.MkdirTemp("", "alloy-incremental-*")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create temp dir: %w", err)
 		}
-	}
+		defer os.RemoveAll(tmpDir)
 
-	contentDir := filepath.Join(tmpDir, "content")
-	allPages, err := content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
-	if err != nil {
-		return nil, fmt.Errorf("content discovery: %w", err)
+		for path, body := range contentMap {
+			fullPath := filepath.Join(tmpDir, path)
+			if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+				return nil, fmt.Errorf("failed to create dir for %s: %w", path, err)
+			}
+			if err := os.WriteFile(fullPath, []byte(body), 0644); err != nil {
+				return nil, fmt.Errorf("failed to write %s: %w", path, err)
+			}
+		}
+
+		contentDir := filepath.Join(tmpDir, "content")
+		allPages, err = content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
+		if err != nil {
+			return nil, fmt.Errorf("content discovery: %w", err)
+		}
 	}
 
 	// Determine which pages need rebuilding
@@ -844,12 +867,17 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				continue
 			}
 			// Content changed?
-			contentPrefix := cfg.Structure.Content
-			if contentPrefix == "" {
-				contentPrefix = "content"
+			var contentBytes []byte
+			if fsMode {
+				contentBytes = page.Content
+			} else {
+				contentPrefix := cfg.Structure.Content
+				if contentPrefix == "" {
+					contentPrefix = "content"
+				}
+				contentBytes = []byte(contentMap[filepath.ToSlash(filepath.Join(contentPrefix, page.RelPath))])
 			}
-			contentBody := contentMap[filepath.ToSlash(filepath.Join(contentPrefix, page.RelPath))]
-			if !previousCache.ShouldSkipFile(page.RelPath, []byte(contentBody)) {
+			if !previousCache.ShouldSkipFile(page.RelPath, contentBytes) {
 				pagesToRender = append(pagesToRender, page)
 				continue
 			}
@@ -891,7 +919,12 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 		ssrHTML := make(map[string]string)
 		for _, page := range pagesToRender {
-			rawContent := contentMap[filepath.ToSlash(filepath.Join(contentPrefix, page.RelPath))]
+			var rawContent string
+			if fsMode {
+				rawContent = string(page.Content)
+			} else {
+				rawContent = contentMap[filepath.ToSlash(filepath.Join(contentPrefix, page.RelPath))]
+			}
 			if tags := ssr.ScanComponents(rawContent); len(tags) > 0 {
 				html := renderedContent[page.RelPath]
 				if html != "" {
@@ -908,34 +941,58 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				// Extract component name from path (e.g., "components/ds-card/ds-card.js" → "ds-card")
 				parts := strings.SplitN(strings.TrimPrefix(normalized, "components/"), "/", 2)
 				componentTag := parts[0]
-				// Find all pages that use this component (from their content)
-				contentPrefix := cfg.Structure.Content
-				if contentPrefix == "" {
-					contentPrefix = "content"
-				}
-				for path, body := range contentMap {
-					relPath := strings.TrimPrefix(path, contentPrefix+"/")
-					if _, alreadyQueued := ssrHTML[relPath]; alreadyQueued {
-						continue
-					}
-					if tags := ssr.ScanComponents(body); len(tags) > 0 {
-						for _, tag := range tags {
-							if tag == componentTag {
-								if html := renderedContent[relPath]; html != "" {
-									ssrHTML[relPath] = html
-								} else {
-									// Page was skipped in Phase 1 — render on-demand for SSR
-									for _, p := range allPages {
-										if p.RelPath == relPath {
-											onDemand, renderErr := renderPages([]*content.Page{p}, &RenderContext{Cfg: cfg})
-											if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
-												ssrHTML[relPath] = string(p.RenderedBody)
-											}
-											break
+				if fsMode {
+					// Filesystem mode: scan all discovered pages for component usage
+					for _, p := range allPages {
+						if _, alreadyQueued := ssrHTML[p.RelPath]; alreadyQueued {
+							continue
+						}
+						if tags := ssr.ScanComponents(string(p.Content)); len(tags) > 0 {
+							for _, tag := range tags {
+								if tag == componentTag {
+									if html := renderedContent[p.RelPath]; html != "" {
+										ssrHTML[p.RelPath] = html
+									} else {
+										onDemand, renderErr := renderPages([]*content.Page{p}, &RenderContext{Cfg: cfg})
+										if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
+											ssrHTML[p.RelPath] = string(p.RenderedBody)
 										}
 									}
+									break
 								}
-								break
+							}
+						}
+					}
+				} else {
+					// Test mode: scan contentMap for component usage
+					contentPrefix := cfg.Structure.Content
+					if contentPrefix == "" {
+						contentPrefix = "content"
+					}
+					for path, body := range contentMap {
+						relPath := strings.TrimPrefix(path, contentPrefix+"/")
+						if _, alreadyQueued := ssrHTML[relPath]; alreadyQueued {
+							continue
+						}
+						if tags := ssr.ScanComponents(body); len(tags) > 0 {
+							for _, tag := range tags {
+								if tag == componentTag {
+									if html := renderedContent[relPath]; html != "" {
+										ssrHTML[relPath] = html
+									} else {
+										// Page was skipped in Phase 1 — render on-demand for SSR
+										for _, p := range allPages {
+											if p.RelPath == relPath {
+												onDemand, renderErr := renderPages([]*content.Page{p}, &RenderContext{Cfg: cfg})
+												if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
+													ssrHTML[relPath] = string(p.RenderedBody)
+												}
+												break
+											}
+										}
+									}
+									break
+								}
 							}
 						}
 					}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
+	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/pipeline"
 	"github.com/zeroedin/alloy/internal/plugin"
@@ -200,29 +201,85 @@ func newDevCommand() *cobra.Command {
 							events := pending
 							pending = nil
 
-							events, _ = debouncer.Debounce(events)
+							events, rebuildScope := debouncer.Debounce(events)
 
 							if _, err := hooks.RunWithTimeout(plugin.OnFileChanged, events); err != nil {
 								log.Printf("warning: plugin hook onFileChanged: %v", err)
+							}
+
+							needsPipelineRebuild := false
+							reloadOnly := true
+							for _, ev := range events {
+								scope := server.RebuildScopeForChangeType(ev.ChangeType)
+								if scope == server.RebuildPipeline {
+									needsPipelineRebuild = true
+									reloadOnly = false
+									break
+								}
+								if ev.ChangeType == server.ComponentChange {
+									needsPipelineRebuild = true
+									reloadOnly = false
+									break
+								}
+							}
+
+							if reloadOnly {
+								srv.BroadcastReload()
+								continue
 							}
 
 							if !cfg.Quiet {
 								log.Printf("rebuilding (%d files changed)...", len(events))
 							}
 
-							if _, err := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true}); err != nil {
-								log.Printf("rebuild failed: %v", err)
-								srv.Overlay().SetErrors([]server.BuildError{
-									{Message: err.Error(), Stage: "rebuild"},
-								})
+							if !needsPipelineRebuild {
 								srv.BroadcastReload()
-							} else {
-								srv.Overlay().ClearErrors()
-								if !cfg.Quiet {
-									log.Printf("rebuild complete")
-								}
-								srv.BroadcastReload()
+								continue
 							}
+
+							hasComponentChange := false
+							for _, ev := range events {
+								if ev.ChangeType == server.ComponentChange {
+									hasComponentChange = true
+									break
+								}
+							}
+
+							if hasComponentChange || rebuildScope == server.RebuildFull {
+								if _, err := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true}); err != nil {
+									log.Printf("rebuild failed: %v", err)
+									srv.Overlay().SetErrors([]server.BuildError{
+										{Message: err.Error(), Stage: "rebuild"},
+									})
+								} else {
+									srv.Overlay().ClearErrors()
+									if !cfg.Quiet {
+										log.Printf("rebuild complete")
+									}
+								}
+							} else {
+								cacheDir := ".alloy"
+								if cfg.ProjectRoot != "" {
+									cacheDir = filepath.Join(cfg.ProjectRoot, ".alloy")
+								}
+								previousCache, _ := cache.LoadFrom(cacheDir)
+								var changedFiles []string
+								for _, ev := range events {
+									changedFiles = append(changedFiles, ev.Path)
+								}
+								if _, err := pipeline.BuildIncremental(cfg, nil, previousCache, changedFiles, pipeline.BuildOptions{SkipSSR: true}); err != nil {
+									log.Printf("rebuild failed: %v", err)
+									srv.Overlay().SetErrors([]server.BuildError{
+										{Message: err.Error(), Stage: "rebuild"},
+									})
+								} else {
+									srv.Overlay().ClearErrors()
+									if !cfg.Quiet {
+										log.Printf("rebuild complete (incremental)")
+									}
+								}
+							}
+							srv.BroadcastReload()
 
 						case err, ok := <-watcher.Errors:
 							if !ok {
