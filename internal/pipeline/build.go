@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"io/fs"
 	"log"
 	"os"
@@ -1457,7 +1458,7 @@ func interpolateFrontMatter(vp *content.Page, asVar string, item interface{}, en
 				log.Printf("warning: front matter interpolation for %s.%s: %v", vp.RelPath, k, err)
 				continue
 			}
-			vp.FrontMatter[k] = strings.TrimSpace(string(out))
+			vp.FrontMatter[k] = html.UnescapeString(strings.TrimSpace(string(out)))
 		} else {
 			vp.FrontMatter[k] = strings.TrimSpace(pagination.RenderSimpleLiquid(s, asVar, item))
 		}

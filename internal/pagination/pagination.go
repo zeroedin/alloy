@@ -121,7 +121,7 @@ func PaginateWithLiquidPermalink(data []interface{}, permalinkTemplate string, a
 	for i, item := range data {
 		// Render the permalink by simple template substitution
 		rendered := RenderSimpleLiquid(permalinkTemplate, as, item)
-		paths[i] = rendered
+		paths[i] = strings.TrimSpace(rendered)
 		contexts[i] = PaginationContext{
 			PageNumber: i + 1,
 			TotalPages: len(data),
