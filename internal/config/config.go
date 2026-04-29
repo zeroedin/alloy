@@ -225,6 +225,7 @@ func ApplyDefaults(cfg *Config) {
 	// for LoadWithDefaults we always set it if the whole markdown section is empty.
 	// Actually the spec says default true, so we set it.
 	cfg.Content.Markdown.Goldmark.TemplateTags = true
+	cfg.Content.Markdown.Goldmark.Unsafe = true
 	if cfg.Pagination.Path == "" {
 		cfg.Pagination.Path = "page"
 	}
