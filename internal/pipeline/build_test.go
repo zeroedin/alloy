@@ -1010,22 +1010,16 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 
-			found := false
-			for key, html := range result.RenderedContent {
-				if strings.Contains(key, "index") {
-					found = true
-					Expect(html).To(ContainSubstring(`class="tagged"`),
-						"taxonomies.tags.go must be iterable in content templates — "+
-							"if missing, taxonomies are not injected into the content render context")
-					Expect(html).To(ContainSubstring("Post A"),
-						"Post A is tagged 'go' and must appear in taxonomies.tags.go")
-					Expect(html).To(ContainSubstring("Post B"),
-						"Post B is tagged 'go' and must appear in taxonomies.tags.go")
-					break
-				}
-			}
-			Expect(found).To(BeTrue(),
+			html := result.RenderedContent["index.md"]
+			Expect(html).NotTo(BeEmpty(),
 				"index page must render")
+			Expect(html).To(ContainSubstring(`class="tagged"`),
+				"taxonomies.tags.go must be iterable in content templates — "+
+					"if missing, taxonomies are not injected into the content render context")
+			Expect(html).To(ContainSubstring("Post A"),
+				"Post A is tagged 'go' and must appear in taxonomies.tags.go")
+			Expect(html).To(ContainSubstring("Post B"),
+				"Post B is tagged 'go' and must appear in taxonomies.tags.go")
 		})
 
 		It("taxonomies are accessible in layouts, not just content", func() {
@@ -1077,19 +1071,13 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 
-			found := false
-			for key, html := range result.RenderedContent {
-				if strings.Contains(key, "index") {
-					found = true
-					Expect(html).To(ContainSubstring("DONE_MARKER"),
-						"index page must render even when taxonomy term has no pages")
-					Expect(html).NotTo(ContainSubstring("Post A"),
-						"Post A is not in categories.news — must not appear")
-					break
-				}
-			}
-			Expect(found).To(BeTrue(),
+			html := result.RenderedContent["index.md"]
+			Expect(html).NotTo(BeEmpty(),
 				"index page must render")
+			Expect(html).To(ContainSubstring("DONE_MARKER"),
+				"index page must render even when taxonomy term has no pages")
+			Expect(html).NotTo(ContainSubstring("Post A"),
+				"Post A is not in categories.news — must not appear")
 		})
 	})
 
