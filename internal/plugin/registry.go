@@ -49,6 +49,7 @@ type PluginFilterRuntime interface {
 	RegisteredShortcodes() []string
 	CallShortcode(name string, args []string, innerContent string) (string, error)
 	RegisteredHooks() []string
+	SetSiteData(data map[string]interface{}) error
 }
 
 // Registry manages plugin discovery and loading.

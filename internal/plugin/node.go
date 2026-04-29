@@ -236,6 +236,12 @@ func (r *NodeRuntime) CallHook(name string, payload interface{}) (interface{}, e
 	return resp.Result, nil
 }
 
+// SetSiteData is a stub for the Node runtime. Site data injection over the
+// Node bridge is not yet implemented.
+func (r *NodeRuntime) SetSiteData(data map[string]interface{}) error {
+	return nil
+}
+
 // Close shuts down the Node subprocess.
 func (r *NodeRuntime) Close() {
 	if r.bridge != nil {

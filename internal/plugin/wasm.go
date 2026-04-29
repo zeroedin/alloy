@@ -665,6 +665,12 @@ func (r *WASMRuntime) RegisteredHooks() []string {
 	return nil
 }
 
+// SetSiteData is a no-op for WASM modules — they don't have a JS context
+// to inject site data into.
+func (r *WASMRuntime) SetSiteData(data map[string]interface{}) error {
+	return nil
+}
+
 // HasExport checks if the WASM module exports a function with the given name.
 func (r *WASMRuntime) HasExport(name string) bool {
 	return r.exports[name]
