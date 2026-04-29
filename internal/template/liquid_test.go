@@ -165,34 +165,33 @@ var _ = Describe("LiquidEngine", func() {
 	// ReadTemplateFile — which must also apply the rewriting.
 
 	Context("Plugin filters in {% include %} partials (issue #376)", func() {
+		// Helper to set includes dir with assertion that it succeeds
+		setIncludesDir := func(engine tmpl.TemplateEngine, dir string) {
+			setter, ok := engine.(interface{ SetIncludesDir(string) })
+			Expect(ok).To(BeTrue(),
+				"engine must implement SetIncludesDir for include tests")
+			setter.SetIncludesDir(dir)
+		}
+
 		It("plugin filter works in an included partial", func() {
 			engine := tmpl.NewLiquidEngine()
 			tmpl.RegisterBuiltinFilters(engine)
 
-			// Register a plugin filter (not in knownLiquidFilters)
 			err := engine.AddFilter("tokenType", func(input interface{}, args ...interface{}) interface{} {
 				return "leaf"
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			// Create a temp directory with a partial that uses the plugin filter
 			tmpDir := GinkgoT().TempDir()
-			partialDir := tmpDir
-			err = os.MkdirAll(partialDir, 0755)
-			Expect(err).NotTo(HaveOccurred())
 			err = os.WriteFile(
-				partialDir+"/token-info.liquid",
+				filepath.Join(tmpDir, "token-info.liquid"),
 				[]byte(`<span>{{ tokenPath | tokenType }}</span>`),
 				0644,
 			)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Set includes dir
-			if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
-				setter.SetIncludesDir(tmpDir)
-			}
+			setIncludesDir(engine, tmpDir)
 
-			// Parse a template that includes the partial
 			tpl, err := engine.Parse("test", []byte(
 				`<div>{% include "token-info" tokenPath: "color" %}</div>`,
 			))
@@ -221,15 +220,13 @@ var _ = Describe("LiquidEngine", func() {
 
 			tmpDir := GinkgoT().TempDir()
 			err = os.WriteFile(
-				tmpDir+"/multi.liquid",
+				filepath.Join(tmpDir, "multi.liquid"),
 				[]byte(`{{ path | tokenType }}-{{ path | tokenLabel }}`),
 				0644,
 			)
 			Expect(err).NotTo(HaveOccurred())
 
-			if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
-				setter.SetIncludesDir(tmpDir)
-			}
+			setIncludesDir(engine, tmpDir)
 
 			tpl, err := engine.Parse("test", []byte(
 				`{% include "multi" path: "color" %}`,
@@ -253,15 +250,13 @@ var _ = Describe("LiquidEngine", func() {
 
 			tmpDir := GinkgoT().TempDir()
 			err = os.WriteFile(
-				tmpDir+"/mixed.liquid",
+				filepath.Join(tmpDir, "mixed.liquid"),
 				[]byte(`{{ name | upcase }}-{{ name | tokenType }}`),
 				0644,
 			)
 			Expect(err).NotTo(HaveOccurred())
 
-			if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
-				setter.SetIncludesDir(tmpDir)
-			}
+			setIncludesDir(engine, tmpDir)
 
 			tpl, err := engine.Parse("test", []byte(
 				`{% include "mixed" name: "color" %}`,
@@ -285,24 +280,20 @@ var _ = Describe("LiquidEngine", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			tmpDir := GinkgoT().TempDir()
-			// Inner partial uses the plugin filter
 			err = os.WriteFile(
-				tmpDir+"/inner.liquid",
+				filepath.Join(tmpDir, "inner.liquid"),
 				[]byte(`<em>{{ val | nodeType }}</em>`),
 				0644,
 			)
 			Expect(err).NotTo(HaveOccurred())
-			// Outer partial includes the inner partial
 			err = os.WriteFile(
-				tmpDir+"/outer.liquid",
+				filepath.Join(tmpDir, "outer.liquid"),
 				[]byte(`<div>{% include "inner" val: item %}</div>`),
 				0644,
 			)
 			Expect(err).NotTo(HaveOccurred())
 
-			if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
-				setter.SetIncludesDir(tmpDir)
-			}
+			setIncludesDir(engine, tmpDir)
 
 			tpl, err := engine.Parse("test", []byte(
 				`{% include "outer" item: "root" %}`,
