@@ -35,8 +35,8 @@ type MarkdownOptions struct {
 // including those containing newlines (e.g., {{ "hello\nworld" | filter }}).
 var templateTagPattern = regexp.MustCompile(`(?s)(\{\{.*?\}\}|\{%.*?%\})`)
 
-// createGoldmark builds a configured goldmark instance from options.
-func createGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) goldmark.Markdown {
+// CreateGoldmark builds a configured goldmark instance from options.
+func CreateGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) goldmark.Markdown {
 	extensions := []goldmark.Extender{
 		extension.Table,
 		extension.TaskList,
@@ -54,7 +54,7 @@ func createGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) gold
 	if len(opts.Hooks) > 0 {
 		noHookOpts := opts
 		noHookOpts.Hooks = nil
-		childMD := createGoldmark(noHookOpts, extraParserOpts...)
+		childMD := CreateGoldmark(noHookOpts, extraParserOpts...)
 		hookRenderer := newHookNodeRenderer(opts.Hooks, childMD.Renderer(), opts.HookRenderer)
 		rendererOpts = append(rendererOpts, renderer.WithNodeRenderers(util.Prioritized(hookRenderer, 100)))
 	}
@@ -83,7 +83,7 @@ func preprocessSource(source []byte, opts MarkdownOptions) ([]byte, []string) {
 // RenderMarkdown converts Markdown source to HTML.
 func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
 	src, placeholders := preprocessSource(source, opts)
-	md := createGoldmark(opts)
+	md := CreateGoldmark(opts)
 
 	var buf bytes.Buffer
 	if err := md.Convert(src, &buf); err != nil {
@@ -192,7 +192,7 @@ func RenderMarkdownWithTOC(source []byte, opts MarkdownOptions) ([]byte, []TOCEn
 	if !opts.AutoHeadingID {
 		extraOpts = append(extraOpts, parser.WithAutoHeadingID(), parser.WithAttribute())
 	}
-	md := createGoldmark(opts, extraOpts...)
+	md := CreateGoldmark(opts, extraOpts...)
 
 	reader := text.NewReader(src)
 	doc := md.Parser().Parse(reader)
