@@ -1152,6 +1152,158 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Pagination front matter interpolation (issue #378) ──────────
+	// String-valued front matter fields with template tags must be
+	// interpolated using the pagination as: variable for virtual pages.
+
+	Describe("Pagination front matter interpolation", func() {
+		It("title is interpolated from pagination as variable", func() {
+			cfg := &config.Config{
+				Title:   "FM Interpolation Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"data/team.json": `[{"name":"Alice","slug":"alice"},{"name":"Bob","slug":"bob"}]`,
+				"content/team.md": "---\ntitle: \"{{ member.name }}\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ member.slug }}/\"\n---\n<p>{{ member.name }}</p>",
+				"layouts/default.liquid": "<html><head><title>{{ page.title }}</title></head><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			found := false
+			for _, html := range result.RenderedContent {
+				if strings.Contains(html, "<p>Alice</p>") {
+					found = true
+					Expect(html).To(ContainSubstring("<title>Alice</title>"),
+						"page.title must be interpolated from {{ member.name }} — "+
+							"front matter template tags must resolve using the pagination as: variable")
+					break
+				}
+			}
+			Expect(found).To(BeTrue(),
+				"at least one virtual page must render with interpolated title")
+		})
+
+		It("front matter interpolation supports filters", func() {
+			cfg := &config.Config{
+				Title:   "FM Filter Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"data/team.json": `[{"name":"alice","slug":"alice"}]`,
+				"content/team.md": "---\ntitle: \"{{ member.name | upcase }}\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ member.slug }}/\"\n---\n<p>{{ member.name }}</p>",
+				"layouts/default.liquid": "<html><head><title>{{ page.title }}</title></head><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			found := false
+			for _, html := range result.RenderedContent {
+				if strings.Contains(html, "<p>alice</p>") {
+					found = true
+					Expect(html).To(ContainSubstring("<title>ALICE</title>"),
+						"front matter interpolation must support Liquid filters — "+
+							"{{ member.name | upcase }} should produce ALICE")
+					break
+				}
+			}
+			Expect(found).To(BeTrue(),
+				"at least one virtual page must render with filter-processed title")
+		})
+
+		It("multiple front matter fields are interpolated", func() {
+			cfg := &config.Config{
+				Title:   "FM Multi Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"data/team.json": `[{"name":"Alice","slug":"alice","role":"Engineer"}]`,
+				"content/team.md": "---\ntitle: \"{{ member.name }}\"\ndescription: \"{{ member.role }} at Acme\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ member.slug }}/\"\n---\n<p>{{ member.name }}</p>",
+				"layouts/default.liquid": "<html><head><title>{{ page.title }}</title><meta name=\"description\" content=\"{{ page.description }}\"></head><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			found := false
+			for _, html := range result.RenderedContent {
+				if strings.Contains(html, "<p>Alice</p>") {
+					found = true
+					Expect(html).To(ContainSubstring("<title>Alice</title>"),
+						"page.title must be interpolated")
+					Expect(html).To(ContainSubstring("Engineer at Acme"),
+						"page.description must also be interpolated — "+
+							"all string front matter fields with template tags should resolve")
+					break
+				}
+			}
+			Expect(found).To(BeTrue(),
+				"at least one virtual page must render with multiple interpolated fields")
+		})
+
+		It("non-template front matter fields are unchanged", func() {
+			cfg := &config.Config{
+				Title:   "FM Passthrough Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"data/team.json": `[{"name":"Alice","slug":"alice"}]`,
+				"content/team.md": "---\ntitle: \"Static Title\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ member.slug }}/\"\n---\n<p>{{ member.name }}</p>",
+				"layouts/default.liquid": "<html><head><title>{{ page.title }}</title></head><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			found := false
+			for _, html := range result.RenderedContent {
+				if strings.Contains(html, "<p>Alice</p>") {
+					found = true
+					Expect(html).To(ContainSubstring("<title>Static Title</title>"),
+						"front matter without template tags must pass through unchanged")
+					break
+				}
+			}
+			Expect(found).To(BeTrue(),
+				"at least one virtual page must render")
+		})
+
+		It("paginated list pages do not interpolate front matter", func() {
+			cfg := &config.Config{
+				Title:   "FM List Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"data/team.json": `[{"name":"Alice","slug":"alice"},{"name":"Bob","slug":"bob"}]`,
+				"content/team.md": "---\ntitle: \"{{ member.name }}\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 10\n  as: member\npermalink: \"/team/\"\n---\n{% for m in member %}<p>{{ m.name }}</p>{% endfor %}",
+				"layouts/default.liquid": "<html><head><title>{{ page.title }}</title></head><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			found := false
+			for _, html := range result.RenderedContent {
+				if strings.Contains(html, "Alice") || strings.Contains(html, "Bob") {
+					found = true
+					Expect(html).To(ContainSubstring("{{ member.name }}"),
+						"paginated list pages (perPage > 1) must NOT interpolate front matter — "+
+							"the as: variable is a slice, not a single item")
+					break
+				}
+			}
+			Expect(found).To(BeTrue(),
+				"at least one paginated list page must render")
+		})
+	})
+
 	// ── SetSiteData pipeline wiring (issue #339) ────────────────────
 	// Build() must call rt.SetSiteData(siteData) for each plugin runtime
 	// after data loading so alloy.data is available in plugins.
