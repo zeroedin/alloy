@@ -688,7 +688,7 @@ Manual `{#id}` overrides take precedence over auto-generated IDs. Alloy enables 
 
 **Extraction** — TOC is extracted from the goldmark AST during markdown rendering (Phase 1, step 3), not from rendered HTML. This is fast and reliable — no HTML parsing pass needed. The AST contains the heading nodes with their auto-generated or attribute-overridden IDs.
 
-**Important:** If a render hook (`render-heading.liquid`) modifies heading IDs in the HTML output, the TOC data will not reflect those changes — it reflects the AST-level IDs. To sync, use the `onContentTransformed` plugin hook to mutate `page.toc` after markdown rendering but before layout rendering.
+**Important:** If a render hook (`render-heading.liquid`) modifies heading IDs in the HTML output, the TOC data will not reflect those changes — it reflects the AST-level IDs. To sync, use the `onContentTransformed` plugin hook to mutate `page.toc` after markdown rendering but before layout rendering. The hook receives `{ html, toc, path, url, frontMatter }` — modify `page.toc` and return the updated object. For non-markdown pages (HTML, paginated data pages), `toc` will be empty — plugins can build it from the rendered HTML.
 
 **Config:**
 
@@ -1111,7 +1111,7 @@ Data cascade and front matter are already assembled from Phase 0 — Phase 1 sta
 
 9. **Plugin Hook: `onContentLoaded`** — Plugins can inspect/modify content+data before processing
 10. **Content Transformation** — Markdown → HTML (via goldmark with template tag auto-detection), raw HTML passthrough. `{{ }}` and `{% %}` patterns survive goldmark automatically.
-11. **Plugin Hook: `onContentTransformed`** — Plugins can modify rendered HTML. Fires once per page with the page's rendered HTML string as payload (see Lifecycle Events in §5 for payload contract). **This hook fires after Markdown→HTML but before layout rendering in all modes** — single-language and i18n pipelines must fire at the same stage. The i18n pipeline must not defer this hook to after layout rendering or taxonomy generation.
+11. **Plugin Hook: `onContentTransformed`** — Plugins can modify rendered content, TOC, and front matter. Fires once per page with a page-scoped object payload: `{ html, toc, path, url, frontMatter }` (see Lifecycle Events in §5 for payload contract). **This hook fires after Markdown→HTML but before layout rendering in all modes** — single-language and i18n pipelines must fire at the same stage. The i18n pipeline must not defer this hook to after layout rendering or taxonomy generation.
 12. **Template Resolution** — Match each content file to its layout (lookup order)
 13. **Content Template Rendering** — Content body is rendered through the template engine with page data + site data context, producing an HTML string.
 14. **Layout Rendering** — The rendered content HTML is injected into the resolved layout as `{{ content }}` (Liquid) or `{{ .content }}` (Go), then the layout is rendered. Content and layout have isolated scopes — variables defined in content do not leak into layout or vice versa.
@@ -2052,20 +2052,27 @@ Hooks receive JSON-serializable payloads so they work across all plugin tiers (G
 
 #### Per-page hooks (HTML string)
 
-These fire **once per page**. Payload is a string, return value replaces the page content. No complex serialization — the simplest and most useful hook type.
+These fire **once per page**. `onContentTransformed` receives a page-scoped object (mutable — fires before layout, page data still matters). The payload contains only page data — no `site`, `collections`, or `taxonomies`. Site-level mutations belong in `onConfig` or `onAfterValidation`. `onPageRendered` receives an HTML string (post-processing only — page is already rendered).
 
 | Event | Payload | Returns | When |
 |---|---|---|---|
-| `onContentTransformed` | HTML string (rendered page body) | HTML string | After Markdown→HTML. Plugin modifies rendered content before layout. |
-| `onPageRendered` | HTML string (complete page after layout) | HTML string | After template rendering. Plugin modifies final page output. |
+| `onContentTransformed` | `{ html, toc, path, url, frontMatter }` | Same shape (mutable) | After Markdown→HTML, before layout. Plugin modifies rendered content, TOC, or front matter. |
+| `onPageRendered` | HTML string (complete page after layout) | HTML string | After template rendering. Plugin post-processes final output. |
 
 ```javascript
-// Example: add lazy loading to all images
-alloy.hook("onContentTransformed", (html) => {
-  return html.replace(/<img /g, '<img loading="lazy" ');
+// Example: add lazy loading + build TOC for non-markdown pages
+alloy.hook("onContentTransformed", (page) => {
+  page.html = page.html.replace(/<img /g, '<img loading="lazy" ');
+  
+  // Build TOC from HTML for pages that didn't go through goldmark
+  if (!page.toc || page.toc.length === 0) {
+    page.toc = extractHeadingsFromHTML(page.html);
+  }
+  
+  return page;
 });
 
-// Example: minify final HTML
+// Example: minify final HTML (post-processing, no page data needed)
 alloy.hook("onPageRendered", (html) => {
   return html.replace(/\s+/g, ' ').trim();
 });
