@@ -1530,14 +1530,20 @@ var _ = Describe("Build Pipeline", func() {
 			defer registry.Close()
 
 			// The Node runtime's project root must match cfg.ProjectRoot
+			found := false
 			for _, rt := range registry.Runtimes() {
 				if nr, ok := rt.(interface{ ProjectRoot() string }); ok {
+					found = true
 					Expect(nr.ProjectRoot()).To(Equal(projectDir),
 						"Node runtime project root must equal cfg.ProjectRoot — "+
 							"when -r is used, the Node subprocess must run from the "+
 							"project directory for correct node_modules/ resolution (issue #439)")
 				}
 			}
+			Expect(found).To(BeTrue(),
+				"at least one runtime must implement ProjectRoot() — "+
+					"if false, the Node plugin was not loaded (Node not in PATH, "+
+					"plugin classified as QuickJS, or eval failed silently)")
 		})
 	})
 
