@@ -178,38 +178,17 @@ var _ = Describe("Paginate", func() {
 		})
 	})
 
-	// ── Liquid permalink rendering for virtual pages ──────────────────
-
-	Context("Liquid permalink rendering", func() {
-		It("renders per-item Liquid permalink template for virtual pages", func() {
-			data := []interface{}{
-				map[string]interface{}{"name": "Alice", "slug": "alice"},
-				map[string]interface{}{"name": "Bob", "slug": "bob"},
-			}
-			contexts, paths, err := pagination.PaginateWithLiquidPermalink(
-				data,
-				"/team/{{ member.slug }}/",
-				"member",
-			)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(contexts).To(HaveLen(2))
-			Expect(paths).To(HaveLen(2))
-			Expect(paths[0]).To(Equal("/team/alice/"))
-			Expect(paths[1]).To(Equal("/team/bob/"))
-		})
-	})
-
-	// ── Template permalink with renderer callback (issue #315) ──────
+	// ── Template permalink with renderer callback (issue #315, #422) ──
 	// PaginateWithTemplatePermalink accepts a renderer callback so it
 	// works with both Liquid and Go template engines.
+	// Issue #422: migrated from PaginateWithLiquidPermalink (now safe to delete).
 
 	Context("Template permalink with renderer callback", func() {
-		It("renders per-item permalink using provided renderer", func() {
+		It("renders per-item permalink for virtual pages", func() {
 			data := []interface{}{
 				map[string]interface{}{"name": "Alice", "slug": "alice"},
 				map[string]interface{}{"name": "Bob", "slug": "bob"},
 			}
-			// Use the real Liquid engine — matches the production path
 			renderer := func(src string, ctx map[string]interface{}) (string, error) {
 				engine := tmpl.NewLiquidEngine()
 				tpl, err := engine.Parse("permalink", []byte(src))
@@ -231,10 +210,12 @@ var _ = Describe("Paginate", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(contexts).To(HaveLen(2))
 			Expect(paths).To(HaveLen(2))
-			Expect(paths[0]).To(Equal("/team/alice/"),
-				"renderer callback must be used for URL generation")
+			Expect(paths[0]).To(Equal("/team/alice/"))
 			Expect(paths[1]).To(Equal("/team/bob/"))
 		})
+
+		// Duplicate test removed (issue #422) — was identical to
+		// "renders per-item permalink for virtual pages" above.
 	})
 
 	// ── Data source resolution ────────────────────────────────────────

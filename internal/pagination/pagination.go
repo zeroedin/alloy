@@ -107,44 +107,6 @@ func ResolveDataSource(ref string, siteData map[string]interface{}, collections 
 	return nil, fmt.Errorf("unknown data source reference: %q", ref)
 }
 
-// PaginateWithLiquidPermalink creates virtual pages using a Liquid permalink
-// pattern for each page (e.g., "/team/{{ member.slug }}/"). Each item in data
-// gets its own page with a URL rendered from the Liquid template.
-func PaginateWithLiquidPermalink(data []interface{}, permalinkTemplate string, as string) ([]PaginationContext, []string, error) {
-	if len(data) == 0 {
-		return nil, nil, nil
-	}
-
-	contexts := make([]PaginationContext, len(data))
-	paths := make([]string, len(data))
-
-	for i, item := range data {
-		// Render the permalink by simple template substitution
-		rendered := RenderSimpleLiquid(permalinkTemplate, as, item)
-		paths[i] = strings.TrimSpace(rendered)
-		contexts[i] = PaginationContext{
-			PageNumber: i + 1,
-			TotalPages: len(data),
-			Items:      []interface{}{item},
-		}
-		if i > 0 {
-			contexts[i].PreviousPage = paths[i-1]
-		}
-		contexts[i].First = paths[0]
-	}
-
-	// Set last and next for all contexts now that all paths are computed
-	lastPath := paths[len(paths)-1]
-	for i := range contexts {
-		contexts[i].Last = lastPath
-		if i < len(contexts)-1 {
-			contexts[i].NextPage = paths[i+1]
-		}
-	}
-
-	return contexts, paths, nil
-}
-
 // TemplateRenderer renders a template string with the given context variables.
 type TemplateRenderer func(source string, ctx map[string]interface{}) (string, error)
 
