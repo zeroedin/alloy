@@ -56,7 +56,6 @@ var _ = Describe("Discovery", func() {
 			It("returns error when content dir does not exist", func() {
 				_, discoverErr := content.Discover("testdata/nonexistent")
 				Expect(discoverErr).To(HaveOccurred())
-				Expect(discoverErr).NotTo(MatchError(content.ErrNotImplemented))
 			})
 		})
 

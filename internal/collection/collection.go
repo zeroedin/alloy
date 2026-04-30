@@ -1,7 +1,6 @@
 package collection
 
 import (
-	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -10,9 +9,6 @@ import (
 
 	"github.com/zeroedin/alloy/internal/content"
 )
-
-// ErrNotImplemented is returned by all stub functions.
-var ErrNotImplemented = errors.New("not implemented")
 
 // Collection represents a group of related pages (e.g., blog posts).
 type Collection struct {

@@ -1,14 +1,10 @@
 package output
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 )
-
-// ErrNotImplemented is returned by all stub functions.
-var ErrNotImplemented = errors.New("not implemented")
 
 // WriteFile writes content to the output directory at the given relative path.
 func WriteFile(outputDir, relPath string, content []byte) error {

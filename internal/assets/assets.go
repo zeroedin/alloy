@@ -1,16 +1,12 @@
 package assets
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/zeroedin/alloy/internal/fileutil"
 )
-
-// ErrNotImplemented is returned by all stub functions.
-var ErrNotImplemented = errors.New("not implemented")
 
 // AssetFile represents a single asset file passed through the onAssetProcess
 // hook. Plugins receive this struct and may modify Content before it is written.

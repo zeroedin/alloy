@@ -1,7 +1,6 @@
 package static
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,9 +9,6 @@ import (
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/fileutil"
 )
-
-// ErrNotImplemented is returned by all stub functions.
-var ErrNotImplemented = errors.New("not implemented")
 
 // CopyStatic copies all files from staticDir to outputDir.
 // If staticDir does not exist or is empty, it returns nil (no error).

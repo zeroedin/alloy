@@ -2,13 +2,9 @@ package plugin
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 )
-
-// ErrNotImplemented is returned by all stub functions.
-var ErrNotImplemented = errors.New("not implemented")
 
 // HookName identifies a lifecycle event.
 type HookName string

@@ -1,7 +1,6 @@
 package permalink
 
 import (
-	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -10,9 +9,6 @@ import (
 
 	"github.com/zeroedin/alloy/internal/content"
 )
-
-// ErrNotImplemented is returned by all stub functions.
-var ErrNotImplemented = errors.New("not implemented")
 
 // Resolve computes the output URL for a page using config patterns and front matter overrides.
 func Resolve(pattern string, page *content.Page) (string, error) {
