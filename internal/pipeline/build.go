@@ -1563,7 +1563,7 @@ func renderPageFormats(page *content.Page, layoutsDir, engineName string, rc *Re
 		}
 		fmtTpl, err := parseLayout(fmtLayoutPath, rc.Engine)
 		if err != nil {
-			return fmt.Errorf("format layout %s: %w", fmtLayoutPath, err)
+			return fmt.Errorf("format layout: %w", err)
 		}
 		fmtCtx := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "").ToMap()
 		fmtCtx["content"] = string(page.RenderedBody)
