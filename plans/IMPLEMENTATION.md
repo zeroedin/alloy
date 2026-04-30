@@ -80,7 +80,7 @@ These packages depend only on stdlib or already-defined types.
 
 Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key implementations:
 - **String**: Slugify, Upcase, Downcase, Capitalize, Truncate, TruncateWords, StripHTML, Escape, Replace, ReplaceFirst, Split, Join, Strip, Append, Prepend, NewlineToBr, Contains
-- **Date**: DateFormat (strftime-style: `%B %d, %Y`)
+- **Date**: DateFormat (strftime-style via `github.com/lestrrat-go/strftime`, issue #367). Replace the hand-rolled `strftimeFormat` function with lestrrat-go/strftime for full POSIX compliance (36+ directives), pre-compiled patterns, and zero per-call allocation. `DateFormat` keeps its input parsing logic (`time.Time` vs string, no-args passthrough) but delegates format conversion to lestrrat-go. Registered in `RegisterBuiltinFilters` for both Liquid and Go template engines — overrides liquidgo's native `date` filter (which has gaps: week numbers stubbed, map-per-call allocation). Delete `strftimeFormat` function entirely.
 - **Array**: Sort (numeric-aware, issue #348), Reverse, First, Last, Where, GroupBy, Size, Map, Uniq, Compact, Concat
 - **`Sort` numeric awareness (issue #348)**: Update `Sort` comparison to use `isWholeNumber(v)` helper: type-switch on `int` (direct, negatives included), `float64` (no fractional part → int, negatives included), `string` (all digits → `strconv.Atoi`, negative strings NOT parsed). Both values whole numbers → compare as `int`. Either not → fall back to `toString` comparison. Nil/missing values sort to end. No new filter — `sort` itself becomes numeric-aware.
 - **Set**: Intersect, Union, Complement

@@ -1,6 +1,8 @@
 package template_test
 
 import (
+	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -88,6 +90,96 @@ var _ = Describe("Built-in Filters", func() {
 		Expect(ok).To(BeTrue())
 		Expect(s).To(ContainSubstring("June"))
 		Expect(s).To(ContainSubstring("2024"))
+	})
+
+	// ── Date filter full POSIX compliance (issue #367) ──────────────────
+	// DateFormat must support all POSIX strftime directives via
+	// lestrrat-go/strftime, not the hand-rolled 13-entry map.
+
+	Context("Date filter POSIX compliance (issue #367)", func() {
+		// Fixed reference time: Saturday, June 15, 2024 14:30:45 UTC
+		// Using a string input so DateFormat parses it.
+		refDate := "2024-06-15T14:30:45Z"
+
+		DescribeTable("POSIX strftime directives",
+			func(directive string, expected string) {
+				result := tmpl.DateFormat(refDate, directive)
+				s, ok := result.(string)
+				Expect(ok).To(BeTrue(),
+					"DateFormat must return a string for directive "+directive)
+				Expect(s).To(Equal(expected),
+					"directive "+directive+" must produce correct output — "+
+						"if this fails, the directive is not supported by the strftime implementation")
+			},
+			Entry("%Y — 4-digit year", "%Y", "2024"),
+			Entry("%y — 2-digit year", "%y", "24"),
+			Entry("%m — zero-padded month", "%m", "06"),
+			Entry("%d — zero-padded day", "%d", "15"),
+			Entry("%H — 24-hour hour", "%H", "14"),
+			Entry("%M — minute", "%M", "30"),
+			Entry("%S — second", "%S", "45"),
+			Entry("%B — full month name", "%B", "June"),
+			Entry("%b — abbreviated month name", "%b", "Jun"),
+			Entry("%A — full weekday name", "%A", "Saturday"),
+			Entry("%a — abbreviated weekday name", "%a", "Sat"),
+			Entry("%p — AM/PM", "%p", "PM"),
+			Entry("%I — 12-hour hour", "%I", "02"),
+			Entry("%e — space-padded day", "%e", "15"),
+			Entry("%j — day of year", "%j", "167"),
+			Entry("%C — century", "%C", "20"),
+			Entry("%D — mm/dd/yy", "%D", "06/15/24"),
+			Entry("%F — YYYY-MM-DD", "%F", "2024-06-15"),
+			Entry("%R — HH:MM", "%R", "14:30"),
+			Entry("%T — HH:MM:SS", "%T", "14:30:45"),
+			Entry("%% — literal percent", "%%", "%"),
+			Entry("%n — newline", "%n", "\n"),
+			Entry("%t — tab", "%t", "\t"),
+		)
+
+		It("format string with no directives passes through unchanged", func() {
+			result := tmpl.DateFormat(refDate, "hello world")
+			Expect(result).To(Equal("hello world"),
+				"format strings without %X directives must pass through unchanged")
+		})
+
+		It("format string with multiple directives", func() {
+			result := tmpl.DateFormat(refDate, "%Y-%m-%d %H:%M:%S")
+			Expect(result).To(Equal("2024-06-15 14:30:45"),
+				"multiple directives in a single format string must all resolve")
+		})
+
+		It("DateFormat handles time.Time input directly", func() {
+			t := time.Date(2024, 6, 15, 14, 30, 45, 0, time.UTC)
+			result := tmpl.DateFormat(t, "%Y-%m-%d")
+			Expect(result).To(Equal("2024-06-15"),
+				"DateFormat must accept time.Time input without string parsing")
+		})
+
+		It("DateFormat handles various string date formats", func() {
+			// ISO 8601 with timezone
+			result := tmpl.DateFormat("2024-06-15T14:30:45Z", "%Y")
+			Expect(result).To(Equal("2024"))
+
+			// Date + time without timezone
+			result = tmpl.DateFormat("2024-06-15 14:30:45", "%B")
+			Expect(result).To(Equal("June"))
+
+			// Date only
+			result = tmpl.DateFormat("2024-06-15", "%d")
+			Expect(result).To(Equal("15"))
+		})
+
+		It("DateFormat with no format argument returns input unchanged", func() {
+			result := tmpl.DateFormat("2024-06-15")
+			Expect(result).To(Equal("2024-06-15"),
+				"no format argument → return input as-is")
+		})
+
+		It("DateFormat with unparseable input returns input unchanged", func() {
+			result := tmpl.DateFormat("not-a-date", "%Y")
+			Expect(result).To(Equal("not-a-date"),
+				"unparseable string input must be returned unchanged, not error")
+		})
 	})
 
 	// ── Array filters (table-driven, simple) ────────────────────────────
