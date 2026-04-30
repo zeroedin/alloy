@@ -247,6 +247,51 @@ var _ = Describe("CLI Commands", func() {
 		})
 	})
 
+	// ── --root config resolution (issue #380) ───────────────────────
+	// When --root is set and --config is not explicitly provided,
+	// the config file must be loaded from the root directory, not CWD.
+
+	Describe("--root flag resolves config from root directory (issue #380)", func() {
+		It("build.go resolves config path from --root before LoadWithDefaults", func() {
+			// The bug: LoadWithDefaults(configPath) is called with the default
+			// "alloy.config.yaml" BEFORE MergeFlags applies --root. Config is
+			// loaded from CWD, not the root directory. Fix: resolve configPath
+			// from the root dir when --root is set and --config is not explicit.
+			buildSource, err := os.ReadFile("build.go")
+			Expect(err).NotTo(HaveOccurred())
+			source := string(buildSource)
+
+			// The fix must read --root BEFORE calling LoadWithDefaults.
+			// Check that build.go references the root flag before config loading.
+			// Current code: LoadWithDefaults at line ~42, root flag at line ~68.
+			// Fixed code: root flag read and applied to configPath before LoadWithDefaults.
+			Expect(source).To(ContainSubstring("Changed(\"config\")"),
+				"build.go must check whether --config was explicitly changed — "+
+					"this is needed to distinguish 'user set --config' from 'default value'. "+
+					"When --root is set and --config is default, resolve config from root dir")
+		})
+
+		It("dev.go resolves config path from --root before LoadWithDefaults", func() {
+			devSource, err := os.ReadFile("dev.go")
+			Expect(err).NotTo(HaveOccurred())
+			source := string(devSource)
+
+			Expect(source).To(ContainSubstring("Changed(\"config\")"),
+				"dev.go must check whether --config was explicitly changed — "+
+					"same --root config resolution bug as build.go (issue #380)")
+		})
+
+		It("serve.go resolves config path from --root before LoadWithDefaults", func() {
+			serveSource, err := os.ReadFile("serve.go")
+			Expect(err).NotTo(HaveOccurred())
+			source := string(serveSource)
+
+			Expect(source).To(ContainSubstring("Changed(\"config\")"),
+				"serve.go must check whether --config was explicitly changed — "+
+					"same --root config resolution bug as build.go (issue #380)")
+		})
+	})
+
 	// ── alloy init behavior ──────────────────────────────────────────
 
 	Describe("alloy init", func() {
