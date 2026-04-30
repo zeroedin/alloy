@@ -610,23 +610,28 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 		// EvalFile must send the absolute file path to the bridge,
 		// not the source code. The bridge uses import() instead of eval().
 
-		It("EvalFile sends absolute file path, not source code (issue #441)", func() {
+		It("EvalFile loads ESM plugin with import statements (issue #441)", func() {
+			// This plugin uses `import { basename } from "node:path"` —
+			// an ESM import statement that eval() CANNOT handle.
+			// If this test passes, the bridge is using import(), not eval().
 			rt := plugin.NewNodeRuntime()
-			pluginPath := filepath.Join(testdataDir(), "single-files", "node-simple.js")
-			absPath, err := filepath.Abs(pluginPath)
-			Expect(err).NotTo(HaveOccurred())
+			pluginPath := filepath.Join(testdataDir(), "single-files", "node-esm-import.js")
 
-			Expect(rt.EvalFile(pluginPath)).To(Succeed())
+			err := rt.EvalFile(pluginPath)
+			Expect(err).NotTo(HaveOccurred(),
+				"EvalFile must load ESM plugins with import statements — "+
+					"if this fails with a syntax error, the bridge is still using eval() "+
+					"instead of import(). eval() cannot handle import statements (issue #441)")
 
-			// The bridge must have received the file path, not source.
-			// Prove this by verifying the plugin loaded successfully —
-			// import() resolves the file from the path, eval() would need
-			// the regex-stripped source to work.
 			filters := rt.RegisteredFilters()
-			Expect(filters).To(ContainElement("nodeUpper"),
-				"EvalFile must discover filters when loading via import() — "+
-					"the bridge receives the absolute path (%s) and calls "+
-					"await import(path) to load the plugin as ESM", absPath)
+			Expect(filters).To(ContainElement("baseName"),
+				"ESM plugin filter must be discovered via import()")
+
+			// Prove the import actually works — basename("a/b/c.txt") → "c.txt"
+			result, err := rt.CallFilter("baseName", "/path/to/file.txt")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("file.txt"),
+				"ESM import of node:path must work — proves import() resolved the module")
 		})
 
 		It("NodeBridge.Start spawns a Node subprocess", func() {
