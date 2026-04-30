@@ -176,6 +176,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 	engine := ps.Engine
 	siteData := ps.SiteData
+	permalinkCfg := buildPermalinkCfg(ps, cfg.Permalinks)
 
 	// ═══ Content pipeline ═══
 
@@ -305,7 +306,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				// doesn't double it (e.g., /es/es/about/).
 				origRelPath := page.RelPath
 				page.RelPath = strings.TrimPrefix(page.RelPath, langPrefix)
-				url, err := permalink.ResolveForSection(page, cfg.Permalinks)
+				url, err := permalink.ResolveForSection(page, permalinkCfg)
 				page.RelPath = origRelPath
 				if err != nil {
 					return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
@@ -316,7 +317,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				}
 				page.URL = "/" + prefix + strings.TrimPrefix(url, "/")
 			} else {
-				url, err := permalink.ResolveForSection(page, cfg.Permalinks)
+				url, err := permalink.ResolveForSection(page, permalinkCfg)
 				if err != nil {
 					return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
 				}
@@ -325,7 +326,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 
 		// Cascade + collections + taxonomies
-		bc := applyBatchContext(batchPages, cfg, ps)
+		bc := applyBatchContext(batchPages, cfg, ps, permalinkCfg)
 
 		// Pagination
 		batchPages = processPagination(batchPages, cfg, siteData, bc.Collections, engine)
@@ -412,7 +413,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			TemplateUsage:  templateUsage,
 		}
 		for _, page := range batch.pages {
-			layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, engineName, cfg.Permalinks)
+			layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, engineName, permalinkCfg)
 			if err != nil {
 				if layoutVal, hasLayout := page.FrontMatter["layout"]; hasLayout && layoutVal != nil {
 					log.Printf("warning: layout %v not found for %s: %v", layoutVal, page.RelPath, err)
@@ -887,15 +888,16 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	}
 	pagesToRender = filteredToRender
 
+	permalinkCfg := buildPermalinkCfg(ps, cfg.Permalinks)
 	for _, page := range allPages {
-		url, err := permalink.ResolveForSection(page, cfg.Permalinks)
+		url, err := permalink.ResolveForSection(page, permalinkCfg)
 		if err != nil {
 			return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
 		}
 		page.URL = url
 	}
 
-	bc := applyBatchContext(allPages, cfg, ps)
+	bc := applyBatchContext(allPages, cfg, ps, permalinkCfg)
 
 	// Track which RelPaths need rendering before pagination expands them
 	renderRelPaths := make(map[string]bool, len(pagesToRender))
@@ -1727,12 +1729,12 @@ func loadSiteData(cfg *config.Config) (map[string]interface{}, error) {
 // buildCollectionsContext builds section collections (directory-based),
 // returning them as a template-friendly map. Taxonomies are handled
 // separately via buildTaxonomiesContext.
-func buildCollectionsContext(pages []*content.Page, cfg *config.Config) map[string]interface{} {
+func buildCollectionsContext(pages []*content.Page, permalinkCfg map[string]string) map[string]interface{} {
 	result := make(map[string]interface{})
 
 	// Section collections — convert pages to template-friendly maps so
 	// Liquid can access fields like {{ post.title }} and {{ post.url }}.
-	colls := collection.BuildCollections(pages, cfg.Permalinks)
+	colls := collection.BuildCollections(pages, permalinkCfg)
 	for name, coll := range colls {
 		items := make([]interface{}, len(coll.Pages))
 		for i, p := range coll.Pages {
@@ -1869,7 +1871,7 @@ type batchContext struct {
 
 // applyBatchContext applies cascade data, builds collections and taxonomies
 // for a set of pages. Used in both Build()'s per-batch loop and BuildIncremental().
-func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineState) *batchContext {
+func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineState, permalinkCfg map[string]string) *batchContext {
 	for _, page := range pages {
 		var dirData map[string]interface{}
 		if len(ps.CascadeData) > 0 {
@@ -1880,7 +1882,7 @@ func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineSt
 	}
 
 	bc := &batchContext{
-		Collections: buildCollectionsContext(pages, cfg),
+		Collections: buildCollectionsContext(pages, permalinkCfg),
 	}
 	if cfg.Taxonomies != nil {
 		bc.Taxonomies = collection.BuildTaxonomies(pages, cfg.Taxonomies)
@@ -1896,6 +1898,29 @@ func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineSt
 		}
 	}
 	return bc
+}
+
+// buildPermalinkCfg builds a section-to-pattern permalink map by extracting
+// permalink patterns from cascade _data.yaml, with cfg.Permalinks as fallback.
+func buildPermalinkCfg(ps *PipelineState, fallback map[string]string) map[string]string {
+	result := make(map[string]string, len(fallback))
+	for k, v := range fallback {
+		result[k] = v
+	}
+	for key, data := range ps.CascadeData {
+		pattern, ok := data["permalink"].(string)
+		if !ok || pattern == "" {
+			continue
+		}
+		trimmed := strings.TrimPrefix(key, ps.ContentBase+"/")
+		trimmed = strings.TrimSuffix(trimmed, "/")
+		if trimmed == "" {
+			result["default"] = pattern
+		} else if !strings.Contains(trimmed, "/") {
+			result[trimmed] = pattern
+		}
+	}
+	return result
 }
 
 func parseLayout(path string, engine tmpl.TemplateEngine) (tmpl.Template, error) {
