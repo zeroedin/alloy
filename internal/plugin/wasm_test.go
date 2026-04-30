@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -733,6 +734,79 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			err := plugin.CheckSandbox(rt)
 			Expect(err).NotTo(HaveOccurred(),
 				"Tier 2 sandbox must prevent network access")
+		})
+	})
+
+	// ── WASM compilation cache (issue #391) ──────────────────────────
+	// WASMRuntime.LoadModule must support a compilation cache directory
+	// so compiled native code persists across builds. This eliminates
+	// the 509ms WASM recompilation cost on warm builds.
+
+	Describe("WASM compilation cache (issue #391)", func() {
+		It("LoadModule accepts a cache directory for compiled modules", func() {
+			cacheDir := GinkgoT().TempDir()
+			rt := plugin.NewWASMRuntime()
+			rt.SetCacheDir(cacheDir)
+			err := rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))
+			Expect(err).NotTo(HaveOccurred(),
+				"LoadModule with cache directory must not error")
+
+			// Verify the cache directory is not empty after loading
+			entries, err := os.ReadDir(cacheDir)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(entries).NotTo(BeEmpty(),
+				"compilation cache directory must contain cached artifacts after LoadModule — "+
+					"if empty, wazero compilation cache is not configured")
+		})
+
+		It("warm build with cache is faster than cold build", func() {
+			cacheDir := GinkgoT().TempDir()
+			wasmPath := filepath.Join(testdataDir(), "single-files", "compiled.wasm")
+
+			// Cold build — first compilation
+			rt1 := plugin.NewWASMRuntime()
+			rt1.SetCacheDir(cacheDir)
+			coldStart := time.Now()
+			Expect(rt1.LoadModule(wasmPath)).To(Succeed())
+			coldDuration := time.Since(coldStart)
+			rt1.Close()
+
+			// Warm build — cached compilation
+			rt2 := plugin.NewWASMRuntime()
+			rt2.SetCacheDir(cacheDir)
+			warmStart := time.Now()
+			Expect(rt2.LoadModule(wasmPath)).To(Succeed())
+			warmDuration := time.Since(warmStart)
+			rt2.Close()
+
+			Expect(warmDuration).To(BeNumerically("<", coldDuration),
+				"warm build (cached WASM compilation) must be faster than cold build — "+
+					"cold: %v, warm: %v", coldDuration, warmDuration)
+		})
+
+		It("cached module produces identical filter output", func() {
+			cacheDir := GinkgoT().TempDir()
+			wasmPath := filepath.Join(testdataDir(), "single-files", "compiled.wasm")
+
+			// Cold build
+			rt1 := plugin.NewWASMRuntime()
+			rt1.SetCacheDir(cacheDir)
+			Expect(rt1.LoadModule(wasmPath)).To(Succeed())
+			result1, err1 := rt1.CallFilter("filter", "hello")
+			rt1.Close()
+
+			// Warm build
+			rt2 := plugin.NewWASMRuntime()
+			rt2.SetCacheDir(cacheDir)
+			Expect(rt2.LoadModule(wasmPath)).To(Succeed())
+			result2, err2 := rt2.CallFilter("filter", "hello")
+			rt2.Close()
+
+			Expect(err1).NotTo(HaveOccurred())
+			Expect(err2).NotTo(HaveOccurred())
+			Expect(result2).To(Equal(result1),
+				"cached WASM module must produce identical output to uncached — "+
+					"compilation cache must not affect runtime behavior")
 		})
 	})
 })

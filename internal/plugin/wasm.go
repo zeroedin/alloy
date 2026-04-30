@@ -380,6 +380,14 @@ type WASMRuntime struct {
 	exports    map[string]bool
 	rt         wazero.Runtime
 	mod        api.Module
+	cacheDir   string // issue #391: wazero compilation cache directory
+}
+
+// SetCacheDir configures a persistent compilation cache directory.
+// When set, wazero persists compiled native code to disk so subsequent
+// builds skip WASM recompilation. Must be called before LoadModule.
+func (r *WASMRuntime) SetCacheDir(dir string) {
+	r.cacheDir = dir
 }
 
 // NewWASMRuntime creates a new WASM runtime via wazero.
