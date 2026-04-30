@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lestrrat-go/strftime"
 	"github.com/yuin/goldmark"
 )
 
@@ -274,31 +275,11 @@ func DateFormat(input interface{}, args ...interface{}) interface{} {
 		return toString(input)
 	}
 
-	return strftimeFormat(t, format)
-}
-
-// strftimeFormat converts strftime-style format to Go time format
-func strftimeFormat(t time.Time, format string) string {
-	replacements := map[string]string{
-		"%Y": "2006",
-		"%m": "01",
-		"%d": "02",
-		"%H": "15",
-		"%M": "04",
-		"%S": "05",
-		"%B": "January",
-		"%b": "Jan",
-		"%A": "Monday",
-		"%a": "Mon",
-		"%p": "PM",
-		"%Z": "MST",
-		"%z": "-0700",
+	p, err := strftime.New(format)
+	if err != nil {
+		return format
 	}
-	result := format
-	for k, v := range replacements {
-		result = strings.ReplaceAll(result, k, v)
-	}
-	return t.Format(result)
+	return p.FormatString(t)
 }
 
 // --- Array filters ---
