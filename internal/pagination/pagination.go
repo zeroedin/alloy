@@ -107,16 +107,6 @@ func ResolveDataSource(ref string, siteData map[string]interface{}, collections 
 	return nil, fmt.Errorf("unknown data source reference: %q", ref)
 }
 
-// PaginateWithLiquidPermalink creates virtual pages using a Liquid permalink
-// pattern for each page (e.g., "/team/{{ member.slug }}/").
-// Deprecated: Use PaginateWithTemplatePermalink with a renderer callback instead.
-func PaginateWithLiquidPermalink(data []interface{}, permalinkTemplate string, as string) ([]PaginationContext, []string, error) {
-	renderer := func(source string, ctx map[string]interface{}) (string, error) {
-		return RenderSimpleLiquid(source, as, ctx[as]), nil
-	}
-	return PaginateWithTemplatePermalink(data, permalinkTemplate, as, renderer)
-}
-
 // TemplateRenderer renders a template string with the given context variables.
 type TemplateRenderer func(source string, ctx map[string]interface{}) (string, error)
 
