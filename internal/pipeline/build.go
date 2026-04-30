@@ -1360,21 +1360,26 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 		var contexts []pagination.PaginationContext
 		var paths []string
 
-		if useTemplatePermalink && perPage == 1 && engine != nil {
-			renderer := func(source string, ctx map[string]interface{}) (string, error) {
-				tpl, err := engine.Parse("_permalink", []byte(source))
-				if err != nil {
-					return "", err
+		if useTemplatePermalink && perPage == 1 {
+			var renderer pagination.TemplateRenderer
+			if engine != nil {
+				renderer = func(source string, ctx map[string]interface{}) (string, error) {
+					tpl, err := engine.Parse("_permalink", []byte(source))
+					if err != nil {
+						return "", err
+					}
+					out, err := tpl.Render(ctx)
+					if err != nil {
+						return "", err
+					}
+					return string(out), nil
 				}
-				out, err := tpl.Render(ctx)
-				if err != nil {
-					return "", err
+			} else {
+				renderer = func(source string, ctx map[string]interface{}) (string, error) {
+					return tmpl.RenderTemplate(source, "_permalink", ctx)
 				}
-				return string(out), nil
 			}
 			contexts, paths, err = pagination.PaginateWithTemplatePermalink(resolved, permalinkStr, asVar, renderer)
-		} else if useTemplatePermalink && perPage == 1 {
-			contexts, paths, err = pagination.PaginateWithLiquidPermalink(resolved, permalinkStr, asVar)
 		} else {
 			basePath := page.URL
 			if basePath == "" {
