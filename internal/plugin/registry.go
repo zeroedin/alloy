@@ -71,6 +71,7 @@ type Registry struct {
 	conflictWarns   []string
 	runtimes        []PluginFilterRuntime   // loaded runtimes for filter/shortcode bridging
 	preInitialized  []initializedPlugin     // Phase A results, consumed by LoadPlugins
+	phaseADone      bool                    // true after InitRuntimes completes
 	wasmCacheDir    string                  // persistent compilation cache for WASM modules
 	wasmCache       wazero.CompilationCache // shared cache, closed in Close()
 }
@@ -175,14 +176,17 @@ func (r *Registry) Runtimes() []PluginFilterRuntime {
 	return r.runtimes
 }
 
-// Close releases resources held by all loaded runtimes.
+// Close releases resources held by all loaded runtimes and any
+// pre-initialized runtimes that were never consumed by LoadPlugins.
 func (r *Registry) Close() {
 	for _, rt := range r.runtimes {
-		if c, ok := rt.(interface{ Close() }); ok {
-			c.Close()
-		}
+		closeRuntime(rt)
 	}
 	r.runtimes = nil
+	for _, ip := range r.preInitialized {
+		closeRuntime(ip.runtime)
+	}
+	r.preInitialized = nil
 	if r.wasmCache != nil {
 		r.wasmCache.Close(context.Background())
 		r.wasmCache = nil
@@ -341,6 +345,9 @@ func (r *Registry) InitRuntimes() ([]PluginFilterRuntime, []string) {
 
 	var runtimes []PluginFilterRuntime
 	var warnings []string
+	for _, ip := range r.preInitialized {
+		closeRuntime(ip.runtime)
+	}
 	r.preInitialized = nil
 	for _, res := range results {
 		if res.warning != "" {
@@ -352,6 +359,7 @@ func (r *Registry) InitRuntimes() ([]PluginFilterRuntime, []string) {
 			r.preInitialized = append(r.preInitialized, res.plugin)
 		}
 	}
+	r.phaseADone = true
 
 	return runtimes, warnings
 }
@@ -361,7 +369,7 @@ func (r *Registry) InitRuntimes() ([]PluginFilterRuntime, []string) {
 // Otherwise initializes and evaluates sequentially (both phases).
 // Returns warnings for plugins that fail to load (non-fatal).
 func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
-	if len(r.preInitialized) > 0 {
+	if r.phaseADone {
 		return r.loadPreInitialized(hooks)
 	}
 	return r.loadSequential(hooks)
