@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuin/goldmark"
 	"github.com/zeroedin/alloy/internal/content"
 )
 
@@ -607,13 +608,27 @@ func Abs(input interface{}, args ...interface{}) interface{} {
 
 // --- Content filters ---
 
-var markdownifyMD = content.CreateGoldmark(content.MarkdownOptions{
-	Unsafe:        true,
-	Typographer:   true,
-	AutoHeadingID: true,
-})
+var markdownifyMD goldmark.Markdown
+
+// InitMarkdownify creates the shared goldmark instance for the markdownify
+// filter using config-driven options. Called from createEngine after config
+// is loaded. TemplateTags is always false: markdownify processes values that
+// have already been through template rendering, so tag protection is not needed.
+func InitMarkdownify(opts content.MarkdownOptions) {
+	opts.TemplateTags = false
+	opts.Hooks = nil
+	opts.HookRenderer = nil
+	markdownifyMD = content.CreateGoldmark(opts)
+}
 
 func Markdownify(input interface{}, args ...interface{}) interface{} {
+	if markdownifyMD == nil {
+		InitMarkdownify(content.MarkdownOptions{
+			Unsafe:        true,
+			Typographer:   true,
+			AutoHeadingID: true,
+		})
+	}
 	s := toString(input)
 	var buf strings.Builder
 	if err := markdownifyMD.Convert([]byte(s), &buf); err != nil {
