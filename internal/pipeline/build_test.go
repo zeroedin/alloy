@@ -1632,6 +1632,54 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Layout resolution diagnostics (issue #385) ────────────────────
+	// When a page explicitly requests a layout via front matter but the
+	// layout file doesn't exist, the build must log a warning — not
+	// silently produce layoutless output.
+
+	Describe("Layout resolution diagnostics (issue #385)", func() {
+		It("page with explicit layout but missing file still renders (without layout)", func() {
+			cfg := &config.Config{
+				Title:   "Missing Layout Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/about.md": "---\ntitle: About\nlayout: nonexistent\n---\n# About",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"missing layout must not cause build failure — page renders without layout")
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(1))
+
+			html := result.RenderedContent["about.md"]
+			Expect(html).NotTo(BeEmpty(),
+				"page must still render even without layout")
+			Expect(html).To(ContainSubstring("About"),
+				"markdown content must be present even without layout wrapping")
+		})
+
+		It("Build defaults ProjectRoot to cwd when empty", func() {
+			cfg := &config.Config{
+				Title:   "No Root Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(1),
+				"Build must work even when initial ProjectRoot is empty — "+
+					"BuildWithContent sets ProjectRoot to tmpDir, but Build() should "+
+					"also default to cwd when ProjectRoot is empty")
+		})
+	})
+
 	// ── Layout chaining (issue #276) ────────────────────────────────
 	// Layout files can reference a parent layout via front matter.
 	// The pipeline renders inside-out: content → child → parent → root.
