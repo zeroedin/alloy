@@ -123,6 +123,12 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	config.ApplyDefaults(cfg)
 
+	if cfg.ProjectRoot == "" {
+		if wd, err := os.Getwd(); err == nil {
+			cfg.ProjectRoot = wd
+		}
+	}
+
 	// Track which pages use which layouts for cache invalidation
 	templateUsage := make(map[string][]string) // page.RelPath → layoutPaths (relative)
 
@@ -405,6 +411,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		for _, page := range batch.pages {
 			layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, engineName, cfg.Permalinks)
 			if err != nil {
+				if _, hasLayout := page.FrontMatter["layout"].(string); hasLayout {
+					log.Printf("warning: layout resolution failed for %s: %v", page.RelPath, err)
+				}
 				continue
 			}
 			if layoutPath == "" {
