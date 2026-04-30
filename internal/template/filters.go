@@ -721,7 +721,6 @@ func SafeHTML(input interface{}, args ...interface{}) interface{} {
 	return toString(input)
 }
 
-// ApplyFilter dispatches a filter by name with the given input and optional arguments.
 var builtinFilters = map[string]FilterFunc{
 	"slugify":       Slugify,
 	"upcase":        Upcase,
@@ -777,15 +776,7 @@ var builtinFilters = map[string]FilterFunc{
 	"safeHTML":      SafeHTML,
 }
 
-var builtinFilterNames map[string]bool
-
-func init() {
-	builtinFilterNames = make(map[string]bool, len(builtinFilters))
-	for name := range builtinFilters {
-		builtinFilterNames[name] = true
-	}
-}
-
+// ApplyFilter dispatches a filter by name with the given input and optional arguments.
 func ApplyFilter(name string, input interface{}, args ...interface{}) interface{} {
 	fn, ok := builtinFilters[name]
 	if !ok {
@@ -796,7 +787,8 @@ func ApplyFilter(name string, input interface{}, args ...interface{}) interface{
 
 // IsBuiltinFilter reports whether name is a known built-in filter.
 func IsBuiltinFilter(name string) bool {
-	return builtinFilterNames[name]
+	_, ok := builtinFilters[name]
+	return ok
 }
 
 // --- Helper functions ---
