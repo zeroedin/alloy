@@ -1068,7 +1068,7 @@ func BuildPhase1(cfg *config.Config) (map[string]string, error) {
 		Unsafe:        cfg.Content.Markdown.Goldmark.Unsafe,
 		Typographer:   cfg.Content.Markdown.Goldmark.Typographer,
 		TemplateTags:  cfg.Content.Markdown.Goldmark.TemplateTags,
-		AutoHeadingID: true,
+		AutoHeadingID: cfg.Content.Markdown.Goldmark.AutoHeadingID,
 	}
 
 	for _, page := range pages {
@@ -1204,7 +1204,7 @@ func renderPages(pages []*content.Page, rc *RenderContext) ([]string, error) {
 		Unsafe:        cfg.Content.Markdown.Goldmark.Unsafe,
 		Typographer:   cfg.Content.Markdown.Goldmark.Typographer,
 		TemplateTags:  cfg.Content.Markdown.Goldmark.TemplateTags,
-		AutoHeadingID: true,
+		AutoHeadingID: cfg.Content.Markdown.Goldmark.AutoHeadingID,
 	}
 
 	layoutsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts)
@@ -1906,7 +1906,7 @@ func createEngine(cfg *config.Config) (tmpl.TemplateEngine, error) {
 	tmpl.InitMarkdownify(content.MarkdownOptions{
 		Unsafe:        cfg.Content.Markdown.Goldmark.Unsafe,
 		Typographer:   cfg.Content.Markdown.Goldmark.Typographer,
-		AutoHeadingID: true,
+		AutoHeadingID: cfg.Content.Markdown.Goldmark.AutoHeadingID,
 	})
 	if err := tmpl.RegisterBuiltinFilters(engine); err != nil {
 		return nil, fmt.Errorf("registering template filters: %w", err)
