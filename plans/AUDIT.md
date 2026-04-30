@@ -96,7 +96,7 @@ These are technically deviations but architecturally correct:
 - **C1**: Build step ordering — data loading runs once before language loop (not at step 7 position). Correct: data is global.
 - **C2**: `ResolveLayoutWithCascade` exists but pipeline uses cascade flattening into FrontMatter instead. Both approaches are valid; flattening is simpler.
 - **C3**: `BuildCollectionsWithMode` exists but pipeline pre-filters via `FilterByLifecycle` before calling `BuildCollections`. Same result, explicit is clearer.
-- **C4**: `FeedConfig` type is dead code (no field on Config). Harmless but could be removed in cleanup.
+- **C4**: `FeedConfig` type was dead code — removed in PR #426.
 - **C5**: `--root` flag fully implemented on main (PR #90 merged). Previously suspected gap is resolved.
 
 ---
