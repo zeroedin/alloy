@@ -25,6 +25,9 @@ func newServeCommand() *cobra.Command {
 		Short: "Build and serve the production site",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configPath, _ := cmd.Flags().GetString("config")
+			if rootPath, _ := cmd.Flags().GetString("root"); rootPath != "" && !cmd.Flags().Changed("config") {
+				configPath = filepath.Join(rootPath, configPath)
+			}
 
 			configLoaded := true
 			cfg, err := config.LoadWithDefaults(configPath)
