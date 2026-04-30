@@ -512,13 +512,16 @@ var _ = Describe("Built-in Filters", func() {
 	})
 
 	// ── ApplyFilter and IsBuiltinFilter dispatch (issue #363) ────────
-	// ApplyFilter and isBuiltinName must use package-level maps, not
-	// per-call map literals. These tests verify all filters are registered
-	// and discoverable after the promotion.
+	// These tests verify all built-in filters are registered and
+	// discoverable. The hardcoded list IS the spec — it defines which
+	// filters must exist. When a new filter is added to
+	// RegisterBuiltinFilters, it must also be added here.
 
 	Context("ApplyFilter dispatch completeness (issue #363)", func() {
-		// Every filter registered in RegisterBuiltinFilters must be
-		// dispatchable via ApplyFilter and identifiable by IsBuiltinFilter.
+		// Canonical list of all built-in filters. This is the spec —
+		// every name here must be registered in both ApplyFilter and
+		// IsBuiltinFilter. If a new filter is added to the codebase,
+		// add it here too.
 		allFilterNames := []string{
 			"slugify", "upcase", "downcase", "capitalize",
 			"truncate", "truncatewords", "strip_html", "escape",
@@ -539,8 +542,8 @@ var _ = Describe("Built-in Filters", func() {
 			for _, name := range allFilterNames {
 				Expect(tmpl.IsBuiltinFilter(name)).To(BeTrue(),
 					"IsBuiltinFilter must return true for %q — "+
-						"if this fails after promoting to package-level map, "+
-						"the filter is missing from the map", name)
+						"if missing after promoting to package-level map, "+
+						"the filter was dropped from the map", name)
 			}
 		})
 
@@ -551,17 +554,20 @@ var _ = Describe("Built-in Filters", func() {
 				"IsBuiltinFilter must return false for empty string")
 		})
 
-		It("ApplyFilter dispatches all registered filters without error", func() {
-			// Each filter should return a non-nil result for simple input.
-			// We're testing dispatch, not filter logic — just verify the
-			// function is reachable via ApplyFilter.
-			for _, name := range allFilterNames {
-				result := tmpl.ApplyFilter(name, "test")
-				// Some filters return nil for certain inputs (e.g., findRE with
-				// no pattern), but the dispatch itself should not panic.
-				_ = result
+		It("ApplyFilter returns non-nil for string-producing filters", func() {
+			// Filters that should produce a non-nil result given string input "test".
+			// This proves the filter function is registered and reachable.
+			stringFilters := []string{
+				"slugify", "upcase", "downcase", "capitalize",
+				"strip_html", "escape", "strip", "newline_to_br",
+				"url_encode", "url_decode", "json", "safeHTML",
 			}
-			// If we get here without a panic, all filters dispatched correctly.
+			for _, name := range stringFilters {
+				result := tmpl.ApplyFilter(name, "test")
+				Expect(result).NotTo(BeNil(),
+					"ApplyFilter(%q, \"test\") must return non-nil — "+
+						"if nil, the filter is missing from the dispatch map", name)
+			}
 		})
 
 		It("ApplyFilter returns nil for unknown filter names", func() {
