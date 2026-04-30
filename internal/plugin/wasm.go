@@ -380,7 +380,9 @@ type WASMRuntime struct {
 	exports    map[string]bool
 	rt         wazero.Runtime
 	mod        api.Module
-	cacheDir   string // issue #391: wazero compilation cache directory
+	cacheDir   string                  // issue #391: wazero compilation cache directory
+	cache      wazero.CompilationCache // owned by this runtime (closed in Close)
+	sharedCache wazero.CompilationCache // owned by Registry (not closed here)
 }
 
 // SetCacheDir configures a persistent compilation cache directory.
@@ -388,6 +390,12 @@ type WASMRuntime struct {
 // builds skip WASM recompilation. Must be called before LoadModule.
 func (r *WASMRuntime) SetCacheDir(dir string) {
 	r.cacheDir = dir
+}
+
+// SetCompilationCache sets a shared compilation cache owned by the caller.
+// The cache is NOT closed by WASMRuntime — the caller manages its lifecycle.
+func (r *WASMRuntime) SetCompilationCache(cache wazero.CompilationCache) {
+	r.sharedCache = cache
 }
 
 // NewWASMRuntime creates a new WASM runtime via wazero.
@@ -418,14 +426,17 @@ func (r *WASMRuntime) LoadModule(path string) error {
 	ctx := context.Background()
 
 	rtConfig := wazero.NewRuntimeConfig()
-	if r.cacheDir != "" {
+	if r.sharedCache != nil {
+		rtConfig = rtConfig.WithCompilationCache(r.sharedCache)
+	} else if r.cacheDir != "" {
 		if err := os.MkdirAll(r.cacheDir, 0o755); err != nil {
-			return fmt.Errorf("creating wasm cache directory: %w", err)
+			return fmt.Errorf("creating wasm cache directory %q: %w", r.cacheDir, err)
 		}
 		cache, err := wazero.NewCompilationCacheWithDir(r.cacheDir)
 		if err != nil {
-			return fmt.Errorf("initializing wasm compilation cache: %w", err)
+			return fmt.Errorf("initializing wasm compilation cache in %q: %w", r.cacheDir, err)
 		}
+		r.cache = cache
 		rtConfig = rtConfig.WithCompilationCache(cache)
 	}
 	r.rt = wazero.NewRuntimeWithConfig(ctx, rtConfig)
@@ -706,6 +717,10 @@ func (r *WASMRuntime) Close() {
 	if r.rt != nil {
 		r.rt.Close(ctx)
 		r.rt = nil
+	}
+	if r.cache != nil {
+		r.cache.Close(ctx)
+		r.cache = nil
 	}
 }
 
