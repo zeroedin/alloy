@@ -115,6 +115,45 @@ var _ = Describe("LiquidEngine", func() {
 		})
 	})
 
+	// ── RenderTemplate cached environment (issue #364) ──────────────
+	// RenderTemplate must not create a fresh liquid.Environment per call.
+	// Multiple calls must produce identical output (shared environment).
+
+	Context("RenderTemplate cached environment (issue #364)", func() {
+		It("produces identical output across multiple calls", func() {
+			ctx := map[string]interface{}{"name": "Alice"}
+			result1, err := tmpl.RenderTemplate("Hello {{ name }}", "test1.liquid", ctx)
+			Expect(err).NotTo(HaveOccurred())
+			result2, err := tmpl.RenderTemplate("Hello {{ name }}", "test2.liquid", ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result1).To(Equal(result2),
+				"RenderTemplate must produce identical output across calls — "+
+					"shared environment must not leak state between renders")
+		})
+
+		It("supports standard Liquid tags without per-call registration", func() {
+			ctx := map[string]interface{}{"items": []interface{}{"a", "b", "c"}}
+			result, err := tmpl.RenderTemplate(
+				"{% for item in items %}{{ item }}{% endfor %}",
+				"tags.liquid", ctx,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("abc"),
+				"standard tags must work without per-call RegisterStandardTags — "+
+					"environment should be cached with tags pre-registered")
+		})
+
+		It("alloy built-in filters are available in RenderTemplate", func() {
+			ctx := map[string]interface{}{"name": "Hello World"}
+			result, err := tmpl.RenderTemplate("{{ name | slugify }}", "filter.liquid", ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("hello-world"),
+				"alloy-specific filters (slugify) must be available in RenderTemplate — "+
+					"if this fails, the cached environment lacks RegisterBuiltinFilters. "+
+					"RenderTemplate currently creates a bare environment without alloy filters")
+		})
+	})
+
 	// ── Error format contracts ────────────────────────────────────────
 
 	Context("Error format contracts", func() {
