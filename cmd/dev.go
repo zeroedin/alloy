@@ -24,10 +24,7 @@ func newDevCommand() *cobra.Command {
 		Use:   "dev",
 		Short: "Start the development server",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			configPath, _ := cmd.Flags().GetString("config")
-			if rootPath, _ := cmd.Flags().GetString("root"); rootPath != "" && !cmd.Flags().Changed("config") {
-				configPath = filepath.Join(rootPath, configPath)
-			}
+			configPath := resolveConfigPath(cmd)
 
 			configLoaded := true
 			cfg, err := config.LoadWithDefaults(configPath)
