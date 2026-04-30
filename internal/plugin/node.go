@@ -120,8 +120,12 @@ func (r *NodeRuntime) EvalFile(path string) error {
 		return fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
 
-	if _, err := os.Stat(absPath); err != nil {
+	info, err := os.Stat(absPath)
+	if err != nil {
 		return fmt.Errorf("%s: %w", filepath.Base(path), err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s: not a regular file", filepath.Base(path))
 	}
 
 	// Start bridge if not running

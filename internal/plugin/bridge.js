@@ -61,10 +61,20 @@ async function handleMessage(msg) {
     switch (msg.type) {
       case 'eval': {
         const pluginPath = msg.payload;
-        const mod = await import(pathToFileURL(pluginPath).href);
-        if (typeof mod.default === 'function') {
-          await mod.default(alloy);
+        let mod;
+        try {
+          mod = await import(pathToFileURL(pluginPath).href);
+        } catch (importErr) {
+          throw new Error(
+            `failed to import plugin ${pluginPath}: ${importErr.message}. ` +
+            `Tier 3 plugins must be ESM — ensure the project has "type": "module" in package.json ` +
+            `or use a .mjs extension.`
+          );
         }
+        if (typeof mod.default !== 'function') {
+          throw new Error('plugin module must export a default function');
+        }
+        await mod.default(alloy);
         sendMessage({
           id: msg.id,
           result: {
