@@ -78,7 +78,7 @@ These packages depend only on stdlib or already-defined types.
 ### 1F: `internal/template/filters.go` — ~22 tests (standalone filter functions)
 **File**: `internal/template/filters.go`
 
-Implement all 50+ filter functions and `ApplyFilter` dispatch table. Key implementations:
+Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-level maps (issue #363)**: `ApplyFilter` and `isBuiltinName` currently construct map literals on every call. Promote both to package-level `var` declarations — Go maps are safe for concurrent reads with no writes after init. Derive `builtinFilterNames` from the filter map at init time to eliminate sync risk. Key implementations:
 - **String**: Slugify, Upcase, Downcase, Capitalize, Truncate, TruncateWords, StripHTML, Escape, Replace, ReplaceFirst, Split, Join, Strip, Append, Prepend, NewlineToBr, Contains
 - **Date**: DateFormat (strftime-style via `github.com/lestrrat-go/strftime`, issue #367). Replace the hand-rolled `strftimeFormat` function with lestrrat-go/strftime for full POSIX compliance (36+ directives), pre-compiled patterns, and zero per-call allocation. `DateFormat` keeps its input parsing logic (`time.Time` vs string, no-args passthrough) but delegates format conversion to lestrrat-go. Registered in `RegisterBuiltinFilters` for both Liquid and Go template engines — overrides liquidgo's native `date` filter (which has gaps: week numbers stubbed, map-per-call allocation). Delete `strftimeFormat` function entirely.
 - **Array**: Sort (numeric-aware, issue #348), Reverse, First, Last, Where, GroupBy, Size, Map, Uniq, Compact, Concat

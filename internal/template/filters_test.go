@@ -602,4 +602,70 @@ var _ = Describe("Built-in Filters", func() {
 		Expect(arr[2].(map[string]interface{})["title"]).To(Equal("No Order"),
 			"items without the sort key must sort to the end")
 	})
+
+	// ── ApplyFilter and IsBuiltinFilter dispatch (issue #363) ────────
+	// These tests verify all built-in filters are registered and
+	// discoverable. The hardcoded list IS the spec — it defines which
+	// filters must exist. When a new filter is added to
+	// RegisterBuiltinFilters, it must also be added here.
+
+	Context("ApplyFilter dispatch completeness (issue #363)", func() {
+		// Canonical list of all built-in filters. This is the spec —
+		// every name here must be registered in both ApplyFilter and
+		// IsBuiltinFilter. If a new filter is added to the codebase,
+		// add it here too.
+		allFilterNames := []string{
+			"slugify", "upcase", "downcase", "capitalize",
+			"truncate", "truncatewords", "strip_html", "escape",
+			"replace", "replace_first", "split", "join",
+			"strip", "append", "prepend", "newline_to_br",
+			"contains", "date", "sort", "reverse",
+			"first", "last", "where", "group_by",
+			"size", "map", "uniq", "compact", "concat",
+			"intersect", "union", "complement",
+			"url", "absolute_url", "url_encode", "url_decode",
+			"plus", "minus", "times", "divided_by",
+			"modulo", "ceil", "floor", "round", "abs",
+			"markdownify", "findRE", "replaceRE",
+			"json", "default", "fingerprint", "safeHTML",
+		}
+
+		It("IsBuiltinFilter returns true for all registered filters", func() {
+			for _, name := range allFilterNames {
+				Expect(tmpl.IsBuiltinFilter(name)).To(BeTrue(),
+					"IsBuiltinFilter must return true for %q — "+
+						"if missing after promoting to package-level map, "+
+						"the filter was dropped from the map", name)
+			}
+		})
+
+		It("IsBuiltinFilter returns false for unknown filters", func() {
+			Expect(tmpl.IsBuiltinFilter("nonexistent_filter")).To(BeFalse(),
+				"IsBuiltinFilter must return false for unknown filters")
+			Expect(tmpl.IsBuiltinFilter("")).To(BeFalse(),
+				"IsBuiltinFilter must return false for empty string")
+		})
+
+		It("ApplyFilter returns non-nil for string-producing filters", func() {
+			// Filters that should produce a non-nil result given string input "test".
+			// This proves the filter function is registered and reachable.
+			stringFilters := []string{
+				"slugify", "upcase", "downcase", "capitalize",
+				"strip_html", "escape", "strip", "newline_to_br",
+				"url_encode", "url_decode", "json", "safeHTML",
+			}
+			for _, name := range stringFilters {
+				result := tmpl.ApplyFilter(name, "test")
+				Expect(result).NotTo(BeNil(),
+					"ApplyFilter(%q, \"test\") must return non-nil — "+
+						"if nil, the filter is missing from the dispatch map", name)
+			}
+		})
+
+		It("ApplyFilter returns nil for unknown filter names", func() {
+			result := tmpl.ApplyFilter("nonexistent_filter", "test")
+			Expect(result).To(BeNil(),
+				"ApplyFilter must return nil for unknown filter names")
+		})
+	})
 })
