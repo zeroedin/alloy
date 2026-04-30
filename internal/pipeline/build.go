@@ -123,6 +123,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	config.ApplyDefaults(cfg)
 
+	// Intentional mutation: downstream code (resolveDir, layout resolution,
+	// output writing, cache persistence) reads cfg.ProjectRoot pervasively.
+	// Threading a local variable would require changing dozens of call sites.
 	if cfg.ProjectRoot == "" {
 		if wd, err := os.Getwd(); err == nil {
 			cfg.ProjectRoot = wd
@@ -411,8 +414,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		for _, page := range batch.pages {
 			layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, engineName, cfg.Permalinks)
 			if err != nil {
-				if _, hasLayout := page.FrontMatter["layout"].(string); hasLayout {
-					log.Printf("warning: layout resolution failed for %s: %v", page.RelPath, err)
+				if layoutVal, hasLayout := page.FrontMatter["layout"]; hasLayout && layoutVal != nil {
+					log.Printf("warning: layout %q not found for %s: %v", layoutVal, page.RelPath, err)
 				}
 				continue
 			}
