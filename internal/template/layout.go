@@ -10,6 +10,16 @@ import (
 	"github.com/zeroedin/alloy/internal/content"
 )
 
+// resolveFirstExisting returns the first candidate path that exists on disk.
+func resolveFirstExisting(candidates []string) (string, bool) {
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c, true
+		}
+	}
+	return "", false
+}
+
 // layoutExtension returns the file extension for the given template engine.
 func layoutExtension(engine string) string {
 	switch engine {
@@ -62,13 +72,9 @@ func ResolveLayout(page *content.Page, layoutsDir string, engine string, permali
 	// 5. Default
 	candidates = append(candidates, filepath.Join(layoutsDir, "default"+ext))
 
-	// Return the first candidate that exists on disk
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			return c, nil
-		}
+	if path, ok := resolveFirstExisting(candidates); ok {
+		return path, nil
 	}
-
 	return "", fmt.Errorf("no layout found for page %q", page.RelPath)
 }
 
@@ -93,13 +99,9 @@ func ResolveLayoutForFormat(page *content.Page, layoutsDir string, engine string
 	// Default format layout
 	candidates = append(candidates, filepath.Join(layoutsDir, "default."+format+ext))
 
-	// Return the first candidate that exists on disk
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			return c, nil
-		}
+	if path, ok := resolveFirstExisting(candidates); ok {
+		return path, nil
 	}
-
 	return "", fmt.Errorf("no layout found for page %q with format %q", page.RelPath, format)
 }
 
@@ -117,13 +119,9 @@ func ResolveTaxonomyLayout(taxonomyName string, layoutOverride string, layoutsDi
 		filepath.Join(layoutsDir, name+ext),
 	}
 
-	// Return the first candidate that exists on disk
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			return c, nil
-		}
+	if path, ok := resolveFirstExisting(candidates); ok {
+		return path, nil
 	}
-
 	return "", fmt.Errorf("no layout found for taxonomy %q", taxonomyName)
 }
 
