@@ -31,14 +31,19 @@ func getStrftimePattern(format string) (*strftime.Strftime, error) {
 		return p, nil
 	}
 
+	strftimeCacheMu.Lock()
+	defer strftimeCacheMu.Unlock()
+
+	if p, ok := strftimeCache[format]; ok {
+		return p, nil
+	}
+
 	p, err := strftime.New(format)
 	if err != nil {
 		return nil, err
 	}
 
-	strftimeCacheMu.Lock()
 	strftimeCache[format] = p
-	strftimeCacheMu.Unlock()
 	return p, nil
 }
 
