@@ -2,7 +2,6 @@ package config
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,9 +10,6 @@ import (
 	"github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v3"
 )
-
-// ErrNotImplemented is returned by all stub functions.
-var ErrNotImplemented = errors.New("not implemented")
 
 // Config represents the full alloy.config.yaml structure.
 type Config struct {

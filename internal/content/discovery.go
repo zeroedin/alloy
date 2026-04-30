@@ -1,15 +1,11 @@
 package content
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
-
-// ErrNotImplemented is returned by all stub functions.
-var ErrNotImplemented = errors.New("not implemented")
 
 // Discover walks the content directory and returns all content pages.
 func Discover(contentDir string) ([]*Page, error) {
