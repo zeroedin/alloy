@@ -2052,7 +2052,7 @@ Hooks receive JSON-serializable payloads so they work across all plugin tiers (G
 
 #### Per-page hooks (HTML string)
 
-These fire **once per page**. `onContentTransformed` receives a page object (mutable — fires before layout, page data still matters). `onPageRendered` receives an HTML string (post-processing only — page is already rendered).
+These fire **once per page**. `onContentTransformed` receives a page-scoped object (mutable — fires before layout, page data still matters). The payload contains only page data — no `site`, `collections`, or `taxonomies`. Site-level mutations belong in `onConfig` or `onAfterValidation`. `onPageRendered` receives an HTML string (post-processing only — page is already rendered).
 
 | Event | Payload | Returns | When |
 |---|---|---|---|
