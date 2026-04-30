@@ -1109,21 +1109,25 @@ var _ = Describe("Build Pipeline", func() {
 					"if this fails, the layout parser is not stripping front matter")
 			Expect(result).NotTo(BeNil())
 
-			// Find a taxonomy page in rendered output
+			// Taxonomy pages are generated (no RelPath), so their
+			// RenderedContent key is page.URL (e.g., "/tags/", "/tags/go/").
 			found := false
 			for key, html := range result.RenderedContent {
-				if strings.Contains(key, "tags") {
+				if strings.Contains(key, "/tags/") || key == "/tags/" {
 					found = true
 					Expect(html).NotTo(ContainSubstring("---"),
 						"taxonomy layout front matter delimiters must be stripped — "+
 							"if '---' appears in output, StripLayoutFrontMatter was not called")
 					Expect(html).NotTo(ContainSubstring("layout: base"),
 						"taxonomy layout front matter content must not appear in rendered output")
+					Expect(html).To(ContainSubstring("taxonomy"),
+						"taxonomy layout must render its content")
 					break
 				}
 			}
 			Expect(found).To(BeTrue(),
-				"at least one taxonomy page must render when Render: true")
+				"at least one taxonomy page must appear in RenderedContent with a /tags/ URL key — "+
+					"taxonomy pages have no RelPath, so renderedContentKey must use page.URL")
 		})
 	})
 
