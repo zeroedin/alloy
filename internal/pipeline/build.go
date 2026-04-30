@@ -1561,13 +1561,9 @@ func renderPageFormats(page *content.Page, layoutsDir, engineName string, rc *Re
 		if err != nil {
 			return fmt.Errorf("no %s layout found for %s: %w", format, page.RelPath, err)
 		}
-		fmtContent, err := os.ReadFile(fmtLayoutPath)
+		fmtTpl, err := parseLayout(fmtLayoutPath, rc.Engine)
 		if err != nil {
-			return fmt.Errorf("reading format layout %s: %w", fmtLayoutPath, err)
-		}
-		fmtTpl, err := rc.Engine.Parse(fmtLayoutPath, []byte(tmpl.StripLayoutFrontMatter(string(fmtContent))))
-		if err != nil {
-			return fmt.Errorf("parsing format layout %s: %w", fmtLayoutPath, err)
+			return fmt.Errorf("format layout: %w", err)
 		}
 		fmtCtx := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "").ToMap()
 		fmtCtx["content"] = string(page.RenderedBody)
@@ -1600,14 +1596,9 @@ func renderPageThroughLayouts(page *content.Page, layoutPath, layoutsDir, engine
 	}
 
 	for _, lp := range chain {
-		layoutContent, err := os.ReadFile(lp)
+		tpl, err := parseLayout(lp, rc.Engine)
 		if err != nil {
-			return fmt.Errorf("reading layout %s: %w", lp, err)
-		}
-		stripped := tmpl.StripLayoutFrontMatter(string(layoutContent))
-		tpl, err := rc.Engine.Parse(lp, []byte(stripped))
-		if err != nil {
-			return fmt.Errorf("parsing layout %s: %w", lp, err)
+			return err
 		}
 
 		tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "")
@@ -1653,13 +1644,9 @@ func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection,
 		if err != nil {
 			return nil, fmt.Errorf("taxonomy %q layout: %w", taxName, err)
 		}
-		layoutContent, err := os.ReadFile(layoutPath)
+		tpl, err := parseLayout(layoutPath, rc.Engine)
 		if err != nil {
-			return nil, fmt.Errorf("reading taxonomy layout %s: %w", layoutPath, err)
-		}
-		tpl, err := rc.Engine.Parse(layoutPath, layoutContent)
-		if err != nil {
-			return nil, fmt.Errorf("parsing taxonomy layout %s: %w", layoutPath, err)
+			return nil, fmt.Errorf("taxonomy %q layout: %w", taxName, err)
 		}
 
 		taxPages := collection.GenerateTaxonomyPages(tc, taxCfg)
@@ -1909,6 +1896,19 @@ func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineSt
 		}
 	}
 	return bc
+}
+
+func parseLayout(path string, engine tmpl.TemplateEngine) (tmpl.Template, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading layout %s: %w", path, err)
+	}
+	stripped := tmpl.StripLayoutFrontMatter(string(content))
+	tpl, err := engine.Parse(path, []byte(stripped))
+	if err != nil {
+		return nil, fmt.Errorf("parsing layout %s: %w", path, err)
+	}
+	return tpl, nil
 }
 
 func createEngine(cfg *config.Config) (tmpl.TemplateEngine, error) {
