@@ -11,11 +11,36 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lestrrat-go/strftime"
 	"github.com/yuin/goldmark"
 )
+
+var (
+	strftimeCache   = make(map[string]*strftime.Strftime)
+	strftimeCacheMu sync.RWMutex
+)
+
+func getStrftimePattern(format string) (*strftime.Strftime, error) {
+	strftimeCacheMu.RLock()
+	p, ok := strftimeCache[format]
+	strftimeCacheMu.RUnlock()
+	if ok {
+		return p, nil
+	}
+
+	p, err := strftime.New(format)
+	if err != nil {
+		return nil, err
+	}
+
+	strftimeCacheMu.Lock()
+	strftimeCache[format] = p
+	strftimeCacheMu.Unlock()
+	return p, nil
+}
 
 // RegisterBuiltinFilters registers all Tier 1 built-in filters on the given engine.
 func RegisterBuiltinFilters(engine TemplateEngine) error {
@@ -275,7 +300,7 @@ func DateFormat(input interface{}, args ...interface{}) interface{} {
 		return toString(input)
 	}
 
-	p, err := strftime.New(format)
+	p, err := getStrftimePattern(format)
 	if err != nil {
 		return format
 	}
