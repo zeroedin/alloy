@@ -8,7 +8,7 @@ import (
 
 // CopyFile copies a file from src to dst, preserving the source file's permissions.
 // Creates parent directories of dst as needed.
-func CopyFile(src, dst string) error {
+func CopyFile(src, dst string) (err error) {
 	srcInfo, err := os.Stat(src)
 	if err != nil {
 		return err
@@ -28,11 +28,12 @@ func CopyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() {
+		if cerr := out.Close(); err == nil {
+			err = cerr
+		}
+	}()
 
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-
-	return out.Close()
+	_, err = io.Copy(out, in)
+	return err
 }
