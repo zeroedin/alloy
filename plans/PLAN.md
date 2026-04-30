@@ -1696,6 +1696,8 @@ templates:
 
 **Tier 3 (Node plugin):**
 
+Tier 3 plugins are loaded via ESM `import()` — the project **must** have `"type": "module"` in its `package.json`. The bridge sends the plugin's absolute file path to the Node subprocess, which calls `await import(path)` and then `mod.default(alloy)`. Node's module cache ensures each dependency is loaded once, preventing side-effect collisions (e.g., duplicate `customElements.define` calls). CJS (`require()`) is not supported for Tier 3 plugins.
+
 ```javascript
 // plugins/shortcodes.js
 export default function(alloy) {

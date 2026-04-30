@@ -606,6 +606,34 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 					"via subprocess, not just returned input unchanged")
 		})
 
+		// ── Issue #441: ESM import replaces eval() ──────────────────
+		// EvalFile must send the absolute file path to the bridge,
+		// not the source code. The bridge uses import() instead of eval().
+
+		It("EvalFile loads ESM plugin with import statements (issue #441)", func() {
+			// This plugin uses `import { basename } from "node:path"` —
+			// an ESM import statement that eval() CANNOT handle.
+			// If this test passes, the bridge is using import(), not eval().
+			rt := plugin.NewNodeRuntime()
+			pluginPath := filepath.Join(testdataDir(), "single-files", "node-esm-import.js")
+
+			err := rt.EvalFile(pluginPath)
+			Expect(err).NotTo(HaveOccurred(),
+				"EvalFile must load ESM plugins with import statements — "+
+					"if this fails with a syntax error, the bridge is still using eval() "+
+					"instead of import(). eval() cannot handle import statements (issue #441)")
+
+			filters := rt.RegisteredFilters()
+			Expect(filters).To(ContainElement("baseName"),
+				"ESM plugin filter must be discovered via import()")
+
+			// Prove the import actually works — basename("a/b/c.txt") → "c.txt"
+			result, err := rt.CallFilter("baseName", "/path/to/file.txt")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("file.txt"),
+				"ESM import of node:path must work — proves import() resolved the module")
+		})
+
 		It("NodeBridge.Start spawns a Node subprocess", func() {
 			bridge := plugin.NewNodeBridge(filepath.Join(testdataDir()))
 			err := bridge.Start()
