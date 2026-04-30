@@ -262,7 +262,7 @@ Key points:
 
 - Adapt chosen Liquid library to `TemplateEngine` interface
 - `Parse`, `Render`, `AddFilter`, `AddTag`, `ParseWithIncludes`
-- `RenderTemplate`: Parse + render, wrap errors with source path
+- `RenderTemplate`: Parse + render, wrap errors with source path. **Must use a cached environment** (issue #364) — currently creates a new `liquid.Environment` and registers standard tags per call. Use `sync.Once` to initialize a package-level default environment, or eliminate `RenderTemplate` entirely by passing the engine to all callers. The `rc.Engine != nil` guard in `renderPages` (build.go:1272) should always be true — engine is created by `createEngine(cfg)` which never returns nil. The `else` branch using `RenderTemplate` is dead code and should be removed. The `Server.RenderPage` path (server.go:401) should use the engine instance held by the server, not a bare `RenderTemplate` call — otherwise plugin filters and custom tags are unavailable in dev mode on-demand renders.
 - Must support: `{{ var }}`, `{{ page.title }}`, `{% if %}`, `{% for %}`, `{% assign %}`, `{{ content }}` injection, `{% include %}`, filter pipelines
 
 ### 4B: Go Template Engine (~12 tests)
