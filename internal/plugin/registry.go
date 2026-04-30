@@ -61,6 +61,7 @@ type Registry struct {
 	filterRegistry  map[string]string      // filter name → source
 	conflictWarns   []string
 	runtimes        []PluginFilterRuntime   // loaded runtimes for filter/shortcode bridging
+	wasmCacheDir    string                 // persistent compilation cache for WASM modules
 }
 
 // NewRegistry creates a plugin registry for the given plugins directory.
@@ -69,6 +70,12 @@ func NewRegistry(pluginsDir string) *Registry {
 		pluginsDir:     pluginsDir,
 		filterRegistry: make(map[string]string),
 	}
+}
+
+// SetWASMCacheDir configures a persistent compilation cache directory
+// for WASM modules. When set, compiled native code is reused across builds.
+func (r *Registry) SetWASMCacheDir(dir string) {
+	r.wasmCacheDir = dir
 }
 
 // supportedExtensions lists file extensions recognized as plugins.
@@ -246,6 +253,9 @@ func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
 			r.runtimes = append(r.runtimes, rt)
 		case RuntimeWASM:
 			rt := NewWASMRuntime()
+			if r.wasmCacheDir != "" {
+				rt.SetCacheDir(r.wasmCacheDir)
+			}
 			if err := rt.LoadModule(p.Path); err != nil {
 				warnings = append(warnings, fmt.Sprintf("plugin %s: load failed: %v", p.Name, err))
 				continue

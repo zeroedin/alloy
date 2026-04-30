@@ -416,7 +416,19 @@ func (r *WASMRuntime) LoadModule(path string) error {
 	r.moduleName = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 
 	ctx := context.Background()
-	r.rt = wazero.NewRuntime(ctx)
+
+	rtConfig := wazero.NewRuntimeConfig()
+	if r.cacheDir != "" {
+		if err := os.MkdirAll(r.cacheDir, 0o755); err != nil {
+			return fmt.Errorf("creating wasm cache directory: %w", err)
+		}
+		cache, err := wazero.NewCompilationCacheWithDir(r.cacheDir)
+		if err != nil {
+			return fmt.Errorf("initializing wasm compilation cache: %w", err)
+		}
+		rtConfig = rtConfig.WithCompilationCache(cache)
+	}
+	r.rt = wazero.NewRuntimeWithConfig(ctx, rtConfig)
 
 	compiled, err := r.rt.CompileModule(ctx, wasmBytes)
 	if err != nil {

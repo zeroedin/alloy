@@ -1824,6 +1824,9 @@ func DiscoverPlugins(cfg *config.Config) (*plugin.Registry, *plugin.HookRegistry
 	hooks.SetTimeout(cfg.Plugins.Timeout)
 	pluginsDir := resolveDir(cfg.ProjectRoot, "plugins")
 	registry := plugin.NewRegistry(pluginsDir)
+	if cfg.ProjectRoot != "" {
+		registry.SetWASMCacheDir(resolveDir(cfg.ProjectRoot, ".alloy/wasm-cache"))
+	}
 	var warnings []string
 	if err := registry.DiscoverPlugins(); err != nil {
 		warnings = append(warnings, fmt.Sprintf("plugin discovery: %v", err))
