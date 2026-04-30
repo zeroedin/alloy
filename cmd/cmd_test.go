@@ -309,6 +309,61 @@ var _ = Describe("CLI Commands", func() {
 		})
 	})
 
+	// ── --root full config loading (issue #437) ─────────────────────
+	// The -r flag must load ALL config fields from the project's config
+	// file, not just some. Previously only taxonomies were tested (#380).
+	// The plugins section and other fields are also lost.
+
+	Describe("--root flag loads full config (issue #437)", func() {
+		It("--root respects build.output from root config", func() {
+			projectDir, err := os.MkdirTemp("", "alloy-root-437-compare-*")
+			Expect(err).NotTo(HaveOccurred())
+			defer os.RemoveAll(projectDir)
+
+			// Config with multiple non-default fields
+			configContent := `title: "Compare437"
+baseURL: "https://example.com"
+build:
+  output: "dist"
+plugins:
+  timeout: 25000
+taxonomies:
+  tags:
+    render: false
+  categories:
+    render: false
+`
+			Expect(os.WriteFile(
+				filepath.Join(projectDir, "alloy.config.yaml"),
+				[]byte(configContent),
+				0644,
+			)).To(Succeed())
+
+			contentDir := filepath.Join(projectDir, "content")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(
+				filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home\n---\n# Home"),
+				0644,
+			)).To(Succeed())
+
+			// Build with --root
+			root := cmd.NewRootCommand()
+			root.SilenceErrors = true
+			root.SilenceUsage = true
+			root.SetArgs([]string{"build", "--root", projectDir})
+			err = root.Execute()
+			Expect(err).NotTo(HaveOccurred())
+
+			// Config has build.output: "dist" — output must be in dist/, not _site/
+			_, statErr := os.Stat(filepath.Join(projectDir, "dist", "index.html"))
+			Expect(statErr).NotTo(HaveOccurred(),
+				"output must be in 'dist/' (from config build.output) not '_site/' — "+
+					"if _site/ exists instead, config was not loaded from --root. "+
+					"The -r flag must load ALL config fields including build.output (issue #437)")
+		})
+	})
+
 	// ── alloy init behavior ──────────────────────────────────────────
 
 	Describe("alloy init", func() {
