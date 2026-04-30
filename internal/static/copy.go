@@ -3,12 +3,12 @@ package static
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/zeroedin/alloy/internal/config"
+	"github.com/zeroedin/alloy/internal/fileutil"
 )
 
 // ErrNotImplemented is returned by all stub functions.
@@ -43,7 +43,7 @@ func CopyStatic(staticDir, outputDir string) error {
 		}
 
 		dst := filepath.Join(outputDir, rel)
-		return copyFile(path, dst)
+		return fileutil.CopyFile(path, dst)
 	})
 }
 
@@ -69,7 +69,7 @@ func CopyPassthrough(mappings []config.PassthroughMapping, projectRoot, outputDi
 				return err
 			}
 		} else {
-			if err := copyFile(fromPath, toPath); err != nil {
+			if err := fileutil.CopyFile(fromPath, toPath); err != nil {
 				return err
 			}
 		}
@@ -128,37 +128,7 @@ func copyDir(src, dst string) error {
 			return os.MkdirAll(target, 0755)
 		}
 
-		return copyFile(path, target)
+		return fileutil.CopyFile(path, target)
 	})
 }
 
-// copyFile copies a single file from src to dst, creating parent directories
-// as needed. Preserves source file permissions.
-func copyFile(src, dst string) error {
-	srcInfo, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return err
-	}
-
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, srcInfo.Mode())
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-
-	return out.Close()
-}

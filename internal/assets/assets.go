@@ -2,10 +2,11 @@ package assets
 
 import (
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/zeroedin/alloy/internal/fileutil"
 )
 
 // ErrNotImplemented is returned by all stub functions.
@@ -46,7 +47,7 @@ func CopyAssets(assetsDir, outputDir string) error {
 			return os.MkdirAll(dest, 0o755)
 		}
 
-		return copyFile(path, dest)
+		return fileutil.CopyFile(path, dest)
 	})
 }
 
@@ -112,27 +113,4 @@ func ResolveURL(path, baseURL string) string {
 		path = "/" + path
 	}
 	return baseURL + path
-}
-
-// copyFile copies a single file from src to dst.
-func copyFile(src, dst string) error {
-	dir := filepath.Dir(dst)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, in)
-	return err
 }
