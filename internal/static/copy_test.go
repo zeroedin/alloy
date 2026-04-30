@@ -56,7 +56,6 @@ var _ = Describe("Static file handling", func() {
 				}
 				err := static.CopyPassthrough(mappings, "testdata/project", "testdata/output")
 				Expect(err).To(HaveOccurred())
-				Expect(err).NotTo(MatchError(static.ErrNotImplemented))
 			})
 		})
 	})

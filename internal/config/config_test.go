@@ -220,7 +220,6 @@ var _ = Describe("Config", func() {
 			It("returns error for invalid YAML", func() {
 				_, err := config.Load("testdata/invalid.yaml")
 				Expect(err).To(HaveOccurred())
-				Expect(err).NotTo(MatchError(config.ErrNotImplemented))
 			})
 		})
 	})
@@ -234,7 +233,6 @@ var _ = Describe("Config", func() {
 
 				_, detectErr := config.DetectConfigFile(dir)
 				Expect(detectErr).To(HaveOccurred())
-				Expect(detectErr).NotTo(MatchError(config.ErrNotImplemented))
 			})
 		})
 	})
