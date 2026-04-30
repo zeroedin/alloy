@@ -111,12 +111,21 @@ func (r *NodeRuntime) SetProjectRoot(root string) {
 	r.projectRoot = root
 }
 
-// EvalFile evaluates a JS plugin file in the Node subprocess.
-// Discovers registered filters, shortcodes, and hooks.
+// EvalFile loads a JS plugin file in the Node subprocess via ESM import().
+// The absolute file path is sent to the bridge, which uses dynamic import()
+// to load the plugin as a native ES module.
 func (r *NodeRuntime) EvalFile(path string) error {
-	src, err := os.ReadFile(path)
+	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("%s: %w", filepath.Base(path), err)
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return fmt.Errorf("%s: %w", filepath.Base(path), err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s: not a regular file", filepath.Base(path))
 	}
 
 	// Start bridge if not running
@@ -129,7 +138,7 @@ func (r *NodeRuntime) EvalFile(path string) error {
 
 	resp, err := r.bridge.Send(&Message{
 		Type:    "eval",
-		Payload: string(src),
+		Payload: absPath,
 	})
 	if err != nil {
 		return fmt.Errorf("%s: %w", filepath.Base(path), err)
@@ -332,20 +341,21 @@ func (b *NodeBridge) Start() error {
 	return nil
 }
 
-// writeBridgeScript writes the embedded bridge script to disk.
+// writeBridgeScript writes the embedded bridge script to disk as .mjs
+// so Node always treats it as ESM (required for dynamic import()).
 // Prefers projectRoot/.alloy/ so Node can resolve node_modules/ via
 // ancestor traversal. Falls back to OS temp dir.
 func (b *NodeBridge) writeBridgeScript() (string, error) {
 	if b.projectRoot != "" {
 		alloyDir := filepath.Join(b.projectRoot, ".alloy")
 		if err := os.MkdirAll(alloyDir, 0755); err == nil {
-			scriptPath := filepath.Join(alloyDir, "bridge.js")
+			scriptPath := filepath.Join(alloyDir, "bridge.mjs")
 			if err := os.WriteFile(scriptPath, []byte(bridgeScript), 0644); err == nil {
 				return scriptPath, nil
 			}
 		}
 	}
-	tmpFile, err := os.CreateTemp("", "alloy-bridge-*.js")
+	tmpFile, err := os.CreateTemp("", "alloy-bridge-*.mjs")
 	if err != nil {
 		return "", fmt.Errorf("creating bridge script: %w", err)
 	}

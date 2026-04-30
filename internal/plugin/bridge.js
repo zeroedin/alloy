@@ -2,6 +2,8 @@
 // Runs as a subprocess, communicates via JSON-RPC over stdin/stdout.
 // Implements the alloy plugin API: alloy.filter(), alloy.shortcode(), alloy.hook()
 
+import { pathToFileURL } from 'node:url';
+
 // Redirect console output to stderr so plugin console.log() doesn't corrupt the JSON-RPC framing on stdout.
 const origConsole = { log: console.log, warn: console.warn, error: console.error, info: console.info, debug: console.debug };
 console.log = (...args) => process.stderr.write(args.join(' ') + '\n');
@@ -58,16 +60,21 @@ async function handleMessage(msg) {
   try {
     switch (msg.type) {
       case 'eval': {
-        // Evaluate plugin source — wraps in a function and calls with alloy
-        const src = msg.payload;
-        // Strip "export const runtime = ..." and "export default function"
-        let code = src.replace(/export\s+const\s+runtime\s*=\s*["']node["'];?\s*/g, '');
-        code = code.replace(/export\s+default\s+function\s*\(\s*alloy\s*\)/, '(function(alloy)');
-        code = code.trimEnd();
-        if (!code.endsWith('(alloy);')) {
-          code += ')(alloy);';
+        const pluginPath = msg.payload;
+        let mod;
+        try {
+          mod = await import(pathToFileURL(pluginPath).href);
+        } catch (importErr) {
+          throw new Error(
+            `failed to import plugin ${pluginPath}: ${importErr.message}. ` +
+            `Tier 3 plugins must be ESM — ensure the project has "type": "module" in package.json ` +
+            `or use a .mjs extension.`
+          );
         }
-        eval(code);
+        if (typeof mod.default !== 'function') {
+          throw new Error('plugin module must export a default function');
+        }
+        await mod.default(alloy);
         sendMessage({
           id: msg.id,
           result: {
