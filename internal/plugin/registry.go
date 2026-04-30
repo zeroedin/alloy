@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/tetratelabs/wazero"
 )
@@ -56,14 +57,22 @@ type PluginFilterRuntime interface {
 	SetSiteData(data map[string]interface{}) error
 }
 
+// initializedPlugin pairs a discovered plugin with its Phase-A-initialized runtime.
+type initializedPlugin struct {
+	info    PluginInfo
+	runtime PluginFilterRuntime
+}
+
 // Registry manages plugin discovery and loading.
 type Registry struct {
 	pluginsDir      string
 	plugins         []PluginInfo
-	filterRegistry  map[string]string      // filter name → source
+	filterRegistry  map[string]string       // filter name → source
 	conflictWarns   []string
 	runtimes        []PluginFilterRuntime   // loaded runtimes for filter/shortcode bridging
-	wasmCacheDir    string                 // persistent compilation cache for WASM modules
+	preInitialized  []initializedPlugin     // Phase A results, consumed by LoadPlugins
+	phaseADone      bool                    // true after InitRuntimes completes
+	wasmCacheDir    string                  // persistent compilation cache for WASM modules
 	wasmCache       wazero.CompilationCache // shared cache, closed in Close()
 }
 
@@ -167,14 +176,17 @@ func (r *Registry) Runtimes() []PluginFilterRuntime {
 	return r.runtimes
 }
 
-// Close releases resources held by all loaded runtimes.
+// Close releases resources held by all loaded runtimes and any
+// pre-initialized runtimes that were never consumed by LoadPlugins.
 func (r *Registry) Close() {
 	for _, rt := range r.runtimes {
-		if c, ok := rt.(interface{ Close() }); ok {
-			c.Close()
-		}
+		closeRuntime(rt)
 	}
 	r.runtimes = nil
+	for _, ip := range r.preInitialized {
+		closeRuntime(ip.runtime)
+	}
+	r.preInitialized = nil
 	if r.wasmCache != nil {
 		r.wasmCache.Close(context.Background())
 		r.wasmCache = nil
@@ -234,14 +246,169 @@ func hasNodeRuntimeExport(src string) bool {
 		strings.Contains(src, "runtime: 'node'")
 }
 
+// registerRuntime registers a loaded runtime's filters and hooks, and appends
+// it to the registry's runtime list. Shared by both loading paths.
+func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, hooks *HookRegistry) {
+	for _, fname := range rt.RegisteredFilters() {
+		r.RegisterFilter(fname, "plugins/"+pluginName)
+	}
+	if caller, ok := rt.(interface {
+		CallHook(string, interface{}) (interface{}, error)
+	}); ok {
+		for _, hookName := range rt.RegisteredHooks() {
+			name := hookName
+			hooks.Register(HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {
+				return caller.CallHook(name, payload)
+			})
+		}
+	}
+	r.runtimes = append(r.runtimes, rt)
+}
+
+// closeRuntime closes a runtime if it implements Close().
+func closeRuntime(rt PluginFilterRuntime) {
+	if c, ok := rt.(interface{ Close() }); ok {
+		c.Close()
+	}
+}
+
+// InitRuntimes concurrently initializes runtimes for all discovered plugins
+// (Phase A). Runtimes are created and compiled but not evaluated — no filters
+// or hooks are registered. Call LoadPlugins after to complete Phase B.
+//
+// QuickJS and WASM plugins run in goroutines (CPU-bound compilation).
+// Node plugins are initialized sequentially on the calling goroutine
+// because subprocess spawn is I/O-bound with side effects.
+func (r *Registry) InitRuntimes() ([]PluginFilterRuntime, []string) {
+	type result struct {
+		idx     int
+		plugin  initializedPlugin
+		warning string
+	}
+
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		results []result
+	)
+
+	nodeAvailableErr := CheckNodeAvailable()
+
+	for i, p := range r.plugins {
+		if p.Runtime == RuntimeNode {
+			if nodeAvailableErr != nil {
+				results = append(results, result{idx: i, warning: fmt.Sprintf("plugin %s: %v", p.Name, nodeAvailableErr)})
+				continue
+			}
+			rt := NewNodeRuntime()
+			rt.SetProjectRoot(filepath.Dir(filepath.Clean(r.pluginsDir)))
+			results = append(results, result{idx: i, plugin: initializedPlugin{info: p, runtime: rt}})
+			continue
+		}
+
+		wg.Add(1)
+		go func(idx int, p PluginInfo) {
+			defer wg.Done()
+			var res result
+			res.idx = idx
+
+			switch p.Runtime {
+			case RuntimeQuickJS:
+				rt := NewQuickJSRuntime()
+				if err := rt.Init(); err != nil {
+					res.warning = fmt.Sprintf("plugin %s: init failed: %v", p.Name, err)
+				} else {
+					res.plugin = initializedPlugin{info: p, runtime: rt}
+				}
+			case RuntimeWASM:
+				rt := NewWASMRuntime()
+				if r.wasmCache != nil {
+					rt.SetCompilationCache(r.wasmCache)
+				} else if r.wasmCacheDir != "" {
+					rt.SetCacheDir(r.wasmCacheDir)
+				}
+				if err := rt.LoadModule(p.Path); err != nil {
+					res.warning = fmt.Sprintf("plugin %s: load failed: %v", p.Name, err)
+				} else {
+					res.plugin = initializedPlugin{info: p, runtime: rt}
+				}
+			}
+
+			mu.Lock()
+			results = append(results, res)
+			mu.Unlock()
+		}(i, p)
+	}
+	wg.Wait()
+
+	sort.Slice(results, func(i, j int) bool { return results[i].idx < results[j].idx })
+
+	var runtimes []PluginFilterRuntime
+	var warnings []string
+	for _, ip := range r.preInitialized {
+		closeRuntime(ip.runtime)
+	}
+	r.preInitialized = nil
+	for _, res := range results {
+		if res.warning != "" {
+			warnings = append(warnings, res.warning)
+			continue
+		}
+		if res.plugin.runtime != nil {
+			runtimes = append(runtimes, res.plugin.runtime)
+			r.preInitialized = append(r.preInitialized, res.plugin)
+		}
+	}
+	r.phaseADone = true
+
+	return runtimes, warnings
+}
+
 // LoadPlugins loads all discovered plugins into the given HookRegistry.
-// Tier 2 (QuickJS/WASM) plugins are evaluated in-process.
-// Tier 3 (Node) plugins require a running NodeBridge.
+// If InitRuntimes was called first, uses pre-initialized runtimes (Phase B only).
+// Otherwise initializes and evaluates sequentially (both phases).
 // Returns warnings for plugins that fail to load (non-fatal).
 func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
+	if r.phaseADone {
+		return r.loadPreInitialized(hooks)
+	}
+	return r.loadSequential(hooks)
+}
+
+// loadPreInitialized completes Phase B for runtimes that were pre-initialized
+// by InitRuntimes: eval plugin source and register filters/hooks.
+func (r *Registry) loadPreInitialized(hooks *HookRegistry) []string {
 	var warnings []string
-	var nodeChecked bool
-	var nodeAvailableErr error
+	for _, ip := range r.preInitialized {
+		switch ip.info.Runtime {
+		case RuntimeQuickJS:
+			rt := ip.runtime.(*QuickJSRuntime)
+			if err := rt.EvalFile(ip.info.Path); err != nil {
+				closeRuntime(rt)
+				warnings = append(warnings, fmt.Sprintf("plugin %s: eval failed: %v", ip.info.Name, err))
+				continue
+			}
+			r.registerRuntime(rt, ip.info.Name, hooks)
+		case RuntimeWASM:
+			r.registerRuntime(ip.runtime, ip.info.Name, hooks)
+		case RuntimeNode:
+			rt := ip.runtime.(*NodeRuntime)
+			if err := rt.EvalFile(ip.info.Path); err != nil {
+				closeRuntime(rt)
+				warnings = append(warnings, fmt.Sprintf("plugin %s: eval failed: %v", ip.info.Name, err))
+				continue
+			}
+			r.registerRuntime(rt, ip.info.Name, hooks)
+		}
+	}
+	r.preInitialized = nil
+	return warnings
+}
+
+// loadSequential initializes and evaluates all plugins sequentially (both phases).
+func (r *Registry) loadSequential(hooks *HookRegistry) []string {
+	var warnings []string
+	nodeAvailableErr := CheckNodeAvailable()
 	for _, p := range r.plugins {
 		switch p.Runtime {
 		case RuntimeQuickJS:
@@ -251,22 +418,11 @@ func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
 				continue
 			}
 			if err := rt.EvalFile(p.Path); err != nil {
+				closeRuntime(rt)
 				warnings = append(warnings, fmt.Sprintf("plugin %s: eval failed: %v", p.Name, err))
 				continue
 			}
-			// Register discovered filters with the registry for conflict detection
-			for _, fname := range rt.RegisteredFilters() {
-				r.RegisterFilter(fname, "plugins/"+p.Name)
-			}
-			// Bridge discovered hooks into the HookRegistry
-			for _, hookName := range rt.RegisteredHooks() {
-				name := hookName
-				runtime := rt
-				hooks.Register(HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {
-					return runtime.CallHook(name, payload)
-				})
-			}
-			r.runtimes = append(r.runtimes, rt)
+			r.registerRuntime(rt, p.Name, hooks)
 		case RuntimeWASM:
 			rt := NewWASMRuntime()
 			if r.wasmCache != nil {
@@ -278,15 +434,8 @@ func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
 				warnings = append(warnings, fmt.Sprintf("plugin %s: load failed: %v", p.Name, err))
 				continue
 			}
-			for _, fname := range rt.RegisteredFilters() {
-				r.RegisterFilter(fname, "plugins/"+p.Name)
-			}
-			r.runtimes = append(r.runtimes, rt)
+			r.registerRuntime(rt, p.Name, hooks)
 		case RuntimeNode:
-			if !nodeChecked {
-				nodeAvailableErr = CheckNodeAvailable()
-				nodeChecked = true
-			}
 			if nodeAvailableErr != nil {
 				warnings = append(warnings, fmt.Sprintf("plugin %s: %v", p.Name, nodeAvailableErr))
 				continue
@@ -294,21 +443,11 @@ func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
 			rt := NewNodeRuntime()
 			rt.SetProjectRoot(filepath.Dir(filepath.Clean(r.pluginsDir)))
 			if err := rt.EvalFile(p.Path); err != nil {
-				rt.Close()
+				closeRuntime(rt)
 				warnings = append(warnings, fmt.Sprintf("plugin %s: eval failed: %v", p.Name, err))
 				continue
 			}
-			for _, fname := range rt.RegisteredFilters() {
-				r.RegisterFilter(fname, "plugins/"+p.Name)
-			}
-			for _, hookName := range rt.RegisteredHooks() {
-				name := hookName
-				runtime := rt
-				hooks.Register(HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {
-					return runtime.CallHook(name, payload)
-				})
-			}
-			r.runtimes = append(r.runtimes, rt)
+			r.registerRuntime(rt, p.Name, hooks)
 		}
 	}
 	return warnings
