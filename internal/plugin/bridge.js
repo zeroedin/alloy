@@ -2,6 +2,8 @@
 // Runs as a subprocess, communicates via JSON-RPC over stdin/stdout.
 // Implements the alloy plugin API: alloy.filter(), alloy.shortcode(), alloy.hook()
 
+import { pathToFileURL } from 'node:url';
+
 // Redirect console output to stderr so plugin console.log() doesn't corrupt the JSON-RPC framing on stdout.
 const origConsole = { log: console.log, warn: console.warn, error: console.error, info: console.info, debug: console.debug };
 console.log = (...args) => process.stderr.write(args.join(' ') + '\n');
@@ -59,7 +61,6 @@ async function handleMessage(msg) {
     switch (msg.type) {
       case 'eval': {
         const pluginPath = msg.payload;
-        const { pathToFileURL } = await import('node:url');
         const mod = await import(pathToFileURL(pluginPath).href);
         if (typeof mod.default === 'function') {
           await mod.default(alloy);
