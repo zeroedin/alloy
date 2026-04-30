@@ -1065,10 +1065,10 @@ func BuildPhase1(cfg *config.Config) (map[string]string, error) {
 	result := make(map[string]string, len(pages))
 
 	mdOpts := content.MarkdownOptions{
-		Unsafe:        cfg.Content.Markdown.Goldmark.Unsafe,
+		Unsafe:        cfg.Content.Markdown.Goldmark.UnsafeValue(),
 		Typographer:   cfg.Content.Markdown.Goldmark.Typographer,
-		TemplateTags:  cfg.Content.Markdown.Goldmark.TemplateTags,
-		AutoHeadingID: true,
+		TemplateTags:  cfg.Content.Markdown.Goldmark.TemplateTagsValue(),
+		AutoHeadingID: cfg.Content.Markdown.Goldmark.AutoHeadingIDValue(),
 	}
 
 	for _, page := range pages {
@@ -1201,10 +1201,10 @@ func buildPhase2Stream(intermediateHTML map[string]string, ssrCfg *config.SSRCon
 func renderPages(pages []*content.Page, rc *RenderContext) ([]string, error) {
 	cfg := rc.Cfg
 	mdOpts := content.MarkdownOptions{
-		Unsafe:        cfg.Content.Markdown.Goldmark.Unsafe,
+		Unsafe:        cfg.Content.Markdown.Goldmark.UnsafeValue(),
 		Typographer:   cfg.Content.Markdown.Goldmark.Typographer,
-		TemplateTags:  cfg.Content.Markdown.Goldmark.TemplateTags,
-		AutoHeadingID: true,
+		TemplateTags:  cfg.Content.Markdown.Goldmark.TemplateTagsValue(),
+		AutoHeadingID: cfg.Content.Markdown.Goldmark.AutoHeadingIDValue(),
 	}
 
 	layoutsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts)
@@ -1903,6 +1903,11 @@ func createEngine(cfg *config.Config) (tmpl.TemplateEngine, error) {
 	} else {
 		engine = tmpl.NewLiquidEngine()
 	}
+	tmpl.InitMarkdownify(content.MarkdownOptions{
+		Unsafe:        cfg.Content.Markdown.Goldmark.UnsafeValue(),
+		Typographer:   cfg.Content.Markdown.Goldmark.Typographer,
+		AutoHeadingID: cfg.Content.Markdown.Goldmark.AutoHeadingIDValue(),
+	})
 	if err := tmpl.RegisterBuiltinFilters(engine); err != nil {
 		return nil, fmt.Errorf("registering template filters: %w", err)
 	}

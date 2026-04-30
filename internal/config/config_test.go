@@ -64,9 +64,9 @@ var _ = Describe("Config", func() {
 
 			It("parses content.markdown.goldmark options", func() {
 				Expect(err).NotTo(HaveOccurred())
-				Expect(cfg.Content.Markdown.Goldmark.Unsafe).To(BeTrue())
+				Expect(cfg.Content.Markdown.Goldmark.UnsafeValue()).To(BeTrue())
 				Expect(cfg.Content.Markdown.Goldmark.Typographer).To(BeTrue())
-				Expect(cfg.Content.Markdown.Goldmark.TemplateTags).To(BeTrue())
+				Expect(cfg.Content.Markdown.Goldmark.TemplateTagsValue()).To(BeTrue())
 			})
 
 			It("parses templates.engine", func() {
@@ -265,7 +265,25 @@ var _ = Describe("Config", func() {
 
 		It("defaults content.markdown.goldmark.templateTags to true", func() {
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cfg.Content.Markdown.Goldmark.TemplateTags).To(BeTrue())
+			Expect(cfg.Content.Markdown.Goldmark.TemplateTagsValue()).To(BeTrue(),
+				"TemplateTagsValue() must return true for minimal config — "+
+					"omitted *bool defaults to true")
+		})
+
+		// ── GoldmarkConfig *bool tri-state semantics (issue #398) ────────
+		// Omitted fields default to true. Explicit false is preserved.
+		// These tests use the helper methods (UnsafeValue, etc.) which
+		// return the effective value: nil → true, *false → false.
+
+		It("omitted goldmark fields default to true via helper methods", func() {
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Content.Markdown.Goldmark.UnsafeValue()).To(BeTrue(),
+				"UnsafeValue() must return true when unsafe is omitted from config — "+
+					"nil *bool defaults to true")
+			Expect(cfg.Content.Markdown.Goldmark.TemplateTagsValue()).To(BeTrue(),
+				"TemplateTagsValue() must return true when templateTags is omitted")
+			Expect(cfg.Content.Markdown.Goldmark.AutoHeadingIDValue()).To(BeTrue(),
+				"AutoHeadingIDValue() must return true when autoHeadingID is omitted")
 		})
 
 		It("defaults pagination.path to page", func() {
@@ -569,6 +587,45 @@ var _ = Describe("Config", func() {
 			err := config.Validate(cfg)
 			Expect(err).NotTo(HaveOccurred(),
 				"config with zero taxonomies must be valid")
+		})
+	})
+
+	// ── GoldmarkConfig explicit false (issue #398) ───────────────────
+	// When goldmark options are explicitly set to false in config,
+	// the *bool tri-state must preserve false — not override to true.
+
+	Describe("GoldmarkConfig explicit false (issue #398)", func() {
+		var cfg *config.Config
+		var err error
+
+		BeforeEach(func() {
+			cfg, err = config.LoadWithDefaults("testdata/goldmark_false.yaml")
+		})
+
+		It("explicit unsafe: false is preserved", func() {
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Content.Markdown.Goldmark.UnsafeValue()).To(BeFalse(),
+				"UnsafeValue() must return false when unsafe is explicitly set to false — "+
+					"ApplyDefaults must not overwrite explicit false with default true")
+		})
+
+		It("explicit templateTags: false is preserved", func() {
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Content.Markdown.Goldmark.TemplateTagsValue()).To(BeFalse(),
+				"TemplateTagsValue() must return false when templateTags is explicitly set to false")
+		})
+
+		It("explicit autoHeadingID: false is preserved", func() {
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Content.Markdown.Goldmark.AutoHeadingIDValue()).To(BeFalse(),
+				"AutoHeadingIDValue() must return false when autoHeadingID is explicitly set to false")
+		})
+
+		It("parses autoHeadingID field from config", func() {
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Content.Markdown.Goldmark.AutoHeadingID).NotTo(BeNil(),
+				"AutoHeadingID must be non-nil when explicitly set in config — "+
+					"the *bool field must parse the YAML value, not remain nil")
 		})
 	})
 })

@@ -1,0 +1,9 @@
+title: "Goldmark False Test"
+baseURL: "https://example.com"
+
+content:
+  markdown:
+    goldmark:
+      unsafe: false
+      templateTags: false
+      autoHeadingID: false
