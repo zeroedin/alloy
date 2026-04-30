@@ -36,7 +36,7 @@ func newBuildCommand() *cobra.Command {
 		Use:   "build",
 		Short: "Run the build pipeline and write _site/",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			configPath, _ := cmd.Flags().GetString("config")
+			configPath := resolveConfigPath(cmd)
 
 			configLoaded := true
 			cfg, err := config.LoadWithDefaults(configPath)

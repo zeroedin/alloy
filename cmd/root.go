@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"path/filepath"
+
 	"github.com/spf13/cobra"
 )
 
@@ -25,6 +27,16 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newInitCommand())
 	root.AddCommand(newVersionCommand())
 	return root
+}
+
+// resolveConfigPath returns the config file path, resolving it relative to
+// --root when --config was not explicitly set.
+func resolveConfigPath(cmd *cobra.Command) string {
+	configPath, _ := cmd.Flags().GetString("config")
+	if rootPath, _ := cmd.Flags().GetString("root"); rootPath != "" && !cmd.Flags().Changed("config") {
+		configPath = filepath.Join(rootPath, configPath)
+	}
+	return configPath
 }
 
 var rootCmd = NewRootCommand()
