@@ -451,6 +451,74 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 		})
 	})
 
+	// ── Parallel plugin startup (issue #401) ────────────────────────
+	// LoadPlugins should support concurrent runtime initialization
+	// (Phase A) followed by sequential eval + registration (Phase B).
+	// Parallel init must produce identical results to sequential.
+
+	Describe("Parallel plugin startup (issue #401)", func() {
+		It("InitRuntimes initializes multiple runtimes concurrently", func() {
+			registry := plugin.NewRegistry(filepath.Join(testdataDir(), "plugins-populated"))
+			Expect(registry.DiscoverPlugins()).To(Succeed())
+
+			runtimes, warnings := registry.InitRuntimes()
+			// Some runtimes may fail to init (e.g., WASM stub) — that's OK,
+			// warnings should be collected, not fatal
+			_ = warnings
+
+			Expect(runtimes).NotTo(BeEmpty(),
+				"InitRuntimes must return at least one initialized runtime — "+
+					"if empty, concurrent init failed to produce any usable runtimes")
+		})
+
+		It("parallel init produces same runtimes as sequential LoadPlugins", func() {
+			// Sequential path
+			seqRegistry := plugin.NewRegistry(filepath.Join(testdataDir(), "plugins-populated"))
+			Expect(seqRegistry.DiscoverPlugins()).To(Succeed())
+			seqHooks := plugin.NewHookRegistry()
+			seqRegistry.LoadPlugins(seqHooks)
+			seqRuntimes := seqRegistry.Runtimes()
+
+			// Parallel path
+			parRegistry := plugin.NewRegistry(filepath.Join(testdataDir(), "plugins-populated"))
+			Expect(parRegistry.DiscoverPlugins()).To(Succeed())
+			parRuntimes, _ := parRegistry.InitRuntimes()
+
+			// Both paths must discover the same number of usable runtimes
+			Expect(len(parRuntimes)).To(Equal(len(seqRuntimes)),
+				"parallel InitRuntimes must produce the same number of runtimes as sequential LoadPlugins — "+
+					"if different, some runtimes were lost during concurrent init")
+		})
+
+		It("InitRuntimes collects errors without blocking other plugins", func() {
+			// Create a temp plugins dir with one valid and one invalid plugin
+			tmpDir := GinkgoT().TempDir()
+			// Valid QuickJS plugin
+			Expect(os.WriteFile(
+				filepath.Join(tmpDir, "good.js"),
+				[]byte("export default function(alloy) { alloy.filter('good', (v) => v); }"),
+				0644,
+			)).To(Succeed())
+			// Invalid file — will fail init
+			Expect(os.WriteFile(
+				filepath.Join(tmpDir, "bad.wasm"),
+				[]byte("not a wasm file"),
+				0644,
+			)).To(Succeed())
+
+			registry := plugin.NewRegistry(tmpDir)
+			Expect(registry.DiscoverPlugins()).To(Succeed())
+
+			runtimes, warnings := registry.InitRuntimes()
+			Expect(warnings).NotTo(BeEmpty(),
+				"InitRuntimes must collect warnings for plugins that fail to init — "+
+					"bad.wasm should produce a warning, not block good.js")
+			Expect(runtimes).NotTo(BeEmpty(),
+				"good.js must still initialize even though bad.wasm failed — "+
+					"one plugin's init failure must not block others")
+		})
+	})
+
 	// ── Unified Runtime interface (#237) ────────────────────────────
 	// All plugin tiers must implement the same Runtime interface.
 	// The pipeline's LoadPlugins bridging loop treats all tiers
