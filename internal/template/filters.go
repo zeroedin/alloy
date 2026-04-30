@@ -810,8 +810,16 @@ func toFloat64(v interface{}) (float64, bool) {
 	case float32:
 		return float64(n), true
 	case string:
-		f, err := strconv.ParseFloat(n, 64)
-		return f, err == nil
+		if len(n) == 0 {
+			return 0, false
+		}
+		for _, c := range n {
+			if c < '0' || c > '9' {
+				return 0, false
+			}
+		}
+		i, err := strconv.Atoi(n)
+		return float64(i), err == nil
 	default:
 		return 0, false
 	}
