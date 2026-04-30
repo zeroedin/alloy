@@ -1563,7 +1563,7 @@ func renderPageFormats(page *content.Page, layoutsDir, engineName string, rc *Re
 		}
 		fmtTpl, err := parseLayout(fmtLayoutPath, rc.Engine)
 		if err != nil {
-			return err
+			return fmt.Errorf("format layout %s: %w", fmtLayoutPath, err)
 		}
 		fmtCtx := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "").ToMap()
 		fmtCtx["content"] = string(page.RenderedBody)
@@ -1646,7 +1646,7 @@ func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection,
 		}
 		tpl, err := parseLayout(layoutPath, rc.Engine)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("taxonomy %q layout: %w", taxName, err)
 		}
 
 		taxPages := collection.GenerateTaxonomyPages(tc, taxCfg)
