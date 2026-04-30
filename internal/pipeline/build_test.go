@@ -1547,6 +1547,55 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── onContentTransformed page object payload (issue #448) ───────
+	// onContentTransformed must receive a page object with html, toc,
+	// path, url, and frontMatter — not just an HTML string.
+	// Plugins can mutate toc and frontMatter before layout rendering.
+
+	Describe("onContentTransformed page object payload (issue #448)", func() {
+		It("onContentTransformed receives page object with toc and frontMatter", func() {
+			cfg := &config.Config{
+				Title:   "Hook Payload Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/about.md": "---\ntitle: About\nlayout: default\n---\n## Section One\n\nContent here.\n\n## Section Two\n\nMore content.",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/toc-check.js": "export default function(alloy) {\n  alloy.hook('onContentTransformed', (page) => {\n    if (typeof page === 'string') throw new Error('payload must be object, got string');\n    if (!page.html) throw new Error('page.html missing');\n    if (!page.path) throw new Error('page.path missing');\n    if (!page.frontMatter) throw new Error('page.frontMatter missing');\n    return page;\n  });\n}",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onContentTransformed must receive a page object, not a string — "+
+					"if this fails with 'payload must be object, got string', "+
+					"the hook still sends string(page.RenderedBody) instead of "+
+					"the page object {html, toc, path, url, frontMatter} (issue #448)")
+			Expect(result).NotTo(BeNil())
+		})
+
+		It("onContentTransformed can mutate page.toc", func() {
+			cfg := &config.Config{
+				Title:   "TOC Mutation Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.html": "---\ntitle: Index\nlayout: default\n---\n<h2 id=\"custom\">Custom Heading</h2>\n<p>No goldmark TOC for HTML content.</p>",
+				"layouts/default.liquid": "<html><body>{% for entry in page.toc %}<a href=\"#{{ entry.id }}\">{{ entry.text }}</a>{% endfor %}{{ content }}</body></html>",
+				"plugins/toc-builder.js": "export default function(alloy) {\n  alloy.hook('onContentTransformed', (page) => {\n    if (!page.toc || page.toc.length === 0) {\n      page.toc = [{id: 'custom', text: 'Custom Heading', level: 2}];\n    }\n    return page;\n  });\n}",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.html"]
+			Expect(html).To(ContainSubstring("Custom Heading</a>"),
+				"plugin-built TOC must be available in layout via page.toc — "+
+					"the onContentTransformed hook must be able to set page.toc "+
+					"for non-markdown pages that don't go through goldmark (issue #448)")
+		})
+	})
+
 	// ── SetSiteData pipeline wiring (issue #339) ────────────────────
 	// Build() must call rt.SetSiteData(siteData) for each plugin runtime
 	// after data loading so alloy.data is available in plugins.
