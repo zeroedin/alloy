@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/tetratelabs/wazero"
 )
 
 // PluginTier represents the execution tier of a plugin.
@@ -61,6 +63,8 @@ type Registry struct {
 	filterRegistry  map[string]string      // filter name → source
 	conflictWarns   []string
 	runtimes        []PluginFilterRuntime   // loaded runtimes for filter/shortcode bridging
+	wasmCacheDir    string                 // persistent compilation cache for WASM modules
+	wasmCache       wazero.CompilationCache // shared cache, closed in Close()
 }
 
 // NewRegistry creates a plugin registry for the given plugins directory.
@@ -69,6 +73,21 @@ func NewRegistry(pluginsDir string) *Registry {
 		pluginsDir:     pluginsDir,
 		filterRegistry: make(map[string]string),
 	}
+}
+
+// SetWASMCacheDir configures a persistent compilation cache directory
+// for WASM modules. When set, compiled native code is reused across builds.
+// Creates the cache eagerly so it can be shared across all WASM runtimes.
+func (r *Registry) SetWASMCacheDir(dir string) {
+	r.wasmCacheDir = dir
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	cache, err := wazero.NewCompilationCacheWithDir(dir)
+	if err != nil {
+		return
+	}
+	r.wasmCache = cache
 }
 
 // supportedExtensions lists file extensions recognized as plugins.
@@ -156,6 +175,10 @@ func (r *Registry) Close() {
 		}
 	}
 	r.runtimes = nil
+	if r.wasmCache != nil {
+		r.wasmCache.Close(context.Background())
+		r.wasmCache = nil
+	}
 }
 
 // ClassifyPlugin determines the tier and runtime for a plugin file based on
@@ -246,6 +269,11 @@ func (r *Registry) LoadPlugins(hooks *HookRegistry) []string {
 			r.runtimes = append(r.runtimes, rt)
 		case RuntimeWASM:
 			rt := NewWASMRuntime()
+			if r.wasmCache != nil {
+				rt.SetCompilationCache(r.wasmCache)
+			} else if r.wasmCacheDir != "" {
+				rt.SetCacheDir(r.wasmCacheDir)
+			}
 			if err := rt.LoadModule(p.Path); err != nil {
 				warnings = append(warnings, fmt.Sprintf("plugin %s: load failed: %v", p.Name, err))
 				continue
