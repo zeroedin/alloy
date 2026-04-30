@@ -33,9 +33,6 @@ import (
 	"github.com/zeroedin/alloy/internal/validation"
 )
 
-// ErrNotImplemented is returned by all stub functions.
-var ErrNotImplemented = errors.New("not implemented")
-
 // activeReporter is the current progress reporter, set via SetReporter.
 // Nil means no progress output. Safe for concurrent use since Build is
 // single-threaded.

@@ -1,10 +1,5 @@
 package template
 
-import "errors"
-
-// ErrNotImplemented is returned by all stub functions.
-var ErrNotImplemented = errors.New("not implemented")
-
 // FilterFunc is the signature for template filter functions.
 type FilterFunc func(input interface{}, args ...interface{}) interface{}
 

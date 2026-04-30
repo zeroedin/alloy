@@ -1,13 +1,8 @@
 package cmd
 
 import (
-	"errors"
-
 	"github.com/spf13/cobra"
 )
-
-// ErrNotImplemented is returned by all stub functions.
-var ErrNotImplemented = errors.New("not implemented")
 
 // NewRootCommand creates a fresh root command tree. Tests use this
 // to avoid shared state between test cases.
