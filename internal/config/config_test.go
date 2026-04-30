@@ -265,7 +265,9 @@ var _ = Describe("Config", func() {
 
 		It("defaults content.markdown.goldmark.templateTags to true", func() {
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cfg.Content.Markdown.Goldmark.TemplateTagsValue()).To(BeTrue())
+			Expect(cfg.Content.Markdown.Goldmark.TemplateTagsValue()).To(BeTrue(),
+				"TemplateTagsValue() must return true for minimal config — "+
+					"omitted *bool defaults to true")
 		})
 
 		// ── GoldmarkConfig *bool tri-state semantics (issue #398) ────────
