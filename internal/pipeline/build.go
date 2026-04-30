@@ -87,7 +87,7 @@ type BuildResult struct {
 	Errors              []error
 	SSRSkipped          bool              // true when Phase 2 was skipped (no ssr: config or SkipSSR)
 	PagesRendered       []string          // source paths of pages that were rendered
-	RenderedContent     map[string]string // page key → final rendered HTML (RelPath for regular pages, URL for paginated virtual pages)
+	RenderedContent     map[string]string // page key → final rendered HTML (RelPath for regular pages, URL for generated pages)
 	ContentPassthroughs []string          // relative paths of non-content files copied from content/ to output
 }
 
