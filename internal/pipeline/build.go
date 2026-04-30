@@ -1904,7 +1904,8 @@ func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineSt
 // permalink patterns from cascade _data.yaml, with cfg.Permalinks as fallback.
 // Only top-level section directories are extracted (e.g. content/blog/ → "blog"),
 // matching ResolveForSection's section-name lookup. Nested _data.yaml permalink
-// patterns (e.g. content/blog/2026/) are handled per-page via cascade.FindCascadeData.
+// patterns (e.g. content/blog/2026/) are not extracted — ResolveForSection only
+// looks up by section name (first path component).
 func buildPermalinkCfg(ps *PipelineState, fallback map[string]string) map[string]string {
 	result := make(map[string]string, len(fallback))
 	for k, v := range fallback {
