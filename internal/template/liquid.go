@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/Notifuse/liquidgo/liquid"
 	"github.com/Notifuse/liquidgo/liquid/tags"
@@ -207,13 +208,31 @@ func (t *liquidTemplate) Render(ctx map[string]interface{}) ([]byte, error) {
 	return []byte(result), nil
 }
 
+var (
+	defaultEnv     *liquid.Environment
+	defaultEnvOnce sync.Once
+)
+
+func getDefaultEnv() *liquid.Environment {
+	defaultEnvOnce.Do(func() {
+		defaultEnv = liquid.NewEnvironment()
+		tags.RegisterStandardTags(defaultEnv)
+		bridge := &alloyFilterBridge{
+			funcs: make(map[string]FilterFunc, len(builtinFilters)),
+		}
+		for name, fn := range builtinFilters {
+			bridge.funcs[name] = fn
+		}
+		defaultEnv.RegisterFilter(bridge)
+	})
+	return defaultEnv
+}
+
 // RenderTemplate renders a template string with the given context.
 // Returns an error that includes the source file path on failure.
 func RenderTemplate(source string, sourcePath string, ctx map[string]interface{}) (string, error) {
-	env := liquid.NewEnvironment()
-	tags.RegisterStandardTags(env)
 	opts := &liquid.TemplateOptions{
-		Environment:   env,
+		Environment:   getDefaultEnv(),
 		StrictFilters: true,
 	}
 	tpl, err := liquid.ParseTemplate(source, opts)
