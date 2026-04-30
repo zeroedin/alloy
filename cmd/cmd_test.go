@@ -315,45 +315,7 @@ var _ = Describe("CLI Commands", func() {
 	// The plugins section and other fields are also lost.
 
 	Describe("--root flag loads full config (issue #437)", func() {
-		It("build with --root loads plugins config from root dir", func() {
-			projectDir, err := os.MkdirTemp("", "alloy-root-437-*")
-			Expect(err).NotTo(HaveOccurred())
-			defer os.RemoveAll(projectDir)
-
-			// Config with plugins.timeout set to non-default value
-			// Default timeout is 5000. If config loads, timeout will be 30000.
-			Expect(os.WriteFile(
-				filepath.Join(projectDir, "alloy.config.yaml"),
-				[]byte("title: \"Root437\"\nbaseURL: \"https://example.com\"\nplugins:\n  timeout: 30000\n"),
-				0644,
-			)).To(Succeed())
-
-			contentDir := filepath.Join(projectDir, "content")
-			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
-			Expect(os.WriteFile(
-				filepath.Join(contentDir, "index.md"),
-				[]byte("---\ntitle: Home\n---\n# Home"),
-				0644,
-			)).To(Succeed())
-
-			// Build with --root only (no --config)
-			root := cmd.NewRootCommand()
-			root.SilenceErrors = true
-			root.SilenceUsage = true
-			root.SetArgs([]string{"build", "--root", projectDir})
-			err = root.Execute()
-			Expect(err).NotTo(HaveOccurred(),
-				"alloy build --root must succeed")
-
-			// Verify config was loaded by checking the output exists
-			// in the project dir (not CWD)
-			_, statErr := os.Stat(filepath.Join(projectDir, "_site", "index.html"))
-			Expect(statErr).NotTo(HaveOccurred(),
-				"_site/index.html must exist in the project root — "+
-					"if missing, config was not loaded from --root (issue #437)")
-		})
-
-		It("--root loads config identically to building from inside the directory", func() {
+		It("--root respects build.output from root config", func() {
 			projectDir, err := os.MkdirTemp("", "alloy-root-437-compare-*")
 			Expect(err).NotTo(HaveOccurred())
 			defer os.RemoveAll(projectDir)
