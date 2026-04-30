@@ -242,9 +242,39 @@ func hasNodeRuntimeExport(src string) bool {
 		strings.Contains(src, "runtime: 'node'")
 }
 
+// registerRuntime registers a loaded runtime's filters and hooks, and appends
+// it to the registry's runtime list. Shared by both loading paths.
+func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, hooks *HookRegistry) {
+	for _, fname := range rt.RegisteredFilters() {
+		r.RegisterFilter(fname, "plugins/"+pluginName)
+	}
+	if caller, ok := rt.(interface {
+		CallHook(string, interface{}) (interface{}, error)
+	}); ok {
+		for _, hookName := range rt.RegisteredHooks() {
+			name := hookName
+			hooks.Register(HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {
+				return caller.CallHook(name, payload)
+			})
+		}
+	}
+	r.runtimes = append(r.runtimes, rt)
+}
+
+// closeRuntime closes a runtime if it implements Close().
+func closeRuntime(rt PluginFilterRuntime) {
+	if c, ok := rt.(interface{ Close() }); ok {
+		c.Close()
+	}
+}
+
 // InitRuntimes concurrently initializes runtimes for all discovered plugins
 // (Phase A). Runtimes are created and compiled but not evaluated — no filters
 // or hooks are registered. Call LoadPlugins after to complete Phase B.
+//
+// QuickJS and WASM plugins run in goroutines (CPU-bound compilation).
+// Node plugins are initialized sequentially on the calling goroutine
+// because subprocess spawn is I/O-bound with side effects.
 func (r *Registry) InitRuntimes() ([]PluginFilterRuntime, []string) {
 	type result struct {
 		idx     int
@@ -258,26 +288,17 @@ func (r *Registry) InitRuntimes() ([]PluginFilterRuntime, []string) {
 		results []result
 	)
 
-	var nodeChecked bool
-	var nodeAvailableErr error
+	nodeAvailableErr := CheckNodeAvailable()
 
 	for i, p := range r.plugins {
 		if p.Runtime == RuntimeNode {
-			if !nodeChecked {
-				nodeAvailableErr = CheckNodeAvailable()
-				nodeChecked = true
-			}
 			if nodeAvailableErr != nil {
-				mu.Lock()
 				results = append(results, result{idx: i, warning: fmt.Sprintf("plugin %s: %v", p.Name, nodeAvailableErr)})
-				mu.Unlock()
 				continue
 			}
 			rt := NewNodeRuntime()
 			rt.SetProjectRoot(filepath.Dir(filepath.Clean(r.pluginsDir)))
-			mu.Lock()
 			results = append(results, result{idx: i, plugin: initializedPlugin{info: p, runtime: rt}})
-			mu.Unlock()
 			continue
 		}
 
@@ -320,6 +341,7 @@ func (r *Registry) InitRuntimes() ([]PluginFilterRuntime, []string) {
 
 	var runtimes []PluginFilterRuntime
 	var warnings []string
+	r.preInitialized = nil
 	for _, res := range results {
 		if res.warning != "" {
 			warnings = append(warnings, res.warning)
@@ -327,12 +349,6 @@ func (r *Registry) InitRuntimes() ([]PluginFilterRuntime, []string) {
 		}
 		if res.plugin.runtime != nil {
 			runtimes = append(runtimes, res.plugin.runtime)
-		}
-	}
-
-	r.preInitialized = nil
-	for _, res := range results {
-		if res.plugin.runtime != nil {
 			r.preInitialized = append(r.preInitialized, res.plugin)
 		}
 	}
@@ -360,43 +376,21 @@ func (r *Registry) loadPreInitialized(hooks *HookRegistry) []string {
 		case RuntimeQuickJS:
 			rt := ip.runtime.(*QuickJSRuntime)
 			if err := rt.EvalFile(ip.info.Path); err != nil {
+				closeRuntime(rt)
 				warnings = append(warnings, fmt.Sprintf("plugin %s: eval failed: %v", ip.info.Name, err))
 				continue
 			}
-			for _, fname := range rt.RegisteredFilters() {
-				r.RegisterFilter(fname, "plugins/"+ip.info.Name)
-			}
-			for _, hookName := range rt.RegisteredHooks() {
-				name := hookName
-				runtime := rt
-				hooks.Register(HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {
-					return runtime.CallHook(name, payload)
-				})
-			}
-			r.runtimes = append(r.runtimes, rt)
+			r.registerRuntime(rt, ip.info.Name, hooks)
 		case RuntimeWASM:
-			for _, fname := range ip.runtime.RegisteredFilters() {
-				r.RegisterFilter(fname, "plugins/"+ip.info.Name)
-			}
-			r.runtimes = append(r.runtimes, ip.runtime)
+			r.registerRuntime(ip.runtime, ip.info.Name, hooks)
 		case RuntimeNode:
 			rt := ip.runtime.(*NodeRuntime)
 			if err := rt.EvalFile(ip.info.Path); err != nil {
-				rt.Close()
+				closeRuntime(rt)
 				warnings = append(warnings, fmt.Sprintf("plugin %s: eval failed: %v", ip.info.Name, err))
 				continue
 			}
-			for _, fname := range rt.RegisteredFilters() {
-				r.RegisterFilter(fname, "plugins/"+ip.info.Name)
-			}
-			for _, hookName := range rt.RegisteredHooks() {
-				name := hookName
-				runtime := rt
-				hooks.Register(HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {
-					return runtime.CallHook(name, payload)
-				})
-			}
-			r.runtimes = append(r.runtimes, rt)
+			r.registerRuntime(rt, ip.info.Name, hooks)
 		}
 	}
 	r.preInitialized = nil
@@ -406,8 +400,7 @@ func (r *Registry) loadPreInitialized(hooks *HookRegistry) []string {
 // loadSequential initializes and evaluates all plugins sequentially (both phases).
 func (r *Registry) loadSequential(hooks *HookRegistry) []string {
 	var warnings []string
-	var nodeChecked bool
-	var nodeAvailableErr error
+	nodeAvailableErr := CheckNodeAvailable()
 	for _, p := range r.plugins {
 		switch p.Runtime {
 		case RuntimeQuickJS:
@@ -417,20 +410,11 @@ func (r *Registry) loadSequential(hooks *HookRegistry) []string {
 				continue
 			}
 			if err := rt.EvalFile(p.Path); err != nil {
+				closeRuntime(rt)
 				warnings = append(warnings, fmt.Sprintf("plugin %s: eval failed: %v", p.Name, err))
 				continue
 			}
-			for _, fname := range rt.RegisteredFilters() {
-				r.RegisterFilter(fname, "plugins/"+p.Name)
-			}
-			for _, hookName := range rt.RegisteredHooks() {
-				name := hookName
-				runtime := rt
-				hooks.Register(HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {
-					return runtime.CallHook(name, payload)
-				})
-			}
-			r.runtimes = append(r.runtimes, rt)
+			r.registerRuntime(rt, p.Name, hooks)
 		case RuntimeWASM:
 			rt := NewWASMRuntime()
 			if r.wasmCache != nil {
@@ -442,15 +426,8 @@ func (r *Registry) loadSequential(hooks *HookRegistry) []string {
 				warnings = append(warnings, fmt.Sprintf("plugin %s: load failed: %v", p.Name, err))
 				continue
 			}
-			for _, fname := range rt.RegisteredFilters() {
-				r.RegisterFilter(fname, "plugins/"+p.Name)
-			}
-			r.runtimes = append(r.runtimes, rt)
+			r.registerRuntime(rt, p.Name, hooks)
 		case RuntimeNode:
-			if !nodeChecked {
-				nodeAvailableErr = CheckNodeAvailable()
-				nodeChecked = true
-			}
 			if nodeAvailableErr != nil {
 				warnings = append(warnings, fmt.Sprintf("plugin %s: %v", p.Name, nodeAvailableErr))
 				continue
@@ -458,21 +435,11 @@ func (r *Registry) loadSequential(hooks *HookRegistry) []string {
 			rt := NewNodeRuntime()
 			rt.SetProjectRoot(filepath.Dir(filepath.Clean(r.pluginsDir)))
 			if err := rt.EvalFile(p.Path); err != nil {
-				rt.Close()
+				closeRuntime(rt)
 				warnings = append(warnings, fmt.Sprintf("plugin %s: eval failed: %v", p.Name, err))
 				continue
 			}
-			for _, fname := range rt.RegisteredFilters() {
-				r.RegisterFilter(fname, "plugins/"+p.Name)
-			}
-			for _, hookName := range rt.RegisteredHooks() {
-				name := hookName
-				runtime := rt
-				hooks.Register(HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {
-					return runtime.CallHook(name, payload)
-				})
-			}
-			r.runtimes = append(r.runtimes, rt)
+			r.registerRuntime(rt, p.Name, hooks)
 		}
 	}
 	return warnings
