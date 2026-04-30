@@ -15,9 +15,39 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lestrrat-go/strftime"
 	"github.com/yuin/goldmark"
 	"github.com/zeroedin/alloy/internal/content"
 )
+
+var (
+	strftimeCache   = make(map[string]*strftime.Strftime)
+	strftimeCacheMu sync.RWMutex
+)
+
+func getStrftimePattern(format string) (*strftime.Strftime, error) {
+	strftimeCacheMu.RLock()
+	p, ok := strftimeCache[format]
+	strftimeCacheMu.RUnlock()
+	if ok {
+		return p, nil
+	}
+
+	strftimeCacheMu.Lock()
+	defer strftimeCacheMu.Unlock()
+
+	if p, ok := strftimeCache[format]; ok {
+		return p, nil
+	}
+
+	p, err := strftime.New(format)
+	if err != nil {
+		return nil, err
+	}
+
+	strftimeCache[format] = p
+	return p, nil
+}
 
 // RegisterBuiltinFilters registers all Tier 1 built-in filters on the given engine.
 func RegisterBuiltinFilters(engine TemplateEngine) error {
@@ -277,31 +307,11 @@ func DateFormat(input interface{}, args ...interface{}) interface{} {
 		return toString(input)
 	}
 
-	return strftimeFormat(t, format)
-}
-
-// strftimeFormat converts strftime-style format to Go time format
-func strftimeFormat(t time.Time, format string) string {
-	replacements := map[string]string{
-		"%Y": "2006",
-		"%m": "01",
-		"%d": "02",
-		"%H": "15",
-		"%M": "04",
-		"%S": "05",
-		"%B": "January",
-		"%b": "Jan",
-		"%A": "Monday",
-		"%a": "Mon",
-		"%p": "PM",
-		"%Z": "MST",
-		"%z": "-0700",
+	p, err := getStrftimePattern(format)
+	if err != nil {
+		return format
 	}
-	result := format
-	for k, v := range replacements {
-		result = strings.ReplaceAll(result, k, v)
-	}
-	return t.Format(result)
+	return p.FormatString(t)
 }
 
 // --- Array filters ---
