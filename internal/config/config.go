@@ -76,11 +76,25 @@ type MarkdownConfig struct {
 }
 
 // GoldmarkConfig holds goldmark-specific options.
+// Boolean fields that default to true use *bool so ApplyDefaults
+// can distinguish "not set" (nil → true) from "explicitly false".
 type GoldmarkConfig struct {
-	Unsafe        bool  `yaml:"unsafe" toml:"unsafe" json:"unsafe"`
+	Unsafe        *bool `yaml:"unsafe" toml:"unsafe" json:"unsafe"`
 	Typographer   bool  `yaml:"typographer" toml:"typographer" json:"typographer"`
-	TemplateTags  bool  `yaml:"templateTags" toml:"templateTags" json:"templateTags"`
+	TemplateTags  *bool `yaml:"templateTags" toml:"templateTags" json:"templateTags"`
 	AutoHeadingID *bool `yaml:"autoHeadingID" toml:"autoHeadingID" json:"autoHeadingID"`
+}
+
+// UnsafeValue returns the effective Unsafe setting.
+// nil (omitted) defaults to true; only explicit false disables.
+func (g *GoldmarkConfig) UnsafeValue() bool {
+	return g.Unsafe == nil || *g.Unsafe
+}
+
+// TemplateTagsValue returns the effective TemplateTags setting.
+// nil (omitted) defaults to true; only explicit false disables.
+func (g *GoldmarkConfig) TemplateTagsValue() bool {
+	return g.TemplateTags == nil || *g.TemplateTags
 }
 
 // AutoHeadingIDValue returns the effective AutoHeadingID setting.
@@ -227,12 +241,8 @@ func ApplyDefaults(cfg *Config) {
 	if len(cfg.Content.Formats) == 0 {
 		cfg.Content.Formats = []string{"md", "html"}
 	}
-	// TemplateTags defaults to true (zero value is false, so we apply on fresh configs)
-	// We need a way to know if it was explicitly set. Since we can't distinguish,
-	// for LoadWithDefaults we always set it if the whole markdown section is empty.
-	// Actually the spec says default true, so we set it.
-	cfg.Content.Markdown.Goldmark.TemplateTags = true
-	cfg.Content.Markdown.Goldmark.Unsafe = true
+	// Unsafe, TemplateTags, and AutoHeadingID default to true via *bool
+	// nil semantics — no overwrite needed here.
 	if cfg.Pagination.Path == "" {
 		cfg.Pagination.Path = "page"
 	}

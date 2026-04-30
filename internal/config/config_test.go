@@ -64,9 +64,9 @@ var _ = Describe("Config", func() {
 
 			It("parses content.markdown.goldmark options", func() {
 				Expect(err).NotTo(HaveOccurred())
-				Expect(cfg.Content.Markdown.Goldmark.Unsafe).To(BeTrue())
+				Expect(cfg.Content.Markdown.Goldmark.UnsafeValue()).To(BeTrue())
 				Expect(cfg.Content.Markdown.Goldmark.Typographer).To(BeTrue())
-				Expect(cfg.Content.Markdown.Goldmark.TemplateTags).To(BeTrue())
+				Expect(cfg.Content.Markdown.Goldmark.TemplateTagsValue()).To(BeTrue())
 			})
 
 			It("parses templates.engine", func() {
@@ -265,7 +265,7 @@ var _ = Describe("Config", func() {
 
 		It("defaults content.markdown.goldmark.templateTags to true", func() {
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cfg.Content.Markdown.Goldmark.TemplateTags).To(BeTrue())
+			Expect(cfg.Content.Markdown.Goldmark.TemplateTagsValue()).To(BeTrue())
 		})
 
 		It("defaults pagination.path to page", func() {
