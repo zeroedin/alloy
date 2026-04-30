@@ -247,6 +247,68 @@ var _ = Describe("CLI Commands", func() {
 		})
 	})
 
+	// ── --root config resolution (issue #380) ───────────────────────
+	// When --root is set and --config is not explicitly provided,
+	// the config file must be loaded from the root directory, not CWD.
+
+	Describe("--root flag resolves config from root directory (issue #380)", func() {
+		It("build with --root loads taxonomies from root config", func() {
+			// The bug: --root sets ProjectRoot but config is loaded from CWD.
+			// Config-dependent features (taxonomies, permalinks) are nil.
+			// This test creates a project with taxonomies in its config and
+			// verifies they're loaded when using --root without --config.
+			projectDir, err := os.MkdirTemp("", "alloy-root-380-*")
+			Expect(err).NotTo(HaveOccurred())
+			defer os.RemoveAll(projectDir)
+
+			// Config with taxonomies — will be nil if loaded from CWD
+			Expect(os.WriteFile(
+				filepath.Join(projectDir, "alloy.config.yaml"),
+				[]byte("title: \"Root380\"\nbaseURL: \"https://example.com\"\ntaxonomies:\n  tags:\n    render: false\n"),
+				0644,
+			)).To(Succeed())
+
+			// Content with tags — needs taxonomies config to be processed
+			contentDir := filepath.Join(projectDir, "content")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(
+				filepath.Join(contentDir, "post.md"),
+				[]byte("---\ntitle: Post\ntags: [\"go\"]\nlayout: default\n---\n# Post"),
+				0644,
+			)).To(Succeed())
+			Expect(os.WriteFile(
+				filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Index\nlayout: default\n---\n{% for p in taxonomies.tags.go %}<span class=\"tagged\">{{ p.title }}</span>{% endfor %}"),
+				0644,
+			)).To(Succeed())
+
+			layoutsDir := filepath.Join(projectDir, "layouts")
+			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(
+				filepath.Join(layoutsDir, "default.liquid"),
+				[]byte("<html><body>{{ content }}</body></html>"),
+				0644,
+			)).To(Succeed())
+
+			// Build with --root only (no --config)
+			root := cmd.NewRootCommand()
+			root.SilenceErrors = true
+			root.SilenceUsage = true
+			root.SetArgs([]string{"build", "--root", projectDir})
+			err = root.Execute()
+			Expect(err).NotTo(HaveOccurred())
+
+			// Read the index output — if taxonomies loaded, tags.go is populated
+			indexHTML, readErr := os.ReadFile(filepath.Join(projectDir, "_site", "index.html"))
+			Expect(readErr).NotTo(HaveOccurred(),
+				"index.html must be generated in _site/")
+			Expect(string(indexHTML)).To(ContainSubstring("tagged"),
+				"taxonomies.tags.go must be populated when using --root — "+
+					"if empty, cfg.Taxonomies is nil because config was loaded from CWD "+
+					"(empty defaults) instead of from the --root directory (issue #380)")
+		})
+	})
+
 	// ── alloy init behavior ──────────────────────────────────────────
 
 	Describe("alloy init", func() {
