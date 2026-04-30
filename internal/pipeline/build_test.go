@@ -1081,6 +1081,52 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Taxonomy layout with front matter (issue #418) ──────────────
+	// Taxonomy layouts may contain YAML front matter (e.g., layout: base
+	// for chaining). The pipeline must strip front matter before parsing
+	// the taxonomy layout — otherwise the --- delimiters render as text.
+
+	Describe("Taxonomy layout with front matter (issue #418)", func() {
+		It("taxonomy layout front matter is stripped before rendering", func() {
+			renderTrue := true
+			cfg := &config.Config{
+				Title:   "Taxonomy Layout FM Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags": {Render: &renderTrue, Layout: "tags"},
+				},
+			}
+			contentMap := map[string]string{
+				"content/post-a.md": "---\ntitle: Post A\ntags: [\"go\"]\nlayout: default\n---\n# Post A",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"layouts/tags.liquid": "---\nlayout: base\n---\n<div class=\"taxonomy\">{{ taxonomy.term }}</div>",
+				"layouts/base.liquid": "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"build must not error when taxonomy layout has front matter — "+
+					"if this fails, the layout parser is not stripping front matter")
+			Expect(result).NotTo(BeNil())
+
+			// Find a taxonomy page in rendered output
+			found := false
+			for key, html := range result.RenderedContent {
+				if strings.Contains(key, "tags") {
+					found = true
+					Expect(html).NotTo(ContainSubstring("---"),
+						"taxonomy layout front matter delimiters must be stripped — "+
+							"if '---' appears in output, StripLayoutFrontMatter was not called")
+					Expect(html).NotTo(ContainSubstring("layout: base"),
+						"taxonomy layout front matter content must not appear in rendered output")
+					break
+				}
+			}
+			Expect(found).To(BeTrue(),
+				"at least one taxonomy page must render when Render: true")
+		})
+	})
+
 	// ── page.toc pipeline wiring (issue #274) ───────────────────────
 	// page.toc must be populated during Build and accessible in templates.
 
