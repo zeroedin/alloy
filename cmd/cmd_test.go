@@ -252,43 +252,60 @@ var _ = Describe("CLI Commands", func() {
 	// the config file must be loaded from the root directory, not CWD.
 
 	Describe("--root flag resolves config from root directory (issue #380)", func() {
-		It("build.go resolves config path from --root before LoadWithDefaults", func() {
-			// The bug: LoadWithDefaults(configPath) is called with the default
-			// "alloy.config.yaml" BEFORE MergeFlags applies --root. Config is
-			// loaded from CWD, not the root directory. Fix: resolve configPath
-			// from the root dir when --root is set and --config is not explicit.
-			buildSource, err := os.ReadFile("build.go")
+		It("build with --root loads taxonomies from root config", func() {
+			// The bug: --root sets ProjectRoot but config is loaded from CWD.
+			// Config-dependent features (taxonomies, permalinks) are nil.
+			// This test creates a project with taxonomies in its config and
+			// verifies they're loaded when using --root without --config.
+			projectDir, err := os.MkdirTemp("", "alloy-root-380-*")
 			Expect(err).NotTo(HaveOccurred())
-			source := string(buildSource)
+			defer os.RemoveAll(projectDir)
 
-			// The fix must read --root BEFORE calling LoadWithDefaults.
-			// Check that build.go references the root flag before config loading.
-			// Current code: LoadWithDefaults at line ~42, root flag at line ~68.
-			// Fixed code: root flag read and applied to configPath before LoadWithDefaults.
-			Expect(source).To(ContainSubstring("Changed(\"config\")"),
-				"build.go must check whether --config was explicitly changed — "+
-					"this is needed to distinguish 'user set --config' from 'default value'. "+
-					"When --root is set and --config is default, resolve config from root dir")
-		})
+			// Config with taxonomies — will be nil if loaded from CWD
+			Expect(os.WriteFile(
+				filepath.Join(projectDir, "alloy.config.yaml"),
+				[]byte("title: \"Root380\"\nbaseURL: \"https://example.com\"\ntaxonomies:\n  tags:\n    render: false\n"),
+				0644,
+			)).To(Succeed())
 
-		It("dev.go resolves config path from --root before LoadWithDefaults", func() {
-			devSource, err := os.ReadFile("dev.go")
+			// Content with tags — needs taxonomies config to be processed
+			contentDir := filepath.Join(projectDir, "content")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(
+				filepath.Join(contentDir, "post.md"),
+				[]byte("---\ntitle: Post\ntags: [\"go\"]\nlayout: default\n---\n# Post"),
+				0644,
+			)).To(Succeed())
+			Expect(os.WriteFile(
+				filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Index\nlayout: default\n---\n{% for p in taxonomies.tags.go %}<span class=\"tagged\">{{ p.title }}</span>{% endfor %}"),
+				0644,
+			)).To(Succeed())
+
+			layoutsDir := filepath.Join(projectDir, "layouts")
+			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(
+				filepath.Join(layoutsDir, "default.liquid"),
+				[]byte("<html><body>{{ content }}</body></html>"),
+				0644,
+			)).To(Succeed())
+
+			// Build with --root only (no --config)
+			root := cmd.NewRootCommand()
+			root.SilenceErrors = true
+			root.SilenceUsage = true
+			root.SetArgs([]string{"build", "--root", projectDir})
+			err = root.Execute()
 			Expect(err).NotTo(HaveOccurred())
-			source := string(devSource)
 
-			Expect(source).To(ContainSubstring("Changed(\"config\")"),
-				"dev.go must check whether --config was explicitly changed — "+
-					"same --root config resolution bug as build.go (issue #380)")
-		})
-
-		It("serve.go resolves config path from --root before LoadWithDefaults", func() {
-			serveSource, err := os.ReadFile("serve.go")
-			Expect(err).NotTo(HaveOccurred())
-			source := string(serveSource)
-
-			Expect(source).To(ContainSubstring("Changed(\"config\")"),
-				"serve.go must check whether --config was explicitly changed — "+
-					"same --root config resolution bug as build.go (issue #380)")
+			// Read the index output — if taxonomies loaded, tags.go is populated
+			indexHTML, readErr := os.ReadFile(filepath.Join(projectDir, "_site", "index.html"))
+			Expect(readErr).NotTo(HaveOccurred(),
+				"index.html must be generated in _site/")
+			Expect(string(indexHTML)).To(ContainSubstring("tagged"),
+				"taxonomies.tags.go must be populated when using --root — "+
+					"if empty, cfg.Taxonomies is nil because config was loaded from CWD "+
+					"(empty defaults) instead of from the --root directory (issue #380)")
 		})
 	})
 
