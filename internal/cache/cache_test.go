@@ -181,11 +181,6 @@ var _ = Describe("Build Cache (§10 Performance Architecture)", func() {
 				"untracked template should return nil")
 		})
 
-		It("config change signals full rebuild of all pages", func() {
-			c := cache.New()
-			Expect(c.InvalidateAll()).To(BeTrue(),
-				"config change must signal full rebuild")
-		})
 	})
 
 	// ── Cache lifecycle ──────────────────────────────────────────────

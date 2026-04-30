@@ -141,12 +141,6 @@ func (c *Cache) InvalidatedPages(changedTemplate string) []string {
 	return pages
 }
 
-// InvalidateAll returns a signal that all pages need rebuilding
-// (e.g., config change). Returns true if a full rebuild is required.
-func (c *Cache) InvalidateAll() bool {
-	return true
-}
-
 // ShouldSkipFile returns true if the file content hash matches the stored hash,
 // meaning the file has not changed and can be skipped entirely (no re-parse, no re-render).
 func (c *Cache) ShouldSkipFile(path string, currentContent []byte) bool {
