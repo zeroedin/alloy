@@ -47,7 +47,7 @@ These packages depend only on stdlib or already-defined types.
 ### 1B: `internal/data` — 8 tests
 **File**: `internal/data/loader.go`
 
-- `LoadFile`: Detect format by extension (.yaml/.yml, .toml, .json), parse with appropriate library
+- `LoadFile`: Detect format by extension (.yaml/.yml, .toml, .json), parse with appropriate library. **JSON key order preservation (issue #446)**: When loading `.json` files, use `json.Decoder` with `Token()` to stream keys in document order. Inject a `_keys` metadata array at each object level recording the original key insertion order. Downstream code (templates, plugins) can iterate `_keys` to process entries in source order, falling back to `Object.keys()` / map iteration for non-JSON data. Keep `map[string]interface{}` as the data type — no breaking changes. The `_keys` array is metadata, not user data — it does not appear in template output unless explicitly accessed.
 - `LoadDirectory`: Walk dir, `LoadFile` each, key by filename without extension. **Stem collision detection**: Track seen stem names. If two files share a stem (e.g., `team.csv` and `team.yaml`), return an error listing both files. No silent overwrites — consistent with output path conflict philosophy (§2).
 - `LoadCSV`: `encoding/csv`, first row = headers, subsequent rows = `[]map[string]string`
 - **External data files (issue #271)**: `loadSiteData` in `build.go` must also load files from `cfg.Data.Files` (a `map[string]string` of key → path). For each entry, resolve the path relative to `cfg.ProjectRoot`, call `data.LoadFile`, and add the result to `siteData[key]`. Check for collisions with `data/` directory keys. File not found is a build error. Add `DataConfig` struct to `config.go` with `Files map[string]string` field.
