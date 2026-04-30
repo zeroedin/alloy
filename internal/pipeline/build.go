@@ -415,7 +415,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, engineName, cfg.Permalinks)
 			if err != nil {
 				if layoutVal, hasLayout := page.FrontMatter["layout"]; hasLayout && layoutVal != nil {
-					log.Printf("warning: layout %q not found for %s: %v", layoutVal, page.RelPath, err)
+					log.Printf("warning: layout %v not found for %s: %v", layoutVal, page.RelPath, err)
 				}
 				continue
 			}
