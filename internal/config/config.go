@@ -155,13 +155,6 @@ type SitemapConfig struct {
 	Priority   float64 `yaml:"priority" toml:"priority" json:"priority"`
 }
 
-// FeedConfig holds RSS/Atom feed settings.
-type FeedConfig struct {
-	Collection string `yaml:"collection" toml:"collection" json:"collection"`
-	Limit      int    `yaml:"limit" toml:"limit" json:"limit"`
-	Title      string `yaml:"title" toml:"title" json:"title"`
-}
-
 // LanguageConfig holds per-language settings for i18n.
 type LanguageConfig struct {
 	Title   string            `yaml:"title" toml:"title" json:"title"`
