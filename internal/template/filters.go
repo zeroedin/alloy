@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yuin/goldmark"
@@ -609,6 +610,7 @@ func Abs(input interface{}, args ...interface{}) interface{} {
 // --- Content filters ---
 
 var markdownifyMD goldmark.Markdown
+var markdownifyOnce sync.Once
 
 // InitMarkdownify creates the shared goldmark instance for the markdownify
 // filter using config-driven options. Called from createEngine after config
@@ -623,10 +625,12 @@ func InitMarkdownify(opts content.MarkdownOptions) {
 
 func Markdownify(input interface{}, args ...interface{}) interface{} {
 	if markdownifyMD == nil {
-		InitMarkdownify(content.MarkdownOptions{
-			Unsafe:        true,
-			Typographer:   true,
-			AutoHeadingID: true,
+		markdownifyOnce.Do(func() {
+			InitMarkdownify(content.MarkdownOptions{
+				Unsafe:        true,
+				Typographer:   true,
+				AutoHeadingID: true,
+			})
 		})
 	}
 	s := toString(input)

@@ -77,9 +77,10 @@ type MarkdownConfig struct {
 
 // GoldmarkConfig holds goldmark-specific options.
 type GoldmarkConfig struct {
-	Unsafe       bool `yaml:"unsafe" toml:"unsafe" json:"unsafe"`
-	Typographer  bool `yaml:"typographer" toml:"typographer" json:"typographer"`
-	TemplateTags bool `yaml:"templateTags" toml:"templateTags" json:"templateTags"`
+	Unsafe        bool `yaml:"unsafe" toml:"unsafe" json:"unsafe"`
+	Typographer   bool `yaml:"typographer" toml:"typographer" json:"typographer"`
+	TemplateTags  bool `yaml:"templateTags" toml:"templateTags" json:"templateTags"`
+	AutoHeadingID bool `yaml:"autoHeadingID" toml:"autoHeadingID" json:"autoHeadingID"`
 }
 
 // TemplatesConfig holds the template engine selection.
@@ -226,6 +227,7 @@ func ApplyDefaults(cfg *Config) {
 	// Actually the spec says default true, so we set it.
 	cfg.Content.Markdown.Goldmark.TemplateTags = true
 	cfg.Content.Markdown.Goldmark.Unsafe = true
+	cfg.Content.Markdown.Goldmark.AutoHeadingID = true
 	if cfg.Pagination.Path == "" {
 		cfg.Pagination.Path = "page"
 	}
