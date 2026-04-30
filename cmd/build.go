@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/pipeline"
+	"golang.org/x/term"
 )
 
 // isTTY returns true if stdout is an interactive terminal.
@@ -23,8 +24,11 @@ func isTTY() bool {
 
 // termWidth returns the terminal width, defaulting to 80.
 func termWidth() int {
-	// TODO: use golang.org/x/term for actual terminal width
-	return 80
+	w, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || w <= 0 {
+		return 80
+	}
+	return w
 }
 
 func newBuildCommand() *cobra.Command {
