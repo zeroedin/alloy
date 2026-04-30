@@ -1903,6 +1903,11 @@ func createEngine(cfg *config.Config) (tmpl.TemplateEngine, error) {
 	} else {
 		engine = tmpl.NewLiquidEngine()
 	}
+	tmpl.InitMarkdownify(content.MarkdownOptions{
+		Unsafe:        cfg.Content.Markdown.Goldmark.Unsafe,
+		Typographer:   cfg.Content.Markdown.Goldmark.Typographer,
+		AutoHeadingID: true,
+	})
 	if err := tmpl.RegisterBuiltinFilters(engine); err != nil {
 		return nil, fmt.Errorf("registering template filters: %w", err)
 	}

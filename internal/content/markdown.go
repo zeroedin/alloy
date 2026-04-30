@@ -36,6 +36,10 @@ type MarkdownOptions struct {
 var templateTagPattern = regexp.MustCompile(`(?s)(\{\{.*?\}\}|\{%.*?%\})`)
 
 // CreateGoldmark builds a configured goldmark instance from options.
+// It configures extensions (Table, TaskList, Footnote, optionally Typographer),
+// parser options (AutoHeadingID, Attribute), and renderer options (Unsafe).
+// TemplateTags preprocessing is NOT handled here — callers that need it
+// (e.g., RenderMarkdown) must call preprocessSource separately.
 func CreateGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) goldmark.Markdown {
 	extensions := []goldmark.Extender{
 		extension.Table,
