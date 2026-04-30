@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -318,11 +319,11 @@ func Sort(input interface{}, args ...interface{}) interface{} {
 		sort.SliceStable(result, func(i, j int) bool {
 			a := getMapValue(result[i], key)
 			b := getMapValue(result[j], key)
-			return toString(a) < toString(b)
+			return compareValues(a, b)
 		})
 	} else {
 		sort.SliceStable(result, func(i, j int) bool {
-			return toString(result[i]) < toString(result[j])
+			return compareValues(result[i], result[j])
 		})
 	}
 	return result
@@ -803,6 +804,50 @@ func isBuiltinName(name string) bool {
 }
 
 // --- Helper functions ---
+
+func compareValues(a, b interface{}) bool {
+	if a == nil && b == nil {
+		return false
+	}
+	if a == nil {
+		return false
+	}
+	if b == nil {
+		return true
+	}
+	aNum, aOk := toFloat64(a)
+	bNum, bOk := toFloat64(b)
+	if aOk && bOk {
+		return aNum < bNum
+	}
+	return toString(a) < toString(b)
+}
+
+func toFloat64(v interface{}) (float64, bool) {
+	switch n := v.(type) {
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case string:
+		if len(n) == 0 {
+			return 0, false
+		}
+		for _, c := range n {
+			if c < '0' || c > '9' {
+				return 0, false
+			}
+		}
+		i, err := strconv.Atoi(n)
+		return float64(i), err == nil
+	default:
+		return 0, false
+	}
+}
 
 func toString(v interface{}) string {
 	if v == nil {
