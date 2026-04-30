@@ -87,7 +87,7 @@ type BuildResult struct {
 	Errors              []error
 	SSRSkipped          bool              // true when Phase 2 was skipped (no ssr: config or SkipSSR)
 	PagesRendered       []string          // source paths of pages that were rendered
-	RenderedContent     map[string]string // page key → final rendered HTML (RelPath for regular pages, URL for paginated virtual pages)
+	RenderedContent     map[string]string // page key → final rendered HTML (RelPath for regular pages, URL for generated pages)
 	ContentPassthroughs []string          // relative paths of non-content files copied from content/ to output
 }
 
@@ -1431,9 +1431,12 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 }
 
 // renderedContentKey returns the key to use in RenderedContent for a page.
-// Regular pages use RelPath; paginated virtual pages use URL to avoid collisions.
+// Regular pages use RelPath; generated pages (taxonomy, paginated) use URL.
 func renderedContentKey(page *content.Page) string {
 	if _, ok := page.FrontMatter["_paginationCtx"]; ok && page.URL != "" {
+		return page.URL
+	}
+	if page.RelPath == "" && page.URL != "" {
 		return page.URL
 	}
 	return page.RelPath
