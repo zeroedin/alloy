@@ -58,16 +58,12 @@ async function handleMessage(msg) {
   try {
     switch (msg.type) {
       case 'eval': {
-        // Evaluate plugin source — wraps in a function and calls with alloy
-        const src = msg.payload;
-        // Strip "export const runtime = ..." and "export default function"
-        let code = src.replace(/export\s+const\s+runtime\s*=\s*["']node["'];?\s*/g, '');
-        code = code.replace(/export\s+default\s+function\s*\(\s*alloy\s*\)/, '(function(alloy)');
-        code = code.trimEnd();
-        if (!code.endsWith('(alloy);')) {
-          code += ')(alloy);';
+        const pluginPath = msg.payload;
+        const { pathToFileURL } = await import('node:url');
+        const mod = await import(pathToFileURL(pluginPath).href);
+        if (typeof mod.default === 'function') {
+          await mod.default(alloy);
         }
-        eval(code);
         sendMessage({
           id: msg.id,
           result: {
