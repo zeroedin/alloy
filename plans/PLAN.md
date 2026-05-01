@@ -1826,7 +1826,20 @@ Alloy uses a tiered plugin runtime. Plugin authors write in their preferred lang
         overwrites built-in filter "slugify"
 ```
 
-**Hook execution order**: When multiple plugins hook the same lifecycle event (e.g., `onContentTransformed`), they execute in alphabetical filename order. Each hook receives the output of the previous one — they chain, not race.
+**Hook execution order**: Hooks execute by priority (lower runs first), then by alphabetical filename order within the same priority. Default priority is 50. Each hook receives the output of the previous one — they chain, not race.
+
+```javascript
+// Runs first (priority 10)
+alloy.hook("onPageRendered", transformsFn, { priority: 10 });
+
+// Runs second (priority 100)
+alloy.hook("onPageRendered", ssrFn, { priority: 100 });
+
+// Runs at default priority 50
+alloy.hook("onPageRendered", analyticsFn);
+```
+
+The `priority` option is available on all lifecycle hooks. Omitting it defaults to 50, preserving backward compatibility with existing plugins that rely on alphabetical order.
 
 ### Tier 1: Go Built-in Filters
 
