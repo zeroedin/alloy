@@ -25,8 +25,11 @@ type StageTimer struct {
 }
 
 // Start begins timing a named stage. If a previous stage is still running,
-// it is stopped first.
+// it is stopped first. Safe to call on a nil receiver (no-op).
 func (t *StageTimer) Start(name string) {
+	if t == nil {
+		return
+	}
 	if t.current != "" {
 		t.Stop()
 	}
@@ -35,8 +38,9 @@ func (t *StageTimer) Start(name string) {
 }
 
 // Stop ends the current stage and records its duration.
+// Safe to call on a nil receiver (no-op).
 func (t *StageTimer) Stop() {
-	if t.current == "" {
+	if t == nil || t.current == "" {
 		return
 	}
 	t.timings = append(t.timings, StageTiming{
@@ -47,7 +51,11 @@ func (t *StageTimer) Stop() {
 }
 
 // Timings returns the recorded stage timings.
+// Safe to call on a nil receiver (returns nil).
 func (t *StageTimer) Timings() []StageTiming {
+	if t == nil {
+		return nil
+	}
 	return t.timings
 }
 
@@ -70,12 +78,14 @@ func StartProfiling(dir string) (*Profiler, error) {
 	}
 	if err := pprof.StartCPUProfile(f); err != nil {
 		f.Close()
+		os.Remove(cpuPath)
 		return nil, fmt.Errorf("starting CPU profile: %w", err)
 	}
 	return &Profiler{cpuFile: f, dir: dir}, nil
 }
 
 // StopProfiling stops CPU profiling and writes a heap profile to mem.prof.
+// GC runs before the heap snapshot so freed objects don't inflate the profile.
 func (p *Profiler) StopProfiling() error {
 	pprof.StopCPUProfile()
 	p.cpuFile.Close()
@@ -123,11 +133,18 @@ func PrintStageTimings(w io.Writer, timings []StageTiming) {
 	fmt.Fprintln(w, divider)
 
 	for _, s := range timings {
-		pct := float64(s.Duration) / float64(total) * 100
+		pct := 0.0
+		if total > 0 {
+			pct = float64(s.Duration) / float64(total) * 100
+		}
 		fmt.Fprintf(w, "%-*s  %10s  %5.1f%%\n", maxName, s.Name, formatDuration(s.Duration), pct)
 	}
 
+	totalPct := 0.0
+	if total > 0 {
+		totalPct = 100.0
+	}
 	fmt.Fprintln(w, divider)
-	fmt.Fprintf(w, "%-*s  %10s  %5.1f%%\n", maxName, "Total", formatDuration(total), 100.0)
+	fmt.Fprintf(w, "%-*s  %10s  %5.1f%%\n", maxName, "Total", formatDuration(total), totalPct)
 	fmt.Fprintln(w)
 }

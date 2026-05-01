@@ -140,9 +140,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	templateUsage := make(map[string][]string) // page.RelPath → layoutPaths (relative)
 
 	// Plugin system: discover plugins and set up hook registry
-	if timer != nil {
-		timer.Start("Plugin discovery")
-	}
+	timer.Start("Plugin discovery")
 	registry, hooks, pluginWarnings := DiscoverPlugins(cfg)
 	for _, w := range pluginWarnings {
 		log.Printf("warning: %s", w)
@@ -177,9 +175,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 
 	// Stage 1: engine + plugins + cascade + site data
-	if timer != nil {
-		timer.Start("Pipeline init (engine+data)")
-	}
+	timer.Start("Pipeline init (engine+data)")
 	ps, err := InitPipelineState(cfg, registry, hooks)
 	if err != nil {
 		return nil, err
@@ -195,9 +191,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	engineName := cfg.Templates.Engine
 
 	// Fetch external data sources and merge into siteData
-	if timer != nil {
-		timer.Start("External sources")
-	}
+	timer.Start("External sources")
 	if len(cfg.Sources) > 0 {
 		if siteData == nil {
 			siteData = make(map[string]interface{})
@@ -239,9 +233,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// Inject site data into plugin runtimes so alloy.data is available
 	// during template filter/shortcode calls and post-discovery hooks (issue #339).
-	if timer != nil {
-		timer.Start("Plugin data injection")
-	}
+	timer.Start("Plugin data injection")
 	for _, rt := range registry.Runtimes() {
 		if err := rt.SetSiteData(siteData); err != nil {
 			log.Printf("warning: setting site data for plugin: %v", err)
@@ -283,9 +275,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	var contentPassthroughs []string
 
 	// ── Pass 1a: discover + prepare per batch (steps 3-9) ──
-	if timer != nil {
-		timer.Start("Pass 1a: discovery+collections")
-	}
+	timer.Start("Pass 1a: discovery+collections")
 	reportStartStage("Discovering", -1)
 	for _, lc := range langContexts {
 		// Content directory: content/<lang>/ for multi-language, content/ for single
@@ -369,9 +359,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 
 	// ── Pass 1b: content rendering per batch (steps 10-11) ──
-	if timer != nil {
-		timer.Start("Pass 1b: content render")
-	}
+	timer.Start("Pass 1b: content render")
 	reportMessage(fmt.Sprintf("%d pages found", len(pages)))
 	reportStartStage("Rendering", len(pages))
 	for i := range batches {
@@ -395,25 +383,19 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// Early return: no content found → zero pages
 	if len(pages) == 0 {
-		if timer != nil {
-			timer.Stop()
-		}
+		timer.Stop()
 		r := &BuildResult{
-			OutputDir:  cfg.Build.Output,
-			PageCount:  0,
-			Duration:   time.Since(start),
-			SSRSkipped: cfg.SSR == nil || options.SkipSSR,
-		}
-		if timer != nil {
-			r.StageTimings = timer.Timings()
+			OutputDir:      cfg.Build.Output,
+			PageCount:      0,
+			Duration:       time.Since(start),
+			SSRSkipped:     cfg.SSR == nil || options.SkipSSR,
+			StageTimings:   timer.Timings(),
 		}
 		return r, nil
 	}
 
 	// Hooks between passes — all pages discovered and content-rendered
-	if timer != nil {
-		timer.Start("Inter-pass hooks")
-	}
+	timer.Start("Inter-pass hooks")
 	if _, err := ps.Hooks.RunWithTimeout(plugin.OnContentLoaded, pages); err != nil {
 		return nil, fmt.Errorf("plugin hook onContentLoaded: %w", err)
 	}
@@ -433,9 +415,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 
 	// ── Pass 2: layout resolution + rendering per batch (steps 12-15) ──
-	if timer != nil {
-		timer.Start("Pass 2: layout render")
-	}
+	timer.Start("Pass 2: layout render")
 	for _, batch := range batches {
 		rc := &RenderContext{
 			Cfg:            cfg,
@@ -483,9 +463,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// Fire onPageRendered hook per-page with HTML string payload.
 	// The hook receives a string and may return string or []byte.
-	if timer != nil {
-		timer.Start("Post-render hooks")
-	}
+	timer.Start("Post-render hooks")
 	for _, page := range pages {
 		result, err := ps.Hooks.RunWithTimeout(plugin.OnPageRendered, string(page.RenderedBody))
 		if err != nil {
@@ -500,9 +478,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 
 	// Pre-build validation: permalink/alias conflicts
-	if timer != nil {
-		timer.Start("Validation")
-	}
+	timer.Start("Validation")
 	if aliasErrs := validation.ValidatePermalinkAliases(pages); len(aliasErrs) > 0 {
 		return nil, aliasErrs[0]
 	}
@@ -539,9 +515,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Phase 2: SSR runs when configured and BuildOptions.SkipSSR is false.
 	// Must run before output writing so transformed HTML reaches disk
 	// (spec §6: Phase 1 → Phase 2 → Phase 3).
-	if timer != nil {
-		timer.Start("SSR (Phase 2)")
-	}
+	timer.Start("SSR (Phase 2)")
 	ssrSkipped := cfg.SSR == nil || options.SkipSSR
 	if cfg.SSR != nil && !options.SkipSSR {
 		intermediateHTML := make(map[string]string, len(pages))
@@ -565,9 +539,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 
 	// Stage 6: Output writing
-	if timer != nil {
-		timer.Start("Output writing")
-	}
+	timer.Start("Output writing")
 	reportStartStage("Writing", -1)
 	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
 	if cfg.Build.Clean {
@@ -614,9 +586,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 
 	// Stage 7: Static files, assets, and passthrough copy
-	if timer != nil {
-		timer.Start("Static+asset copy")
-	}
+	timer.Start("Static+asset copy")
 	staticDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Static)
 	if err := static.CopyStatic(staticDir, outputDir); err != nil {
 		return nil, fmt.Errorf("copying static files: %w", err)
@@ -657,9 +627,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 
 	// Stage 8: Sitemap generation
-	if timer != nil {
-		timer.Start("Sitemap")
-	}
+	timer.Start("Sitemap")
 	if len(pages) > 0 {
 		sitemapXML, err := output.GenerateSitemap(pages, cfg.Sitemap, cfg.BaseURL)
 		if err != nil {
@@ -671,9 +639,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 
 	// Stage 9: Cache persistence (non-fatal, only with a real project root)
-	if timer != nil {
-		timer.Start("Cache persistence")
-	}
+	timer.Start("Cache persistence")
 	if cfg.ProjectRoot != "" {
 		buildCache := cache.New()
 		for _, page := range pages {
@@ -698,9 +664,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
-	if timer != nil {
-		timer.Stop()
-	}
+	timer.Stop()
 
 	result := &BuildResult{
 		OutputDir:           cfg.Build.Output,
@@ -710,9 +674,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		PagesRendered:       rendered,
 		RenderedContent:     renderedContent,
 		ContentPassthroughs: contentPassthroughs,
-	}
-	if timer != nil {
-		result.StageTimings = timer.Timings()
+		StageTimings:        timer.Timings(),
 	}
 
 	reportEndStage()
