@@ -23,6 +23,7 @@ import (
 	"github.com/zeroedin/alloy/internal/data"
 	"github.com/zeroedin/alloy/internal/fetch"
 	"github.com/zeroedin/alloy/internal/i18n"
+	"github.com/zeroedin/alloy/internal/ordered"
 	"github.com/zeroedin/alloy/internal/output"
 	"github.com/zeroedin/alloy/internal/pagination"
 	"github.com/zeroedin/alloy/internal/permalink"
@@ -1807,17 +1808,51 @@ func buildTaxonomiesContext(taxonomies map[string]*collection.TaxonomyCollection
 	return taxMap
 }
 
+// convertOrderedMaps recursively converts *ordered.Map values to
+// map[string]interface{} for fast JSON serialization in hook payloads.
+func convertOrderedMaps(m map[string]interface{}) map[string]interface{} {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		out[k] = convertOrderedValue(v)
+	}
+	return out
+}
+
+func convertOrderedValue(v interface{}) interface{} {
+	switch val := v.(type) {
+	case *ordered.Map:
+		return val.ToGoMap()
+	case map[string]interface{}:
+		return convertOrderedMaps(val)
+	case []interface{}:
+		result := make([]interface{}, len(val))
+		for i, item := range val {
+			result[i] = convertOrderedValue(item)
+		}
+		return result
+	default:
+		return v
+	}
+}
+
 // fireContentTransformedHooks fires onContentTransformed once per page
 // with a page object payload containing html, toc, path, url, and frontMatter.
 // Applies returned modifications back to page fields.
 func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegistry) error {
+	if !hooks.HasHooks(plugin.OnContentTransformed) {
+		return nil
+	}
 	for _, page := range pages {
+		convertedFM := convertOrderedMaps(page.FrontMatter)
 		payload := map[string]interface{}{
 			"html":        string(page.RenderedBody),
 			"toc":         serializeTOC(page.TOC),
 			"path":        page.RelPath,
 			"url":         page.URL,
-			"frontMatter": page.FrontMatter,
+			"frontMatter": convertedFM,
 		}
 
 		result, err := hooks.RunWithTimeout(plugin.OnContentTransformed, payload)
@@ -1833,8 +1868,8 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 			if tocSlice, ok := modified["toc"].([]interface{}); ok {
 				page.TOC = deserializeTOC(tocSlice)
 			}
-			if fm, ok := modified["frontMatter"].(map[string]interface{}); ok {
-				page.FrontMatter = fm
+			if returnedFM, ok := modified["frontMatter"].(map[string]interface{}); ok {
+				page.FrontMatter = returnedFM
 			}
 		case string:
 			page.RenderedBody = []byte(modified)
