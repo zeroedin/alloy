@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -96,6 +97,9 @@ func newBuildCommand() *cobra.Command {
 			var profiler *pipeline.Profiler
 			if profile {
 				profileDir, _ := cmd.Flags().GetString("profile-dir")
+				if !filepath.IsAbs(profileDir) && cfg.ProjectRoot != "" {
+					profileDir = filepath.Join(cfg.ProjectRoot, profileDir)
+				}
 				var err error
 				profiler, err = pipeline.StartProfiling(profileDir)
 				if err != nil {
