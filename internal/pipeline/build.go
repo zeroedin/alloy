@@ -1780,15 +1780,59 @@ func buildTaxonomiesContext(taxonomies map[string]*collection.TaxonomyCollection
 }
 
 // fireContentTransformedHooks fires onContentTransformed once per page
-// with the rendered HTML string as payload. Applies returned modifications
-// back to page.RenderedBody.
+// with a page object payload containing html, toc, path, url, and frontMatter.
+// Applies returned modifications back to page fields.
 func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegistry) error {
 	for _, page := range pages {
-		result, err := hooks.RunWithTimeout(plugin.OnContentTransformed, string(page.RenderedBody))
-		if err != nil {
-			return fmt.Errorf("plugin hook onContentTransformed: %w", err)
+		toc := make([]map[string]interface{}, 0, len(page.TOC))
+		for _, entry := range page.TOC {
+			toc = append(toc, map[string]interface{}{
+				"id":    entry.ID,
+				"text":  entry.Text,
+				"level": entry.Level,
+			})
 		}
+
+		payload := map[string]interface{}{
+			"html":        string(page.RenderedBody),
+			"toc":         toc,
+			"path":        page.RelPath,
+			"url":         page.URL,
+			"frontMatter": page.FrontMatter,
+		}
+
+		result, err := hooks.RunWithTimeout(plugin.OnContentTransformed, payload)
+		if err != nil {
+			return fmt.Errorf("plugin hook onContentTransformed (%s): %w", page.RelPath, err)
+		}
+
 		switch modified := result.(type) {
+		case map[string]interface{}:
+			if html, ok := modified["html"].(string); ok {
+				page.RenderedBody = []byte(html)
+			}
+			if tocSlice, ok := modified["toc"].([]interface{}); ok {
+				page.TOC = nil
+				for _, item := range tocSlice {
+					if entry, ok := item.(map[string]interface{}); ok {
+						level := 0
+						switch v := entry["level"].(type) {
+						case int:
+							level = v
+						case float64:
+							level = int(v)
+						}
+						page.TOC = append(page.TOC, content.TOCEntry{
+							ID:    fmt.Sprint(entry["id"]),
+							Text:  fmt.Sprint(entry["text"]),
+							Level: level,
+						})
+					}
+				}
+			}
+			if fm, ok := modified["frontMatter"].(map[string]interface{}); ok {
+				page.FrontMatter = fm
+			}
 		case string:
 			page.RenderedBody = []byte(modified)
 		case []byte:
