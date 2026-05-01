@@ -21,11 +21,21 @@ func NewGoEngine() TemplateEngine {
 				if om, ok := m.(*ordered.Map); ok {
 					return om.Get(key)
 				}
+				if gm, ok := m.(map[string]interface{}); ok {
+					return gm[key]
+				}
 				return nil
 			},
 			"orange": func(m interface{}) []ordered.KVPair {
 				if om, ok := m.(*ordered.Map); ok {
 					return om.Entries()
+				}
+				if gm, ok := m.(map[string]interface{}); ok {
+					pairs := make([]ordered.KVPair, 0, len(gm))
+					for k, v := range gm {
+						pairs = append(pairs, ordered.KVPair{Key: k, Value: v})
+					}
+					return pairs
 				}
 				return nil
 			},

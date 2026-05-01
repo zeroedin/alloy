@@ -232,7 +232,7 @@ func decodeArray(data []byte) ([]interface{}, error) {
 		return nil, fmt.Errorf("expected '[', got %v", t)
 	}
 
-	var result []interface{}
+	result := make([]interface{}, 0)
 	for dec.More() {
 		var raw json.RawMessage
 		if err := dec.Decode(&raw); err != nil {
