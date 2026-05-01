@@ -287,6 +287,11 @@ Key points:
 **File**: `internal/template/gotemplate.go`
 
 - Adapt `html/template` to `TemplateEngine` interface via `FuncMap`
+- **`*ordered.Map` compatibility (issue #458)**: Go templates use reflection — `*ordered.Map` is a struct, not a map or slice, so neither `{{ index }}` nor `{{ range }}` work natively. Converting to `map[string]interface{}` enables property access but loses iteration order; converting to `[]KVPair` enables ordered iteration but breaks key-based lookup. These are mutually exclusive on the same value. Fix: keep `*ordered.Map` as the context value and register FuncMap helpers in the Go template engine:
+  - **`oget`** (`{{ oget .site.data.tokens "white" }}`): calls `m.Get(key)` on `*ordered.Map`, returns the value. Falls back to `index` for regular maps.
+  - **`orange`** (`{{ range orange .site.data.tokens }}`): calls `m.Entries()` on `*ordered.Map`, returns `[]KVPair` for ordered iteration. Each entry has `.Key` and `.Value`.
+  
+  Register both in `goEngine.AddFilter` or directly in the FuncMap during engine creation. The `*ordered.Map` in `siteData` is never mutated. Liquid uses it directly via `Each` and `LiquidMethodMissing`.
 
 ### 4C: `internal/static` — 6 tests
 **File**: `internal/static/copy.go`
