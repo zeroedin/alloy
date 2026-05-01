@@ -95,8 +95,9 @@ func newBuildCommand() *cobra.Command {
 
 			var profiler *pipeline.Profiler
 			if profile {
+				profileDir, _ := cmd.Flags().GetString("profile-dir")
 				var err error
-				profiler, err = pipeline.StartProfiling()
+				profiler, err = pipeline.StartProfiling(profileDir)
 				if err != nil {
 					return err
 				}
@@ -121,14 +122,15 @@ func newBuildCommand() *cobra.Command {
 			}
 
 			// Print stage timing table when profiling
-			if profile && len(result.StageTimings) > 0 {
+			if profiler != nil && len(result.StageTimings) > 0 {
 				pipeline.PrintStageTimings(cmd.OutOrStdout(), result.StageTimings)
-				fmt.Fprintf(cmd.OutOrStdout(), "[alloy] Wrote cpu.prof and mem.prof\n")
+				fmt.Fprintf(cmd.OutOrStdout(), "[alloy] Wrote profiles to %s\n", profiler.Dir())
 			}
 
 			return nil
 		},
 	}
 	cmd.Flags().Bool("profile", false, "Enable pprof profiling and print per-stage timing breakdown")
+	cmd.Flags().String("profile-dir", ".alloy/profiles", "Directory for profile output files")
 	return cmd
 }

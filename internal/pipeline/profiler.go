@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/pprof"
 	"strings"
@@ -53,19 +54,25 @@ func (t *StageTimer) Timings() []StageTiming {
 // Profiler manages pprof CPU and memory profiling for a build.
 type Profiler struct {
 	cpuFile *os.File
+	dir     string
 }
 
-// StartProfiling begins CPU profiling, writing to cpu.prof.
-func StartProfiling() (*Profiler, error) {
-	f, err := os.Create("cpu.prof")
+// StartProfiling begins CPU profiling in the given directory.
+// The directory is created if it does not exist.
+func StartProfiling(dir string) (*Profiler, error) {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("creating profile directory: %w", err)
+	}
+	cpuPath := filepath.Join(dir, "cpu.prof")
+	f, err := os.Create(cpuPath)
 	if err != nil {
-		return nil, fmt.Errorf("creating cpu.prof: %w", err)
+		return nil, fmt.Errorf("creating %s: %w", cpuPath, err)
 	}
 	if err := pprof.StartCPUProfile(f); err != nil {
 		f.Close()
 		return nil, fmt.Errorf("starting CPU profile: %w", err)
 	}
-	return &Profiler{cpuFile: f}, nil
+	return &Profiler{cpuFile: f, dir: dir}, nil
 }
 
 // StopProfiling stops CPU profiling and writes a heap profile to mem.prof.
@@ -74,15 +81,21 @@ func (p *Profiler) StopProfiling() error {
 	p.cpuFile.Close()
 
 	runtime.GC()
-	mf, err := os.Create("mem.prof")
+	memPath := filepath.Join(p.dir, "mem.prof")
+	mf, err := os.Create(memPath)
 	if err != nil {
-		return fmt.Errorf("creating mem.prof: %w", err)
+		return fmt.Errorf("creating %s: %w", memPath, err)
 	}
 	defer mf.Close()
 	if err := pprof.WriteHeapProfile(mf); err != nil {
 		return fmt.Errorf("writing memory profile: %w", err)
 	}
 	return nil
+}
+
+// Dir returns the directory where profile files are written.
+func (p *Profiler) Dir() string {
+	return p.dir
 }
 
 // Report prints a formatted timing table of this timer's recorded stages.
