@@ -1,0 +1,7 @@
+{
+  "white": {"$value": "#ffffff"},
+  "black": {"$value": "#000000"},
+  "accent": {"$value": "#ee0000"},
+  "brand": {"$value": "#e00"},
+  "surface": {"$value": "#f0f0f0"}
+}
