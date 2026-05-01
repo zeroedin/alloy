@@ -287,7 +287,11 @@ Key points:
 **File**: `internal/template/gotemplate.go`
 
 - Adapt `html/template` to `TemplateEngine` interface via `FuncMap`
-- **`*ordered.Map` compatibility (issue #458)**: Go templates use reflection for dot-notation property access (`{{ .site.data.tokens.white }}`). `*ordered.Map` is a struct, not a `map[string]interface{}`, so dot-notation fails. Fix: in `goTemplate.Render()`, recursively convert `*ordered.Map` values to `map[string]interface{}` via `ToGoMap()` before passing to `tpl.Execute()`. The `markHTMLSafe` function already walks the context recursively — extend it to also convert `*ordered.Map` values. Order is lost for Go templates, but Go's `{{ range }}` on maps is random-order anyway — order preservation only matters for Liquid's `{% for %}`.
+- **`*ordered.Map` compatibility (issue #458)**: Go templates use reflection — `*ordered.Map` is a struct, not a map or slice, so dot-notation and `{{ range }}` don't work natively. Fix: in `goTemplate.Render()`, recursively convert `*ordered.Map` values at the template rendering boundary (read-only — the original data is untouched):
+  - **Property access** (`{{ index .site.data.tokens "white" }}`): convert to `map[string]interface{}` via `ToGoMap()` so `index` and dot-notation work.
+  - **Iteration** (`{{ range .site.data.tokens }}`): convert to `[]ordered.KVPair` via `Entries()` so `{{ range }}` iterates in insertion order. Each entry has `.Key` and `.Value` fields.
+  
+  Both conversions happen in a pre-render step (extend `markHTMLSafe` or add a separate walk). The `*ordered.Map` in `siteData` is never mutated — only the view passed to `tpl.Execute()` is converted. Liquid uses the `*ordered.Map` directly via `Each` and `LiquidMethodMissing`.
 
 ### 4C: `internal/static` — 6 tests
 **File**: `internal/static/copy.go`

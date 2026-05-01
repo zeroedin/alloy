@@ -1856,6 +1856,41 @@ var _ = Describe("Build Pipeline", func() {
 				"Go template must access JSON data value — "+
 					"{{ index .site.data.colors \"white\" }} must resolve to #fff")
 		})
+
+		It("gotemplate iterates JSON data in insertion order", func() {
+			cfg := &config.Config{
+				Title:     "GoTemplate JSON Order Test",
+				BaseURL:   "https://example.com",
+				Build:     config.BuildConfig{Output: "_site"},
+				Templates: config.TemplatesConfig{Engine: "gotemplate"},
+			}
+			contentMap := map[string]string{
+				"data/colors.json": `{"white":"#fff","black":"#000","accent":"#e00","brand":"#ee0","surface":"#f0f"}`,
+				"content/index.md": "---\ntitle: Colors\nlayout: default\n---\n# Colors",
+				"layouts/default.html": `<html><body>{{ range .site.data.colors }}<span>{{ .Key }}</span>{{ end }}{{ .content }}</body></html>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"gotemplate range over JSON data must not error — "+
+					"if this fails, *ordered.Map is not converted to an iterable "+
+					"type ([]KVPair) for Go template {{ range }} (issue #458)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+
+			whiteIdx := strings.Index(html, "<span>white</span>")
+			blackIdx := strings.Index(html, "<span>black</span>")
+			accentIdx := strings.Index(html, "<span>accent</span>")
+
+			Expect(whiteIdx).To(BeNumerically(">=", 0),
+				"white must appear in output")
+			Expect(blackIdx).To(BeNumerically(">", whiteIdx),
+				"black must appear after white — JSON insertion order")
+			Expect(accentIdx).To(BeNumerically(">", blackIdx),
+				"accent must appear after black — "+
+					"Go template {{ range }} must iterate in JSON insertion order, "+
+					"not Go's random map order (issue #458)")
+		})
 	})
 
 	// ── Layout resolution diagnostics (issue #385) ────────────────────
