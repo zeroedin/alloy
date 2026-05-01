@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"runtime"
-	"runtime/pprof"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -95,17 +93,13 @@ func newBuildCommand() *cobra.Command {
 			}
 			defer pipeline.SetReporter(nil)
 
-			// pprof CPU profiling
+			var profiler *pipeline.Profiler
 			if profile {
-				cpuFile, err := os.Create("cpu.prof")
+				var err error
+				profiler, err = pipeline.StartProfiling()
 				if err != nil {
-					return fmt.Errorf("creating cpu.prof: %w", err)
+					return err
 				}
-				defer cpuFile.Close()
-				if err := pprof.StartCPUProfile(cpuFile); err != nil {
-					return fmt.Errorf("starting CPU profile: %w", err)
-				}
-				defer pprof.StopCPUProfile()
 			}
 
 			buildOpts := pipeline.BuildOptions{Profile: profile}
@@ -114,16 +108,9 @@ func newBuildCommand() *cobra.Command {
 				return err
 			}
 
-			// pprof memory profiling
-			if profile {
-				runtime.GC()
-				memFile, err := os.Create("mem.prof")
-				if err != nil {
-					return fmt.Errorf("creating mem.prof: %w", err)
-				}
-				defer memFile.Close()
-				if err := pprof.WriteHeapProfile(memFile); err != nil {
-					return fmt.Errorf("writing memory profile: %w", err)
+			if profiler != nil {
+				if err := profiler.StopProfiling(); err != nil {
+					return err
 				}
 			}
 

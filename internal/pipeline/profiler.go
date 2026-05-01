@@ -3,6 +3,9 @@ package pipeline
 import (
 	"fmt"
 	"io"
+	"os"
+	"runtime"
+	"runtime/pprof"
 	"strings"
 	"time"
 )
@@ -45,6 +48,41 @@ func (t *StageTimer) Stop() {
 // Timings returns the recorded stage timings.
 func (t *StageTimer) Timings() []StageTiming {
 	return t.timings
+}
+
+// Profiler manages pprof CPU and memory profiling for a build.
+type Profiler struct {
+	cpuFile *os.File
+}
+
+// StartProfiling begins CPU profiling, writing to cpu.prof.
+func StartProfiling() (*Profiler, error) {
+	f, err := os.Create("cpu.prof")
+	if err != nil {
+		return nil, fmt.Errorf("creating cpu.prof: %w", err)
+	}
+	if err := pprof.StartCPUProfile(f); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("starting CPU profile: %w", err)
+	}
+	return &Profiler{cpuFile: f}, nil
+}
+
+// StopProfiling stops CPU profiling and writes a heap profile to mem.prof.
+func (p *Profiler) StopProfiling() error {
+	pprof.StopCPUProfile()
+	p.cpuFile.Close()
+
+	runtime.GC()
+	mf, err := os.Create("mem.prof")
+	if err != nil {
+		return fmt.Errorf("creating mem.prof: %w", err)
+	}
+	defer mf.Close()
+	if err := pprof.WriteHeapProfile(mf); err != nil {
+		return fmt.Errorf("writing memory profile: %w", err)
+	}
+	return nil
 }
 
 // Report prints a formatted timing table of this timer's recorded stages.
