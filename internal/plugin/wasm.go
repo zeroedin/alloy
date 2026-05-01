@@ -106,8 +106,9 @@ func (r *QuickJSRuntime) Init() error {
 }
 
 // SetSiteData makes site data available as alloy.data in the JS context.
-// Data is JSON-serialized from Go and parsed in JS. The resulting object
-// is frozen to prevent cross-plugin mutation.
+// Data is JSON-serialized from Go and parsed in JS to create a plain JS object.
+// The resulting object is frozen to prevent cross-plugin mutation.
+// JSON is acceptable here because SetSiteData is called once per build, not per-page.
 func (r *QuickJSRuntime) SetSiteData(data map[string]interface{}) error {
 	if !r.initialized {
 		return fmt.Errorf("quickjs runtime not initialized — call Init() first")
@@ -206,20 +207,20 @@ func (r *QuickJSRuntime) CallFilter(name string, input interface{}, args ...inte
 	defer func() {
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewUndefined())
 		r.ctx.Global().SetPropertyStr("__callFilterName", r.ctx.NewUndefined())
-		r.ctx.Global().SetPropertyStr("__callArgsJSON", r.ctx.NewUndefined())
+		r.ctx.Global().SetPropertyStr("__callArgsVal", r.ctx.NewUndefined())
 		r.ctx.Eval("args-cleanup.js", qjs.Code(`__callArgs = undefined;`))
 	}()
 
-	// Serialize args as a JS array so the filter function receives them
+	// Convert args to a native JS array so the filter function receives them
 	if len(args) > 0 {
-		argsJSON, err := json.Marshal(args)
+		jsArgs, err := qjs.ToJsValue(r.ctx, args)
 		if err != nil {
-			return nil, fmt.Errorf("filter %q: marshaling args: %w", name, err)
+			return nil, fmt.Errorf("filter %q: converting args: %w", name, err)
 		}
-		r.ctx.Global().SetPropertyStr("__callArgsJSON", r.ctx.NewString(string(argsJSON)))
-		_, err = r.ctx.Eval("args-parse.js", qjs.Code(`var __callArgs = JSON.parse(__callArgsJSON);`))
+		r.ctx.Global().SetPropertyStr("__callArgsVal", jsArgs)
+		_, err = r.ctx.Eval("args-assign.js", qjs.Code(`var __callArgs = __callArgsVal;`))
 		if err != nil {
-			return nil, fmt.Errorf("filter %q: parsing args: %w", name, err)
+			return nil, fmt.Errorf("filter %q: assigning args: %w", name, err)
 		}
 	} else {
 		_, err := r.ctx.Eval("args-empty.js", qjs.Code(`var __callArgs = [];`))
@@ -240,10 +241,24 @@ func (r *QuickJSRuntime) CallFilter(name string, input interface{}, args ...inte
 	return jsValueToGo(result), nil
 }
 
+const jsMaxDepth = 64
+
 // jsValueToGo converts a QJS Value to an appropriate Go type.
+// Objects become map[string]interface{}, arrays become []interface{}.
+// Depth is capped at jsMaxDepth to prevent stack overflow from cyclic JS objects.
 func jsValueToGo(v *qjs.Value) interface{} {
-	if v.IsString() {
-		return v.String()
+	return jsValueToGoDepth(v, 0)
+}
+
+func jsValueToGoDepth(v *qjs.Value, depth int) interface{} {
+	if depth > jsMaxDepth {
+		return nil
+	}
+	if v.IsNull() || v.IsUndefined() {
+		return nil
+	}
+	if v.IsBool() {
+		return v.Bool()
 	}
 	if v.IsNumber() {
 		f := v.Float64()
@@ -252,13 +267,38 @@ func jsValueToGo(v *qjs.Value) interface{} {
 		}
 		return f
 	}
-	if v.IsBool() {
-		return v.Bool()
+	if v.IsString() {
+		return v.String()
 	}
-	if v.IsNull() || v.IsUndefined() {
-		return nil
+	if v.IsArray() {
+		length := v.Len()
+		arr := make([]interface{}, length)
+		for i := int64(0); i < length; i++ {
+			elem := v.GetPropertyIndex(i)
+			arr[i] = jsValueToGoDepth(elem, depth+1)
+			elem.Free()
+		}
+		return arr
 	}
-	// Fallback: convert to string representation
+	if v.IsObject() {
+		keys, err := v.GetOwnPropertyNames()
+		if err != nil {
+			return v.String()
+		}
+		m := make(map[string]interface{}, len(keys))
+		for _, key := range keys {
+			// qjs.ToJsValue adds __go_type and __registry_id metadata to
+			// Go-backed objects. These are internal to the fastschema/qjs
+			// bridge and must not leak into the returned Go map.
+			if key == "__go_type" || key == "__registry_id" {
+				continue
+			}
+			prop := v.GetPropertyStr(key)
+			m[key] = jsValueToGoDepth(prop, depth+1)
+			prop.Free()
+		}
+		return m
+	}
 	return v.String()
 }
 
@@ -309,7 +349,7 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 	}
 
 	// Set the payload as a global variable accessible from JS.
-	// Complex types (maps, slices) are JSON-serialized and parsed in the VM.
+	// Complex types use native qjs value conversion (no JSON round-trip).
 	switch v := payload.(type) {
 	case string:
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(v))
@@ -320,17 +360,11 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 	case bool:
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewBool(v))
 	case map[string]interface{}, []interface{}:
-		jsonBytes, err := json.Marshal(v)
+		jsVal, err := qjs.ToJsValue(r.ctx, v)
 		if err != nil {
-			return nil, fmt.Errorf("hook %q: marshaling payload: %w", name, err)
+			return nil, fmt.Errorf("hook %q: converting payload: %w", name, err)
 		}
-		r.ctx.Global().SetPropertyStr("__callInputJSON", r.ctx.NewString(string(jsonBytes)))
-		parsed, err := r.ctx.Eval("hook-input.js", qjs.Code(`JSON.parse(__callInputJSON)`))
-		r.ctx.Global().SetPropertyStr("__callInputJSON", r.ctx.NewUndefined())
-		if err != nil {
-			return nil, fmt.Errorf("hook %q: parsing payload: %w", name, err)
-		}
-		r.ctx.Global().SetPropertyStr("__callInput", parsed)
+		r.ctx.Global().SetPropertyStr("__callInput", jsVal)
 	default:
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(fmt.Sprint(v)))
 	}
@@ -338,8 +372,7 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 	r.ctx.Global().SetPropertyStr("__callHookName", r.ctx.NewString(name))
 
 	result, err := r.ctx.Eval("hook-call.js", qjs.Code(
-		`(function() { var __r = __hooks[__callHookName](__callInput); `+
-			`return typeof __r === 'object' && __r !== null ? JSON.stringify(__r) : __r; })()`))
+		`__hooks[__callHookName](__callInput)`))
 
 	r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewUndefined())
 	r.ctx.Global().SetPropertyStr("__callHookName", r.ctx.NewUndefined())
@@ -348,17 +381,6 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 		return nil, fmt.Errorf("hook %q: %w", name, err)
 	}
 	defer result.Free()
-
-	if result.IsString() {
-		s := result.String()
-		var obj interface{}
-		if len(s) > 0 && (s[0] == '{' || s[0] == '[') {
-			if err := json.Unmarshal([]byte(s), &obj); err == nil {
-				return obj, nil
-			}
-		}
-		return s, nil
-	}
 
 	return jsValueToGo(result), nil
 }
