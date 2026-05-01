@@ -1780,15 +1780,34 @@ func buildTaxonomiesContext(taxonomies map[string]*collection.TaxonomyCollection
 }
 
 // fireContentTransformedHooks fires onContentTransformed once per page
-// with the rendered HTML string as payload. Applies returned modifications
-// back to page.RenderedBody.
+// with a page object payload containing html, toc, path, url, and frontMatter.
+// Applies returned modifications back to page fields.
 func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegistry) error {
 	for _, page := range pages {
-		result, err := hooks.RunWithTimeout(plugin.OnContentTransformed, string(page.RenderedBody))
-		if err != nil {
-			return fmt.Errorf("plugin hook onContentTransformed: %w", err)
+		payload := map[string]interface{}{
+			"html":        string(page.RenderedBody),
+			"toc":         serializeTOC(page.TOC),
+			"path":        page.RelPath,
+			"url":         page.URL,
+			"frontMatter": page.FrontMatter,
 		}
+
+		result, err := hooks.RunWithTimeout(plugin.OnContentTransformed, payload)
+		if err != nil {
+			return fmt.Errorf("plugin hook onContentTransformed (%s): %w", page.RelPath, err)
+		}
+
 		switch modified := result.(type) {
+		case map[string]interface{}:
+			if html, ok := modified["html"].(string); ok {
+				page.RenderedBody = []byte(html)
+			}
+			if tocSlice, ok := modified["toc"].([]interface{}); ok {
+				page.TOC = deserializeTOC(tocSlice)
+			}
+			if fm, ok := modified["frontMatter"].(map[string]interface{}); ok {
+				page.FrontMatter = fm
+			}
 		case string:
 			page.RenderedBody = []byte(modified)
 		case []byte:
@@ -1796,6 +1815,47 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 		}
 	}
 	return nil
+}
+
+func serializeTOC(entries []content.TOCEntry) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(entries))
+	for _, entry := range entries {
+		m := map[string]interface{}{
+			"id":    entry.ID,
+			"text":  entry.Text,
+			"level": entry.Level,
+		}
+		if len(entry.Children) > 0 {
+			m["children"] = serializeTOC(entry.Children)
+		}
+		result = append(result, m)
+	}
+	return result
+}
+
+func deserializeTOC(items []interface{}) []content.TOCEntry {
+	var entries []content.TOCEntry
+	for _, item := range items {
+		entry, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		id, _ := entry["id"].(string)
+		text, _ := entry["text"].(string)
+		level := 0
+		switch v := entry["level"].(type) {
+		case int:
+			level = v
+		case float64:
+			level = int(v)
+		}
+		tocEntry := content.TOCEntry{ID: id, Text: text, Level: level}
+		if children, ok := entry["children"].([]interface{}); ok {
+			tocEntry.Children = deserializeTOC(children)
+		}
+		entries = append(entries, tocEntry)
+	}
+	return entries
 }
 
 // PipelineState holds shared state initialized once per build.

@@ -2,11 +2,10 @@
 // If the payload contains <!DOCTYPE or <head>, the hook fired AFTER
 // layout rendering — which violates the spec.
 export default function(alloy) {
-    alloy.hook("onContentTransformed", (html) => {
-        if (html.includes("<!DOCTYPE") || html.includes("<head>")) {
-            // Signal the violation by injecting a marker the test can detect
-            return "HOOK_FIRED_AFTER_LAYOUT:" + html;
+    alloy.hook("onContentTransformed", (page) => {
+        if (page.html.includes("<!DOCTYPE") || page.html.includes("<head>")) {
+            page.html = "HOOK_FIRED_AFTER_LAYOUT:" + page.html;
         }
-        return html;
+        return page;
     });
 }

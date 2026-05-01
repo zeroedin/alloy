@@ -308,7 +308,8 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 		return payload, nil
 	}
 
-	// Set the payload as a global variable accessible from JS
+	// Set the payload as a global variable accessible from JS.
+	// Complex types (maps, slices) are JSON-serialized and parsed in the VM.
 	switch v := payload.(type) {
 	case string:
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(v))
@@ -318,6 +319,18 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewFloat64(v))
 	case bool:
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewBool(v))
+	case map[string]interface{}, []interface{}:
+		jsonBytes, err := json.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("hook %q: marshaling payload: %w", name, err)
+		}
+		r.ctx.Global().SetPropertyStr("__callInputJSON", r.ctx.NewString(string(jsonBytes)))
+		parsed, err := r.ctx.Eval("hook-input.js", qjs.Code(`JSON.parse(__callInputJSON)`))
+		r.ctx.Global().SetPropertyStr("__callInputJSON", r.ctx.NewUndefined())
+		if err != nil {
+			return nil, fmt.Errorf("hook %q: parsing payload: %w", name, err)
+		}
+		r.ctx.Global().SetPropertyStr("__callInput", parsed)
 	default:
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(fmt.Sprint(v)))
 	}
@@ -325,7 +338,8 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 	r.ctx.Global().SetPropertyStr("__callHookName", r.ctx.NewString(name))
 
 	result, err := r.ctx.Eval("hook-call.js", qjs.Code(
-		`__hooks[__callHookName](__callInput)`))
+		`(function() { var __r = __hooks[__callHookName](__callInput); `+
+			`return typeof __r === 'object' && __r !== null ? JSON.stringify(__r) : __r; })()`))
 
 	r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewUndefined())
 	r.ctx.Global().SetPropertyStr("__callHookName", r.ctx.NewUndefined())
@@ -334,6 +348,17 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 		return nil, fmt.Errorf("hook %q: %w", name, err)
 	}
 	defer result.Free()
+
+	if result.IsString() {
+		s := result.String()
+		var obj interface{}
+		if len(s) > 0 && (s[0] == '{' || s[0] == '[') {
+			if err := json.Unmarshal([]byte(s), &obj); err == nil {
+				return obj, nil
+			}
+		}
+		return s, nil
+	}
 
 	return jsValueToGo(result), nil
 }
