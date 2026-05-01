@@ -186,6 +186,32 @@ var _ = Describe("CLI Commands", func() {
 		})
 	})
 
+	// ── Build command --profile flag (issue #389/461) ───────────────
+
+	Describe("Build command --profile flag", func() {
+		var findBuild = func(root *cobra.Command) *cobra.Command {
+			for _, c := range root.Commands() {
+				if c.Name() == "build" {
+					return c
+				}
+			}
+			return nil
+		}
+
+		It("--profile flag is registered on build command", func() {
+			root := cmd.NewRootCommand()
+			buildCmd := findBuild(root)
+			Expect(buildCmd).NotTo(BeNil(), "build command must be registered")
+
+			flag := buildCmd.Flags().Lookup("profile")
+			Expect(flag).NotTo(BeNil(),
+				"--profile flag must be registered on build command — "+
+					"enables pprof profiling and per-stage timing (issue #389)")
+			Expect(flag.DefValue).To(Equal("false"),
+				"--profile must default to false")
+		})
+	})
+
 	// ── Serve command flags (§9 Flags, issue #256) ───────────────────
 
 	Describe("Serve command flags", func() {
