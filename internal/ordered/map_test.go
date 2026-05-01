@@ -175,4 +175,93 @@ var _ = Describe("Ordered Map", func() {
 				"JSON round-trip must preserve key order exactly")
 		})
 	})
+
+	// ── Liquid integration (issue #456) ─────────────────────────────
+	// ordered.Map must work with liquidgo's iteration and property
+	// access interfaces for templates to consume JSON data in order.
+
+	Context("Liquid integration", func() {
+		It("Each yields [key, value] pairs in insertion order", func() {
+			m := ordered.New()
+			m.Set("white", "#fff")
+			m.Set("black", "#000")
+			m.Set("accent", "#e00")
+
+			var keys []string
+			m.Each(func(pair interface{}) {
+				kv, ok := pair.([]interface{})
+				Expect(ok).To(BeTrue(), "Each must yield []interface{}{key, value}")
+				Expect(kv).To(HaveLen(2))
+				keys = append(keys, kv[0].(string))
+			})
+
+			Expect(keys).To(Equal([]string{"white", "black", "accent"}),
+				"Each must iterate in insertion order — "+
+					"Liquid {% for item in data %} depends on this")
+		})
+
+		It("LiquidMethodMissing enables property access", func() {
+			m := ordered.New()
+			m.Set("name", "Alice")
+			m.Set("role", "Engineer")
+
+			result := m.LiquidMethodMissing("name")
+			Expect(result).To(Equal("Alice"),
+				"LiquidMethodMissing must return the value for the key — "+
+					"{{ site.data.team.name }} calls LiquidMethodMissing(\"name\")")
+
+			missing := m.LiquidMethodMissing("nonexistent")
+			Expect(missing).To(BeNil(),
+				"LiquidMethodMissing must return nil for missing keys")
+		})
+
+		It("First returns the first [key, value] pair", func() {
+			m := ordered.New()
+			m.Set("white", "#fff")
+			m.Set("black", "#000")
+
+			first := m.First()
+			kv, ok := first.([]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(kv[0]).To(Equal("white"))
+			Expect(kv[1]).To(Equal("#fff"))
+		})
+
+		It("First returns nil for empty map", func() {
+			m := ordered.New()
+			Expect(m.First()).To(BeNil())
+		})
+	})
+
+	// ── UnmarshalJSONValue (issue #456) ─────────────────────────────
+
+	Context("UnmarshalJSONValue", func() {
+		It("parses top-level object as *Map", func() {
+			result, err := ordered.UnmarshalJSONValue([]byte(`{"a":1,"b":2}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			m, ok := result.(*ordered.Map)
+			Expect(ok).To(BeTrue())
+			Expect(m.Keys()).To(Equal([]string{"a", "b"}))
+		})
+
+		It("parses top-level array preserving nested object order", func() {
+			result, err := ordered.UnmarshalJSONValue([]byte(`[{"z":1},{"a":2}]`))
+			Expect(err).NotTo(HaveOccurred())
+
+			arr, ok := result.([]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(arr).To(HaveLen(2))
+
+			first, ok := arr[0].(*ordered.Map)
+			Expect(ok).To(BeTrue())
+			Expect(first.Keys()).To(Equal([]string{"z"}))
+		})
+
+		It("parses scalar values", func() {
+			result, err := ordered.UnmarshalJSONValue([]byte(`"hello"`))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("hello"))
+		})
+	})
 })
