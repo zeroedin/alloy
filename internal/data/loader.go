@@ -2,7 +2,6 @@ package data
 
 import (
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/zeroedin/alloy/internal/ordered"
 	"gopkg.in/yaml.v3"
 )
 
@@ -20,11 +20,14 @@ func LoadFile(path string) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	m, ok := v.(map[string]interface{})
-	if !ok {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		return val, nil
+	case *ordered.Map:
+		return val.ToGoMap(), nil
+	default:
 		return nil, fmt.Errorf("parsing %s: expected map at root level, got %T", path, v)
 	}
-	return m, nil
 }
 
 // LoadFileAny loads a single data file (YAML, TOML, JSON) and returns its contents.
@@ -49,8 +52,8 @@ func LoadFileAny(path string) (interface{}, error) {
 		}
 		return result, nil
 	case ".json":
-		var result interface{}
-		if err := json.Unmarshal(b, &result); err != nil {
+		result, err := ordered.UnmarshalJSONValue(b)
+		if err != nil {
 			return nil, fmt.Errorf("parsing JSON %s: %w", path, err)
 		}
 		return result, nil
