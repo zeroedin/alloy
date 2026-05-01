@@ -105,9 +105,11 @@ func (m *Map) UnmarshalJSON(data []byte) error {
 			return err
 		}
 
-		val := decodeValue(rawVal)
-		m.keys = append(m.keys, key)
-		m.values[key] = val
+		val, err := decodeValue(rawVal)
+		if err != nil {
+			return err
+		}
+		m.Set(key, val)
 	}
 
 	t, err = dec.Token()
@@ -197,49 +199,57 @@ func (m *Map) First() interface{} {
 
 // decodeValue recursively decodes a JSON raw message, producing *Map for
 // objects and []interface{} for arrays, preserving key order throughout.
-func decodeValue(raw json.RawMessage) interface{} {
+func decodeValue(raw json.RawMessage) (interface{}, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
-		return nil
+		return nil, nil
 	}
 	switch trimmed[0] {
 	case '{':
 		m := New()
 		if err := m.UnmarshalJSON(trimmed); err != nil {
-			var fallback interface{}
-			json.Unmarshal(raw, &fallback)
-			return fallback
+			return nil, err
 		}
-		return m
+		return m, nil
 	case '[':
 		return decodeArray(trimmed)
 	default:
 		var v interface{}
-		json.Unmarshal(raw, &v)
-		return v
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return nil, err
+		}
+		return v, nil
 	}
 }
 
-func decodeArray(data []byte) []interface{} {
+func decodeArray(data []byte) ([]interface{}, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	t, err := dec.Token()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	if delim, ok := t.(json.Delim); !ok || delim != '[' {
-		return nil
+		return nil, fmt.Errorf("expected '[', got %v", t)
 	}
 
 	var result []interface{}
 	for dec.More() {
 		var raw json.RawMessage
 		if err := dec.Decode(&raw); err != nil {
-			return nil
+			return nil, err
 		}
-		result = append(result, decodeValue(raw))
+		val, err := decodeValue(raw)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, val)
 	}
-	dec.Token()
-	return result
+	if t, err := dec.Token(); err != nil {
+		return nil, err
+	} else if delim, ok := t.(json.Delim); !ok || delim != ']' {
+		return nil, fmt.Errorf("expected ']', got %v", t)
+	}
+	return result, nil
 }
 
 // UnmarshalJSONValue parses a top-level JSON value, using *Map for objects.
@@ -257,7 +267,7 @@ func UnmarshalJSONValue(data []byte) (interface{}, error) {
 		}
 		return m, nil
 	case '[':
-		return decodeArray(trimmed), nil
+		return decodeArray(trimmed)
 	default:
 		var v interface{}
 		if err := json.Unmarshal(trimmed, &v); err != nil {
