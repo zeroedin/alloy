@@ -540,6 +540,75 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(result).NotTo(BeNil())
 		})
 
+		// ── Native qjs value conversion (issue #465) ────────────────
+		// CallHook must use qjs.ToJsValue for Go→JS conversion instead
+		// of json.Marshal + JSON.parse. The JS function receives native
+		// JS objects, not parsed JSON strings.
+
+		It("CallHook passes map payload and receives modified map back", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(filepath.Join(testdataDir(), "single-files", "map-hook.js"))).To(Succeed())
+
+			payload := map[string]interface{}{
+				"html":        "<p>hello</p>",
+				"toc":         []interface{}{},
+				"path":        "content/test.md",
+				"url":         "/test/",
+				"frontMatter": map[string]interface{}{"title": "Test"},
+			}
+			result, err := rt.CallHook("onContentTransformed", payload)
+			Expect(err).NotTo(HaveOccurred(),
+				"CallHook with map payload must not error — "+
+					"if this fails, the Go→JS value conversion is broken (issue #465)")
+
+			resultMap, ok := result.(map[string]interface{})
+			Expect(ok).To(BeTrue(),
+				"CallHook must return a map when the hook returns an object")
+			Expect(resultMap["html"]).To(Equal("<p>hello</p><!-- modified -->"),
+				"hook must be able to modify html field")
+
+			fm, ok := resultMap["frontMatter"].(map[string]interface{})
+			Expect(ok).To(BeTrue(),
+				"frontMatter must be returned as a map")
+			Expect(fm["title"]).To(Equal("Test"),
+				"original frontMatter values must be preserved")
+			Expect(fm["injected"]).To(Equal("by-plugin"),
+				"hook must be able to add new frontMatter fields — "+
+					"proves the JS function received a real object, not a string")
+		})
+
+		It("CallHook with nested map preserves structure", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(filepath.Join(testdataDir(), "single-files", "nested-hook.js"))).To(Succeed())
+
+			payload := map[string]interface{}{
+				"html": "<p>test</p>",
+				"path": "test.md",
+				"url":  "/test/",
+				"toc":  []interface{}{},
+				"frontMatter": map[string]interface{}{
+					"title": "Test",
+					"nested": map[string]interface{}{
+						"key": "value",
+					},
+				},
+			}
+			result, err := rt.CallHook("onContentTransformed", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			resultMap := result.(map[string]interface{})
+			fm := resultMap["frontMatter"].(map[string]interface{})
+			nested, ok := fm["nested"].(map[string]interface{})
+			Expect(ok).To(BeTrue(),
+				"nested maps must survive the Go→JS→Go round-trip")
+			Expect(nested["key"]).To(Equal("value"),
+				"original nested values must be preserved")
+			Expect(nested["added"]).To(Equal(true),
+				"hook must be able to modify nested map values")
+		})
+
 		It("NodeRuntime implements the Runtime interface", func() {
 			// NodeRuntime must exist and implement the same interface as
 			// QuickJSRuntime and WASMRuntime. The pipeline bridging loop
