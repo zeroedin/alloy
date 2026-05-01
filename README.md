@@ -156,8 +156,10 @@ export default function(alloy) {
     return `<iframe src="https://www.youtube.com/embed/${args[0]}"></iframe>`;
   });
 
-  alloy.hook("onContentTransformed", (content) => {
-    return content; // post-process rendered HTML
+  alloy.hook("onContentTransformed", (page) => {
+    // page.html, page.toc, page.path, page.url, page.frontMatter
+    page.html = page.html.replace(/<img /g, '<img loading="lazy" ');
+    return page;
   });
 }
 ```
@@ -204,7 +206,7 @@ Plugins can hook into 12 lifecycle events. Hooks chain in alphabetical filename 
 | `onDataFetched` | After external data fetch | Yes |
 | `onDataCascadeReady` | Cascade fully resolved | Yes |
 | `onContentLoaded` | After content discovery | Yes |
-| `onContentTransformed` | After Markdown rendering (per page, receives HTML string) | Yes |
+| `onContentTransformed` | After Markdown rendering (per page, receives `{ html, toc, path, url, frontMatter }`) | Yes |
 | `onPageRendered` | After layout rendering (per page, receives HTML string) | Yes |
 | `onAssetProcess` | Per-asset processing (receives `{ path, content }`) | Yes |
 | `onBuildComplete` | Build finished | No |
