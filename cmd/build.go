@@ -105,13 +105,21 @@ func newBuildCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				defer profiler.StopProfiling()
 			}
 
 			buildOpts := pipeline.BuildOptions{Profile: profile}
 			result, err := pipeline.Build(cfg, buildOpts)
 			if err != nil {
+				if profiler != nil {
+					profiler.StopProfiling()
+				}
 				return err
+			}
+
+			if profiler != nil {
+				if err := profiler.StopProfiling(); err != nil {
+					return err
+				}
 			}
 
 			// Non-TTY without --verbose: print summary line for CI/piped output

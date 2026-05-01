@@ -109,8 +109,9 @@ func (p *Profiler) Dir() string {
 }
 
 // Report prints a formatted timing table of this timer's recorded stages.
+// Safe to call on a nil receiver (no-op).
 func (t *StageTimer) Report(w io.Writer) {
-	PrintStageTimings(w, t.timings)
+	PrintStageTimings(w, t.Timings())
 }
 
 // PrintStageTimings prints a formatted timing table for the given stage timings.
