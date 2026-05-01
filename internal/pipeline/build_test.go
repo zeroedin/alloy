@@ -1826,6 +1826,73 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Go template engine with JSON data (issue #458) ─────────────
+	// *ordered.Map is a struct — Go templates can't use dot-notation or
+	// {{ range }} on it directly. FuncMap helpers bridge the gap:
+	// oget for key access, orange for ordered iteration.
+
+	Describe("Go template engine with JSON ordered data (issue #458)", func() {
+		It("gotemplate accesses JSON data via oget function", func() {
+			cfg := &config.Config{
+				Title:     "GoTemplate JSON Test",
+				BaseURL:   "https://example.com",
+				Build:     config.BuildConfig{Output: "_site"},
+				Templates: config.TemplatesConfig{Engine: "gotemplate"},
+			}
+			contentMap := map[string]string{
+				"data/colors.json":     `{"white":"#fff","black":"#000"}`,
+				"content/index.md":     "---\ntitle: Colors\nlayout: default\n---\n# Colors",
+				"layouts/default.html": `<html><body><span class="color">{{ oget .site.data.colors "white" }}</span>{{ .content }}</body></html>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"gotemplate build with JSON data must not error — "+
+					"oget must be registered as a FuncMap helper that calls "+
+					"ordered.Map.Get() for key-based access (issue #458)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("#fff"),
+				"oget must return the value for the key — "+
+					"{{ oget .site.data.colors \"white\" }} must resolve to #fff")
+		})
+
+		It("gotemplate iterates JSON data in insertion order via orange", func() {
+			cfg := &config.Config{
+				Title:     "GoTemplate JSON Order Test",
+				BaseURL:   "https://example.com",
+				Build:     config.BuildConfig{Output: "_site"},
+				Templates: config.TemplatesConfig{Engine: "gotemplate"},
+			}
+			contentMap := map[string]string{
+				"data/colors.json": `{"white":"#fff","black":"#000","accent":"#e00","brand":"#ee0","surface":"#f0f"}`,
+				"content/index.md": "---\ntitle: Colors\nlayout: default\n---\n# Colors",
+				"layouts/default.html": `<html><body>{{ range orange .site.data.colors }}<span>{{ .Key }}</span>{{ end }}{{ .content }}</body></html>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"gotemplate range over JSON data must not error — "+
+					"orange must be registered as a FuncMap helper that returns "+
+					"[]ordered.KVPair for ordered iteration (issue #458)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+
+			whiteIdx := strings.Index(html, "<span>white</span>")
+			blackIdx := strings.Index(html, "<span>black</span>")
+			accentIdx := strings.Index(html, "<span>accent</span>")
+
+			Expect(whiteIdx).To(BeNumerically(">=", 0),
+				"white must appear in output")
+			Expect(blackIdx).To(BeNumerically(">", whiteIdx),
+				"black must appear after white — JSON insertion order")
+			Expect(accentIdx).To(BeNumerically(">", blackIdx),
+				"accent must appear after black — "+
+					"{{ range orange .site.data.colors }} must iterate in JSON "+
+					"insertion order (issue #458)")
+		})
+	})
+
 	// ── Layout resolution diagnostics (issue #385) ────────────────────
 	// When a page explicitly requests a layout via front matter but the
 	// layout file doesn't exist, the build must log a warning — not
