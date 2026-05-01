@@ -349,7 +349,9 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 	}
 
 	// Set the payload as a global variable accessible from JS.
-	// Complex types use native qjs value conversion (no JSON round-trip).
+	// Complex types (maps, slices) use JSON serialization for Go→JS because
+	// qjs.ToJsValue is 8x slower for nested objects (see #470).
+	// The JS→Go return path uses native property enumeration (jsValueToGo).
 	switch v := payload.(type) {
 	case string:
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(v))
@@ -360,11 +362,17 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 	case bool:
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewBool(v))
 	case map[string]interface{}, []interface{}:
-		jsVal, err := qjs.ToJsValue(r.ctx, v)
+		jsonBytes, err := json.Marshal(v)
 		if err != nil {
-			return nil, fmt.Errorf("hook %q: converting payload: %w", name, err)
+			return nil, fmt.Errorf("hook %q: marshaling payload: %w", name, err)
 		}
-		r.ctx.Global().SetPropertyStr("__callInput", jsVal)
+		r.ctx.Global().SetPropertyStr("__callInputJSON", r.ctx.NewString(string(jsonBytes)))
+		parsed, err := r.ctx.Eval("hook-input.js", qjs.Code(`JSON.parse(__callInputJSON)`))
+		r.ctx.Global().SetPropertyStr("__callInputJSON", r.ctx.NewUndefined())
+		if err != nil {
+			return nil, fmt.Errorf("hook %q: parsing payload: %w", name, err)
+		}
+		r.ctx.Global().SetPropertyStr("__callInput", parsed)
 	default:
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(fmt.Sprint(v)))
 	}
