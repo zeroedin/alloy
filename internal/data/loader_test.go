@@ -8,6 +8,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/zeroedin/alloy/internal/data"
+	"github.com/zeroedin/alloy/internal/ordered"
 )
 
 // testdataDir returns the absolute path to the testdata directory
@@ -58,6 +59,25 @@ var _ = Describe("Data Loader", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).To(HaveKey("alice"))
 			Expect(result).To(HaveKey("bob"))
+		})
+
+		// ── JSON key order preservation (issue #453) ────────────────
+		// JSON data files must return *ordered.Map to preserve key
+		// insertion order. Only JSON — YAML/TOML use map[string]interface{}.
+
+		It("JSON LoadFileAny returns *ordered.Map preserving key order (issue #453)", func() {
+			path := filepath.Join(testdataDir(), "ordered-keys.json")
+			result, err := data.LoadFileAny(path)
+			Expect(err).NotTo(HaveOccurred())
+
+			om, ok := result.(*ordered.Map)
+			Expect(ok).To(BeTrue(),
+				"LoadFileAny for .json must return *ordered.Map — "+
+					"if this fails, json.Unmarshal into map[string]interface{} "+
+					"is still being used instead of ordered.Map.UnmarshalJSON (issue #453)")
+
+			Expect(om.Keys()).To(Equal([]string{"white", "black", "accent", "brand", "surface"}),
+				"JSON key insertion order must be preserved")
 		})
 	})
 
