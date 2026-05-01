@@ -1811,6 +1811,9 @@ func buildTaxonomiesContext(taxonomies map[string]*collection.TaxonomyCollection
 // convertOrderedMaps recursively converts *ordered.Map values to
 // map[string]interface{} for fast JSON serialization in hook payloads.
 func convertOrderedMaps(m map[string]interface{}) map[string]interface{} {
+	if m == nil {
+		return nil
+	}
 	out := make(map[string]interface{}, len(m))
 	for k, v := range m {
 		out[k] = convertOrderedValue(v)
@@ -1839,14 +1842,17 @@ func convertOrderedValue(v interface{}) interface{} {
 // with a page object payload containing html, toc, path, url, and frontMatter.
 // Applies returned modifications back to page fields.
 func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegistry) error {
+	if !hooks.HasHooks(plugin.OnContentTransformed) {
+		return nil
+	}
 	for _, page := range pages {
-		fm := convertOrderedMaps(page.FrontMatter)
+		convertedFM := convertOrderedMaps(page.FrontMatter)
 		payload := map[string]interface{}{
 			"html":        string(page.RenderedBody),
 			"toc":         serializeTOC(page.TOC),
 			"path":        page.RelPath,
 			"url":         page.URL,
-			"frontMatter": fm,
+			"frontMatter": convertedFM,
 		}
 
 		result, err := hooks.RunWithTimeout(plugin.OnContentTransformed, payload)
@@ -1862,8 +1868,8 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 			if tocSlice, ok := modified["toc"].([]interface{}); ok {
 				page.TOC = deserializeTOC(tocSlice)
 			}
-			if fm, ok := modified["frontMatter"].(map[string]interface{}); ok {
-				page.FrontMatter = fm
+			if returnedFM, ok := modified["frontMatter"].(map[string]interface{}); ok {
+				page.FrontMatter = returnedFM
 			}
 		case string:
 			page.RenderedBody = []byte(modified)

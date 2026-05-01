@@ -58,6 +58,11 @@ func (r *HookRegistry) Warnings() []string {
 	return r.warnings
 }
 
+// HasHooks returns true if any hooks are registered for the given event.
+func (r *HookRegistry) HasHooks(event HookName) bool {
+	return len(r.hooks[event]) > 0
+}
+
 // Register adds a hook function for the given event.
 func (r *HookRegistry) Register(event HookName, fn HookFunc) {
 	r.hooks[event] = append(r.hooks[event], fn)
