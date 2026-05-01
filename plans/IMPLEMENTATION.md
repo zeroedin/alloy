@@ -44,10 +44,28 @@ These packages depend only on stdlib or already-defined types.
 - `InvalidatedByGlobalData`: Return all page paths from hashes map
 - `TrackDirectoryData`/`InvalidatedByDirectoryData`: Directory-to-pages tracking
 
+### 1B-0: `internal/ordered` — ordered map for JSON key preservation (issue #453)
+**File**: `internal/ordered/map.go`
+
+In-house ordered map type that preserves JSON key insertion order. ~100 lines, zero dependencies. Aligned to [c0b/go-ordered-json](https://pkg.go.dev/gitlab.com/c0b/go-ordered-json) API.
+
+- `New() *Map` — constructor
+- `Get(key) interface{}` / `GetValue(key) (interface{}, bool)` — O(1) lookup
+- `Set(key, value)` — O(1) insert/update, preserves insertion order for new keys
+- `Delete(key)` — remove
+- `Has(key) bool` — existence check
+- `Keys() []string` — keys in insertion order
+- `Len() int` — key count
+- `Entries() []KVPair` — key-value pairs in insertion order
+- `UnmarshalJSON(data) error` — uses `json.Decoder` with `Token()` to stream keys in document order. Nested JSON objects recursively create nested `*Map` instances.
+- `MarshalJSON() ([]byte, error)` — emits keys in insertion order
+
+Used by `LoadFile` and `LoadExternalFiles` for `.json` files only. Front matter, config, cascade, and collections do not use this type.
+
 ### 1B: `internal/data` — 8 tests
 **File**: `internal/data/loader.go`
 
-- `LoadFile`: Detect format by extension (.yaml/.yml, .toml, .json), parse with appropriate library
+- `LoadFile`: Detect format by extension (.yaml/.yml, .toml, .json), parse with appropriate library. **JSON files return `*ordered.Map`** (issue #453) — the value inside `siteData["filename"]` is an `*ordered.Map` preserving key insertion order. The `LoadFile` return type stays `map[string]interface{}` for YAML/TOML; for JSON, the top-level object is an `*ordered.Map` stored as `interface{}` in the result.
 - `LoadDirectory`: Walk dir, `LoadFile` each, key by filename without extension. **Stem collision detection**: Track seen stem names. If two files share a stem (e.g., `team.csv` and `team.yaml`), return an error listing both files. No silent overwrites — consistent with output path conflict philosophy (§2).
 - `LoadCSV`: `encoding/csv`, first row = headers, subsequent rows = `[]map[string]string`
 - **External data files (issue #271)**: `loadSiteData` in `build.go` must also load files from `cfg.Data.Files` (a `map[string]string` of key → path). For each entry, resolve the path relative to `cfg.ProjectRoot`, call `data.LoadFile`, and add the result to `siteData[key]`. Check for collisions with `data/` directory keys. File not found is a build error. Add `DataConfig` struct to `config.go` with `Files map[string]string` field.
