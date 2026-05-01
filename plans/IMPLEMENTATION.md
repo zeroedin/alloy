@@ -287,11 +287,11 @@ Key points:
 **File**: `internal/template/gotemplate.go`
 
 - Adapt `html/template` to `TemplateEngine` interface via `FuncMap`
-- **`*ordered.Map` compatibility (issue #458)**: Go templates use reflection — `*ordered.Map` is a struct, not a map or slice, so dot-notation and `{{ range }}` don't work natively. Fix: in `goTemplate.Render()`, recursively convert `*ordered.Map` values at the template rendering boundary (read-only — the original data is untouched):
-  - **Property access** (`{{ index .site.data.tokens "white" }}`): convert to `map[string]interface{}` via `ToGoMap()` so `index` and dot-notation work.
-  - **Iteration** (`{{ range .site.data.tokens }}`): convert to `[]ordered.KVPair` via `Entries()` so `{{ range }}` iterates in insertion order. Each entry has `.Key` and `.Value` fields.
+- **`*ordered.Map` compatibility (issue #458)**: Go templates use reflection — `*ordered.Map` is a struct, not a map or slice, so neither `{{ index }}` nor `{{ range }}` work natively. Converting to `map[string]interface{}` enables property access but loses iteration order; converting to `[]KVPair` enables ordered iteration but breaks key-based lookup. These are mutually exclusive on the same value. Fix: keep `*ordered.Map` as the context value and register FuncMap helpers in the Go template engine:
+  - **`oget`** (`{{ oget .site.data.tokens "white" }}`): calls `m.Get(key)` on `*ordered.Map`, returns the value. Falls back to `index` for regular maps.
+  - **`orange`** (`{{ range orange .site.data.tokens }}`): calls `m.Entries()` on `*ordered.Map`, returns `[]KVPair` for ordered iteration. Each entry has `.Key` and `.Value`.
   
-  Both conversions happen in a pre-render step (extend `markHTMLSafe` or add a separate walk). The `*ordered.Map` in `siteData` is never mutated — only the view passed to `tpl.Execute()` is converted. Liquid uses the `*ordered.Map` directly via `Each` and `LiquidMethodMissing`.
+  Register both in `goEngine.AddFilter` or directly in the FuncMap during engine creation. The `*ordered.Map` in `siteData` is never mutated. Liquid uses it directly via `Each` and `LiquidMethodMissing`.
 
 ### 4C: `internal/static` — 6 tests
 **File**: `internal/static/copy.go`

@@ -1832,7 +1832,7 @@ var _ = Describe("Build Pipeline", func() {
 	// fails unless the map is converted before rendering.
 
 	Describe("Go template engine with JSON ordered data (issue #458)", func() {
-		It("gotemplate can access JSON data properties via dot notation", func() {
+		It("gotemplate accesses JSON data via oget function", func() {
 			cfg := &config.Config{
 				Title:     "GoTemplate JSON Test",
 				BaseURL:   "https://example.com",
@@ -1842,22 +1842,22 @@ var _ = Describe("Build Pipeline", func() {
 			contentMap := map[string]string{
 				"data/colors.json":     `{"white":"#fff","black":"#000"}`,
 				"content/index.md":     "---\ntitle: Colors\nlayout: default\n---\n# Colors",
-				"layouts/default.html": `<html><body><span class="color">{{ index .site.data.colors "white" }}</span>{{ .content }}</body></html>`,
+				"layouts/default.html": `<html><body><span class="color">{{ oget .site.data.colors "white" }}</span>{{ .content }}</body></html>`,
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred(),
 				"gotemplate build with JSON data must not error — "+
-					"if this fails, *ordered.Map is not being converted to "+
-					"map[string]interface{} before Go template rendering (issue #458)")
+					"oget must be registered as a FuncMap helper that calls "+
+					"ordered.Map.Get() for key-based access (issue #458)")
 			Expect(result).NotTo(BeNil())
 
 			html := result.RenderedContent["index.md"]
 			Expect(html).To(ContainSubstring("#fff"),
-				"Go template must access JSON data value — "+
-					"{{ index .site.data.colors \"white\" }} must resolve to #fff")
+				"oget must return the value for the key — "+
+					"{{ oget .site.data.colors \"white\" }} must resolve to #fff")
 		})
 
-		It("gotemplate iterates JSON data in insertion order", func() {
+		It("gotemplate iterates JSON data in insertion order via orange", func() {
 			cfg := &config.Config{
 				Title:     "GoTemplate JSON Order Test",
 				BaseURL:   "https://example.com",
@@ -1867,13 +1867,13 @@ var _ = Describe("Build Pipeline", func() {
 			contentMap := map[string]string{
 				"data/colors.json": `{"white":"#fff","black":"#000","accent":"#e00","brand":"#ee0","surface":"#f0f"}`,
 				"content/index.md": "---\ntitle: Colors\nlayout: default\n---\n# Colors",
-				"layouts/default.html": `<html><body>{{ range .site.data.colors }}<span>{{ .Key }}</span>{{ end }}{{ .content }}</body></html>`,
+				"layouts/default.html": `<html><body>{{ range orange .site.data.colors }}<span>{{ .Key }}</span>{{ end }}{{ .content }}</body></html>`,
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred(),
 				"gotemplate range over JSON data must not error — "+
-					"if this fails, *ordered.Map is not converted to an iterable "+
-					"type ([]KVPair) for Go template {{ range }} (issue #458)")
+					"orange must be registered as a FuncMap helper that returns "+
+					"[]ordered.KVPair for ordered iteration (issue #458)")
 			Expect(result).NotTo(BeNil())
 
 			html := result.RenderedContent["index.md"]
@@ -1888,8 +1888,8 @@ var _ = Describe("Build Pipeline", func() {
 				"black must appear after white — JSON insertion order")
 			Expect(accentIdx).To(BeNumerically(">", blackIdx),
 				"accent must appear after black — "+
-					"Go template {{ range }} must iterate in JSON insertion order, "+
-					"not Go's random map order (issue #458)")
+					"{{ range orange .site.data.colors }} must iterate in JSON "+
+					"insertion order (issue #458)")
 		})
 	})
 
