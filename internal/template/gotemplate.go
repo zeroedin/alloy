@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	gohtml "html/template"
+
+	"github.com/zeroedin/alloy/internal/ordered"
 )
 
 // goEngine adapts Go's html/template to the TemplateEngine interface.
@@ -14,7 +16,20 @@ type goEngine struct {
 // NewGoEngine creates a new Go html/template engine.
 func NewGoEngine() TemplateEngine {
 	return &goEngine{
-		funcMap: gohtml.FuncMap{},
+		funcMap: gohtml.FuncMap{
+			"oget": func(m interface{}, key string) interface{} {
+				if om, ok := m.(*ordered.Map); ok {
+					return om.Get(key)
+				}
+				return nil
+			},
+			"orange": func(m interface{}) []ordered.KVPair {
+				if om, ok := m.(*ordered.Map); ok {
+					return om.Entries()
+				}
+				return nil
+			},
+		},
 	}
 }
 
