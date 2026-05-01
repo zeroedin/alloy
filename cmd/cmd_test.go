@@ -223,6 +223,41 @@ var _ = Describe("CLI Commands", func() {
 			Expect(flag.DefValue).To(Equal(".alloy/profiles"),
 				"--profile-dir must default to .alloy/profiles")
 		})
+
+		It("--profile with --root writes profiles to project root, not CWD", func() {
+			projectDir, err := os.MkdirTemp("", "alloy-profile-root-*")
+			Expect(err).NotTo(HaveOccurred())
+			defer os.RemoveAll(projectDir)
+
+			Expect(os.WriteFile(
+				filepath.Join(projectDir, "alloy.config.yaml"),
+				[]byte("title: \"Profile Root Test\"\nbaseURL: \"https://example.com\"\n"),
+				0644,
+			)).To(Succeed())
+
+			contentDir := filepath.Join(projectDir, "content")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(
+				filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home\n---\n# Home"),
+				0644,
+			)).To(Succeed())
+
+			root := cmd.NewRootCommand()
+			root.SilenceErrors = true
+			root.SilenceUsage = true
+			root.SetArgs([]string{"build", "--root", projectDir, "--profile"})
+			err = root.Execute()
+			Expect(err).NotTo(HaveOccurred())
+
+			// Profiles must be in projectDir/.alloy/profiles/, not CWD/.alloy/profiles/
+			profileDir := filepath.Join(projectDir, ".alloy", "profiles")
+			_, statErr := os.Stat(filepath.Join(profileDir, "cpu.prof"))
+			Expect(statErr).NotTo(HaveOccurred(),
+				"cpu.prof must be written to <project-root>/.alloy/profiles/ — "+
+					"not CWD. --profile-dir must resolve relative to cfg.ProjectRoot "+
+					"when --root is used")
+		})
 	})
 
 	// ── Serve command flags (§9 Flags, issue #256) ───────────────────
