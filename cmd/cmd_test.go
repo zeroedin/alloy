@@ -210,6 +210,19 @@ var _ = Describe("CLI Commands", func() {
 			Expect(flag.DefValue).To(Equal("false"),
 				"--profile must default to false")
 		})
+
+		It("--profile-dir flag is registered with default .alloy/profiles", func() {
+			root := cmd.NewRootCommand()
+			buildCmd := findBuild(root)
+			Expect(buildCmd).NotTo(BeNil())
+
+			flag := buildCmd.Flags().Lookup("profile-dir")
+			Expect(flag).NotTo(BeNil(),
+				"--profile-dir flag must be registered on build command — "+
+					"specifies where cpu.prof and mem.prof are written")
+			Expect(flag.DefValue).To(Equal(".alloy/profiles"),
+				"--profile-dir must default to .alloy/profiles")
+		})
 	})
 
 	// ── Serve command flags (§9 Flags, issue #256) ───────────────────

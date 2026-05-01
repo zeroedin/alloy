@@ -2,6 +2,8 @@ package pipeline_test
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -120,6 +122,60 @@ var _ = Describe("Profiler", func() {
 			Expect(result.StageTimings).To(BeEmpty(),
 				"Build without Profile must not populate StageTimings — "+
 					"timing overhead should only be incurred when requested")
+		})
+	})
+
+	// ── StartProfiling with directory ───────────────────────────────
+
+	Context("StartProfiling", func() {
+		It("writes cpu.prof to the specified directory", func() {
+			dir := GinkgoT().TempDir()
+			profiler, err := pipeline.StartProfiling(dir)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(profiler).NotTo(BeNil())
+
+			err = profiler.StopProfiling()
+			Expect(err).NotTo(HaveOccurred())
+
+			_, statErr := os.Stat(filepath.Join(dir, "cpu.prof"))
+			Expect(statErr).NotTo(HaveOccurred(),
+				"cpu.prof must be written to the specified directory")
+		})
+
+		It("writes mem.prof on StopProfiling", func() {
+			dir := GinkgoT().TempDir()
+			profiler, err := pipeline.StartProfiling(dir)
+			Expect(err).NotTo(HaveOccurred())
+
+			err = profiler.StopProfiling()
+			Expect(err).NotTo(HaveOccurred())
+
+			_, statErr := os.Stat(filepath.Join(dir, "mem.prof"))
+			Expect(statErr).NotTo(HaveOccurred(),
+				"mem.prof must be written to the specified directory on StopProfiling")
+		})
+
+		It("Dir returns the profile output directory", func() {
+			dir := GinkgoT().TempDir()
+			profiler, err := pipeline.StartProfiling(dir)
+			Expect(err).NotTo(HaveOccurred())
+			defer profiler.StopProfiling()
+
+			Expect(profiler.Dir()).To(Equal(dir),
+				"Dir() must return the directory passed to StartProfiling")
+		})
+
+		It("creates the directory if it does not exist", func() {
+			parent := GinkgoT().TempDir()
+			dir := filepath.Join(parent, "nested", "profiles")
+
+			profiler, err := pipeline.StartProfiling(dir)
+			Expect(err).NotTo(HaveOccurred())
+			defer profiler.StopProfiling()
+
+			_, statErr := os.Stat(dir)
+			Expect(statErr).NotTo(HaveOccurred(),
+				"StartProfiling must create the directory if it doesn't exist")
 		})
 	})
 })
