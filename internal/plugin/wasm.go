@@ -326,11 +326,11 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 		}
 		r.ctx.Global().SetPropertyStr("__callInputJSON", r.ctx.NewString(string(jsonBytes)))
 		parsed, err := r.ctx.Eval("hook-input.js", qjs.Code(`JSON.parse(__callInputJSON)`))
+		r.ctx.Global().SetPropertyStr("__callInputJSON", r.ctx.NewUndefined())
 		if err != nil {
 			return nil, fmt.Errorf("hook %q: parsing payload: %w", name, err)
 		}
 		r.ctx.Global().SetPropertyStr("__callInput", parsed)
-		r.ctx.Global().SetPropertyStr("__callInputJSON", r.ctx.NewUndefined())
 	default:
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(fmt.Sprint(v)))
 	}

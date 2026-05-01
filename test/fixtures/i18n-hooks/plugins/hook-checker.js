@@ -3,11 +3,8 @@
 // layout rendering — which violates the spec.
 export default function(alloy) {
     alloy.hook("onContentTransformed", (page) => {
-        const html = typeof page === 'string' ? page : page.html;
-        if (html.includes("<!DOCTYPE") || html.includes("<head>")) {
-            if (typeof page === 'string') return "HOOK_FIRED_AFTER_LAYOUT:" + html;
-            page.html = "HOOK_FIRED_AFTER_LAYOUT:" + html;
-            return page;
+        if (page.html.includes("<!DOCTYPE") || page.html.includes("<head>")) {
+            page.html = "HOOK_FIRED_AFTER_LAYOUT:" + page.html;
         }
         return page;
     });
