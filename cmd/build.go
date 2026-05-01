@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -32,7 +33,7 @@ func termWidth() int {
 }
 
 func newBuildCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "build",
 		Short: "Run the build pipeline and write _site/",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -80,6 +81,8 @@ func newBuildCommand() *cobra.Command {
 				}
 			}
 
+			profile, _ := cmd.Flags().GetBool("profile")
+
 			// Set up progress reporter based on flags + TTY detection
 			if !cfg.Quiet {
 				if cfg.Verbose {
@@ -91,9 +94,32 @@ func newBuildCommand() *cobra.Command {
 			}
 			defer pipeline.SetReporter(nil)
 
-			result, err := pipeline.Build(cfg)
+			var profiler *pipeline.Profiler
+			if profile {
+				profileDir, _ := cmd.Flags().GetString("profile-dir")
+				if !filepath.IsAbs(profileDir) && cfg.ProjectRoot != "" {
+					profileDir = filepath.Join(cfg.ProjectRoot, profileDir)
+				}
+				var err error
+				profiler, err = pipeline.StartProfiling(profileDir)
+				if err != nil {
+					return err
+				}
+			}
+
+			buildOpts := pipeline.BuildOptions{Profile: profile}
+			result, err := pipeline.Build(cfg, buildOpts)
 			if err != nil {
+				if profiler != nil {
+					profiler.StopProfiling()
+				}
 				return err
+			}
+
+			if profiler != nil {
+				if err := profiler.StopProfiling(); err != nil {
+					return err
+				}
 			}
 
 			// Non-TTY without --verbose: print summary line for CI/piped output
@@ -102,7 +128,16 @@ func newBuildCommand() *cobra.Command {
 					result.PageCount, result.Duration.Round(time.Millisecond))
 			}
 
+			// Print stage timing table when profiling
+			if profiler != nil && len(result.StageTimings) > 0 {
+				pipeline.PrintStageTimings(cmd.OutOrStdout(), result.StageTimings)
+				fmt.Fprintf(cmd.OutOrStdout(), "[alloy] Wrote profiles to %s\n", profiler.Dir())
+			}
+
 			return nil
 		},
 	}
+	cmd.Flags().Bool("profile", false, "Enable pprof profiling and print per-stage timing breakdown")
+	cmd.Flags().String("profile-dir", ".alloy/profiles", "Directory for profile output files")
+	return cmd
 }

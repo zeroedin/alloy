@@ -2595,9 +2595,11 @@ Runs the full build pipeline and writes output to `_site/` (or the configured ou
 
 1. Detect and load config file (via `config.DetectConfigFile` + `config.LoadWithDefaults`). If no config file is found, fall back to built-in defaults so an empty project produces a successful zero-page build.
 2. Apply CLI flag overrides via `config.MergeFlags` (`--output`, `--verbose`, `--quiet`).
-3. Call `pipeline.Build(cfg)`.
-4. Print build summary: page count and duration (e.g., `Built 42 pages in 127ms`).
-5. Exit 0 on success, exit 1 on any error.
+3. If `--profile`, start pprof CPU profiling via `pipeline.StartProfiling(profileDir)`. Default `profileDir` is `.alloy/profiles`.
+4. Call `pipeline.Build(cfg, pipeline.BuildOptions{Profile: profile})`. When `Profile` is true, `Build` records per-stage wall-clock timings in `BuildResult.StageTimings`.
+5. If `--profile`, stop profiling (writes `cpu.prof` and `mem.prof` to `profileDir`), print stage timing table.
+6. Print build summary: page count and duration (e.g., `Built 42 pages in 127ms`).
+7. Exit 0 on success, exit 1 on any error.
 
 #### `alloy dev`
 
@@ -2632,6 +2634,8 @@ Starts the production server. Same pipeline as `alloy build` but keeps serving w
 --port, -p         Server port (default: 3000) — alloy dev and alloy serve
 --no-drafts        Hide draft content (alloy dev only, drafts visible by default)
 --refetch          Bypass source cache TTL, fetch fresh data on startup — alloy dev and alloy serve
+--profile          Enable per-stage timing breakdown and pprof CPU/memory profiling — alloy build only
+--profile-dir      Directory for profile output (default: .alloy/profiles) — requires --profile
 ```
 
 ### Build Progress Output

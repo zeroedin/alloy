@@ -661,9 +661,18 @@ Key points:
 `RunE` is an empty stub. Must wire to pipeline:
 1. Read `--config` flag, call `config.DetectConfigFile` or `config.Load`. If no config file found, use `config.ApplyDefaults` on an empty `Config` (zero-page build, not an error).
 2. Read `--output`, `--verbose`, `--quiet`, `--root` flags, call `config.MergeFlags`.
-3. Call `pipeline.Build(cfg)`.
-4. Print summary: `fmt.Printf("Built %d pages in %s\n", result.PageCount, result.Duration)`.
-5. Return any error from Build — Cobra will handle exit code.
+3. If `--profile`, start profiling: `pipeline.StartProfiling(resolveDir(cfg.ProjectRoot, profileDir))`. The `--profile-dir` flag defaults to `.alloy/profiles` but must be resolved relative to `cfg.ProjectRoot` (not CWD) so `-r` works correctly.
+4. Call `pipeline.Build(cfg, pipeline.BuildOptions{Profile: profile})`. When `Profile` is true, `Build` instruments 15 pipeline stages via `StageTimer` and populates `BuildResult.StageTimings`.
+5. If `--profile`, call `profiler.StopProfiling()` (writes `cpu.prof` + `mem.prof`), then `pipeline.PrintStageTimings(stdout, result.StageTimings)`.
+6. Print summary: `fmt.Printf("Built %d pages in %s\n", result.PageCount, result.Duration)`.
+7. Return any error from Build — Cobra will handle exit code.
+
+**Profiling types** (`internal/pipeline/profiler.go`):
+- `StageTimer` — records named stage durations. `Start(name)` auto-stops the previous stage. `Timings()` returns `[]StageTiming`.
+- `Profiler` — wraps pprof. `StartProfiling(dir)` creates the directory and begins CPU profiling. `StopProfiling()` writes `cpu.prof` + `mem.prof`. `Dir()` returns the output directory.
+- `PrintStageTimings(w, timings)` — formatted table with Stage/Duration/%Total columns.
+- `BuildOptions.Profile bool` — when true, `Build` creates a `StageTimer` and populates `BuildResult.StageTimings`.
+- `BuildResult.StageTimings []StageTiming` — empty when `Profile` is false (no overhead).
 
 **Test note**: The existing cmd test `"build command executes the build pipeline successfully"` runs without a project fixture. Build must handle missing content directory gracefully (return zero-page success, not error) for this test to pass.
 
