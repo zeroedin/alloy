@@ -1827,9 +1827,9 @@ var _ = Describe("Build Pipeline", func() {
 	})
 
 	// ── Go template engine with JSON data (issue #458) ─────────────
-	// Go templates access data via dot notation ({{ .site.data.X.key }}).
-	// *ordered.Map is a struct, not map[string]interface{}, so dot-notation
-	// fails unless the map is converted before rendering.
+	// *ordered.Map is a struct — Go templates can't use dot-notation or
+	// {{ range }} on it directly. FuncMap helpers bridge the gap:
+	// oget for key access, orange for ordered iteration.
 
 	Describe("Go template engine with JSON ordered data (issue #458)", func() {
 		It("gotemplate accesses JSON data via oget function", func() {
