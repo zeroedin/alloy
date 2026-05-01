@@ -1826,6 +1826,38 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Go template engine with JSON data (issue #458) ─────────────
+	// Go templates access data via dot notation ({{ .site.data.X.key }}).
+	// *ordered.Map is a struct, not map[string]interface{}, so dot-notation
+	// fails unless the map is converted before rendering.
+
+	Describe("Go template engine with JSON ordered data (issue #458)", func() {
+		It("gotemplate can access JSON data properties via dot notation", func() {
+			cfg := &config.Config{
+				Title:     "GoTemplate JSON Test",
+				BaseURL:   "https://example.com",
+				Build:     config.BuildConfig{Output: "_site"},
+				Templates: config.TemplatesConfig{Engine: "gotemplate"},
+			}
+			contentMap := map[string]string{
+				"data/colors.json":     `{"white":"#fff","black":"#000"}`,
+				"content/index.md":     "---\ntitle: Colors\nlayout: default\n---\n# Colors",
+				"layouts/default.html": `<html><body><span class="color">{{ index .site.data.colors "white" }}</span>{{ .content }}</body></html>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"gotemplate build with JSON data must not error — "+
+					"if this fails, *ordered.Map is not being converted to "+
+					"map[string]interface{} before Go template rendering (issue #458)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("#fff"),
+				"Go template must access JSON data value — "+
+					"{{ index .site.data.colors \"white\" }} must resolve to #fff")
+		})
+	})
+
 	// ── Layout resolution diagnostics (issue #385) ────────────────────
 	// When a page explicitly requests a layout via front matter but the
 	// layout file doesn't exist, the build must log a warning — not

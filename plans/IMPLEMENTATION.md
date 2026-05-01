@@ -287,6 +287,7 @@ Key points:
 **File**: `internal/template/gotemplate.go`
 
 - Adapt `html/template` to `TemplateEngine` interface via `FuncMap`
+- **`*ordered.Map` compatibility (issue #458)**: Go templates use reflection for dot-notation property access (`{{ .site.data.tokens.white }}`). `*ordered.Map` is a struct, not a `map[string]interface{}`, so dot-notation fails. Fix: in `goTemplate.Render()`, recursively convert `*ordered.Map` values to `map[string]interface{}` via `ToGoMap()` before passing to `tpl.Execute()`. The `markHTMLSafe` function already walks the context recursively — extend it to also convert `*ordered.Map` values. Order is lost for Go templates, but Go's `{{ range }}` on maps is random-order anyway — order preservation only matters for Liquid's `{% for %}`.
 
 ### 4C: `internal/static` — 6 tests
 **File**: `internal/static/copy.go`
