@@ -1832,11 +1832,11 @@ Alloy uses a tiered plugin runtime. Plugin authors write in their preferred lang
 // Runs first (priority 10)
 alloy.hook("onPageRendered", transformsFn, { priority: 10 });
 
-// Runs second (priority 100)
-alloy.hook("onPageRendered", ssrFn, { priority: 100 });
-
-// Runs at default priority 50
+// Runs second (default priority 50)
 alloy.hook("onPageRendered", analyticsFn);
+
+// Runs last (priority 100)
+alloy.hook("onPageRendered", ssrFn, { priority: 100 });
 ```
 
 The `priority` option is available on all lifecycle hooks. Omitting it defaults to 50, preserving backward compatibility with existing plugins that rely on alphabetical order.

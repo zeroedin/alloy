@@ -283,7 +283,7 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(order).To(Equal([]string{"alpha", "beta", "gamma"}),
 				"hooks with the same priority must execute in registration order "+
-					"(which is alphabetical filename order from LoadPlugins)")
+					"(plugin load order: tier-first, then alphabetical within each tier)")
 		})
 
 		It("surfaces QuickJS error with plugin filename and line number", func() {
