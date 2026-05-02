@@ -255,11 +255,23 @@ func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, ho
 	if caller, ok := rt.(interface {
 		CallHook(string, interface{}) (interface{}, error)
 	}); ok {
-		for _, hookName := range rt.RegisteredHooks() {
-			name := hookName
-			hooks.Register(HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {
-				return caller.CallHook(name, payload)
-			})
+		type hookDetailer interface {
+			RegisteredHookDetails() []HookRegistration
+		}
+		if hd, ok := rt.(hookDetailer); ok {
+			for _, reg := range hd.RegisteredHookDetails() {
+				name := reg.Name
+				hooks.RegisterWithPriority(HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {
+					return caller.CallHook(name, payload)
+				}, reg.Priority)
+			}
+		} else {
+			for _, hookName := range rt.RegisteredHooks() {
+				name := hookName
+				hooks.Register(HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {
+					return caller.CallHook(name, payload)
+				})
+			}
 		}
 	}
 	r.runtimes = append(r.runtimes, rt)
