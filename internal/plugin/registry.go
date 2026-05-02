@@ -57,6 +57,12 @@ type PluginFilterRuntime interface {
 	SetSiteData(data map[string]interface{}) error
 }
 
+// HookDetailer is implemented by runtimes that can report hook priorities.
+// Runtimes without priority support fall back to RegisteredHooks() with default priority 50.
+type HookDetailer interface {
+	RegisteredHookDetails() []HookRegistration
+}
+
 // initializedPlugin pairs a discovered plugin with its Phase-A-initialized runtime.
 type initializedPlugin struct {
 	info    PluginInfo
@@ -255,10 +261,7 @@ func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, ho
 	if caller, ok := rt.(interface {
 		CallHook(string, interface{}) (interface{}, error)
 	}); ok {
-		type hookDetailer interface {
-			RegisteredHookDetails() []HookRegistration
-		}
-		if hd, ok := rt.(hookDetailer); ok {
+		if hd, ok := rt.(HookDetailer); ok {
 			for _, reg := range hd.RegisteredHookDetails() {
 				name := reg.Name
 				hooks.RegisterWithPriority(HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {

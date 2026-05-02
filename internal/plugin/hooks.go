@@ -79,14 +79,16 @@ func (r *HookRegistry) Register(event HookName, fn HookFunc) {
 // RegisterWithPriority adds a hook function for the given event with explicit priority.
 // Lower priority runs first. Hooks with the same priority preserve registration order.
 func (r *HookRegistry) RegisterWithPriority(event HookName, fn HookFunc, priority int) {
-	r.hooks[event] = append(r.hooks[event], priorityHook{fn: fn, priority: priority, index: r.nextIdx})
+	h := priorityHook{fn: fn, priority: priority, index: r.nextIdx}
 	r.nextIdx++
-	sort.SliceStable(r.hooks[event], func(i, j int) bool {
-		if r.hooks[event][i].priority != r.hooks[event][j].priority {
-			return r.hooks[event][i].priority < r.hooks[event][j].priority
-		}
-		return r.hooks[event][i].index < r.hooks[event][j].index
+	hooks := r.hooks[event]
+	i := sort.Search(len(hooks), func(i int) bool {
+		return hooks[i].priority > priority || (hooks[i].priority == priority && hooks[i].index > h.index)
 	})
+	hooks = append(hooks, priorityHook{})
+	copy(hooks[i+1:], hooks[i:])
+	hooks[i] = h
+	r.hooks[event] = hooks
 }
 
 // Run executes all hooks for an event in priority order, chaining results.
