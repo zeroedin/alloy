@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -28,17 +29,24 @@ const (
 // The context carries the per-hook timeout deadline for cooperative cancellation.
 type HookFunc func(ctx context.Context, payload interface{}) (interface{}, error)
 
+type priorityHook struct {
+	fn       HookFunc
+	priority int
+	index    int // registration order for stable sort
+}
+
 // HookRegistry manages lifecycle hook registrations and execution.
 type HookRegistry struct {
-	hooks    map[HookName][]HookFunc
+	hooks    map[HookName][]priorityHook
 	timeout  int // per-hook timeout in milliseconds (default 5000)
 	warnings []string
+	nextIdx  int // monotonic counter for registration order
 }
 
 // NewHookRegistry creates an empty hook registry with a default timeout of 5000ms.
 func NewHookRegistry() *HookRegistry {
 	return &HookRegistry{
-		hooks:   make(map[HookName][]HookFunc),
+		hooks:   make(map[HookName][]priorityHook),
 		timeout: 5000,
 	}
 }
@@ -63,17 +71,32 @@ func (r *HookRegistry) HasHooks(event HookName) bool {
 	return len(r.hooks[event]) > 0
 }
 
-// Register adds a hook function for the given event.
+// Register adds a hook function for the given event with default priority (50).
 func (r *HookRegistry) Register(event HookName, fn HookFunc) {
-	r.hooks[event] = append(r.hooks[event], fn)
+	r.RegisterWithPriority(event, fn, 50)
 }
 
-// Run executes all hooks for an event in registration order, chaining results.
+// RegisterWithPriority adds a hook function for the given event with explicit priority.
+// Lower priority runs first. Hooks with the same priority preserve registration order.
+func (r *HookRegistry) RegisterWithPriority(event HookName, fn HookFunc, priority int) {
+	h := priorityHook{fn: fn, priority: priority, index: r.nextIdx}
+	r.nextIdx++
+	hooks := r.hooks[event]
+	i := sort.Search(len(hooks), func(i int) bool {
+		return hooks[i].priority > priority || (hooks[i].priority == priority && hooks[i].index > h.index)
+	})
+	hooks = append(hooks, priorityHook{})
+	copy(hooks[i+1:], hooks[i:])
+	hooks[i] = h
+	r.hooks[event] = hooks
+}
+
+// Run executes all hooks for an event in priority order, chaining results.
 func (r *HookRegistry) Run(event HookName, payload interface{}) (interface{}, error) {
-	fns := r.hooks[event]
+	hooks := r.hooks[event]
 	current := payload
-	for _, fn := range fns {
-		result, err := fn(context.Background(), current)
+	for _, h := range hooks {
+		result, err := h.fn(context.Background(), current)
 		if err != nil {
 			return nil, err
 		}
@@ -87,9 +110,9 @@ func (r *HookRegistry) Run(event HookName, payload interface{}) (interface{}, er
 // payload is kept), a warning is logged, and the build continues.
 // Each hook receives a context with the timeout deadline for cooperative cancellation.
 func (r *HookRegistry) RunWithTimeout(event HookName, payload interface{}) (interface{}, error) {
-	fns := r.hooks[event]
+	hooks := r.hooks[event]
 	current := payload
-	for _, fn := range fns {
+	for _, h := range hooks {
 		preHook := current
 		timeout := time.Duration(r.timeout) * time.Millisecond
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -100,7 +123,7 @@ func (r *HookRegistry) RunWithTimeout(event HookName, payload interface{}) (inte
 		}
 		ch := make(chan hookResult, 1)
 		go func() {
-			result, err := fn(ctx, preHook)
+			result, err := h.fn(ctx, preHook)
 			ch <- hookResult{result, err}
 		}()
 

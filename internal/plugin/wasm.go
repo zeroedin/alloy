@@ -17,13 +17,19 @@ import (
 // QuickJSRuntime wraps a QuickJS instance for Tier 2 in-process JS plugins.
 // JavaScript is executed via QuickJS compiled to WASM, running on wazero
 // (pure Go, zero CGo). See PLAN.md §5.
+// HookRegistration pairs a hook name with its priority.
+type HookRegistration struct {
+	Name     string
+	Priority int
+}
+
 type QuickJSRuntime struct {
 	initialized bool
 	rt          *qjs.Runtime
 	ctx         *qjs.Context
 	filters     map[string]bool
 	shortcodes  map[string]bool
-	hooks       map[string]bool
+	hooks       map[string]int // hook name → priority
 }
 
 // NewQuickJSRuntime creates a new QuickJS runtime instance.
@@ -32,7 +38,7 @@ func NewQuickJSRuntime() *QuickJSRuntime {
 	return &QuickJSRuntime{
 		filters:    make(map[string]bool),
 		shortcodes: make(map[string]bool),
-		hooks:      make(map[string]bool),
+		hooks:      make(map[string]int),
 	}
 }
 
@@ -65,8 +71,10 @@ func (r *QuickJSRuntime) Init() error {
 
 	r.ctx.SetFunc("__registerHook", func(this *qjs.This) (*qjs.Value, error) {
 		args := this.Args()
-		if len(args) >= 1 {
-			r.hooks[args[0].String()] = true
+		if len(args) >= 2 {
+			r.hooks[args[0].String()] = int(args[1].Int32())
+		} else if len(args) >= 1 {
+			r.hooks[args[0].String()] = 50
 		}
 		return this.Context().NewUndefined(), nil
 	})
@@ -86,13 +94,15 @@ func (r *QuickJSRuntime) Init() error {
 				__shortcodes[name] = fn;
 				__registerShortcode(name);
 			},
-			hook: function(name, fn) {
+			hook: function(name, fn, opts) {
 				__hooks[name] = fn;
-				__registerHook(name);
+				var p = (opts && typeof opts.priority === 'number') ? Math.floor(opts.priority) : 50;
+				__registerHook(name, p);
 			},
-			on: function(name, fn) {
+			on: function(name, fn, opts) {
 				__hooks[name] = fn;
-				__registerHook(name);
+				var p = (opts && typeof opts.priority === 'number') ? Math.floor(opts.priority) : 50;
+				__registerHook(name, p);
 			}
 		};
 	`))
@@ -304,7 +314,7 @@ func (r *QuickJSRuntime) CallShortcode(name string, args []string, innerContent 
 // The hook function is invoked in the QuickJS VM and the result is
 // converted back to a Go value.
 func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}, error) {
-	if !r.hooks[name] {
+	if _, ok := r.hooks[name]; !ok {
 		return payload, nil
 	}
 
@@ -388,6 +398,15 @@ func (r *QuickJSRuntime) RegisteredHooks() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// RegisteredHookDetails returns hook registrations with priority info.
+func (r *QuickJSRuntime) RegisteredHookDetails() []HookRegistration {
+	regs := make([]HookRegistration, 0, len(r.hooks))
+	for name, priority := range r.hooks {
+		regs = append(regs, HookRegistration{Name: name, Priority: priority})
+	}
+	return regs
 }
 
 // Close releases resources held by the QuickJS runtime.
