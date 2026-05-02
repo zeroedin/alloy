@@ -629,6 +629,7 @@ var _ = Describe("Built-in Filters", func() {
 			"modulo", "ceil", "floor", "round", "abs",
 			"markdownify", "findRE", "replaceRE",
 			"json", "default", "fingerprint", "safeHTML",
+			"flatten",
 		}
 
 		It("IsBuiltinFilter returns true for all registered filters", func() {
