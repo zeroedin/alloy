@@ -8,9 +8,12 @@ import (
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
+// sink prevents dead-code elimination of benchmark results.
+var sink interface{}
+
 // buildCEMData creates a realistic CEM-scale dataset:
 // numModules modules, each with numDecls declarations containing
-// tagName, slots, attributes, and events arrays.
+// tagName, slots, attributes, events, cssProperties, and members arrays.
 func buildCEMData(numModules, numDecls int) []interface{} {
 	modules := make([]interface{}, numModules)
 	for i := 0; i < numModules; i++ {
@@ -38,6 +41,33 @@ func buildCEMData(numModules, numDecls int) []interface{} {
 			}
 			decl.Set("attributes", attrs)
 
+			events := make([]interface{}, 2)
+			for e := 0; e < 2; e++ {
+				ev := ordered.New()
+				ev.Set("name", fmt.Sprintf("event-%d", e))
+				ev.Set("type", "CustomEvent")
+				events[e] = ev
+			}
+			decl.Set("events", events)
+
+			cssProps := make([]interface{}, 3)
+			for c := 0; c < 3; c++ {
+				cp := ordered.New()
+				cp.Set("name", fmt.Sprintf("--rh-prop-%d", c))
+				cp.Set("default", "initial")
+				cssProps[c] = cp
+			}
+			decl.Set("cssProperties", cssProps)
+
+			members := make([]interface{}, 2)
+			for m := 0; m < 2; m++ {
+				mem := ordered.New()
+				mem.Set("name", fmt.Sprintf("member-%d", m))
+				mem.Set("kind", "field")
+				members[m] = mem
+			}
+			decl.Set("members", members)
+
 			decls[j] = decl
 		}
 
@@ -52,12 +82,11 @@ func buildCEMData(numModules, numDecls int) []interface{} {
 // Benchmark_Flatten measures flatten on CEM-scale nested arrays.
 func Benchmark_Flatten(b *testing.B) {
 	modules := buildCEMData(96, 10)
-	// map "declarations" produces array of arrays
 	mapped := tmpl.Map(modules, "declarations")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tmpl.Flatten(mapped)
+		sink = tmpl.Flatten(mapped)
 	}
 }
 
@@ -70,7 +99,7 @@ func Benchmark_Where(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tmpl.Where(flat, "tagName", "rh-element-50-5")
+		sink = tmpl.Where(flat, "tagName", "rh-element-50-5")
 	}
 }
 
@@ -80,7 +109,7 @@ func Benchmark_Map(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tmpl.Map(modules, "declarations")
+		sink = tmpl.Map(modules, "declarations")
 	}
 }
 
@@ -92,17 +121,20 @@ func Benchmark_FilterChain(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		mapped := tmpl.Map(modules, "declarations")
 		flattened := tmpl.Flatten(mapped)
-		tmpl.Where(flattened, "tagName", "rh-element-50-5")
+		sink = tmpl.Where(flattened, "tagName", "rh-element-50-5")
 	}
 }
 
-// Benchmark_FilterChainLiquid measures the filter chain through a full
-// Liquid parse → render cycle, including liquidgo dispatch overhead.
+// Benchmark_FilterChainLiquid measures the filter chain through a
+// Liquid render cycle, including liquidgo dispatch overhead.
+// Parse happens before ResetTimer — this measures render only.
 func Benchmark_FilterChainLiquid(b *testing.B) {
 	modules := buildCEMData(96, 10)
 
 	engine := tmpl.NewLiquidEngine()
-	tmpl.RegisterBuiltinFilters(engine)
+	if err := tmpl.RegisterBuiltinFilters(engine); err != nil {
+		b.Fatal(err)
+	}
 
 	tpl, err := engine.Parse("bench", []byte(
 		`{% assign decls = modules | map: "declarations" | flatten %}{% assign match = decls | where: "tagName", "rh-element-50-5" | first %}{{ match.tagName }}`,
@@ -115,22 +147,25 @@ func Benchmark_FilterChainLiquid(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := tpl.Render(ctx)
+		out, err := tpl.Render(ctx)
 		if err != nil {
 			b.Fatal(err)
 		}
+		sink = out
 	}
 }
 
-// Benchmark_FilterChainRepeated simulates a partial called 96 times,
-// each running the filter chain — measures cumulative cost.
+// Benchmark_FilterChainRepeated measures 96 filter chain invocations
+// in a single template render — simulates the cumulative cost of
+// running the chain once per element page.
 func Benchmark_FilterChainRepeated(b *testing.B) {
 	modules := buildCEMData(96, 10)
 
 	engine := tmpl.NewLiquidEngine()
-	tmpl.RegisterBuiltinFilters(engine)
+	if err := tmpl.RegisterBuiltinFilters(engine); err != nil {
+		b.Fatal(err)
+	}
 
-	// Build a template that runs the filter chain 96 times (once per "page")
 	templateSrc := ""
 	for i := 0; i < 96; i++ {
 		templateSrc += fmt.Sprintf(
@@ -148,9 +183,10 @@ func Benchmark_FilterChainRepeated(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := tpl.Render(ctx)
+		out, err := tpl.Render(ctx)
 		if err != nil {
 			b.Fatal(err)
 		}
+		sink = out
 	}
 }
