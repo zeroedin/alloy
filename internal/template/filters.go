@@ -18,6 +18,7 @@ import (
 	"github.com/lestrrat-go/strftime"
 	"github.com/yuin/goldmark"
 	"github.com/zeroedin/alloy/internal/content"
+	"github.com/zeroedin/alloy/internal/ordered"
 )
 
 var (
@@ -78,6 +79,7 @@ func RegisterBuiltinFilters(engine TemplateEngine) error {
 		"group_by":       GroupBy,
 		"size":           Size,
 		"map":            Map,
+		"flatten":        Flatten,
 		"uniq":           Uniq,
 		"compact":        Compact,
 		"concat":         Concat,
@@ -420,6 +422,22 @@ func Map(input interface{}, args ...interface{}) interface{} {
 	return result
 }
 
+func Flatten(input interface{}, args ...interface{}) interface{} {
+	if input == nil {
+		return nil
+	}
+	arr := toSlice(input)
+	var result []interface{}
+	for _, item := range arr {
+		if sub, ok := item.([]interface{}); ok {
+			result = append(result, sub...)
+		} else {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
 func Uniq(input interface{}, args ...interface{}) interface{} {
 	arr := toSlice(input)
 	seen := make(map[interface{}]bool)
@@ -748,6 +766,7 @@ var builtinFilters = map[string]FilterFunc{
 	"group_by":      GroupBy,
 	"size":          Size,
 	"map":           Map,
+	"flatten":       Flatten,
 	"uniq":          Uniq,
 	"compact":       Compact,
 	"concat":        Concat,
@@ -889,6 +908,9 @@ func toSlice(v interface{}) []interface{} {
 func getMapValue(item interface{}, key string) interface{} {
 	if m, ok := item.(map[string]interface{}); ok {
 		return m[key]
+	}
+	if m, ok := item.(*ordered.Map); ok {
+		return m.Get(key)
 	}
 	return nil
 }
