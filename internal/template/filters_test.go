@@ -671,7 +671,7 @@ var _ = Describe("Built-in Filters", func() {
 	})
 
 	// ── Filters on *ordered.Map items (issue #477) ──────────────────
-	// where, sort, groupby, and map must work on arrays of *ordered.Map
+	// where, sort, group_by, and map must work on arrays of *ordered.Map
 	// items from JSON data files. getMapValue must handle *ordered.Map.
 
 	Context("Filters on ordered.Map items (issue #477)", func() {
@@ -821,7 +821,7 @@ var _ = Describe("Built-in Filters", func() {
 				"flatten on a flat array must be a no-op")
 		})
 
-		It("nil input returns empty", func() {
+		It("nil input returns nil", func() {
 			result := tmpl.Flatten(nil)
 			Expect(result).To(BeNil())
 		})
