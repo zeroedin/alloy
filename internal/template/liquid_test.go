@@ -8,6 +8,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/zeroedin/alloy/internal/ordered"
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
@@ -345,6 +346,125 @@ var _ = Describe("LiquidEngine", func() {
 					"filter rewriting must apply at every include level")
 			Expect(string(out)).To(ContainSubstring("<em>branch</em>"),
 				"plugin filter must execute in the innermost partial")
+		})
+	})
+
+	// ── flatten filter through Liquid engine (issue #477) ───────────
+	// flatten is in knownLiquidFilters and dispatched via the
+	// alloyFilterBridge.Flatten method (reflection). This test verifies
+	// the full parse → render path works end-to-end.
+
+	Context("flatten filter through Liquid engine (issue #477)", func() {
+		It("flatten works in a Liquid template", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+
+			tpl, err := engine.Parse("test", []byte(
+				`{% assign nested = "a,b|c,d" | split: "|" %}{% assign flat = nested | flatten %}{{ flat | join: "," }}`,
+			))
+			// Note: split by "|" gives ["a,b", "c,d"] — that's flat strings, not nested arrays.
+			// We need actual nested arrays to test flatten. Use assign with split twice.
+			Expect(err).NotTo(HaveOccurred())
+			// This test verifies the filter is reachable through the Liquid engine.
+			// Even if the template logic doesn't produce nested arrays from pure Liquid,
+			// the parse/render path still verifies that `flatten` is recognized in
+			// knownLiquidFilters and dispatched via alloyFilterBridge.Flatten.
+			_, renderErr := tpl.Render(map[string]interface{}{})
+			Expect(renderErr).NotTo(HaveOccurred(),
+				"flatten must be dispatchable through the Liquid engine — "+
+					"if this fails with 'undefined filter flatten', the filter is "+
+					"not being recognized as a known Liquid filter or dispatched via "+
+					"alloyFilterBridge.Flatten (issue #477)")
+		})
+
+		It("flatten on nested array data produces flat output", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+
+			// Standard Liquid does not support filter pipes in {% for %} range
+			// expressions. Use the two-step {% assign %} pattern instead.
+			tpl, err := engine.Parse("test", []byte(
+				`{% assign flat = nested | flatten %}{% for item in flat %}{{ item }},{% endfor %}`,
+			))
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx := map[string]interface{}{
+				"nested": []interface{}{
+					[]interface{}{"a", "b"},
+					[]interface{}{"c", "d"},
+				},
+			}
+			out, err := tpl.Render(ctx)
+			Expect(err).NotTo(HaveOccurred(),
+				"flatten on nested array must not error in Liquid")
+			Expect(string(out)).To(Equal("a,b,c,d,"),
+				"flatten must collapse [[a,b],[c,d]] and iterate in order — "+
+					"uses standard {% assign %} + {% for %} pattern (issue #483)")
+		})
+	})
+
+	// ── Liquid bridge integration: where/sort/map on ordered.Map (#477) ─
+	// These tests verify the alloyFilterBridge methods (Where, Sort, Map)
+	// work through a full Liquid parse → render cycle with *ordered.Map data.
+	// Unit tests in filters_test.go cover the FilterFunc level; these cover
+	// the Liquid dispatch path.
+
+	Context("Liquid bridge filters on ordered.Map data (issue #477)", func() {
+		It("where filter finds matching ordered.Map items in Liquid", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+
+			tpl, err := engine.Parse("test", []byte(
+				`{% assign matches = items | where: "role", "engineer" %}{% for m in matches %}{{ m.name }},{% endfor %}`,
+			))
+			Expect(err).NotTo(HaveOccurred())
+
+			items, _ := ordered.UnmarshalJSONValue([]byte(
+				`[{"name":"Alice","role":"engineer"},{"name":"Bob","role":"designer"},{"name":"Charlie","role":"engineer"}]`,
+			))
+			ctx := map[string]interface{}{"items": items}
+			out, err := tpl.Render(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(out)).To(Equal("Alice,Charlie,"),
+				"where must filter *ordered.Map items by role=engineer through Liquid engine")
+		})
+
+		It("sort filter orders ordered.Map items in Liquid", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+
+			tpl, err := engine.Parse("test", []byte(
+				`{% assign sorted = items | sort: "name" %}{% for s in sorted %}{{ s.name }},{% endfor %}`,
+			))
+			Expect(err).NotTo(HaveOccurred())
+
+			items, _ := ordered.UnmarshalJSONValue([]byte(
+				`[{"name":"Charlie"},{"name":"Alice"},{"name":"Bob"}]`,
+			))
+			ctx := map[string]interface{}{"items": items}
+			out, err := tpl.Render(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(out)).To(Equal("Alice,Bob,Charlie,"),
+				"sort must order *ordered.Map items by name through Liquid engine")
+		})
+
+		It("map filter plucks field from ordered.Map items in Liquid", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+
+			tpl, err := engine.Parse("test", []byte(
+				`{% assign names = items | map: "name" %}{{ names | join: "," }}`,
+			))
+			Expect(err).NotTo(HaveOccurred())
+
+			items, _ := ordered.UnmarshalJSONValue([]byte(
+				`[{"name":"Alice","role":"engineer"},{"name":"Bob","role":"designer"}]`,
+			))
+			ctx := map[string]interface{}{"items": items}
+			out, err := tpl.Render(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(out)).To(Equal("Alice,Bob"),
+				"map must pluck name from *ordered.Map items through Liquid engine")
 		})
 	})
 
