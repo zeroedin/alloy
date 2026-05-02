@@ -378,8 +378,10 @@ var _ = Describe("LiquidEngine", func() {
 			engine := tmpl.NewLiquidEngine()
 			tmpl.RegisterBuiltinFilters(engine)
 
+			// Standard Liquid does not support filter pipes in {% for %} range
+			// expressions. Use the two-step {% assign %} pattern instead.
 			tpl, err := engine.Parse("test", []byte(
-				`{% for item in nested | flatten %}{{ item }},{% endfor %}`,
+				`{% assign flat = nested | flatten %}{% for item in flat %}{{ item }},{% endfor %}`,
 			))
 			Expect(err).NotTo(HaveOccurred())
 
@@ -394,7 +396,7 @@ var _ = Describe("LiquidEngine", func() {
 				"flatten on nested array must not error in Liquid")
 			Expect(string(out)).To(Equal("a,b,c,d,"),
 				"flatten must collapse [[a,b],[c,d]] and iterate in order — "+
-					"proves the dynamic filter rewrite dispatches correctly")
+					"uses standard {% assign %} + {% for %} pattern (issue #483)")
 		})
 	})
 
