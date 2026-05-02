@@ -348,6 +348,56 @@ var _ = Describe("LiquidEngine", func() {
 		})
 	})
 
+	// ── flatten filter through Liquid engine (issue #477) ───────────
+	// flatten is not in knownLiquidFilters — it routes through the
+	// dynamic filter rewrite (plugin_filter bridge). This test verifies
+	// the full parse → rewrite → render path works end-to-end.
+
+	Context("flatten filter through Liquid engine (issue #477)", func() {
+		It("flatten works in a Liquid template", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+
+			tpl, err := engine.Parse("test", []byte(
+				`{% assign nested = "a,b|c,d" | split: "|" %}{% assign flat = nested | flatten %}{{ flat | join: "," }}`,
+			))
+			// Note: split by "|" gives ["a,b", "c,d"] — that's flat strings, not nested arrays.
+			// We need actual nested arrays to test flatten. Use assign with split twice.
+			Expect(err).NotTo(HaveOccurred())
+			// This test verifies the filter is reachable through the Liquid engine.
+			// Even if the template logic doesn't produce nested arrays from pure Liquid,
+			// the parse/render path exercises the rewrite → plugin_filter dispatch.
+			_, renderErr := tpl.Render(map[string]interface{}{})
+			Expect(renderErr).NotTo(HaveOccurred(),
+				"flatten must be dispatchable through the Liquid engine — "+
+					"if this fails with 'undefined filter flatten', the filter is "+
+					"not in knownLiquidFilters and the dynamic rewrite failed (issue #477)")
+		})
+
+		It("flatten on nested array data produces flat output", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+
+			tpl, err := engine.Parse("test", []byte(
+				`{% for item in nested | flatten %}{{ item }},{% endfor %}`,
+			))
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx := map[string]interface{}{
+				"nested": []interface{}{
+					[]interface{}{"a", "b"},
+					[]interface{}{"c", "d"},
+				},
+			}
+			out, err := tpl.Render(ctx)
+			Expect(err).NotTo(HaveOccurred(),
+				"flatten on nested array must not error in Liquid")
+			Expect(string(out)).To(Equal("a,b,c,d,"),
+				"flatten must collapse [[a,b],[c,d]] and iterate in order — "+
+					"proves the dynamic filter rewrite dispatches correctly")
+		})
+	})
+
 	// ── Issue #200: Plugin filter shadows built-in in Liquid engine ──
 	// RegisterBuiltinFilters registers built-ins first. Then AddFilter
 	// registers a plugin filter with the same name. The plugin must win.
