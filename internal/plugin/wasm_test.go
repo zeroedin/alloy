@@ -206,6 +206,86 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 				"alloy.on() must be treated as alias for alloy.hook()")
 		})
 
+		// ── Hook priority (issue #464) ──────────────────────────────
+		// Hooks execute by priority (lower first), then registration
+		// order within the same priority.
+
+		It("hooks execute in priority order (lower first)", func() {
+			registry := plugin.NewHookRegistry()
+			var order []string
+
+			registry.RegisterWithPriority(plugin.OnPageRendered, func(ctx context.Context, payload interface{}) (interface{}, error) {
+				order = append(order, "ssr")
+				return payload, nil
+			}, 100)
+
+			registry.RegisterWithPriority(plugin.OnPageRendered, func(ctx context.Context, payload interface{}) (interface{}, error) {
+				order = append(order, "transforms")
+				return payload, nil
+			}, 10)
+
+			_, err := registry.Run(plugin.OnPageRendered, "<p>test</p>")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(order).To(Equal([]string{"transforms", "ssr"}),
+				"hooks must execute in priority order — lower priority runs first. "+
+					"transforms (10) must run before ssr (100) regardless of registration order")
+		})
+
+		It("default priority is 50", func() {
+			registry := plugin.NewHookRegistry()
+			var order []string
+
+			// Register with default priority (50)
+			registry.Register(plugin.OnPageRendered, func(ctx context.Context, payload interface{}) (interface{}, error) {
+				order = append(order, "default")
+				return payload, nil
+			})
+
+			// Register with priority 10 (should run first)
+			registry.RegisterWithPriority(plugin.OnPageRendered, func(ctx context.Context, payload interface{}) (interface{}, error) {
+				order = append(order, "early")
+				return payload, nil
+			}, 10)
+
+			// Register with priority 90 (should run last)
+			registry.RegisterWithPriority(plugin.OnPageRendered, func(ctx context.Context, payload interface{}) (interface{}, error) {
+				order = append(order, "late")
+				return payload, nil
+			}, 90)
+
+			_, err := registry.Run(plugin.OnPageRendered, "<p>test</p>")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(order).To(Equal([]string{"early", "default", "late"}),
+				"Register without priority must default to 50 — "+
+					"early (10) < default (50) < late (90)")
+		})
+
+		It("same priority preserves registration order", func() {
+			registry := plugin.NewHookRegistry()
+			var order []string
+
+			registry.RegisterWithPriority(plugin.OnPageRendered, func(ctx context.Context, payload interface{}) (interface{}, error) {
+				order = append(order, "alpha")
+				return payload, nil
+			}, 50)
+
+			registry.RegisterWithPriority(plugin.OnPageRendered, func(ctx context.Context, payload interface{}) (interface{}, error) {
+				order = append(order, "beta")
+				return payload, nil
+			}, 50)
+
+			registry.RegisterWithPriority(plugin.OnPageRendered, func(ctx context.Context, payload interface{}) (interface{}, error) {
+				order = append(order, "gamma")
+				return payload, nil
+			}, 50)
+
+			_, err := registry.Run(plugin.OnPageRendered, "<p>test</p>")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(order).To(Equal([]string{"alpha", "beta", "gamma"}),
+				"hooks with the same priority must execute in registration order "+
+					"(plugin load order: tier-first, then alphabetical within each tier)")
+		})
+
 		It("surfaces QuickJS error with plugin filename and line number", func() {
 			rt := plugin.NewQuickJSRuntime()
 			Expect(rt.Init()).To(Succeed())
