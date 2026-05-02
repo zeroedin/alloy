@@ -159,7 +159,7 @@ var knownLiquidFilters = map[string]bool{
 	"find": true, "find_index": true, "concat": true, "sum": true,
 	// alloyFilterBridge methods (excluding contains, findRE, replaceRE
 	// which need the plugin_filter bridge for correct Liquid behavior)
-	"slugify": true, "group_by": true,
+	"slugify": true, "group_by": true, "flatten": true,
 	"intersect": true, "union": true, "complement": true,
 	"absolute_url": true, "markdownify": true,
 	"json": true, "fingerprint": true, "safeHTML": true, "url": true,
@@ -365,6 +365,22 @@ func (f *alloyFilterBridge) Contains(input interface{}, args ...interface{}) int
 
 func (f *alloyFilterBridge) GroupBy(input interface{}, args ...interface{}) interface{} {
 	return f.call("group_by", input, args...)
+}
+
+func (f *alloyFilterBridge) Where(input interface{}, args ...interface{}) interface{} {
+	return f.call("where", input, args...)
+}
+
+func (f *alloyFilterBridge) Sort(input interface{}, args ...interface{}) interface{} {
+	return f.call("sort", input, args...)
+}
+
+func (f *alloyFilterBridge) Map(input interface{}, args ...interface{}) interface{} {
+	return f.call("map", input, args...)
+}
+
+func (f *alloyFilterBridge) Flatten(input interface{}, args ...interface{}) interface{} {
+	return f.call("flatten", input, args...)
 }
 
 func (f *alloyFilterBridge) Intersect(input interface{}, args ...interface{}) interface{} {
