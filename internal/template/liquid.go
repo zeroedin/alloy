@@ -57,10 +57,6 @@ type liquidTemplate struct {
 func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
 	src := string(content)
 
-	// Pre-process: extract filter chains from {% for %} range expressions
-	// into {% assign %} tags, since liquidgo doesn't evaluate filters in for-tags.
-	src = rewriteForTagFilters(src)
-
 	// Pre-process: rewrite novel/plugin filter references to use the
 	// plugin_filter bridge, which liquidgo can dispatch via PluginFilter().
 	for filterName := range e.dynamicFilters {
@@ -118,31 +114,6 @@ func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
 	return &liquidTemplate{tpl: tpl, name: name, includesDir: e.includesDir, dynamicFilters: filterSnapshot}, nil
 }
 
-// rewriteForTagFilters extracts filter chains from {% for %} range expressions
-// into preceding {% assign %} tags. liquidgo does not evaluate filters in
-// for-tag range expressions, so this pre-processing step is required.
-//
-//	{% for item in arr | flatten %}  →  {% assign __alloy_for_1 = arr | flatten %}{% for item in __alloy_for_1 %}
-var forTagFilterPattern = regexp.MustCompile(`\{%(-?)\s*for\s+(\w+)\s+in\s+(.+?)\s*(-?)%\}`)
-
-func rewriteForTagFilters(src string) string {
-	counter := 0
-	return forTagFilterPattern.ReplaceAllStringFunc(src, func(match string) string {
-		submatch := forTagFilterPattern.FindStringSubmatch(match)
-		if len(submatch) < 5 {
-			return match
-		}
-		expr := strings.TrimSpace(submatch[3])
-		if !strings.Contains(expr, "|") {
-			return match
-		}
-		counter++
-		assignVar := fmt.Sprintf("__alloy_for_%d", counter)
-		return fmt.Sprintf("{%% assign %s = %s %%}{%%%s for %s in %s %s%%}",
-			assignVar, expr, submatch[1], submatch[2], assignVar, submatch[4])
-	})
-}
-
 // rewriteFilterToPlugin replaces occurrences of a novel filter name in Liquid
 // templates with a plugin_filter bridge call. For example:
 //
@@ -188,7 +159,7 @@ var knownLiquidFilters = map[string]bool{
 	"find": true, "find_index": true, "concat": true, "sum": true,
 	// alloyFilterBridge methods (excluding contains, findRE, replaceRE
 	// which need the plugin_filter bridge for correct Liquid behavior)
-	"flatten": true, "slugify": true, "group_by": true,
+	"slugify": true, "group_by": true, "flatten": true,
 	"intersect": true, "union": true, "complement": true,
 	"absolute_url": true, "markdownify": true,
 	"json": true, "fingerprint": true, "safeHTML": true, "url": true,
@@ -312,7 +283,6 @@ func (fs *alloyFileSystem) ReadTemplateFile(templatePath string) (string, error)
 		data, err := os.ReadFile(path)
 		if err == nil {
 			src := string(data)
-			src = rewriteForTagFilters(src)
 			for filterName := range fs.dynamicFilters {
 				if strings.Contains(src, filterName) {
 					src = rewriteFilterToPlugin(src, filterName)
