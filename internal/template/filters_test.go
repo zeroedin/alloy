@@ -7,6 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/zeroedin/alloy/internal/content"
+	"github.com/zeroedin/alloy/internal/ordered"
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
@@ -666,6 +667,131 @@ var _ = Describe("Built-in Filters", func() {
 			result := tmpl.ApplyFilter("nonexistent_filter", "test")
 			Expect(result).To(BeNil(),
 				"ApplyFilter must return nil for unknown filter names")
+		})
+	})
+
+	// ── Filters on *ordered.Map items (issue #477) ──────────────────
+	// where, sort, groupby, and map must work on arrays of *ordered.Map
+	// items from JSON data files. getMapValue must handle *ordered.Map.
+
+	Context("Filters on ordered.Map items (issue #477)", func() {
+		// Helper: create an array of *ordered.Map from JSON
+		parseJSONArray := func(jsonStr string) []interface{} {
+			var arr []interface{}
+			result, err := ordered.UnmarshalJSONValue([]byte(jsonStr))
+			Expect(err).NotTo(HaveOccurred())
+			arr, ok := result.([]interface{})
+			Expect(ok).To(BeTrue())
+			return arr
+		}
+
+		It("where filters ordered.Map items by key=value", func() {
+			items := parseJSONArray(`[
+				{"tagName":"rh-accordion","kind":"class"},
+				{"tagName":"rh-button","kind":"class"},
+				{"tagName":"rh-tooltip","kind":"class"}
+			]`)
+
+			result := tmpl.Where(items, "tagName", "rh-button")
+			arr, ok := result.([]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(arr).To(HaveLen(1),
+				"where must find exactly one match — "+
+					"if empty, getMapValue doesn't handle *ordered.Map (issue #477)")
+
+			match, ok := arr[0].(*ordered.Map)
+			Expect(ok).To(BeTrue())
+			Expect(match.Get("tagName")).To(Equal("rh-button"))
+		})
+
+		It("sort orders ordered.Map items by key", func() {
+			items := parseJSONArray(`[
+				{"name":"Charlie","order":3},
+				{"name":"Alice","order":1},
+				{"name":"Bob","order":2}
+			]`)
+
+			result := tmpl.Sort(items, "name")
+			arr, ok := result.([]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(arr).To(HaveLen(3))
+
+			first, ok := arr[0].(*ordered.Map)
+			Expect(ok).To(BeTrue())
+			Expect(first.Get("name")).To(Equal("Alice"),
+				"sort by name must put Alice first — "+
+					"if order is wrong, getMapValue returns nil for *ordered.Map")
+		})
+
+		It("groupby groups ordered.Map items by key", func() {
+			items := parseJSONArray(`[
+				{"name":"Alice","role":"engineer"},
+				{"name":"Bob","role":"designer"},
+				{"name":"Charlie","role":"engineer"}
+			]`)
+
+			result := tmpl.GroupBy(items, "role")
+			groups, ok := result.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(groups).To(HaveKey("engineer"),
+				"groupby must group by role — "+
+					"if no keys, getMapValue returns nil for *ordered.Map")
+			Expect(groups).To(HaveKey("designer"))
+
+			engineers, ok := groups["engineer"].([]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(engineers).To(HaveLen(2))
+		})
+
+		It("map plucks field from ordered.Map items", func() {
+			items := parseJSONArray(`[
+				{"name":"Alice","email":"alice@example.com"},
+				{"name":"Bob","email":"bob@example.com"}
+			]`)
+
+			result := tmpl.Map(items, "name")
+			arr, ok := result.([]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(arr).To(Equal([]interface{}{"Alice", "Bob"}),
+				"map must extract name from each *ordered.Map item — "+
+					"if nil values, getMapValue doesn't handle *ordered.Map")
+		})
+
+		It("where with nested ordered.Map values", func() {
+			// Simulates CEM structure: modules[].declarations[]
+			input := `[
+				{"path":"accordion.js","declarations":[
+					{"tagName":"rh-accordion","slots":[{"name":"default"},{"name":"header"}]},
+					{"tagName":"rh-accordion-header","slots":[]}
+				]},
+				{"path":"button.js","declarations":[
+					{"tagName":"rh-button","slots":[{"name":"default"}]}
+				]}
+			]`
+			modules := parseJSONArray(input)
+
+			// Walk modules, find declaration by tagName
+			var foundSlots []interface{}
+			for _, mod := range modules {
+				om, ok := mod.(*ordered.Map)
+				if !ok {
+					continue
+				}
+				decls, ok := om.Get("declarations").([]interface{})
+				if !ok {
+					continue
+				}
+				matches := tmpl.Where(decls, "tagName", "rh-accordion")
+				if arr, ok := matches.([]interface{}); ok && len(arr) > 0 {
+					decl := arr[0].(*ordered.Map)
+					foundSlots, _ = decl.Get("slots").([]interface{})
+					break
+				}
+			}
+
+			Expect(foundSlots).To(HaveLen(2),
+				"must find 2 slots for rh-accordion through nested where — "+
+					"this simulates the CEM use case from issue #477")
 		})
 	})
 })
