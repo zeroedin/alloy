@@ -794,4 +794,95 @@ var _ = Describe("Built-in Filters", func() {
 					"this simulates the CEM use case from issue #477")
 		})
 	})
+
+	// ── Flatten filter (issue #477) ─────────────────────────────────
+	// Collapses one level of array nesting. Required for CEM use case
+	// where map: "declarations" produces [[decl1, decl2], [decl3]].
+
+	Context("Flatten filter (issue #477)", func() {
+		It("collapses one level of array nesting", func() {
+			input := []interface{}{
+				[]interface{}{"a", "b"},
+				[]interface{}{"c", "d"},
+			}
+			result := tmpl.Flatten(input)
+			arr, ok := result.([]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(arr).To(Equal([]interface{}{"a", "b", "c", "d"}),
+				"flatten must collapse [[a,b],[c,d]] into [a,b,c,d]")
+		})
+
+		It("flat array is unchanged", func() {
+			input := []interface{}{"a", "b", "c"}
+			result := tmpl.Flatten(input)
+			arr, ok := result.([]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(arr).To(Equal([]interface{}{"a", "b", "c"}),
+				"flatten on a flat array must be a no-op")
+		})
+
+		It("nil input returns empty", func() {
+			result := tmpl.Flatten(nil)
+			Expect(result).To(BeNil())
+		})
+
+		It("mixed nested and flat items", func() {
+			input := []interface{}{
+				[]interface{}{"a", "b"},
+				"c",
+				[]interface{}{"d"},
+			}
+			result := tmpl.Flatten(input)
+			arr, ok := result.([]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(arr).To(Equal([]interface{}{"a", "b", "c", "d"}),
+				"flatten must handle mixed nested and flat items")
+		})
+
+		It("CEM pipeline: map declarations then flatten then where", func() {
+			parseJSONArray := func(jsonStr string) []interface{} {
+				result, err := ordered.UnmarshalJSONValue([]byte(jsonStr))
+				Expect(err).NotTo(HaveOccurred())
+				arr, ok := result.([]interface{})
+				Expect(ok).To(BeTrue())
+				return arr
+			}
+
+			modules := parseJSONArray(`[
+				{"path":"accordion.js","declarations":[
+					{"tagName":"rh-accordion","slots":[{"name":"default"},{"name":"header"}]},
+					{"tagName":"rh-accordion-header","slots":[]}
+				]},
+				{"path":"button.js","declarations":[
+					{"tagName":"rh-button","slots":[{"name":"default"}]}
+				]}
+			]`)
+
+			// Step 1: map "declarations" — produces array of arrays
+			mapped := tmpl.Map(modules, "declarations")
+
+			// Step 2: flatten — collapses to flat array of declarations
+			flattened := tmpl.Flatten(mapped)
+			flatArr, ok := flattened.([]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(flatArr).To(HaveLen(3),
+				"flatten must produce 3 declarations total (2 + 1)")
+
+			// Step 3: where tagName — find the one we want
+			matches := tmpl.Where(flatArr, "tagName", "rh-accordion")
+			matchArr, ok := matches.([]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(matchArr).To(HaveLen(1),
+				"where must find exactly one rh-accordion declaration — "+
+					"this is the full CEM pipeline: map | flatten | where")
+
+			// Step 4: access nested slots
+			decl, ok := matchArr[0].(*ordered.Map)
+			Expect(ok).To(BeTrue())
+			slots, ok := decl.Get("slots").([]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(slots).To(HaveLen(2),
+				"rh-accordion must have 2 slots (default, header)")
+		})
+	})
 })
