@@ -367,12 +367,14 @@ var _ = Describe("LiquidEngine", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// This test verifies the filter is reachable through the Liquid engine.
 			// Even if the template logic doesn't produce nested arrays from pure Liquid,
-			// the parse/render path exercises the rewrite → plugin_filter dispatch.
+			// the parse/render path still verifies that `flatten` is recognized in
+			// knownLiquidFilters and dispatched via alloyFilterBridge.Flatten.
 			_, renderErr := tpl.Render(map[string]interface{}{})
 			Expect(renderErr).NotTo(HaveOccurred(),
 				"flatten must be dispatchable through the Liquid engine — "+
 					"if this fails with 'undefined filter flatten', the filter is "+
-					"not in knownLiquidFilters and the dynamic rewrite failed (issue #477)")
+					"not being recognized as a known Liquid filter or dispatched via "+
+					"alloyFilterBridge.Flatten (issue #477)")
 		})
 
 		It("flatten on nested array data produces flat output", func() {
