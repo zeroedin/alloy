@@ -349,9 +349,9 @@ var _ = Describe("LiquidEngine", func() {
 	})
 
 	// ── flatten filter through Liquid engine (issue #477) ───────────
-	// flatten is not in knownLiquidFilters — it routes through the
-	// dynamic filter rewrite (plugin_filter bridge). This test verifies
-	// the full parse → rewrite → render path works end-to-end.
+	// flatten is in knownLiquidFilters and dispatched via the
+	// alloyFilterBridge.Flatten method (reflection). This test verifies
+	// the full parse → render path works end-to-end.
 
 	Context("flatten filter through Liquid engine (issue #477)", func() {
 		It("flatten works in a Liquid template", func() {
