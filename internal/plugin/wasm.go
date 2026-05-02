@@ -96,12 +96,12 @@ func (r *QuickJSRuntime) Init() error {
 			},
 			hook: function(name, fn, opts) {
 				__hooks[name] = fn;
-				var p = (opts && typeof opts.priority === 'number') ? opts.priority : 50;
+				var p = (opts && typeof opts.priority === 'number') ? Math.floor(opts.priority) : 50;
 				__registerHook(name, p);
 			},
 			on: function(name, fn, opts) {
 				__hooks[name] = fn;
-				var p = (opts && typeof opts.priority === 'number') ? opts.priority : 50;
+				var p = (opts && typeof opts.priority === 'number') ? Math.floor(opts.priority) : 50;
 				__registerHook(name, p);
 			}
 		};
