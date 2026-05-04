@@ -157,31 +157,39 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
+	// Snapshot config values before starting the background goroutine.
+	// onConfig fires later and may mutate cfg — reading cfg inside the
+	// goroutine would be a data race.
+	staticDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Static)
+	assetsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Assets)
+	passthrough := cfg.Passthrough
+	projectRoot := cfg.ProjectRoot
+	passthroughManagedDirs := []string{
+		cfg.Structure.Content,
+		cfg.Structure.Layouts,
+		cfg.Structure.Assets,
+		cfg.Structure.Static,
+		cfg.Structure.Data,
+		"plugins",
+		".alloy",
+	}
+
 	// Start static + asset + passthrough copy in background goroutine.
 	var staticWg sync.WaitGroup
 	var staticCopyErr error
 	staticWg.Add(1)
 	go func() {
 		defer staticWg.Done()
-		staticDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Static)
 		if err := static.CopyStatic(staticDir, outputDir); err != nil {
 			staticCopyErr = fmt.Errorf("copying static files: %w", err)
 			return
 		}
-		assetsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Assets)
 		if err := assets.CopyAssets(assetsDir, outputDir); err != nil {
 			staticCopyErr = fmt.Errorf("copying assets: %w", err)
 			return
 		}
-		if len(cfg.Passthrough) > 0 {
-			managedDirs := []string{
-				cfg.Structure.Content,
-				cfg.Structure.Layouts,
-				cfg.Structure.Assets,
-				cfg.Structure.Static,
-				cfg.Structure.Data,
-			}
-			if err := static.CopyPassthroughWithValidation(cfg.Passthrough, cfg.ProjectRoot, outputDir, managedDirs); err != nil {
+		if len(passthrough) > 0 {
+			if err := static.CopyPassthroughWithValidation(passthrough, projectRoot, outputDir, passthroughManagedDirs); err != nil {
 				staticCopyErr = fmt.Errorf("copying passthrough files: %w", err)
 				return
 			}
@@ -461,6 +469,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// Early return: no content found → zero pages
 	if len(pages) == 0 {
+		timer.Start("Static+asset copy (wait)")
 		staticWg.Wait()
 		if staticCopyErr != nil {
 			return nil, staticCopyErr
