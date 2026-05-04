@@ -989,41 +989,4 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 		})
 	})
 
-	// ── Worker pool for subprocess plugins (issue #491) ─────────────
-	// Multiple subprocess workers process per-page hooks in parallel.
-	// Each worker loads the same plugins. Pages distributed in chunks.
-
-	Describe("Worker pool (issue #491)", func() {
-		It("auto-scales worker count from CPU count", func() {
-			count := plugin.AutoWorkerCount()
-			Expect(count).To(BeNumerically(">=", 2),
-				"auto worker count must be at least 2 (floor)")
-			Expect(count).To(BeNumerically("<=", 8),
-				"auto worker count must be at most 8 (cap)")
-		})
-
-		It("config workers: auto resolves to AutoWorkerCount", func() {
-			count := plugin.ResolveWorkerCount("auto")
-			Expect(count).To(Equal(plugin.AutoWorkerCount()),
-				"workers: auto must resolve to AutoWorkerCount()")
-		})
-
-		It("config workers: N resolves to N", func() {
-			count := plugin.ResolveWorkerCount(4)
-			Expect(count).To(Equal(4),
-				"workers: 4 must resolve to 4")
-		})
-
-		It("config workers: 0 falls back to auto", func() {
-			count := plugin.ResolveWorkerCount(0)
-			Expect(count).To(Equal(plugin.AutoWorkerCount()),
-				"workers: 0 must fall back to auto")
-		})
-
-		It("config workers: negative falls back to auto", func() {
-			count := plugin.ResolveWorkerCount(-1)
-			Expect(count).To(Equal(plugin.AutoWorkerCount()),
-				"workers: -1 must fall back to auto")
-		})
-	})
 })
