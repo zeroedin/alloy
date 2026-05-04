@@ -801,6 +801,17 @@ Full rebuilds in serve mode (config changes, 10+ files) go through `Build()`, wh
 
 The pipeline must nil-guard every progress call since the reporter may be nil.
 
+**All build stages must report progress (issue #493)**. Currently only content rendering (Pass 1b) has a progress bar. The 8-12s gap between "Rendering 100%" and build completion has no feedback. Add `StartStage`/`Update`/`EndStage` to:
+
+| Stage | Name | Total | Where |
+|-------|------|-------|-------|
+| Content rendering | `"Rendering"` | `len(pages)` | Already done (Pass 1b) |
+| Layout rendering | `"Layouts"` | `len(pages)` | Pass 2, per-page in layout chain loop |
+| Post-render hooks | `"Transforms"` | `len(pages)` | `firePageRenderedHooks`, per-page |
+| Output writing | `"Writing"` | `len(pages)` | Output write loop, per-file |
+
+Post-render hook progress reports at the page level, not the batch level — even with worker pools (#491), the caller tracks which pages are complete.
+
 `Build()` reporter calls:
 ```go
 if reporter != nil { reporter.StartStage("Rendering", len(pages)) }
