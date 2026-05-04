@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -108,6 +109,7 @@ type TemplatesConfig struct {
 type PluginsConfig struct {
 	Node    bool `yaml:"node" toml:"node" json:"node"`
 	Timeout int  `yaml:"timeout" toml:"timeout" json:"timeout"`
+	Workers int  `yaml:"workers" toml:"workers" json:"workers"` // 0 = auto-scale, >0 = explicit count
 }
 
 // TaxonomyConfig holds per-taxonomy settings.
@@ -337,5 +339,27 @@ func Validate(cfg *Config) error {
 	if cfg.Plugins.Timeout < 0 {
 		return fmt.Errorf("validation error: plugins timeout must not be negative (got %d)", cfg.Plugins.Timeout)
 	}
+	if cfg.Plugins.Workers < 0 {
+		return fmt.Errorf("validation error: plugins workers must not be negative (got %d)", cfg.Plugins.Workers)
+	}
 	return nil
+}
+
+// ResolveWorkerCount returns the number of subprocess workers to use.
+// When configured to 0 (auto), scales based on CPU count: min(NumCPU/3, 8)
+// with a floor of 2. The /3 divisor accounts for contention between
+// subprocess workers and Go's own goroutines.
+// Explicit positive values are returned as-is.
+func ResolveWorkerCount(configured int) int {
+	if configured > 0 {
+		return configured
+	}
+	n := runtime.NumCPU() / 3
+	if n < 2 {
+		n = 2
+	}
+	if n > 8 {
+		n = 8
+	}
+	return n
 }
