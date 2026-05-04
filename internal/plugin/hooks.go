@@ -167,7 +167,7 @@ func (r *HookRegistry) RunWithTimeout(event HookName, payload interface{}) (inte
 // RunBatchWithTimeout dispatches multiple payloads through all hooks for an event.
 // Hooks with a batchFn use batch dispatch (distributing across workers).
 // Hooks without batchFn fall back to per-item dispatch with timeout enforcement.
-// Batch timeout scales with payload count; +5000ms headroom for IPC overhead.
+// Batch timeout scales linearly with payload count (timeout × itemCount).
 func (r *HookRegistry) RunBatchWithTimeout(event HookName, payloads []interface{}) ([]interface{}, error) {
 	hooks := r.hooks[event]
 	current := make([]interface{}, len(payloads))
@@ -178,8 +178,7 @@ func (r *HookRegistry) RunBatchWithTimeout(event HookName, payloads []interface{
 			preHook := make([]interface{}, len(current))
 			copy(preHook, current)
 			itemCount := len(current)
-			// +5000ms headroom for IPC overhead across worker subprocesses
-			effectiveTimeout := r.timeout*itemCount + 5000
+			effectiveTimeout := r.timeout * itemCount
 			timeout := time.Duration(effectiveTimeout) * time.Millisecond
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 
