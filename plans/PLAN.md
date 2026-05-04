@@ -2004,7 +2004,17 @@ For plugins that need Node-specific capabilities:
 
 **Security: Tier 3 plugins run with the same permissions as the user.** They have full access to the filesystem, network, and environment variables. A plugin can read files, make HTTP requests, or spawn child processes — there is no sandbox. This is the same trust model used by 11ty, Jekyll, and every other plugin-based SSG: installing a plugin is an explicit statement of trust. Only install plugins you have reviewed or that come from trusted sources.
 
-Alloy scans `plugins/` for `.js` and `.ts` files that export `runtime: "node"`. If any are found, it spawns a single Node subprocess that loads all of them. If none are found, no Node process is started — zero overhead. Communicates via stdin/stdout using length-prefixed JSON-RPC (LSP-style framing). Plugin stderr is redirected to `.alloy/plugin.log`.
+Alloy scans `plugins/` for `.js` and `.ts` files that export `runtime: "node"`. If any are found, it spawns subprocess workers that load all of them. If none are found, no Node process is started — zero overhead. Communicates via stdin/stdout using length-prefixed JSON-RPC (LSP-style framing). Plugin stderr is redirected to `.alloy/plugin.log`.
+
+**Worker pool for per-page hooks (issue #491)**: For hooks that fire per page (`onPageRendered`, `onContentTransformed`), Alloy distributes pages across multiple subprocess workers. Each worker loads the same plugins and processes a contiguous chunk of pages. This parallelizes the single largest build cost — SSR and HTML transforms.
+
+```yaml
+plugins:
+  workers: auto    # default — auto-scale based on CPU count
+  # workers: 4    # explicit override
+```
+
+Auto-scaling: `min(runtime.NumCPU() / 2, 8)` with a floor of 2. `/2` because workers compete with Go's own goroutines. Cap at 8 to avoid IPC overhead diminishing returns. Workers are spawned async during pipeline init and shut down after the build completes. Only Tier 3 (subprocess) runtimes use the pool — Tier 2 (QuickJS/WASM) runs in-process.
 
 **Unified Runtime interface**: Node plugins implement the same `Runtime` interface as Tier 2 plugins (QuickJS and WASM). `Registry.LoadPlugins()` treats all tiers identically — it iterates `RegisteredFilters`, `RegisteredShortcodes`, and `RegisteredHooks` from each runtime and bridges them to the template engine and `HookRegistry`. The `NodeRuntime` implementation routes these calls over JSON-RPC to the subprocess. The pipeline (via `Registry.LoadPlugins`) never knows whether a filter, shortcode, or hook is running in-process or in a subprocess.
 

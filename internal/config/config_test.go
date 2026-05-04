@@ -294,6 +294,13 @@ var _ = Describe("Config", func() {
 			Expect(cfg.Plugins.Timeout).To(Equal(5000))
 		})
 
+		It("defaults plugins.workers to auto (issue #491)", func() {
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Plugins.Workers).To(Equal("auto"),
+				"plugins.workers must default to 'auto' — "+
+					"auto-scales subprocess worker count based on CPU")
+		})
+
 		It("defaults content.formats to md and html", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cfg.Content.Formats).To(Equal([]string{"md", "html"}),
