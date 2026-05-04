@@ -514,6 +514,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// ── Pass 2: layout resolution + rendering per batch (steps 12-15) ──
 	timer.Start("Pass 2: layout render")
+	reportStartStage("Layouts", len(pages))
 	for _, batch := range batches {
 		rc := &RenderContext{
 			Cfg:            cfg,
@@ -558,6 +559,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			pages = append(pages, taxPages...)
 		}
 	}
+	reportEndStage()
 
 	// Wait for worker pool before dispatching hooks.
 	if workerPoolReady != nil {
@@ -568,6 +570,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Worker pool distributes pages across multiple subprocesses.
 	if ps.Hooks.HasHooks(plugin.OnPageRendered) {
 		timer.Start("Post-render hooks")
+		reportStartStage("Transforms", len(pages))
 		payloads := make([]interface{}, len(pages))
 		for i, page := range pages {
 			payloads[i] = string(page.RenderedBody)
@@ -584,6 +587,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				pages[i].RenderedBody = modified
 			}
 		}
+		reportEndStage()
 	}
 
 	// Pre-build validation: permalink/alias conflicts
@@ -649,7 +653,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// Stage 6: Output writing
 	timer.Start("Output writing")
-	reportStartStage("Writing", -1)
+	reportStartStage("Writing", len(pages))
 	for _, page := range pages {
 		if !output.ShouldWrite(page.URL) {
 			continue
@@ -676,6 +680,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			}
 		}
 	}
+	reportEndStage()
 
 	// Wait for background static/asset copy goroutine (started early in pipeline).
 	timer.Start("Static+asset copy (wait)")
@@ -764,7 +769,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		StageTimings:        timer.Timings(),
 	}
 
-	reportEndStage()
 	reportSummary(result.PageCount, result.Duration, 0)
 
 	// Fire onBuildComplete hook — build is finished, plugins can run post-build tasks
