@@ -229,7 +229,7 @@ func (r *HookRegistry) RunBatchWithTimeout(event HookName, payloads []interface{
 				case res := <-ch:
 					cancel()
 					if res.err != nil {
-						return nil, res.err
+						return nil, fmt.Errorf("%s item %d: %w", string(event), j, res.err)
 					}
 					current[j] = res.val
 				case <-ctx.Done():

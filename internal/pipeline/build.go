@@ -150,17 +150,14 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		log.Printf("warning: %s", w)
 	}
 
-	// Deferred worker pool cleanup — declared early so it runs on all exit paths.
+	// Deferred cleanup — declared early so it runs on all exit paths.
+	// registry.Close() shuts down all runtimes (primary bridges + worker pools).
 	var workerPoolReady chan struct{}
 	defer func() {
 		if workerPoolReady != nil {
 			<-workerPoolReady
 		}
-		for _, rt := range registry.Runtimes() {
-			if wp, ok := rt.(interface{ CloseWorkers() }); ok {
-				wp.CloseWorkers()
-			}
-		}
+		registry.Close()
 	}()
 
 	// Fire onConfig hook — plugins can mutate config before validation.
