@@ -259,6 +259,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				cfg.Structure.Assets,
 				cfg.Structure.Static,
 				cfg.Structure.Data,
+				"plugins",
+				".alloy",
 			}
 			if err := static.CopyPassthroughWithValidation(cfg.Passthrough, cfg.ProjectRoot, outputDir, managedDirs); err != nil {
 				staticCopyErr = fmt.Errorf("copying passthrough files: %w", err)
