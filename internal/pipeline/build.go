@@ -685,8 +685,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Wait for background static/asset copy goroutine (started early in pipeline).
 	timer.Start("Static+asset copy (wait)")
 	reportStartStage("Finalizing", -1)
+	reportMessage("Waiting for static/asset copy…")
 	staticWg.Wait()
 	if staticCopyErr != nil {
+		reportEndStage()
 		return nil, staticCopyErr
 	}
 
@@ -698,6 +700,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		"outputDir": outputDir,
 	}
 	if _, err := ps.Hooks.RunWithTimeout(plugin.OnAssetProcess, assetInfo); err != nil {
+		reportEndStage()
 		return nil, fmt.Errorf("plugin hook onAssetProcess: %w", err)
 	}
 
@@ -707,13 +710,16 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			src := filepath.Join(contentDir, relPath)
 			dst := filepath.Join(outputDir, relPath)
 			if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+				reportEndStage()
 				return nil, fmt.Errorf("copying content passthrough: %w", err)
 			}
 			srcData, err := os.ReadFile(src)
 			if err != nil {
+				reportEndStage()
 				return nil, fmt.Errorf("copying content passthrough %s: %w", relPath, err)
 			}
 			if err := os.WriteFile(dst, srcData, 0644); err != nil {
+				reportEndStage()
 				return nil, fmt.Errorf("copying content passthrough %s: %w", relPath, err)
 			}
 		}
@@ -724,9 +730,11 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	if len(pages) > 0 {
 		sitemapXML, err := output.GenerateSitemap(pages, cfg.Sitemap, cfg.BaseURL)
 		if err != nil {
+			reportEndStage()
 			return nil, fmt.Errorf("generating sitemap: %w", err)
 		}
 		if err := output.WriteFile(outputDir, "sitemap.xml", sitemapXML); err != nil {
+			reportEndStage()
 			return nil, fmt.Errorf("writing sitemap: %w", err)
 		}
 	}
