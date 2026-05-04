@@ -467,7 +467,16 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
   Three implementations:
   - **`QuickJSRuntime`** — in-process JS execution via embedded QuickJS. Already implements most methods.
   - **`WASMRuntime`** — in-process WASM execution via wazero with alloc/ptr/len ABI.
-  - **`NodeRuntime`** — subprocess execution via JSON-RPC over stdin/stdout (length-prefixed, LSP-style framing). Spawned once per build, reused for all hook/filter/shortcode calls. Stderr redirected to `.alloy/plugin.log`.
+  - **`NodeRuntime`** — subprocess execution via JSON-RPC over stdin/stdout (length-prefixed, LSP-style framing). Stderr redirected to `.alloy/plugin.log`.
+  - **Worker pool (issue #491)**: For per-page hooks (`onPageRendered`, `onContentTransformed`), spawn multiple subprocess workers and distribute pages across them. Each worker loads the same plugins via `EvalFile`. Implementation:
+    - `WorkerPool` struct: holds `[]*NodeBridge`, worker count, and dispatch logic
+    - `NewWorkerPool(count int, projectRoot string) *WorkerPool`: spawns N bridges, each loading the same plugin files
+    - `DispatchHook(event string, pages []PagePayload) ([]PageResult, error)`: distributes pages in contiguous chunks across workers, collects results in order
+    - Auto-scaling: `cfg.Plugins.Workers` — `"auto"` (default) uses `min(runtime.NumCPU()/2, 8)` with floor 2. Integer value overrides.
+    - `config.PluginsConfig` gets a `Workers` field: `Workers interface{} \`yaml:"workers"\`` — accepts `"auto"` or int
+    - Workers spawn async during `DiscoverPlugins` (overlap with pipeline init), shut down in `registry.Close()`
+    - Only Tier 3 (subprocess) runtimes — Tier 2 (QuickJS/WASM) is in-process, no pooling needed
+    - Per-page dispatch (not batched) — prototype showed individual IPC outperforms batched JSON arrays for large HTML payloads
     - `EvalFile(path)`: Send the **absolute file path** (not source code) to the Node subprocess. The bridge loads the plugin via `await import(absPath)`, calls `mod.default(alloy)`, and returns discovered registration names. **ESM import replaces eval() (issue #441)**: the previous approach read the file, regex-stripped `export` keywords, and `eval()`d the result in global scope. This caused side-effect collisions (`customElements.define` duplication) because `eval()` has no module semantics — re-evaluation re-triggers side effects that ES modules would deduplicate. With `import()`, Node's module cache ensures each module is loaded once. Go side sends `Payload: absPath` instead of `Payload: string(src)`. Bridge side: `case 'eval'` uses `await import(msg.payload)` instead of `eval(code)`. **Prerequisite**: projects must use ESM (`"type": "module"` in `package.json`). This is a requirement for Tier 3 Node plugins.
     - `CallFilter(name, input, args...)`: Send `Message{ID: n, Type: "filter", Name: name, Payload: input}` to subprocess via `EncodeMessage`. Wait for response `Message{ID: n, Result: "..."}` via `DecodeMessage`. Return result.
     - `CallHook(name, payload)`: Send `Message{ID: n, Type: "hook", Name: name, Payload: payload}`. Wait for response. Return modified payload from `Result` field.

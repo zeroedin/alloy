@@ -988,4 +988,5 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 					"compilation cache must not affect runtime behavior")
 		})
 	})
+
 })
