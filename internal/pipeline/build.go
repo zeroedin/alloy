@@ -664,6 +664,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Wait for background static/asset copy goroutine (started early in pipeline).
 	// Must complete before onAssetProcess — the hook transforms assets already
 	// in the output dir, so files must be on disk first.
+	timer.Start("Static+asset copy (wait)")
 	staticWg.Wait()
 	if staticCopyErr != nil {
 		return nil, staticCopyErr
@@ -2198,11 +2199,14 @@ func resolveDir(projectRoot, dir string) string {
 }
 
 // validateOutputDir ensures the output directory doesn't conflict with
-// managed project directories (content, layouts, assets, static, data).
+// managed project directories (content, layouts, assets, static, data,
+// plugins, .alloy cache).
 func validateOutputDir(cfg *config.Config) error {
 	managedDirs := []string{
 		cfg.Structure.Content,
 		cfg.Structure.Layouts,
+		"plugins",
+		".alloy",
 	}
 	if cfg.Structure.Assets != "" {
 		managedDirs = append(managedDirs, cfg.Structure.Assets)
