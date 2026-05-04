@@ -106,8 +106,9 @@ type TemplatesConfig struct {
 
 // PluginsConfig holds plugin system settings.
 type PluginsConfig struct {
-	Node    bool `yaml:"node" toml:"node" json:"node"`
-	Timeout int  `yaml:"timeout" toml:"timeout" json:"timeout"`
+	Node    bool        `yaml:"node" toml:"node" json:"node"`
+	Timeout int         `yaml:"timeout" toml:"timeout" json:"timeout"`
+	Workers interface{} `yaml:"workers" toml:"workers" json:"workers"` // "auto" (default) or int
 }
 
 // TaxonomyConfig holds per-taxonomy settings.
@@ -237,6 +238,9 @@ func ApplyDefaults(cfg *Config) {
 	}
 	if cfg.Plugins.Timeout == 0 {
 		cfg.Plugins.Timeout = 5000
+	}
+	if cfg.Plugins.Workers == nil {
+		cfg.Plugins.Workers = "auto"
 	}
 	if cfg.Language == "" {
 		cfg.Language = "en"

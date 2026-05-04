@@ -29,8 +29,14 @@ const (
 // The context carries the per-hook timeout deadline for cooperative cancellation.
 type HookFunc func(ctx context.Context, payload interface{}) (interface{}, error)
 
+// BatchHookFunc processes multiple payloads in a single call, returning one
+// result per input. Used by subprocess plugins to distribute work across
+// multiple worker processes.
+type BatchHookFunc func(ctx context.Context, payloads []interface{}) ([]interface{}, error)
+
 type priorityHook struct {
 	fn       HookFunc
+	batchFn  BatchHookFunc // optional batch-capable variant
 	priority int
 	index    int // registration order for stable sort
 }
@@ -74,6 +80,21 @@ func (r *HookRegistry) HasHooks(event HookName) bool {
 // Register adds a hook function for the given event with default priority (50).
 func (r *HookRegistry) Register(event HookName, fn HookFunc) {
 	r.RegisterWithPriority(event, fn, 50)
+}
+
+// RegisterBatchWithPriority adds a hook with both single and batch dispatch functions.
+// The batch function is used by RunBatchWithTimeout to distribute work across workers.
+func (r *HookRegistry) RegisterBatchWithPriority(event HookName, fn HookFunc, batchFn BatchHookFunc, priority int) {
+	h := priorityHook{fn: fn, batchFn: batchFn, priority: priority, index: r.nextIdx}
+	r.nextIdx++
+	hooks := r.hooks[event]
+	i := sort.Search(len(hooks), func(i int) bool {
+		return hooks[i].priority > priority || (hooks[i].priority == priority && hooks[i].index > h.index)
+	})
+	hooks = append(hooks, priorityHook{})
+	copy(hooks[i+1:], hooks[i:])
+	hooks[i] = h
+	r.hooks[event] = hooks
 }
 
 // RegisterWithPriority adds a hook function for the given event with explicit priority.
@@ -138,6 +159,87 @@ func (r *HookRegistry) RunWithTimeout(event HookName, payload interface{}) (inte
 			cancel()
 			current = preHook
 			r.warnings = append(r.warnings, fmt.Sprintf("hook timeout: %s exceeded %dms", string(event), r.timeout))
+		}
+	}
+	return current, nil
+}
+
+// RunBatchWithTimeout dispatches multiple payloads through all hooks for an event.
+// Hooks with a batchFn use batch dispatch (distributing across workers).
+// Hooks without batchFn fall back to per-item dispatch with timeout enforcement.
+// Batch timeout scales with payload count; +5000ms headroom for IPC overhead.
+func (r *HookRegistry) RunBatchWithTimeout(event HookName, payloads []interface{}) ([]interface{}, error) {
+	hooks := r.hooks[event]
+	current := make([]interface{}, len(payloads))
+	copy(current, payloads)
+
+	for _, h := range hooks {
+		if h.batchFn != nil {
+			preHook := make([]interface{}, len(current))
+			copy(preHook, current)
+			itemCount := len(current)
+			// +5000ms headroom for IPC overhead across worker subprocesses
+			effectiveTimeout := r.timeout*itemCount + 5000
+			timeout := time.Duration(effectiveTimeout) * time.Millisecond
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+
+			type batchResult struct {
+				val []interface{}
+				err error
+			}
+			ch := make(chan batchResult, 1)
+			go func() {
+				result, err := h.batchFn(ctx, current)
+				ch <- batchResult{result, err}
+			}()
+
+			select {
+			case res := <-ch:
+				cancel()
+				if res.err != nil {
+					return nil, res.err
+				}
+				if len(res.val) != itemCount {
+					return nil, fmt.Errorf("batch hook %s returned %d results for %d inputs",
+						string(event), len(res.val), itemCount)
+				}
+				current = res.val
+			case <-ctx.Done():
+				cancel()
+				current = preHook
+				r.warnings = append(r.warnings, fmt.Sprintf("batch hook timeout: %s exceeded %dms for %d items",
+					string(event), effectiveTimeout, itemCount))
+			}
+		} else {
+			for j, payload := range current {
+				preItem := current[j]
+				timeout := time.Duration(r.timeout) * time.Millisecond
+				ctx, cancel := context.WithTimeout(context.Background(), timeout)
+
+				type hookResult struct {
+					val interface{}
+					err error
+				}
+				ch := make(chan hookResult, 1)
+				go func() {
+					result, err := h.fn(ctx, payload)
+					ch <- hookResult{result, err}
+				}()
+
+				select {
+				case res := <-ch:
+					cancel()
+					if res.err != nil {
+						return nil, res.err
+					}
+					current[j] = res.val
+				case <-ctx.Done():
+					cancel()
+					current[j] = preItem
+					r.warnings = append(r.warnings, fmt.Sprintf("hook timeout: %s item %d exceeded %dms",
+						string(event), j, r.timeout))
+				}
+			}
 		}
 	}
 	return current, nil

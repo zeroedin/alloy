@@ -92,6 +92,8 @@ type NodeRuntime struct {
 	filters     []string
 	shortcodes  []string
 	hooks       []string
+	pluginPaths []string     // paths loaded via EvalFile, for worker replication
+	workerPool  []*NodeBridge // additional bridges for parallel hook dispatch
 }
 
 // NewNodeRuntime creates a new Node.js plugin runtime with its own bridge.
@@ -143,6 +145,8 @@ func (r *NodeRuntime) EvalFile(path string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
+
+	r.pluginPaths = append(r.pluginPaths, absPath)
 
 	// Parse discovered registrations from response
 	if resultMap, ok := resp.Result.(map[string]interface{}); ok {
@@ -245,6 +249,116 @@ func (r *NodeRuntime) CallHook(name string, payload interface{}) (interface{}, e
 	return resp.Result, nil
 }
 
+// PrepareWorkerPool starts n-1 additional Node bridges for parallel hook dispatch.
+// Each worker loads the same plugin files as the primary bridge.
+// Skipped when the runtime has no hooks (only filters/shortcodes).
+func (r *NodeRuntime) PrepareWorkerPool(n int) error {
+	if n <= 1 || r.bridge == nil || len(r.pluginPaths) == 0 || len(r.hooks) == 0 {
+		return nil
+	}
+
+	numWorkers := n - 1
+	workers := make([]*NodeBridge, numWorkers)
+	errs := make(chan error, numWorkers)
+
+	for i := 0; i < numWorkers; i++ {
+		go func(idx int) {
+			b := NewNodeBridge(r.projectRoot)
+			if err := b.Start(); err != nil {
+				errs <- fmt.Errorf("worker %d: %w", idx, err)
+				return
+			}
+			for _, path := range r.pluginPaths {
+				if _, err := b.Send(&Message{Type: "eval", Payload: path}); err != nil {
+					b.Stop()
+					errs <- fmt.Errorf("worker %d eval: %w", idx, err)
+					return
+				}
+			}
+			workers[idx] = b
+			errs <- nil
+		}(i)
+	}
+
+	for i := 0; i < numWorkers; i++ {
+		if err := <-errs; err != nil {
+			for _, w := range workers {
+				if w != nil {
+					w.Stop()
+				}
+			}
+			return fmt.Errorf("worker pool: %w", err)
+		}
+	}
+	r.workerPool = workers
+	return nil
+}
+
+// CloseWorkers shuts down all worker pool bridges.
+func (r *NodeRuntime) CloseWorkers() {
+	for _, w := range r.workerPool {
+		if w != nil {
+			w.Stop()
+		}
+	}
+	r.workerPool = nil
+}
+
+// BatchCallHook distributes payloads across the worker pool for parallel processing.
+// Uses per-page IPC dispatch which outperforms large batch JSON serialization.
+func (r *NodeRuntime) BatchCallHook(name string, payloads []interface{}) ([]interface{}, error) {
+	if r.bridge == nil {
+		return payloads, nil
+	}
+
+	bridges := []*NodeBridge{r.bridge}
+	for _, w := range r.workerPool {
+		if w != nil {
+			bridges = append(bridges, w)
+		}
+	}
+	numBridges := len(bridges)
+
+	results := make([]interface{}, len(payloads))
+	var firstErr error
+	var errOnce sync.Once
+	var wg sync.WaitGroup
+
+	chunkSize := (len(payloads) + numBridges - 1) / numBridges
+	for w := 0; w < numBridges; w++ {
+		start := w * chunkSize
+		if start >= len(payloads) {
+			break
+		}
+		end := start + chunkSize
+		if end > len(payloads) {
+			end = len(payloads)
+		}
+		wg.Add(1)
+		go func(bridge *NodeBridge, lo, hi int) {
+			defer wg.Done()
+			for i := lo; i < hi; i++ {
+				resp, err := bridge.Send(&Message{
+					Type:    "hook",
+					Name:    name,
+					Payload: payloads[i],
+				})
+				if err != nil {
+					errOnce.Do(func() { firstErr = err })
+					return
+				}
+				results[i] = resp.Result
+			}
+		}(bridges[w], start, end)
+	}
+	wg.Wait()
+
+	if firstErr != nil {
+		return nil, fmt.Errorf("node batch hook %q: %w", name, firstErr)
+	}
+	return results, nil
+}
+
 // SetSiteData is a stub for the Node runtime. Site data injection over the
 // Node bridge is not yet implemented — returns nil (no-op) since Node plugins
 // receive data through hook payloads rather than a persistent alloy.data binding.
@@ -252,8 +366,9 @@ func (r *NodeRuntime) SetSiteData(data map[string]interface{}) error {
 	return nil
 }
 
-// Close shuts down the Node subprocess.
+// Close shuts down the worker pool and primary Node subprocess.
 func (r *NodeRuntime) Close() {
+	r.CloseWorkers()
 	if r.bridge != nil {
 		r.bridge.Stop()
 	}
