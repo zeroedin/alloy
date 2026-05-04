@@ -150,8 +150,26 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		log.Printf("warning: %s", w)
 	}
 
-	// Spawn worker pools asynchronously so bridge startup overlaps with pipeline init.
+	// Deferred worker pool cleanup — declared early so it runs on all exit paths.
 	var workerPoolReady chan struct{}
+	defer func() {
+		if workerPoolReady != nil {
+			<-workerPoolReady
+		}
+		for _, rt := range registry.Runtimes() {
+			if wp, ok := rt.(interface{ CloseWorkers() }); ok {
+				wp.CloseWorkers()
+			}
+		}
+	}()
+
+	// Fire onConfig hook — plugins can mutate config before validation.
+	// Must run before worker pool spawn so plugins can set cfg.Plugins.Workers.
+	if _, err := hooks.RunWithTimeout(plugin.OnConfig, cfg); err != nil {
+		return nil, fmt.Errorf("plugin hook onConfig: %w", err)
+	}
+
+	// Spawn worker pools asynchronously so bridge startup overlaps with pipeline init.
 	if hooks.HasHooks(plugin.OnPageRendered) {
 		workerPoolReady = make(chan struct{})
 		go func() {
@@ -167,21 +185,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				}
 			}
 		}()
-	}
-	defer func() {
-		if workerPoolReady != nil {
-			<-workerPoolReady
-		}
-		for _, rt := range registry.Runtimes() {
-			if wp, ok := rt.(interface{ CloseWorkers() }); ok {
-				wp.CloseWorkers()
-			}
-		}
-	}()
-
-	// Fire onConfig hook — plugins can mutate config before validation
-	if _, err := hooks.RunWithTimeout(plugin.OnConfig, cfg); err != nil {
-		return nil, fmt.Errorf("plugin hook onConfig: %w", err)
 	}
 
 	// Build output path map for validation hooks
