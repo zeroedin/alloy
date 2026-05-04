@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zeroedin/alloy/internal/assets"
@@ -137,6 +138,56 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		timer = &StageTimer{}
 	}
 
+	// Validate output directory doesn't overlap with managed directories.
+	// Must run before any filesystem operations (clean, static copy) to
+	// prevent destructive actions on managed dirs like content/ (issue #492).
+	if err := validateOutputDir(cfg); err != nil {
+		return nil, err
+	}
+
+	// Output dir creation/cleaning — moved early so static copy can start
+	// immediately. Static and passthrough copies have zero dependency on
+	// content processing (issue #492).
+	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
+	if cfg.Build.Clean {
+		if _, statErr := os.Stat(outputDir); statErr == nil {
+			if err := output.CleanOutputDir(outputDir); err != nil {
+				return nil, fmt.Errorf("cleaning output directory: %w", err)
+			}
+		}
+	}
+
+	// Start static + asset + passthrough copy in background goroutine.
+	var staticWg sync.WaitGroup
+	var staticCopyErr error
+	staticWg.Add(1)
+	go func() {
+		defer staticWg.Done()
+		staticDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Static)
+		if err := static.CopyStatic(staticDir, outputDir); err != nil {
+			staticCopyErr = fmt.Errorf("copying static files: %w", err)
+			return
+		}
+		assetsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Assets)
+		if err := assets.CopyAssets(assetsDir, outputDir); err != nil {
+			staticCopyErr = fmt.Errorf("copying assets: %w", err)
+			return
+		}
+		if len(cfg.Passthrough) > 0 {
+			managedDirs := []string{
+				cfg.Structure.Content,
+				cfg.Structure.Layouts,
+				cfg.Structure.Assets,
+				cfg.Structure.Static,
+				cfg.Structure.Data,
+			}
+			if err := static.CopyPassthroughWithValidation(cfg.Passthrough, cfg.ProjectRoot, outputDir, managedDirs); err != nil {
+				staticCopyErr = fmt.Errorf("copying passthrough files: %w", err)
+				return
+			}
+		}
+	}()
+
 	// Track which pages use which layouts for cache invalidation
 	templateUsage := make(map[string][]string) // page.RelPath → layoutPaths (relative)
 
@@ -152,8 +203,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// Deferred cleanup — declared early so it runs on all exit paths.
 	// registry.Close() shuts down all runtimes (primary bridges + worker pools).
+	// staticWg.Wait() ensures the background copy goroutine completes on early returns.
 	var workerPoolReady chan struct{}
 	defer func() {
+		staticWg.Wait()
 		if workerPoolReady != nil {
 			<-workerPoolReady
 		}
@@ -192,11 +245,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Fire onBeforeValidation hook — plugins can add entries (e.g. _redirects)
 	if _, err := hooks.RunWithTimeout(plugin.OnBeforeValidation, outputPathMap); err != nil {
 		return nil, fmt.Errorf("plugin hook onBeforeValidation: %w", err)
-	}
-
-	// Validate output directory doesn't overlap with managed directories
-	if err := validateOutputDir(cfg); err != nil {
-		return nil, err
 	}
 
 	// Fire onAfterValidation hook — validated manifest (read-only) + data cascade
@@ -582,14 +630,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Stage 6: Output writing
 	timer.Start("Output writing")
 	reportStartStage("Writing", -1)
-	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
-	if cfg.Build.Clean {
-		if _, statErr := os.Stat(outputDir); statErr == nil {
-			if err := output.CleanOutputDir(outputDir); err != nil {
-				return nil, fmt.Errorf("cleaning output directory: %w", err)
-			}
-		}
-	}
 	for _, page := range pages {
 		if !output.ShouldWrite(page.URL) {
 			continue
@@ -617,7 +657,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
-	// Fire onAssetProcess hook — plugins can transform assets before copying
+	// Fire onAssetProcess hook — plugins can transform assets in the output dir
 	assetInfo := map[string]interface{}{
 		"assetsDir": resolveDir(cfg.ProjectRoot, cfg.Structure.Assets),
 		"outputDir": outputDir,
@@ -626,30 +666,13 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		return nil, fmt.Errorf("plugin hook onAssetProcess: %w", err)
 	}
 
-	// Stage 7: Static files, assets, and passthrough copy
-	timer.Start("Static+asset copy")
-	staticDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Static)
-	if err := static.CopyStatic(staticDir, outputDir); err != nil {
-		return nil, fmt.Errorf("copying static files: %w", err)
-	}
-	assetsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Assets)
-	if err := assets.CopyAssets(assetsDir, outputDir); err != nil {
-		return nil, fmt.Errorf("copying assets: %w", err)
-	}
-	if len(cfg.Passthrough) > 0 {
-		managedDirs := []string{
-			cfg.Structure.Content,
-			cfg.Structure.Layouts,
-			cfg.Structure.Assets,
-			cfg.Structure.Static,
-			cfg.Structure.Data,
-		}
-		if err := static.CopyPassthroughWithValidation(cfg.Passthrough, cfg.ProjectRoot, outputDir, managedDirs); err != nil {
-			return nil, fmt.Errorf("copying passthrough files: %w", err)
-		}
+	// Wait for background static/asset copy goroutine (started early in pipeline).
+	staticWg.Wait()
+	if staticCopyErr != nil {
+		return nil, staticCopyErr
 	}
 
-	// Stage 7b: Copy content-colocated passthrough files
+	// Copy content-colocated passthrough files (depends on content discovery)
 	if len(contentPassthroughs) > 0 {
 		for _, relPath := range contentPassthroughs {
 			src := filepath.Join(contentDir, relPath)
