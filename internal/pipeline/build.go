@@ -684,6 +684,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// Wait for background static/asset copy goroutine (started early in pipeline).
 	timer.Start("Static+asset copy (wait)")
+	reportStartStage("Finalizing", -1)
 	staticWg.Wait()
 	if staticCopyErr != nil {
 		return nil, staticCopyErr
@@ -755,6 +756,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			renderedContent[renderedContentKey(page)] = string(page.RenderedBody)
 		}
 	}
+	reportEndStage()
 
 	timer.Stop()
 
