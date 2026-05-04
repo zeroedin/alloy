@@ -945,6 +945,56 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Early static/asset copy (issue #492) ────────────────────────
+	// Static and passthrough copies run in a background goroutine.
+	// BuildWithContent uses a temp dir that is cleaned up on return,
+	// so filesystem assertions on the output dir are not possible here.
+	// These tests verify the build succeeds with static files in the
+	// content map — a failure indicates the background goroutine or
+	// output dir creation order is broken.
+
+	Describe("Early static/asset copy (issue #492)", func() {
+		It("build succeeds with static files in content map", func() {
+			cfg := &config.Config{
+				Title:   "Static Copy Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"static/robots.txt":      "User-agent: *\nDisallow:",
+				"static/css/main.css":    "body { margin: 0; }",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"build must succeed with static files — "+
+					"if this errors, output dir creation or static copy goroutine failed")
+			Expect(result).NotTo(BeNil())
+			Expect(result.RenderedContent).To(HaveKey("index.md"),
+				"rendered content must be present alongside static files")
+		})
+
+		It("build succeeds with passthrough mappings", func() {
+			cfg := &config.Config{
+				Title:   "Passthrough Copy Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"content/blog/icon.svg":  "<svg></svg>",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"build must succeed with content-colocated passthrough files")
+			Expect(result).NotTo(BeNil())
+			Expect(result.ContentPassthroughs).To(ContainElement("blog/icon.svg"),
+				"passthrough files must be tracked in BuildResult")
+		})
+	})
+
 	// ── Taxonomy collection page properties (issue #328) ────────────
 	// Pages in taxonomy collections must expose title, url, slug via
 	// ToTemplateMap() — not raw *content.Page structs.

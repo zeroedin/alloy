@@ -1138,7 +1138,7 @@ Each phase must complete before the next begins, but work within each phase is p
 - **Per-file stages** (content discovery, front matter extraction, data cascade assembly, Markdown transformation, template rendering) run concurrently using a `runtime.NumCPU()` worker pool
 - **Templates** are parsed once at startup and reused across all pages (liquidgo's parse-once/render-many model)
 - **Phase 0 internal concurrency**: after config loads, content discovery, static file walk, passthrough directory walk, and auto-generated file paths all run concurrently. Front matter extraction and data cascade assembly run after content discovery completes. Content-dependent path computation (permalinks, aliases, pagination, taxonomy pages) waits on data cascade assembly. Validation hooks and conflict detection run sequentially after that.
-- **Asset and static copy** (Phase 3) runs in parallel with content rendering (Phases 1-2) since assets are independent of content
+- **Asset and static copy** starts in a background goroutine immediately after the output directory is created/cleaned (issue #492). The goroutine runs throughout content discovery, rendering, and layout processing — completing in the background while the content pipeline works. The build waits for the goroutine before returning. This eliminates file copy time from the critical path for most sites. Output directory must be created/cleaned BEFORE the goroutine starts. No conflict with output writing since static files and rendered pages target different paths.
 - **Plugin hooks** are synchronous barriers — all pages batch through each hook before proceeding to the next stage. This keeps the Go pipeline in control and bounds plugin latency.
 
 ### Error Handling
