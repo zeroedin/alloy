@@ -461,6 +461,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// Early return: no content found → zero pages
 	if len(pages) == 0 {
+		staticWg.Wait()
+		if staticCopyErr != nil {
+			return nil, staticCopyErr
+		}
 		timer.Stop()
 		r := &BuildResult{
 			OutputDir:      cfg.Build.Output,
@@ -657,19 +661,21 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
-	// Fire onAssetProcess hook — plugins can transform assets in the output dir
+	// Wait for background static/asset copy goroutine (started early in pipeline).
+	// Must complete before onAssetProcess — the hook transforms assets already
+	// in the output dir, so files must be on disk first.
+	staticWg.Wait()
+	if staticCopyErr != nil {
+		return nil, staticCopyErr
+	}
+
+	// Fire onAssetProcess hook — assets are now in output dir, safe to transform.
 	assetInfo := map[string]interface{}{
 		"assetsDir": resolveDir(cfg.ProjectRoot, cfg.Structure.Assets),
 		"outputDir": outputDir,
 	}
 	if _, err := ps.Hooks.RunWithTimeout(plugin.OnAssetProcess, assetInfo); err != nil {
 		return nil, fmt.Errorf("plugin hook onAssetProcess: %w", err)
-	}
-
-	// Wait for background static/asset copy goroutine (started early in pipeline).
-	staticWg.Wait()
-	if staticCopyErr != nil {
-		return nil, staticCopyErr
 	}
 
 	// Copy content-colocated passthrough files (depends on content discovery)
