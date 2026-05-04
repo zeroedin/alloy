@@ -2177,6 +2177,35 @@ var _ = Describe("Build Pipeline", func() {
 					"each Update drives the progress bar forward")
 		})
 
+		It("Build reports progress for all pipeline stages (issue #493)", func() {
+			spy := &spyReporter{}
+			pipeline.SetReporter(spy)
+
+			cfg := &config.Config{
+				Title:   "All Stages Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			content := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"content/about.md":       "---\ntitle: About\nlayout: default\n---\n# About",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			}
+			_, err := pipeline.BuildWithContent(cfg, content)
+			Expect(err).NotTo(HaveOccurred())
+
+			// All pipeline stages must report progress — not just content rendering.
+			// Currently only "Rendering" has a progress bar. The 8-12s gap between
+			// "Rendering 100%" and build completion has no feedback.
+			Expect(spy.stages).To(ContainElement("Rendering"),
+				"content rendering must report progress")
+			Expect(spy.stages).To(ContainElement("Layouts"),
+				"layout rendering must report progress — "+
+					"this is Pass 2, currently has no progress bar (issue #493)")
+			Expect(spy.stages).To(ContainElement("Writing"),
+				"output writing must report progress")
+		})
+
 		It("BuildIncremental calls only Summary on the reporter", func() {
 			spy := &spyReporter{}
 			pipeline.SetReporter(spy)

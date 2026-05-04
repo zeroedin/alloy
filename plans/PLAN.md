@@ -2670,18 +2670,21 @@ Build progress is displayed differently based on the output context and verbosit
 A progress bar showing the current pipeline stage, percentage, page count, and the file being processed. The progress line overwrites itself (carriage return) for a clean single-line display. The final summary line persists after the build completes.
 
 ```
-[alloy] Discovering content... 42 pages found
-[alloy] Rendering  [========>                ] 34% (142/420) content/blog/my-post.md
-[alloy] SSR        [=============>           ] 55% (66/120)  content/components/card.md
-[alloy] Writing    [=====================>   ] 88% (370/420)
-[alloy] Built 420 pages in 1.8s
+[alloy] Discovering content... 480 pages found
+[alloy] Rendering    [=========================] 100% (480/480)
+[alloy] Layouts      [=========================] 100% (480/480)
+[alloy] Transforms   [=========================] 100% (480/480)
+[alloy] Writing      [=========================] 100% (480/480)
+[alloy] Built 480 pages in 12.3s
 ```
 
 Pipeline stages shown in order:
-1. **Discovering** — content discovery + front matter extraction. Total is unknown at start (discovery produces the count). Shown as a single-line message: `[alloy] Discovering content... 42 pages found` — not a progress bar.
-2. **Rendering** — Markdown → HTML + template rendering + layout
-3. **SSR** — Phase 2 SSR (only shown when `ssr:` is configured and pages have custom elements)
-4. **Writing** — output files + static copy + sitemap
+1. **Discovering** — content discovery + front matter extraction. Total is unknown at start (discovery produces the count). Shown as a single-line message: `[alloy] Discovering content... 480 pages found` — not a progress bar.
+2. **Rendering** — Markdown → HTML + content template rendering (Pass 1b)
+3. **Layouts** — layout chain resolution and rendering (Pass 2)
+4. **Transforms** — post-render hooks (`onPageRendered`). Reports per-page even with worker pools (#491).
+5. **SSR** — Phase 2 SSR (only shown when `ssr:` is configured and pages have custom elements)
+6. **Writing** — output files to `_site/`
 
 For stages with a known total, each shows `[stageName] [progress bar] percentage (current/total) currentFile`. For stages where the total is unknown (discovery), a message-style output is used instead. The progress bar width adapts to terminal width. The current file name is truncated if it would exceed the terminal width.
 
