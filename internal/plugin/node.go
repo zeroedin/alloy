@@ -280,15 +280,20 @@ func (r *NodeRuntime) PrepareWorkerPool(n int) error {
 		}(i)
 	}
 
+	// Drain all goroutines before accessing workers slice to avoid a data race.
+	var firstErr error
 	for i := 0; i < numWorkers; i++ {
-		if err := <-errs; err != nil {
-			for _, w := range workers {
-				if w != nil {
-					w.Stop()
-				}
-			}
-			return fmt.Errorf("worker pool: %w", err)
+		if err := <-errs; err != nil && firstErr == nil {
+			firstErr = err
 		}
+	}
+	if firstErr != nil {
+		for _, w := range workers {
+			if w != nil {
+				w.Stop()
+			}
+		}
+		return fmt.Errorf("worker pool: %w", firstErr)
 	}
 	r.workerPool = workers
 	return nil

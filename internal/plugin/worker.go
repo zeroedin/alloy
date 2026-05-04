@@ -15,8 +15,9 @@ func AutoWorkerCount() int {
 }
 
 // ResolveWorkerCount resolves a configured worker count to a concrete integer.
-// Accepts "auto" (string), 0, or negative values → auto-scaled.
 // Positive integers are returned as-is (no floor applied).
+// All other values (including "auto", 0, negative, or unrecognized types)
+// fall back to AutoWorkerCount.
 func ResolveWorkerCount(configured interface{}) int {
 	switch v := configured.(type) {
 	case int:
