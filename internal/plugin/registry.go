@@ -261,19 +261,39 @@ func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, ho
 	if caller, ok := rt.(interface {
 		CallHook(string, interface{}) (interface{}, error)
 	}); ok {
+		batcher, hasBatch := rt.(interface {
+			BatchCallHook(string, []interface{}) ([]interface{}, error)
+		})
+
 		if hd, ok := rt.(HookDetailer); ok {
 			for _, reg := range hd.RegisteredHookDetails() {
 				name := reg.Name
-				hooks.RegisterWithPriority(HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {
+				singleFn := func(ctx context.Context, payload interface{}) (interface{}, error) {
 					return caller.CallHook(name, payload)
-				}, reg.Priority)
+				}
+				if hasBatch {
+					batchFn := func(ctx context.Context, payloads []interface{}) ([]interface{}, error) {
+						return batcher.BatchCallHook(name, payloads)
+					}
+					hooks.RegisterBatchWithPriority(HookName(name), singleFn, batchFn, reg.Priority)
+				} else {
+					hooks.RegisterWithPriority(HookName(name), singleFn, reg.Priority)
+				}
 			}
 		} else {
 			for _, hookName := range rt.RegisteredHooks() {
 				name := hookName
-				hooks.Register(HookName(name), func(ctx context.Context, payload interface{}) (interface{}, error) {
+				singleFn := func(ctx context.Context, payload interface{}) (interface{}, error) {
 					return caller.CallHook(name, payload)
-				})
+				}
+				if hasBatch {
+					batchFn := func(ctx context.Context, payloads []interface{}) ([]interface{}, error) {
+						return batcher.BatchCallHook(name, payloads)
+					}
+					hooks.RegisterBatchWithPriority(HookName(name), singleFn, batchFn, 50)
+				} else {
+					hooks.Register(HookName(name), singleFn)
+				}
 			}
 		}
 	}

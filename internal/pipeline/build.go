@@ -150,9 +150,38 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		log.Printf("warning: %s", w)
 	}
 
-	// Fire onConfig hook — plugins can mutate config before validation
+	// Deferred cleanup — declared early so it runs on all exit paths.
+	// registry.Close() shuts down all runtimes (primary bridges + worker pools).
+	var workerPoolReady chan struct{}
+	defer func() {
+		if workerPoolReady != nil {
+			<-workerPoolReady
+		}
+		registry.Close()
+	}()
+
+	// Fire onConfig hook — plugins can mutate config before validation.
+	// Must run before worker pool spawn so plugins can set cfg.Plugins.Workers.
 	if _, err := hooks.RunWithTimeout(plugin.OnConfig, cfg); err != nil {
 		return nil, fmt.Errorf("plugin hook onConfig: %w", err)
+	}
+
+	// Spawn worker pools asynchronously so bridge startup overlaps with pipeline init.
+	if hooks.HasHooks(plugin.OnPageRendered) {
+		workerPoolReady = make(chan struct{})
+		go func() {
+			defer close(workerPoolReady)
+			numWorkers := plugin.ResolveWorkerCount(cfg.Plugins.Workers)
+			for _, rt := range registry.Runtimes() {
+				if wp, ok := rt.(interface {
+					PrepareWorkerPool(int) error
+				}); ok {
+					if err := wp.PrepareWorkerPool(numWorkers); err != nil {
+						log.Printf("warning: worker pool setup: %v", err)
+					}
+				}
+			}
+		}()
 	}
 
 	// Build output path map for validation hooks
@@ -462,19 +491,30 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
-	// Fire onPageRendered hook per-page with HTML string payload.
-	// The hook receives a string and may return string or []byte.
-	timer.Start("Post-render hooks")
-	for _, page := range pages {
-		result, err := ps.Hooks.RunWithTimeout(plugin.OnPageRendered, string(page.RenderedBody))
-		if err != nil {
-			return nil, fmt.Errorf("plugin hook onPageRendered (%s): %w", page.RelPath, err)
+	// Wait for worker pool before dispatching hooks.
+	if workerPoolReady != nil {
+		<-workerPoolReady
+	}
+
+	// Fire onPageRendered hooks with batch dispatch for subprocess plugins.
+	// Worker pool distributes pages across multiple subprocesses.
+	if ps.Hooks.HasHooks(plugin.OnPageRendered) {
+		timer.Start("Post-render hooks")
+		payloads := make([]interface{}, len(pages))
+		for i, page := range pages {
+			payloads[i] = string(page.RenderedBody)
 		}
-		switch modified := result.(type) {
-		case string:
-			page.RenderedBody = []byte(modified)
-		case []byte:
-			page.RenderedBody = modified
+		results, err := ps.Hooks.RunBatchWithTimeout(plugin.OnPageRendered, payloads)
+		if err != nil {
+			return nil, fmt.Errorf("plugin hook onPageRendered: %w", err)
+		}
+		for i, result := range results {
+			switch modified := result.(type) {
+			case string:
+				pages[i].RenderedBody = []byte(modified)
+			case []byte:
+				pages[i].RenderedBody = modified
+			}
 		}
 	}
 

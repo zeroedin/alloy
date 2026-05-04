@@ -370,4 +370,104 @@ var _ = Describe("Hooks", func() {
 				"mutations must apply globally — hooks receive shared pointer, not a copy")
 		})
 	})
+
+	// ── Batch hook dispatch ───────────────────────────────────────────
+
+	Describe("Batch hook dispatch", func() {
+		It("RegisterBatchWithPriority respects priority ordering", func() {
+			registry := plugin.NewHookRegistry()
+			var order []string
+
+			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+			batchA := func(_ context.Context, ps []interface{}) ([]interface{}, error) {
+				order = append(order, "A")
+				return ps, nil
+			}
+			batchB := func(_ context.Context, ps []interface{}) ([]interface{}, error) {
+				order = append(order, "B")
+				return ps, nil
+			}
+
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchB, 100)
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchA, 10)
+
+			_, err := registry.RunBatchWithTimeout(plugin.OnPageRendered, []interface{}{"x"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(order).To(Equal([]string{"A", "B"}),
+				"lower priority must run first")
+		})
+
+		It("RunBatchWithTimeout returns error on result length mismatch", func() {
+			registry := plugin.NewHookRegistry()
+			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+			batchFn := func(_ context.Context, ps []interface{}) ([]interface{}, error) {
+				return ps[:1], nil // return fewer results
+			}
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchFn, 50)
+
+			_, err := registry.RunBatchWithTimeout(plugin.OnPageRendered, []interface{}{"a", "b", "c"})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("returned 1 results for 3 inputs"))
+		})
+
+		It("RunBatchWithTimeout per-item fallback enforces timeout", func() {
+			registry := plugin.NewHookRegistry()
+			registry.SetTimeout(50)
+
+			slowFn := func(ctx context.Context, p interface{}) (interface{}, error) {
+				select {
+				case <-time.After(500 * time.Millisecond):
+					return "modified", nil
+				case <-ctx.Done():
+					return p, ctx.Err()
+				}
+			}
+			registry.Register(plugin.OnPageRendered, slowFn)
+
+			results, err := registry.RunBatchWithTimeout(plugin.OnPageRendered, []interface{}{"a", "b"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(Equal([]interface{}{"a", "b"}),
+				"timed-out per-item hooks must preserve original values")
+			Expect(registry.Warnings()).NotTo(BeEmpty(),
+				"timeout must produce a warning")
+		})
+
+		It("RunBatchWithTimeout reverts to pre-hook state on batch timeout", func() {
+			registry := plugin.NewHookRegistry()
+			// timeout=10ms × 2 items = 20ms total budget
+			// slowBatch sleeps 100ms, exceeds the 20ms budget
+			registry.SetTimeout(10)
+
+			fastBatch := func(_ context.Context, ps []interface{}) ([]interface{}, error) {
+				out := make([]interface{}, len(ps))
+				for i, p := range ps {
+					out[i] = p.(string) + "-fast"
+				}
+				return out, nil
+			}
+			slowBatch := func(_ context.Context, ps []interface{}) ([]interface{}, error) {
+				time.Sleep(100 * time.Millisecond)
+				out := make([]interface{}, len(ps))
+				for i, p := range ps {
+					out[i] = p.(string) + "-slow"
+				}
+				return out, nil
+			}
+			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, fastBatch, 10)
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, slowBatch, 20)
+
+			results, err := registry.RunBatchWithTimeout(plugin.OnPageRendered, []interface{}{"a", "b"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(Equal([]interface{}{"a-fast", "b-fast"}),
+				"timeout must revert to pre-hook state (after fast hook), not original input")
+		})
+	})
 })
