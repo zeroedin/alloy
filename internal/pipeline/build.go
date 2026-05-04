@@ -145,57 +145,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		return nil, err
 	}
 
-	// Output dir creation/cleaning — moved early so static copy can start
-	// immediately. Static and passthrough copies have zero dependency on
-	// content processing (issue #492).
-	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
-	if cfg.Build.Clean {
-		if _, statErr := os.Stat(outputDir); statErr == nil {
-			if err := output.CleanOutputDir(outputDir); err != nil {
-				return nil, fmt.Errorf("cleaning output directory: %w", err)
-			}
-		}
-	}
-
-	// Snapshot config values before starting the background goroutine.
-	// onConfig fires later and may mutate cfg — reading cfg inside the
-	// goroutine would be a data race.
-	staticDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Static)
-	assetsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Assets)
-	passthrough := cfg.Passthrough
-	projectRoot := cfg.ProjectRoot
-	passthroughManagedDirs := []string{
-		cfg.Structure.Content,
-		cfg.Structure.Layouts,
-		cfg.Structure.Assets,
-		cfg.Structure.Static,
-		cfg.Structure.Data,
-		"plugins",
-		".alloy",
-	}
-
-	// Start static + asset + passthrough copy in background goroutine.
-	var staticWg sync.WaitGroup
-	var staticCopyErr error
-	staticWg.Add(1)
-	go func() {
-		defer staticWg.Done()
-		if err := static.CopyStatic(staticDir, outputDir); err != nil {
-			staticCopyErr = fmt.Errorf("copying static files: %w", err)
-			return
-		}
-		if err := assets.CopyAssets(assetsDir, outputDir); err != nil {
-			staticCopyErr = fmt.Errorf("copying assets: %w", err)
-			return
-		}
-		if len(passthrough) > 0 {
-			if err := static.CopyPassthroughWithValidation(passthrough, projectRoot, outputDir, passthroughManagedDirs); err != nil {
-				staticCopyErr = fmt.Errorf("copying passthrough files: %w", err)
-				return
-			}
-		}
-	}()
-
 	// Track which pages use which layouts for cache invalidation
 	templateUsage := make(map[string][]string) // page.RelPath → layoutPaths (relative)
 
@@ -209,9 +158,20 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		log.Printf("warning: %s", w)
 	}
 
+	// Fire onConfig hook — plugins can mutate config before validation.
+	// Must run before output dir resolution and worker pool spawn so
+	// plugins can change cfg.Build.Output, cfg.Structure.*, cfg.Passthrough,
+	// and cfg.Plugins.Workers.
+	if _, err := hooks.RunWithTimeout(plugin.OnConfig, cfg); err != nil {
+		return nil, fmt.Errorf("plugin hook onConfig: %w", err)
+	}
+
 	// Deferred cleanup — declared early so it runs on all exit paths.
 	// registry.Close() shuts down all runtimes (primary bridges + worker pools).
-	// staticWg.Wait() ensures the background copy goroutine completes on early returns.
+	// staticWg is initialized later (after validation) but the defer captures
+	// the pointer so it always waits if the goroutine was started.
+	var staticWg sync.WaitGroup
+	var staticCopyErr error
 	var workerPoolReady chan struct{}
 	defer func() {
 		staticWg.Wait()
@@ -220,12 +180,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 		registry.Close()
 	}()
-
-	// Fire onConfig hook — plugins can mutate config before validation.
-	// Must run before worker pool spawn so plugins can set cfg.Plugins.Workers.
-	if _, err := hooks.RunWithTimeout(plugin.OnConfig, cfg); err != nil {
-		return nil, fmt.Errorf("plugin hook onConfig: %w", err)
-	}
 
 	// Spawn worker pools asynchronously so bridge startup overlaps with pipeline init.
 	if hooks.HasHooks(plugin.OnPageRendered) {
@@ -259,6 +213,67 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	if _, err := hooks.RunWithTimeout(plugin.OnAfterValidation, outputPathMap); err != nil {
 		return nil, fmt.Errorf("plugin hook onAfterValidation: %w", err)
 	}
+
+	// Re-validate output dir after hooks in case a plugin changed Build.Output.
+	if err := validateOutputDir(cfg); err != nil {
+		return nil, err
+	}
+
+	// Output dir creation/cleaning + background static copy (issue #492, #503).
+	// Starts after all validation hooks so plugin-mutated paths are respected
+	// and validation failures don't leave partial copies as debris.
+	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
+	if cfg.Build.Clean {
+		if _, statErr := os.Stat(outputDir); statErr == nil {
+			if err := output.CleanOutputDir(outputDir); err != nil {
+				return nil, fmt.Errorf("cleaning output directory: %w", err)
+			}
+		}
+	}
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating output directory: %w", err)
+	}
+
+	// Background goroutine for static/asset/passthrough copy (steps 16-18).
+	// onAssetProcess fires inside the goroutine after assets are on disk.
+	staticDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Static)
+	assetsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Assets)
+	staticWg.Add(1)
+	go func() {
+		defer staticWg.Done()
+
+		if err := static.CopyStatic(staticDir, outputDir); err != nil {
+			staticCopyErr = fmt.Errorf("copying static files: %w", err)
+			return
+		}
+
+		if err := assets.CopyAssets(assetsDir, outputDir); err != nil {
+			staticCopyErr = fmt.Errorf("copying asset files: %w", err)
+			return
+		}
+
+		if len(cfg.Passthrough) > 0 {
+			managedDirs := []string{
+				cfg.Structure.Content,
+				cfg.Structure.Layouts,
+				cfg.Structure.Assets,
+				cfg.Structure.Static,
+				cfg.Structure.Data,
+			}
+			if err := static.CopyPassthroughWithValidation(cfg.Passthrough, cfg.ProjectRoot, outputDir, managedDirs); err != nil {
+				staticCopyErr = fmt.Errorf("copying passthrough files: %w", err)
+				return
+			}
+		}
+
+		assetInfo := map[string]interface{}{
+			"assetsDir": assetsDir,
+			"outputDir": outputDir,
+		}
+		if _, err := hooks.RunWithTimeout(plugin.OnAssetProcess, assetInfo); err != nil {
+			staticCopyErr = fmt.Errorf("plugin hook onAssetProcess: %w", err)
+		}
+	}()
 
 	// Stage 1: engine + plugins + cascade + site data
 	timer.Start("Pipeline init (engine+data)")
@@ -671,21 +686,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 
 	// Wait for background static/asset copy goroutine (started early in pipeline).
-	// Must complete before onAssetProcess — the hook transforms assets already
-	// in the output dir, so files must be on disk first.
 	timer.Start("Static+asset copy (wait)")
 	staticWg.Wait()
 	if staticCopyErr != nil {
 		return nil, staticCopyErr
-	}
-
-	// Fire onAssetProcess hook — assets are now in output dir, safe to transform.
-	assetInfo := map[string]interface{}{
-		"assetsDir": resolveDir(cfg.ProjectRoot, cfg.Structure.Assets),
-		"outputDir": outputDir,
-	}
-	if _, err := ps.Hooks.RunWithTimeout(plugin.OnAssetProcess, assetInfo); err != nil {
-		return nil, fmt.Errorf("plugin hook onAssetProcess: %w", err)
 	}
 
 	// Copy content-colocated passthrough files (depends on content discovery)
