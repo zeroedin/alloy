@@ -344,7 +344,9 @@ func (r *NodeRuntime) BatchCallHook(name string, payloads []interface{}) ([]inte
 					Payload: payloads[i],
 				})
 				if err != nil {
-					errOnce.Do(func() { firstErr = err })
+					errOnce.Do(func() {
+						firstErr = fmt.Errorf("item %d (chunk %d-%d): %w", i, lo, hi-1, err)
+					})
 					return
 				}
 				results[i] = resp.Result

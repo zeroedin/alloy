@@ -24,6 +24,11 @@ func ResolveWorkerCount(configured interface{}) int {
 			return v
 		}
 		return AutoWorkerCount()
+	case int64:
+		if int(v) > 0 {
+			return int(v)
+		}
+		return AutoWorkerCount()
 	case float64:
 		if int(v) > 0 {
 			return int(v)
