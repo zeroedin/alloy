@@ -169,6 +169,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}()
 	}
 	defer func() {
+		if workerPoolReady != nil {
+			<-workerPoolReady
+		}
 		for _, rt := range registry.Runtimes() {
 			if wp, ok := rt.(interface{ CloseWorkers() }); ok {
 				wp.CloseWorkers()
@@ -495,8 +498,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// Fire onPageRendered hooks with batch dispatch for subprocess plugins.
 	// Worker pool distributes pages across multiple subprocesses.
-	timer.Start("Post-render hooks")
 	if ps.Hooks.HasHooks(plugin.OnPageRendered) {
+		timer.Start("Post-render hooks")
 		payloads := make([]interface{}, len(pages))
 		for i, page := range pages {
 			payloads[i] = string(page.RenderedBody)

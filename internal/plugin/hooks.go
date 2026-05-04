@@ -166,8 +166,8 @@ func (r *HookRegistry) RunWithTimeout(event HookName, payload interface{}) (inte
 
 // RunBatchWithTimeout dispatches multiple payloads through all hooks for an event.
 // Hooks with a batchFn use batch dispatch (distributing across workers).
-// Hooks without batchFn fall back to per-item dispatch.
-// Timeout scales with payload count for batch hooks.
+// Hooks without batchFn fall back to per-item dispatch with timeout enforcement.
+// Batch timeout scales with payload count; +5000ms headroom for IPC overhead.
 func (r *HookRegistry) RunBatchWithTimeout(event HookName, payloads []interface{}) ([]interface{}, error) {
 	hooks := r.hooks[event]
 	current := make([]interface{}, len(payloads))
@@ -175,7 +175,12 @@ func (r *HookRegistry) RunBatchWithTimeout(event HookName, payloads []interface{
 
 	for _, h := range hooks {
 		if h.batchFn != nil {
-			timeout := time.Duration(r.timeout*len(current)+5000) * time.Millisecond
+			preHook := make([]interface{}, len(current))
+			copy(preHook, current)
+			itemCount := len(current)
+			// +5000ms headroom for IPC overhead across worker subprocesses
+			effectiveTimeout := r.timeout*itemCount + 5000
+			timeout := time.Duration(effectiveTimeout) * time.Millisecond
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 
 			type batchResult struct {
@@ -194,21 +199,46 @@ func (r *HookRegistry) RunBatchWithTimeout(event HookName, payloads []interface{
 				if res.err != nil {
 					return nil, res.err
 				}
+				if len(res.val) != itemCount {
+					return nil, fmt.Errorf("batch hook %s returned %d results for %d inputs",
+						string(event), len(res.val), itemCount)
+				}
 				current = res.val
 			case <-ctx.Done():
 				cancel()
-				current = make([]interface{}, len(payloads))
-				copy(current, payloads)
+				current = preHook
 				r.warnings = append(r.warnings, fmt.Sprintf("batch hook timeout: %s exceeded %dms for %d items",
-					string(event), r.timeout, len(current)))
+					string(event), effectiveTimeout, itemCount))
 			}
 		} else {
 			for j, payload := range current {
-				result, err := h.fn(context.Background(), payload)
-				if err != nil {
-					return nil, err
+				preItem := current[j]
+				timeout := time.Duration(r.timeout) * time.Millisecond
+				ctx, cancel := context.WithTimeout(context.Background(), timeout)
+
+				type hookResult struct {
+					val interface{}
+					err error
 				}
-				current[j] = result
+				ch := make(chan hookResult, 1)
+				go func() {
+					result, err := h.fn(ctx, payload)
+					ch <- hookResult{result, err}
+				}()
+
+				select {
+				case res := <-ch:
+					cancel()
+					if res.err != nil {
+						return nil, res.err
+					}
+					current[j] = res.val
+				case <-ctx.Done():
+					cancel()
+					current[j] = preItem
+					r.warnings = append(r.warnings, fmt.Sprintf("hook timeout: %s item %d exceeded %dms",
+						string(event), j, r.timeout))
+				}
 			}
 		}
 	}

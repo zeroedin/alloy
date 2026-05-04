@@ -366,8 +366,9 @@ func (r *NodeRuntime) SetSiteData(data map[string]interface{}) error {
 	return nil
 }
 
-// Close shuts down the Node subprocess.
+// Close shuts down the worker pool and primary Node subprocess.
 func (r *NodeRuntime) Close() {
+	r.CloseWorkers()
 	if r.bridge != nil {
 		r.bridge.Stop()
 	}
