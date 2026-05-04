@@ -438,9 +438,9 @@ var _ = Describe("Hooks", func() {
 
 		It("RunBatchWithTimeout reverts to pre-hook state on batch timeout", func() {
 			registry := plugin.NewHookRegistry()
-			// timeout*items+5000 = 1*2+5000 = 5002ms total budget
-			// slowBatch sleeps 6s, so it will exceed the budget
-			registry.SetTimeout(1)
+			// timeout=10ms × 2 items = 20ms total budget
+			// slowBatch sleeps 100ms, exceeds the 20ms budget
+			registry.SetTimeout(10)
 
 			fastBatch := func(_ context.Context, ps []interface{}) ([]interface{}, error) {
 				out := make([]interface{}, len(ps))
@@ -450,7 +450,7 @@ var _ = Describe("Hooks", func() {
 				return out, nil
 			}
 			slowBatch := func(_ context.Context, ps []interface{}) ([]interface{}, error) {
-				time.Sleep(6 * time.Second)
+				time.Sleep(100 * time.Millisecond)
 				out := make([]interface{}, len(ps))
 				for i, p := range ps {
 					out[i] = p.(string) + "-slow"
