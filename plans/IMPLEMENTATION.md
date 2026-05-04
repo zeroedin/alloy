@@ -379,10 +379,12 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
 13. Render page through layout chain ({{ content }} injection)  ✅ done (single level only, chaining missing)
 14. output.ComputeOutputPath(page) → output path          ✅ done
 15. output.WriteFile(outputPath, html)                    ✅ done
-16. static.CopyStatic(staticDir, outputDir)               ✅ done
-17. assets.CopyAssets(assetsDir, outputDir)                ✅ done
-18. static.CopyPassthroughWithValidation(...)             ✅ done
-18b. Copy content-colocated passthrough files (issue #300)  ← MISSING
+16. static.CopyStatic(staticDir, outputDir)               ✅ done — **move to background goroutine (issue #492)**
+17. assets.CopyAssets(assetsDir, outputDir)                ✅ done — **move to background goroutine (issue #492)**
+18. static.CopyPassthroughWithValidation(...)             ✅ done — **move to background goroutine (issue #492)**
+18b. Copy content-colocated passthrough files (issue #300)  ← MISSING — **include in background goroutine**
+
+**Early static/asset copy (issue #492)**: Steps 16-18b must start in a background goroutine immediately after the output directory is created/cleaned. The goroutine runs throughout content discovery, rendering, and layout processing. `Build()` waits for the goroutine (via `sync.WaitGroup` or channel) before returning. Move output dir creation/cleaning to earlier in the pipeline — right after config validation, before plugin discovery. `onAssetProcess` hooks fire inside the goroutine — no pipeline state dependencies.
      `Build()` step 3 must switch from `DiscoverWithFormats` to `DiscoverWithPassthrough`.
      The returned passthrough paths are carried through the pipeline and copied
      to outputDir preserving their relative path: `content/about/diagram.svg`
