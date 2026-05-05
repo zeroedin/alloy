@@ -489,16 +489,32 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			return nil, fmt.Errorf("plugin hook onContentLoaded: %w", err)
 		}
 		if returnedPages, ok := contentResult.([]interface{}); ok {
+			originalCount := len(pages)
 			for i, rp := range returnedPages {
-				if i >= len(pages) {
-					break
+				pageMap, ok := rp.(map[string]interface{})
+				if !ok {
+					continue
 				}
-				if pageMap, ok := rp.(map[string]interface{}); ok {
+				if i < originalCount {
 					if fm, ok := pageMap["frontMatter"].(map[string]interface{}); ok {
 						for k, v := range fm {
 							pages[i].FrontMatter[k] = v
 						}
 					}
+					continue
+				}
+				vp, err := virtualPageFromMap(pageMap)
+				if err != nil {
+					return nil, fmt.Errorf("plugin hook onContentLoaded: virtual page %d: %w", i-originalCount, err)
+				}
+				for _, existing := range pages {
+					if existing.URL == vp.URL {
+						return nil, fmt.Errorf("plugin hook onContentLoaded: virtual page URL %q collides with existing page %s", vp.URL, existing.RelPath)
+					}
+				}
+				pages = append(pages, vp)
+				if len(batches) > 0 {
+					batches[len(batches)-1].pages = append(batches[len(batches)-1].pages, vp)
 				}
 			}
 		}
@@ -2013,6 +2029,34 @@ func serializePagesForHook(pages []*content.Page) []interface{} {
 		}
 	}
 	return result
+}
+
+func virtualPageFromMap(m map[string]interface{}) (*content.Page, error) {
+	path, _ := m["path"].(string)
+	url, _ := m["url"].(string)
+	if path == "" && url == "" {
+		return nil, fmt.Errorf("virtual page must have a path or url field")
+	}
+	fm, _ := m["frontMatter"].(map[string]interface{})
+	if fm == nil {
+		fm = make(map[string]interface{})
+	}
+	htmlBody, _ := m["html"].(string)
+	page := &content.Page{
+		RelPath:      path,
+		URL:          url,
+		FrontMatter:  fm,
+		RenderedBody: []byte(htmlBody),
+	}
+	if layout, ok := fm["layout"]; ok {
+		if s, ok := layout.(string); ok {
+			page.Layout = s
+		}
+	}
+	if page.URL == "" && page.RelPath != "" {
+		page.URL = "/" + strings.TrimSuffix(page.RelPath, filepath.Ext(page.RelPath)) + "/"
+	}
+	return page, nil
 }
 
 // fireContentTransformedHooks fires onContentTransformed once per page
