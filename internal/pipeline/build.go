@@ -440,7 +440,29 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	reportEndStage()
 
 	// Early return: no content found → zero pages
+	// Still copy static/asset files so static-only sites produce output.
 	if len(pages) == 0 {
+		timer.Start("Static+asset copy")
+		if err := static.CopyStatic(staticDir, outputDir); err != nil {
+			return nil, fmt.Errorf("copying static files: %w", err)
+		}
+		if err := assets.CopyAssets(assetsDir, outputDir); err != nil {
+			return nil, fmt.Errorf("copying asset files: %w", err)
+		}
+		if len(cfg.Passthrough) > 0 {
+			managedDirs := []string{
+				cfg.Structure.Content,
+				cfg.Structure.Layouts,
+				cfg.Structure.Assets,
+				cfg.Structure.Static,
+				cfg.Structure.Data,
+				"plugins",
+				".alloy",
+			}
+			if err := static.CopyPassthroughWithValidation(cfg.Passthrough, cfg.ProjectRoot, outputDir, managedDirs); err != nil {
+				return nil, fmt.Errorf("copying passthrough files: %w", err)
+			}
+		}
 		timer.Stop()
 		r := &BuildResult{
 			OutputDir:      cfg.Build.Output,
