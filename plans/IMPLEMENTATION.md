@@ -384,9 +384,7 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
 18. static.CopyPassthroughWithValidation(...)             ✅ done — **synchronous (issue #507)**
 18b. Copy content-colocated passthrough files (issue #300)  ← MISSING
 
-**Static/asset copy is synchronous (issue #507)**: Steps 16-18b run sequentially during Phase 3 (output), after all content rendering and hooks complete. Background goroutine parallelism was attempted (#492, #501) but profiling showed I/O contention with template rendering caused a 31% build regression (content render +107%, layout render +50%, post-render hooks +35%). Sequential copy is faster and simpler.
-
-`Build()` waits for the goroutine (via `sync.WaitGroup` or channel) before returning. `onAssetProcess` hooks fire inside the goroutine — plugin discovery and all validation have completed before the goroutine starts.
+**Static/asset copy runs as its own pipeline stage (issue #507)**: Steps 16-18b run during Phase 3 (output), after all content rendering and hooks complete. The copy stage does NOT overlap with rendering or hook execution — running it in the background caused I/O contention (31% regression, issue #507). However, file copies WITHIN the stage may use internal parallelism (e.g., a `sync.WaitGroup` with `runtime.NumCPU()` goroutines copying files concurrently). This is safe because nothing else is running — the pipeline is waiting for the copy stage to finish before proceeding to output writing.
      `Build()` step 3 must switch from `DiscoverWithFormats` to `DiscoverWithPassthrough`.
      The returned passthrough paths are carried through the pipeline and copied
      to outputDir preserving their relative path: `content/about/diagram.svg`

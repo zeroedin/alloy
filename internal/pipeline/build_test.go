@@ -946,9 +946,10 @@ var _ = Describe("Build Pipeline", func() {
 	})
 
 	// ── Static/asset copy (issue #507) ──────────────────────────────
-	// Static and passthrough copies run synchronously during Phase 3.
-	// Background goroutine parallelism was reverted (#507) — caused
-	// I/O contention with template rendering (31% regression).
+	// Static and passthrough copies run as their own pipeline stage
+	// during Phase 3, not overlapping with rendering or hooks.
+	// Internal parallelism (concurrent file copies within the stage)
+	// is fine — it's the cross-stage overlap that caused regression.
 
 	Describe("Static/asset copy (issue #507)", func() {
 		It("build succeeds with static files in content map", func() {
