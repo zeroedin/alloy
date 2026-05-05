@@ -82,7 +82,7 @@ var _ = Describe("Static file handling", func() {
 			// Create fileCount files across nested directories
 			for i := 0; i < fileCount; i++ {
 				subdir := filepath.Join(srcDir, fmt.Sprintf("dir-%d", i%10))
-				_ = os.MkdirAll(subdir, 0755)
+				Expect(os.MkdirAll(subdir, 0755)).To(Succeed())
 				name := filepath.Join(subdir, fmt.Sprintf("file-%d.txt", i))
 				err := os.WriteFile(name, []byte(fmt.Sprintf("content-%d", i)), 0644)
 				Expect(err).NotTo(HaveOccurred())

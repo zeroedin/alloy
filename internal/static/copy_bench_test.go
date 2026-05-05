@@ -29,7 +29,9 @@ func BenchmarkCopyStatic(b *testing.B) {
 			}
 			for i := 0; i < fileCount; i++ {
 				subdir := filepath.Join(srcDir, fmt.Sprintf("dir-%d", i%20))
-				_ = os.MkdirAll(subdir, 0755)
+				if err := os.MkdirAll(subdir, 0755); err != nil {
+				b.Fatal(err)
+			}
 				name := filepath.Join(subdir, fmt.Sprintf("file-%d.bin", i))
 				if err := os.WriteFile(name, content, 0644); err != nil {
 					b.Fatal(err)
