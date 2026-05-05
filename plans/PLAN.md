@@ -2123,7 +2123,7 @@ alloy.hook("onAssetProcess", (asset) => {
 
 | Event | Payload | Returns | When |
 |---|---|---|---|
-| `onContentLoaded` | `[{ path, url, frontMatter: { ... }, content: "...", html: "..." }, ...]` | Same shape (may include additional virtual pages) | After discovery. Fires once with full pages array. Plugin modifies page metadata or injects virtual pages (#518). |
+| `onContentLoaded` | `[{ path, url, frontMatter: { ... }, content: "...", html: "..." }, ...]` | Same shape (may include additional virtual pages) | After content rendering, before layout resolution. Fires once with full pages array. Plugin modifies page metadata or injects virtual pages (#518). |
 | `onDataCascadeReady` | `{ path, data: { ... } }` | Same shape | After cascade resolved. Fires once per page. Plugin enriches cascade data. |
 
 #### Per-build hooks (JSON objects)
