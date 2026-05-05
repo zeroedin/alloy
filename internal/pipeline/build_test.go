@@ -1738,7 +1738,7 @@ var _ = Describe("Build Pipeline", func() {
 				"onDataFetched hook must not error when returning modified siteData")
 			Expect(result).NotTo(BeNil())
 
-			html := result.RenderedContent["index.html"]
+			html := result.RenderedContent["index.md"]
 			Expect(html).To(ContainSubstring("Count: 3"),
 				"onDataFetched return value must be applied back to siteData — "+
 					"currently the return is discarded with _ at build.go:285 (issue #494)")
@@ -1767,7 +1767,7 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 
-			html := result.RenderedContent["index.html"]
+			html := result.RenderedContent["index.md"]
 			Expect(html).To(ContainSubstring("Team: 3"),
 				"onDataFetched must allow plugins to modify existing data keys — "+
 					"team array should have 3 members after plugin appends one (issue #494)")
@@ -1798,7 +1798,7 @@ var _ = Describe("Build Pipeline", func() {
 				"onContentLoaded hook must not error when returning modified pages")
 			Expect(result).NotTo(BeNil())
 
-			html := result.RenderedContent["index.html"]
+			html := result.RenderedContent["index.md"]
 			Expect(html).To(ContainSubstring("Home (enriched)"),
 				"onContentLoaded return value must be applied back to pages — "+
 					"currently the return is discarded with _ at build.go:479 (issue #494)")
