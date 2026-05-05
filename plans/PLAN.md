@@ -2119,14 +2119,12 @@ alloy.hook("onAssetProcess", (asset) => {
 });
 ```
 
-#### Per-page hooks (JSON objects)
-
-Fire **once per page**. Payload is a JSON-serializable representation of page-scoped data. The pipeline converts Go structs to `map[string]interface{}` before calling, and applies returned changes back.
+#### Content hooks (JSON objects)
 
 | Event | Payload | Returns | When |
 |---|---|---|---|
-| `onContentLoaded` | `[{ path, frontMatter: { ... }, content: "..." }, ...]` | Same shape (may include additional virtual pages) | After discovery. Plugin modifies page metadata or injects virtual pages (#518). |
-| `onDataCascadeReady` | `{ path, data: { ... } }` | Same shape | After cascade resolved. Plugin enriches cascade data. |
+| `onContentLoaded` | `[{ path, url, frontMatter: { ... }, content: "...", html: "..." }, ...]` | Same shape (may include additional virtual pages) | After discovery. Fires once with full pages array. Plugin modifies page metadata or injects virtual pages (#518). |
+| `onDataCascadeReady` | `{ path, data: { ... } }` | Same shape | After cascade resolved. Fires once per page. Plugin enriches cascade data. |
 
 #### Per-build hooks (JSON objects)
 
@@ -2141,7 +2139,7 @@ Fire **once per build**. Payload is a JSON-serializable representation of the Go
 
 **Data mutation via hooks** — To modify site data that templates see, use per-build hooks. The hook receives the data object, modifies it, and returns it. The pipeline applies the returned value. This is the only way to add or change data that flows into templates — `alloy.data` in filters/shortcodes is read-only.
 
-**Virtual page injection (issue #518)** — `onContentLoaded` receives the pages array and may return additional page objects appended to the array. Virtual pages are distinguished from real pages by having indices beyond the original array length. Required fields: `path` (relative output path) or `url`. Optional: `frontMatter` (including `layout`), `content` (pre-rendered HTML body). Virtual pages go through the remaining pipeline: layout resolution (if `layout` is set), template rendering, and output writing. `layout: false` skips layout wrapping — content is written as-is. URL collisions between a virtual page and a real page produce a build error. Missing `path`/`url` produces a validation error. Virtual pages are included in `PageCount`.
+**Virtual page injection (issue #518)** — `onContentLoaded` receives the pages array and may return additional page objects appended to the array. Virtual pages are distinguished from real pages by having indices beyond the original array length. Required fields: `path` (source-relative identifier, e.g. `demos/button.html` — used as `RelPath` and `RenderedContent` key) and `url` (permalink, e.g. `/demos/button/` — used for output path computation). Optional: `frontMatter` (including `layout`), `html` (pre-rendered HTML body — maps to `RenderedBody`). Virtual pages go through the remaining pipeline: layout resolution (if `layout` is set), template rendering, and output writing. `layout: false` skips layout wrapping — html is written as-is. URL collisions between a virtual page and a real page produce a build error. Missing `path`/`url` produces a validation error. Virtual pages are included in `PageCount`.
 
 ```javascript
 // plugins/enrich-data.js

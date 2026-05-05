@@ -1826,7 +1826,7 @@ var _ = Describe("Build Pipeline", func() {
       path: 'demos/button.html',
       url: '/demos/button/',
       frontMatter: { title: 'Button Demo', layout: 'default' },
-      content: '<h1>Button Demo</h1><p>Interactive button component.</p>'
+      html: '<h1>Button Demo</h1><p>Interactive button component.</p>'
     });
     return pages;
   });
@@ -1861,7 +1861,7 @@ var _ = Describe("Build Pipeline", func() {
       path: 'embed/widget.html',
       url: '/embed/widget/',
       frontMatter: { title: 'Widget', layout: false },
-      content: '<div class="widget">Embeddable widget</div>'
+      html: '<div class="widget">Embeddable widget</div>'
     });
     return pages;
   });
@@ -1894,7 +1894,7 @@ var _ = Describe("Build Pipeline", func() {
       path: 'about/team.html',
       url: '/about/team/',
       frontMatter: { title: 'Our Team', layout: 'default' },
-      content: '<p>Meet the team.</p>'
+      html: '<p>Meet the team.</p>'
     });
     return pages;
   });
@@ -1927,7 +1927,7 @@ var _ = Describe("Build Pipeline", func() {
       path: 'index.md',
       url: '/',
       frontMatter: { title: 'Collision' },
-      content: '<p>This collides with the real index page.</p>'
+      html: '<p>This collides with the real index page.</p>'
     });
     return pages;
   });
@@ -1979,7 +1979,7 @@ var _ = Describe("Build Pipeline", func() {
         path: 'demos/' + demos[i] + '.html',
         url: '/demos/' + demos[i] + '/',
         frontMatter: { title: demos[i] + ' Demo', layout: 'default' },
-        content: '<h1>' + demos[i] + '</h1>'
+        html: '<h1>' + demos[i] + '</h1>'
       });
     }
     return pages;
