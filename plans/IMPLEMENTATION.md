@@ -379,12 +379,12 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
 13. Render page through layout chain ({{ content }} injection)  ✅ done (single level only, chaining missing)
 14. output.ComputeOutputPath(page) → output path          ✅ done
 15. output.WriteFile(outputPath, html)                    ✅ done
-16. static.CopyStatic(staticDir, outputDir)               ✅ done — **synchronous (issue #507)**
-17. assets.CopyAssets(assetsDir, outputDir)                ✅ done — **synchronous (issue #507)**
-18. static.CopyPassthroughWithValidation(...)             ✅ done — **synchronous (issue #507)**
+16. static.CopyStatic(staticDir, outputDir)               ✅ done — **concurrent file copies (issue #511)**
+17. assets.CopyAssets(assetsDir, outputDir)                ✅ done — **concurrent file copies (issue #511)**
+18. static.CopyPassthroughWithValidation(...)             ✅ done — **concurrent file copies (issue #511)**
 18b. Copy content-colocated passthrough files (issue #300)  ← MISSING
 
-**Static/asset copy runs as its own pipeline stage (issue #507)**: Steps 16-18b run during Phase 3 (output), after all content rendering and hooks complete. The copy stage does NOT overlap with rendering or hook execution — running it in the background caused I/O contention (31% regression, issue #507). However, file copies WITHIN the stage may use internal parallelism (e.g., a `sync.WaitGroup` with `runtime.NumCPU()` goroutines copying files concurrently). This is safe because nothing else is running — the pipeline is waiting for the copy stage to finish before proceeding to output writing.
+**Static/asset copy runs as its own pipeline stage (issue #507, #511)**: Steps 16-18b run during Phase 3 (output), after all content rendering and hooks complete. The copy stage does NOT overlap with rendering or hook execution (#507). File copies within the stage use a bounded worker pool of `runtime.NumCPU()` goroutines (#511) — walk the source directory, create directories synchronously, dispatch file copies to the pool via a semaphore channel. First error cancels remaining work. Benchmark: 60% reduction in copy time (4.8s → 1.9s on 7,947 files).
      `Build()` step 3 must switch from `DiscoverWithFormats` to `DiscoverWithPassthrough`.
      The returned passthrough paths are carried through the pipeline and copied
      to outputDir preserving their relative path: `content/about/diagram.svg`
