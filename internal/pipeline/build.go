@@ -493,6 +493,12 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 		if returnedPages, ok := contentResult.([]interface{}); ok {
 			originalCount := len(pages)
+			urlIndex := make(map[string]string, len(pages))
+			for _, p := range pages {
+				if p.URL != "" {
+					urlIndex[p.URL] = p.RelPath
+				}
+			}
 			for i, rp := range returnedPages {
 				pageMap, ok := rp.(map[string]interface{})
 				if !ok {
@@ -510,11 +516,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				if err != nil {
 					return nil, fmt.Errorf("plugin hook onContentLoaded: virtual page %d: %w", i-originalCount, err)
 				}
-				for _, existing := range pages {
-					if existing.URL == vp.URL {
-						return nil, fmt.Errorf("plugin hook onContentLoaded: virtual page URL %q collides with existing page %s", vp.URL, existing.RelPath)
-					}
+				if existingPath, ok := urlIndex[vp.URL]; ok {
+					return nil, fmt.Errorf("plugin hook onContentLoaded: virtual page URL %q collides with existing page %s", vp.URL, existingPath)
 				}
+				urlIndex[vp.URL] = vp.RelPath
 				pages = append(pages, vp)
 				if len(batches) > 0 {
 					batches[len(batches)-1].pages = append(batches[len(batches)-1].pages, vp)
