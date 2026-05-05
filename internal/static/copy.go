@@ -92,28 +92,6 @@ func CopyPassthroughWithValidation(mappings []config.PassthroughMapping, project
 	return CopyPassthrough(filtered, projectRoot, outputDir)
 }
 
-// copyDir recursively copies a directory tree from src to dst (sequential fallback).
-func copyDir(src, dst string) error {
-	return filepath.Walk(src, func(path string, fi os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-
-		target := filepath.Join(dst, rel)
-
-		if fi.IsDir() {
-			return os.MkdirAll(target, 0755)
-		}
-
-		return fileutil.CopyFile(path, target)
-	})
-}
-
 type copyJob struct {
 	src string
 	dst string
