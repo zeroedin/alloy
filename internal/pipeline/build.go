@@ -520,12 +520,16 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 					log.Printf("warning: layout %v not found for %s: %v", layoutVal, page.RelPath, err)
 				}
 				layoutPageIdx++
-				reportUpdate(layoutPageIdx, page.RelPath, time.Since(pageStart))
+				if activeReporter != nil {
+					reportUpdate(layoutPageIdx, page.RelPath, time.Since(pageStart))
+				}
 				continue
 			}
 			if layoutPath == "" {
 				layoutPageIdx++
-				reportUpdate(layoutPageIdx, page.RelPath, time.Since(pageStart))
+				if activeReporter != nil {
+					reportUpdate(layoutPageIdx, page.RelPath, time.Since(pageStart))
+				}
 				continue
 			}
 
@@ -537,7 +541,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				return nil, err
 			}
 			layoutPageIdx++
-			reportUpdate(layoutPageIdx, page.RelPath, time.Since(pageStart))
+			if activeReporter != nil {
+				reportUpdate(layoutPageIdx, page.RelPath, time.Since(pageStart))
+			}
 		}
 
 		if batch.taxonomies != nil && engine != nil {
@@ -583,7 +589,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			case []byte:
 				pages[i].RenderedBody = modified
 			}
-			reportUpdate(i+1, pages[i].RelPath, time.Since(applyStart))
+			if activeReporter != nil {
+				reportUpdate(i+1, pages[i].RelPath, time.Since(applyStart))
+			}
 		}
 		reportEndStage()
 	}
@@ -660,7 +668,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 		if !output.ShouldWrite(page.URL) {
 			writeIdx++
-			reportUpdate(writeIdx, page.RelPath, time.Since(pageStart))
+			if activeReporter != nil {
+				reportUpdate(writeIdx, page.RelPath, time.Since(pageStart))
+			}
 			continue
 		}
 		outPath := output.ComputeOutputPath(page.URL)
@@ -685,7 +695,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			}
 		}
 		writeIdx++
-		reportUpdate(writeIdx, page.RelPath, time.Since(pageStart))
+		if activeReporter != nil {
+			reportUpdate(writeIdx, page.RelPath, time.Since(pageStart))
+		}
 	}
 	reportEndStage()
 
