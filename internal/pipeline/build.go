@@ -497,6 +497,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// ── Pass 2: layout resolution + rendering per batch (steps 12-15) ──
 	timer.Start("Pass 2: layout render")
 	reportStartStage("Layouts", len(pages))
+	layoutPageIdx := 0
 	for _, batch := range batches {
 		rc := &RenderContext{
 			Cfg:            cfg,
@@ -509,14 +510,26 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			TemplateUsage:  templateUsage,
 		}
 		for _, page := range batch.pages {
+			var pageStart time.Time
+			if activeReporter != nil {
+				pageStart = time.Now()
+			}
 			layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, engineName, permalinkCfg)
 			if err != nil {
 				if layoutVal, hasLayout := page.FrontMatter["layout"]; hasLayout && layoutVal != nil {
 					log.Printf("warning: layout %v not found for %s: %v", layoutVal, page.RelPath, err)
 				}
+				layoutPageIdx++
+				if activeReporter != nil {
+					reportUpdate(layoutPageIdx, page.RelPath, time.Since(pageStart))
+				}
 				continue
 			}
 			if layoutPath == "" {
+				layoutPageIdx++
+				if activeReporter != nil {
+					reportUpdate(layoutPageIdx, page.RelPath, time.Since(pageStart))
+				}
 				continue
 			}
 
@@ -526,6 +539,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 			if err := renderPageFormats(page, layoutsDir, engineName, rc); err != nil {
 				return nil, err
+			}
+			layoutPageIdx++
+			if activeReporter != nil {
+				reportUpdate(layoutPageIdx, page.RelPath, time.Since(pageStart))
 			}
 		}
 
@@ -562,11 +579,18 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			return nil, fmt.Errorf("plugin hook onPageRendered: %w", err)
 		}
 		for i, result := range results {
+			var applyStart time.Time
+			if activeReporter != nil {
+				applyStart = time.Now()
+			}
 			switch modified := result.(type) {
 			case string:
 				pages[i].RenderedBody = []byte(modified)
 			case []byte:
 				pages[i].RenderedBody = modified
+			}
+			if activeReporter != nil {
+				reportUpdate(i+1, pages[i].RelPath, time.Since(applyStart))
 			}
 		}
 		reportEndStage()
@@ -636,8 +660,17 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Stage 6: Output writing
 	timer.Start("Output writing")
 	reportStartStage("Writing", len(pages))
+	writeIdx := 0
 	for _, page := range pages {
+		var pageStart time.Time
+		if activeReporter != nil {
+			pageStart = time.Now()
+		}
 		if !output.ShouldWrite(page.URL) {
+			writeIdx++
+			if activeReporter != nil {
+				reportUpdate(writeIdx, page.RelPath, time.Since(pageStart))
+			}
 			continue
 		}
 		outPath := output.ComputeOutputPath(page.URL)
@@ -660,6 +693,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			if err := output.WriteAliases(outputDir, aliases, page.RenderedBody); err != nil {
 				return nil, fmt.Errorf("writing aliases for %s: %w", page.RelPath, err)
 			}
+		}
+		writeIdx++
+		if activeReporter != nil {
+			reportUpdate(writeIdx, page.RelPath, time.Since(pageStart))
 		}
 	}
 	reportEndStage()
