@@ -510,7 +510,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			TemplateUsage:  templateUsage,
 		}
 		for _, page := range batch.pages {
-			pageStart := time.Now()
+			var pageStart time.Time
+			if activeReporter != nil {
+				pageStart = time.Now()
+			}
 			layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, engineName, permalinkCfg)
 			if err != nil {
 				if layoutVal, hasLayout := page.FrontMatter["layout"]; hasLayout && layoutVal != nil {
@@ -570,13 +573,17 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			return nil, fmt.Errorf("plugin hook onPageRendered: %w", err)
 		}
 		for i, result := range results {
+			var applyStart time.Time
+			if activeReporter != nil {
+				applyStart = time.Now()
+			}
 			switch modified := result.(type) {
 			case string:
 				pages[i].RenderedBody = []byte(modified)
 			case []byte:
 				pages[i].RenderedBody = modified
 			}
-			reportUpdate(i+1, pages[i].RelPath, 0)
+			reportUpdate(i+1, pages[i].RelPath, time.Since(applyStart))
 		}
 		reportEndStage()
 	}
@@ -647,7 +654,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	reportStartStage("Writing", len(pages))
 	writeIdx := 0
 	for _, page := range pages {
-		pageStart := time.Now()
+		var pageStart time.Time
+		if activeReporter != nil {
+			pageStart = time.Now()
+		}
 		if !output.ShouldWrite(page.URL) {
 			writeIdx++
 			reportUpdate(writeIdx, page.RelPath, time.Since(pageStart))
