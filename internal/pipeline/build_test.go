@@ -1843,7 +1843,7 @@ var _ = Describe("Build Pipeline", func() {
 			html := result.RenderedContent["demos/button.html"]
 			Expect(html).To(ContainSubstring("Button Demo"),
 				"virtual page must be rendered and accessible in build output — "+
-					"currently build.go:493 breaks at i >= len(pages), dropping virtual pages")
+					"pages beyond the original array length must be constructed as new content.Page entries (issue #518)")
 		})
 
 		It("virtual page with layout: false skips layout wrapping", func() {
