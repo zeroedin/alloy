@@ -16,11 +16,12 @@ import (
 
 // spyReporter records all ProgressReporter calls for test assertions.
 type spyReporter struct {
-	stages    []string
-	messages  []string
-	updates   []spyUpdate
-	ended     int
-	summaries []spySummary
+	stages       []string
+	stageTotals  []int
+	messages     []string
+	updates      []spyUpdate
+	ended        int
+	summaries    []spySummary
 }
 
 type spyUpdate struct {
@@ -35,14 +36,30 @@ type spySummary struct {
 	pagesSkipped int
 }
 
-func (s *spyReporter) StartStage(name string, total int) { s.stages = append(s.stages, name) }
-func (s *spyReporter) Message(text string)               { s.messages = append(s.messages, text) }
+func (s *spyReporter) StartStage(name string, total int) {
+	s.stages = append(s.stages, name)
+	s.stageTotals = append(s.stageTotals, total)
+}
+func (s *spyReporter) Message(text string) { s.messages = append(s.messages, text) }
 func (s *spyReporter) Update(current int, filePath string, elapsed time.Duration) {
 	s.updates = append(s.updates, spyUpdate{current: current, filePath: filePath, elapsed: elapsed})
 }
 func (s *spyReporter) EndStage() { s.ended++ }
 func (s *spyReporter) Summary(pageCount int, duration time.Duration, pagesSkipped int) {
 	s.summaries = append(s.summaries, spySummary{pageCount: pageCount, duration: duration, pagesSkipped: pagesSkipped})
+}
+
+// perPageStageCount returns the number of stages that report per-page
+// updates (total >= 0). Stages with total=-1 (Discovering, Copying,
+// Finalizing) do not have per-page granularity.
+func (s *spyReporter) perPageStageCount() int {
+	count := 0
+	for _, t := range s.stageTotals {
+		if t >= 0 {
+			count++
+		}
+	}
+	return count
 }
 
 // Spec reference: PLAN.md §2 — Build Pipeline
@@ -2152,7 +2169,7 @@ var _ = Describe("Build Pipeline", func() {
 				"Summary pageCount must match the build result")
 		})
 
-		It("Build with content calls Update for each page", func() {
+		It("Build with content calls Update for each page in every stage", func() {
 			spy := &spyReporter{}
 			pipeline.SetReporter(spy)
 
@@ -2169,9 +2186,13 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 
-			Expect(spy.updates).To(HaveLen(result.PageCount),
-				"Build must call Update once per page rendered — "+
-					"each Update drives the progress bar forward")
+			// Each per-page stage (Rendering, Layouts, Writing — no Transforms
+			// without plugins) must call Update once per page.
+			// Stages with total=-1 (Discovering, Copying, Finalizing) are excluded.
+			// Total updates = PageCount × perPageStageCount.
+			Expect(spy.updates).To(HaveLen(result.PageCount*spy.perPageStageCount()),
+				"Build must call Update once per page per stage — "+
+					"each Update drives the progress bar forward (issue #506)")
 		})
 
 		It("Build reports progress for all pipeline stages (issue #493)", func() {
