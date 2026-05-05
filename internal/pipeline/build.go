@@ -282,8 +282,17 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
-	if _, err := ps.Hooks.RunWithTimeout(plugin.OnDataFetched, siteData); err != nil {
+	if siteData == nil {
+		siteData = make(map[string]interface{})
+	}
+	dataResult, err := ps.Hooks.RunWithTimeout(plugin.OnDataFetched, siteData)
+	if err != nil {
 		return nil, fmt.Errorf("plugin hook onDataFetched: %w", err)
+	}
+	if modified, ok := dataResult.(map[string]interface{}); ok {
+		for k, v := range modified {
+			siteData[k] = v
+		}
 	}
 
 	// Keep PipelineState in sync after sources merge may have replaced the map
@@ -476,11 +485,53 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// Hooks between passes — all pages discovered and content-rendered
 	timer.Start("Inter-pass hooks")
-	if _, err := ps.Hooks.RunWithTimeout(plugin.OnContentLoaded, pages); err != nil {
-		return nil, fmt.Errorf("plugin hook onContentLoaded: %w", err)
+	if ps.Hooks.HasHooks(plugin.OnContentLoaded) {
+		contentPayload := serializePagesForHook(pages)
+		contentResult, err := ps.Hooks.RunWithTimeout(plugin.OnContentLoaded, contentPayload)
+		if err != nil {
+			return nil, fmt.Errorf("plugin hook onContentLoaded: %w", err)
+		}
+		if returnedPages, ok := contentResult.([]interface{}); ok {
+			originalCount := len(pages)
+			urlIndex := make(map[string]string, len(pages))
+			for _, p := range pages {
+				if p.URL != "" {
+					urlIndex[p.URL] = p.RelPath
+				}
+			}
+			for i, rp := range returnedPages {
+				pageMap, ok := rp.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if i < originalCount {
+					if fm, ok := pageMap["frontMatter"].(map[string]interface{}); ok {
+						for k, v := range fm {
+							pages[i].FrontMatter[k] = v
+						}
+					}
+					continue
+				}
+				vp, err := virtualPageFromMap(pageMap)
+				if err != nil {
+					return nil, fmt.Errorf("plugin hook onContentLoaded: virtual page %d: %w", i-originalCount, err)
+				}
+				if existingPath, ok := urlIndex[vp.URL]; ok {
+					return nil, fmt.Errorf("plugin hook onContentLoaded: virtual page URL %q collides with existing page %s", vp.URL, existingPath)
+				}
+				urlIndex[vp.URL] = vp.RelPath
+				pages = append(pages, vp)
+				if len(batches) > 0 {
+					batches[len(batches)-1].pages = append(batches[len(batches)-1].pages, vp)
+				}
+			}
+		}
 	}
-	if _, err := ps.Hooks.RunWithTimeout(plugin.OnDataCascadeReady, pages); err != nil {
-		return nil, fmt.Errorf("plugin hook onDataCascadeReady: %w", err)
+	if ps.Hooks.HasHooks(plugin.OnDataCascadeReady) {
+		cascadePayload := serializePagesForHook(pages)
+		if _, err := ps.Hooks.RunWithTimeout(plugin.OnDataCascadeReady, cascadePayload); err != nil {
+			return nil, fmt.Errorf("plugin hook onDataCascadeReady: %w", err)
+		}
 	}
 
 	// Link translations across all language trees (only for multi-language builds)
@@ -1975,6 +2026,45 @@ func convertOrderedValue(v interface{}) interface{} {
 	default:
 		return v
 	}
+}
+
+func serializePagesForHook(pages []*content.Page) []interface{} {
+	result := make([]interface{}, len(pages))
+	for i, page := range pages {
+		result[i] = map[string]interface{}{
+			"path":        page.RelPath,
+			"url":         page.URL,
+			"frontMatter": convertOrderedMaps(page.FrontMatter),
+			"content":     string(page.Content),
+			"html":        string(page.RenderedBody),
+		}
+	}
+	return result
+}
+
+func virtualPageFromMap(m map[string]interface{}) (*content.Page, error) {
+	path, _ := m["path"].(string)
+	url, _ := m["url"].(string)
+	if path == "" || url == "" {
+		return nil, fmt.Errorf("virtual page must have both path and url fields")
+	}
+	fm, _ := m["frontMatter"].(map[string]interface{})
+	if fm == nil {
+		fm = make(map[string]interface{})
+	}
+	htmlBody, _ := m["html"].(string)
+	page := &content.Page{
+		RelPath:      path,
+		URL:          url,
+		FrontMatter:  fm,
+		RenderedBody: []byte(htmlBody),
+	}
+	if layout, ok := fm["layout"]; ok {
+		if s, ok := layout.(string); ok {
+			page.Layout = s
+		}
+	}
+	return page, nil
 }
 
 // fireContentTransformedHooks fires onContentTransformed once per page
