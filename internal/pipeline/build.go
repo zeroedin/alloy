@@ -691,7 +691,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		intermediateHTML := make(map[string]string, len(pages))
 		for _, page := range pages {
 			if len(page.RenderedBody) > 0 {
-				intermediateHTML[page.RelPath] = string(page.RenderedBody)
+				intermediateHTML[renderedContentKey(page)] = string(page.RenderedBody)
 			}
 		}
 
@@ -701,7 +701,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 
 		for _, page := range pages {
-			if transformed, ok := finalHTML[page.RelPath]; ok {
+			if transformed, ok := finalHTML[renderedContentKey(page)]; ok {
 				page.RenderedBody = []byte(transformed)
 			}
 		}
