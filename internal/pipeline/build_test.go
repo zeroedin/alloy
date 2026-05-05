@@ -1705,6 +1705,106 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Hook return values applied to pipeline state (issue #494) ───
+	// Hooks documented as mutators (onDataFetched, onContentLoaded) must
+	// apply their return values back to the pipeline. Currently both
+	// discard returns with `_`. RunWithTimeout already chains results
+	// correctly — callers need to stop discarding them.
+
+	Describe("onDataFetched return value applied to siteData (issue #494)", func() {
+		It("plugin-injected data via onDataFetched is accessible in templates", func() {
+			cfg := &config.Config{
+				Title:   "Data Hook Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"data/site.json":         `{"name":"test"}`,
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}<p>Count: {{ site.data.demos | size }}</p></body></html>",
+				"plugins/inject-data.js": `export default function(alloy) {
+  alloy.hook('onDataFetched', (data) => {
+    data.demos = [
+      { name: 'button', slug: 'button' },
+      { name: 'card', slug: 'card' },
+      { name: 'dialog', slug: 'dialog' }
+    ];
+    return data;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onDataFetched hook must not error when returning modified siteData")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.html"]
+			Expect(html).To(ContainSubstring("Count: 3"),
+				"onDataFetched return value must be applied back to siteData — "+
+					"currently the return is discarded with _ at build.go:285 (issue #494)")
+		})
+
+		It("plugin can modify existing data keys via onDataFetched", func() {
+			cfg := &config.Config{
+				Title:   "Data Modify Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"data/team.json":         `[{"name":"Alice"},{"name":"Bob"}]`,
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}<p>Team: {{ site.data.team | size }}</p></body></html>",
+				"plugins/enrich-data.js": `export default function(alloy) {
+  alloy.hook('onDataFetched', (data) => {
+    if (data.team) {
+      data.team.push({ name: 'Charlie' });
+    }
+    return data;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.html"]
+			Expect(html).To(ContainSubstring("Team: 3"),
+				"onDataFetched must allow plugins to modify existing data keys — "+
+					"team array should have 3 members after plugin appends one (issue #494)")
+		})
+	})
+
+	Describe("onContentLoaded return value applied to pages (issue #494)", func() {
+		It("plugin can modify page front matter via onContentLoaded", func() {
+			cfg := &config.Config{
+				Title:   "Content Hook Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body><h1>{{ page.title }}</h1>{{ content }}</body></html>",
+				"plugins/enrich-pages.js": `export default function(alloy) {
+  alloy.hook('onContentLoaded', function(pages) {
+    for (var i = 0; i < pages.length; i++) {
+      pages[i].frontMatter.title = pages[i].frontMatter.title + ' (enriched)';
+    }
+    return pages;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onContentLoaded hook must not error when returning modified pages")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.html"]
+			Expect(html).To(ContainSubstring("Home (enriched)"),
+				"onContentLoaded return value must be applied back to pages — "+
+					"currently the return is discarded with _ at build.go:479 (issue #494)")
+		})
+	})
+
 	// ── SetSiteData pipeline wiring (issue #339) ────────────────────
 	// Build() must call rt.SetSiteData(siteData) for each plugin runtime
 	// after data loading so alloy.data is available in plugins.
