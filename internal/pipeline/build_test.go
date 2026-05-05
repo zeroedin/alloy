@@ -527,6 +527,83 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── SSR Phase 2 with paginated pages (issue #522) ───────────────
+	// Paginated virtual pages share RelPath but have unique URLs.
+	// SSR Phase 2 must use renderedContentKey (URL for paginated pages)
+	// instead of RelPath to avoid map key collisions.
+
+	Describe("SSR Phase 2 with paginated pages (issue #522)", func() {
+		It("each paginated page gets distinct SSR output", func() {
+			cfg := &config.Config{
+				Title:   "SSR Pagination Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				SSR:     &config.SSRConfig{Command: "cat"},
+			}
+			contentMap := map[string]string{
+				"data/team.json": `[{"name":"Alice","slug":"alice"},{"name":"Bob","slug":"bob"},{"name":"Charlie","slug":"charlie"}]`,
+				"content/team.md": "---\ntitle: \"{{ member.name }}\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ member.slug }}/\"\n---\n<ds-card>{{ member.name }}</ds-card>",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			// All 3 paginated pages must have distinct content after SSR.
+			// Bug: Build() uses page.RelPath as SSR key — all 3 pages share
+			// RelPath "team.md", so only the last survives. All 3 get
+			// Charlie's content instead of their own.
+			aliceHTML := result.RenderedContent["/team/alice/"]
+			bobHTML := result.RenderedContent["/team/bob/"]
+			charlieHTML := result.RenderedContent["/team/charlie/"]
+
+			Expect(aliceHTML).To(ContainSubstring("Alice"),
+				"Alice's page must contain Alice's content after SSR — "+
+					"not Charlie's (issue #522)")
+			Expect(bobHTML).To(ContainSubstring("Bob"),
+				"Bob's page must contain Bob's content after SSR — "+
+					"not Charlie's (issue #522)")
+			Expect(charlieHTML).To(ContainSubstring("Charlie"),
+				"Charlie's page must contain Charlie's content after SSR")
+
+			// Each page must be distinct — no duplication
+			Expect(aliceHTML).NotTo(Equal(bobHTML),
+				"paginated pages must not all contain the same SSR output — "+
+					"RelPath key collision causes all pages to share last page's content")
+		})
+
+		It("non-paginated pages render correctly alongside paginated SSR pages", func() {
+			cfg := &config.Config{
+				Title:   "SSR Mixed Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				SSR:     &config.SSRConfig{Command: "cat"},
+			}
+			contentMap := map[string]string{
+				"data/items.json": `[{"name":"One","slug":"one"},{"name":"Two","slug":"two"}]`,
+				"content/index.md": "---\ntitle: Home\nlayout: default\n---\n<ds-hero>Welcome</ds-hero>",
+				"content/items.md": "---\ntitle: \"{{ item.name }}\"\nlayout: default\npagination:\n  data: site.data.items\n  perPage: 1\n  as: item\npermalink: \"/items/{{ item.slug }}/\"\n---\n<ds-card>{{ item.name }}</ds-card>",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			// Non-paginated page must still render correctly
+			homeHTML := result.RenderedContent["index.md"]
+			Expect(homeHTML).To(ContainSubstring("Welcome"),
+				"non-paginated page must render correctly when paginated pages are also present")
+
+			// Paginated pages must each have their own content
+			oneHTML := result.RenderedContent["/items/one/"]
+			twoHTML := result.RenderedContent["/items/two/"]
+			Expect(oneHTML).To(ContainSubstring("One"),
+				"first paginated page must have its own content after SSR (issue #522)")
+			Expect(twoHTML).To(ContainSubstring("Two"),
+				"second paginated page must have its own content after SSR (issue #522)")
+		})
+	})
+
 	// ── Phase 1 → Phase 2 handoff (§2) ──────────────────────────────
 	// Per spec §6: Phase 2 operates in memory. For each page with custom
 	// elements, Alloy pipes the full page HTML to ssr.command via stdin.
