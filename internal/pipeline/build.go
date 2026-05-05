@@ -482,20 +482,22 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// Hooks between passes — all pages discovered and content-rendered
 	timer.Start("Inter-pass hooks")
-	contentPayload := serializePagesForHook(pages)
-	contentResult, err := ps.Hooks.RunWithTimeout(plugin.OnContentLoaded, contentPayload)
-	if err != nil {
-		return nil, fmt.Errorf("plugin hook onContentLoaded: %w", err)
-	}
-	if returnedPages, ok := contentResult.([]interface{}); ok {
-		for i, rp := range returnedPages {
-			if i >= len(pages) {
-				break
-			}
-			if pageMap, ok := rp.(map[string]interface{}); ok {
-				if fm, ok := pageMap["frontMatter"].(map[string]interface{}); ok {
-					for k, v := range fm {
-						pages[i].FrontMatter[k] = v
+	if ps.Hooks.HasHooks(plugin.OnContentLoaded) {
+		contentPayload := serializePagesForHook(pages)
+		contentResult, err := ps.Hooks.RunWithTimeout(plugin.OnContentLoaded, contentPayload)
+		if err != nil {
+			return nil, fmt.Errorf("plugin hook onContentLoaded: %w", err)
+		}
+		if returnedPages, ok := contentResult.([]interface{}); ok {
+			for i, rp := range returnedPages {
+				if i >= len(pages) {
+					break
+				}
+				if pageMap, ok := rp.(map[string]interface{}); ok {
+					if fm, ok := pageMap["frontMatter"].(map[string]interface{}); ok {
+						for k, v := range fm {
+							pages[i].FrontMatter[k] = v
+						}
 					}
 				}
 			}
