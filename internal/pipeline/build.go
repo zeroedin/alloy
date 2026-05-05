@@ -522,8 +522,11 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			}
 		}
 	}
-	if _, err := ps.Hooks.RunWithTimeout(plugin.OnDataCascadeReady, pages); err != nil {
-		return nil, fmt.Errorf("plugin hook onDataCascadeReady: %w", err)
+	if ps.Hooks.HasHooks(plugin.OnDataCascadeReady) {
+		cascadePayload := serializePagesForHook(pages)
+		if _, err := ps.Hooks.RunWithTimeout(plugin.OnDataCascadeReady, cascadePayload); err != nil {
+			return nil, fmt.Errorf("plugin hook onDataCascadeReady: %w", err)
+		}
 	}
 
 	// Link translations across all language trees (only for multi-language builds)
