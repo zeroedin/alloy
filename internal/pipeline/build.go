@@ -282,6 +282,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
+	if siteData == nil {
+		siteData = make(map[string]interface{})
+	}
 	dataResult, err := ps.Hooks.RunWithTimeout(plugin.OnDataFetched, siteData)
 	if err != nil {
 		return nil, fmt.Errorf("plugin hook onDataFetched: %w", err)
@@ -2034,8 +2037,8 @@ func serializePagesForHook(pages []*content.Page) []interface{} {
 func virtualPageFromMap(m map[string]interface{}) (*content.Page, error) {
 	path, _ := m["path"].(string)
 	url, _ := m["url"].(string)
-	if path == "" && url == "" {
-		return nil, fmt.Errorf("virtual page must have a path or url field")
+	if path == "" || url == "" {
+		return nil, fmt.Errorf("virtual page must have both path and url fields")
 	}
 	fm, _ := m["frontMatter"].(map[string]interface{})
 	if fm == nil {
@@ -2052,9 +2055,6 @@ func virtualPageFromMap(m map[string]interface{}) (*content.Page, error) {
 		if s, ok := layout.(string); ok {
 			page.Layout = s
 		}
-	}
-	if page.URL == "" && page.RelPath != "" {
-		page.URL = "/" + strings.TrimSuffix(page.RelPath, filepath.Ext(page.RelPath)) + "/"
 	}
 	return page, nil
 }
