@@ -379,30 +379,12 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
 13. Render page through layout chain ({{ content }} injection)  ✅ done (single level only, chaining missing)
 14. output.ComputeOutputPath(page) → output path          ✅ done
 15. output.WriteFile(outputPath, html)                    ✅ done
-16. static.CopyStatic(staticDir, outputDir)               ✅ done — **move to background goroutine (issue #492)**
-17. assets.CopyAssets(assetsDir, outputDir)                ✅ done — **move to background goroutine (issue #492)**
-18. static.CopyPassthroughWithValidation(...)             ✅ done — **move to background goroutine (issue #492)**
-18b. Copy content-colocated passthrough files (issue #300)  ← MISSING — **include in background goroutine**
+16. static.CopyStatic(staticDir, outputDir)               ✅ done — **synchronous (issue #507)**
+17. assets.CopyAssets(assetsDir, outputDir)                ✅ done — **synchronous (issue #507)**
+18. static.CopyPassthroughWithValidation(...)             ✅ done — **synchronous (issue #507)**
+18b. Copy content-colocated passthrough files (issue #300)  ← MISSING
 
-**Early static/asset copy (issue #492, #503)**: Steps 16-18b must start in a background goroutine AFTER all validation completes and the output directory is created/cleaned. The goroutine must NOT start before validation because:
-- `onConfig` can mutate source directories and output path
-- `onBeforeValidation` adds output paths for conflict detection
-- Conflict detection validates no overlaps exist
-- `onAfterValidation` inspects the final manifest
-- Starting before validation writes to the output directory before the build is confirmed valid — a validation failure leaves partial copies as debris
-
-Pipeline order for the goroutine start:
-1. Config validation (non-destructive)
-2. Plugin discovery
-3. `onConfig` hook fires (plugins mutate config)
-4. `onBeforeValidation` hook (plugins add output paths)
-5. Conflict detection
-6. `onAfterValidation` hook (plugins inspect manifest)
-7. Re-validate output dir
-8. Output dir create/clean
-9. **Start background goroutine** (steps 16-18b)
-10. Pipeline init, content discovery, rendering...
-15. Wait for goroutine before returning
+**Static/asset copy is synchronous (issue #507)**: Steps 16-18b run sequentially during Phase 3 (output), after all content rendering and hooks complete. Background goroutine parallelism was attempted (#492, #501) but profiling showed I/O contention with template rendering caused a 31% build regression (content render +107%, layout render +50%, post-render hooks +35%). Sequential copy is faster and simpler.
 
 `Build()` waits for the goroutine (via `sync.WaitGroup` or channel) before returning. `onAssetProcess` hooks fire inside the goroutine — plugin discovery and all validation have completed before the goroutine starts.
      `Build()` step 3 must switch from `DiscoverWithFormats` to `DiscoverWithPassthrough`.

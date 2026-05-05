@@ -945,15 +945,12 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
-	// ── Early static/asset copy (issue #492) ────────────────────────
-	// Static and passthrough copies run in a background goroutine.
-	// BuildWithContent uses a temp dir that is cleaned up on return,
-	// so filesystem assertions on the output dir are not possible here.
-	// These tests verify the build succeeds with static files in the
-	// content map — a failure indicates the background goroutine or
-	// output dir creation order is broken.
+	// ── Static/asset copy (issue #507) ──────────────────────────────
+	// Static and passthrough copies run synchronously during Phase 3.
+	// Background goroutine parallelism was reverted (#507) — caused
+	// I/O contention with template rendering (31% regression).
 
-	Describe("Early static/asset copy (issue #492)", func() {
+	Describe("Static/asset copy (issue #507)", func() {
 		It("build succeeds with static files in content map", func() {
 			cfg := &config.Config{
 				Title:   "Static Copy Test",
@@ -968,8 +965,7 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred(),
-				"build must succeed with static files — "+
-					"if this errors, output dir creation or static copy goroutine failed")
+				"build must succeed with static files")
 			Expect(result).NotTo(BeNil())
 			Expect(result.RenderedContent).To(HaveKey("index.md"),
 				"rendered content must be present alongside static files")
