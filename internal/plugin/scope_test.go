@@ -1,0 +1,363 @@
+package plugin_test
+
+import (
+	"context"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/zeroedin/alloy/internal/plugin"
+)
+
+var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
+
+	// ── HookScope struct ───────────────────────────────────────────
+	// Plugins must declare what data they need at registration time.
+	// The pipeline uses the scope to serialize only the requested subset.
+
+	Describe("HookScope struct", func() {
+		It("exists with Data, Pages, and PageFields fields", func() {
+			scope := plugin.HookScope{
+				Data: []string{"elements", "tokens"},
+				Pages: plugin.PagesScope{
+					Mode: plugin.PagesScopeAll,
+				},
+				PageFields: []string{"frontMatter", "url"},
+			}
+
+			Expect(scope.Data).To(Equal([]string{"elements", "tokens"}),
+				"Data field must hold siteData key names (issue #528)")
+			Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeAll),
+				"Pages field must be PagesScope with Mode (issue #528)")
+			Expect(scope.PageFields).To(Equal([]string{"frontMatter", "url"}),
+				"PageFields field must hold per-page field names (issue #528)")
+		})
+	})
+
+	// ── PagesScopeMode constants ────────────────────────────────────
+
+	Describe("PagesScopeMode constants", func() {
+		It("PagesScopeNone, PagesScopeAll, PagesScopeGlob, PagesScopeTaxonomy are distinct", func() {
+			modes := []plugin.PagesScopeMode{
+				plugin.PagesScopeNone,
+				plugin.PagesScopeAll,
+				plugin.PagesScopeGlob,
+				plugin.PagesScopeTaxonomy,
+			}
+			seen := make(map[plugin.PagesScopeMode]bool)
+			for _, m := range modes {
+				Expect(seen[m]).To(BeFalse(),
+					"each PagesScopeMode constant must have a distinct value (issue #528)")
+				seen[m] = true
+			}
+		})
+
+		It("PagesScopeNone is the zero value", func() {
+			var mode plugin.PagesScopeMode
+			Expect(mode).To(Equal(plugin.PagesScopeNone),
+				"PagesScopeNone must be iota zero — unset PagesScope defaults to skip pages (issue #528)")
+		})
+	})
+
+	// ── PagesScope struct ──────────────────────────────────────────
+
+	Describe("PagesScope struct", func() {
+		It("represents glob scope with Mode and Glob fields", func() {
+			ps := plugin.PagesScope{
+				Mode: plugin.PagesScopeGlob,
+				Glob: "/blog/**",
+			}
+			Expect(ps.Mode).To(Equal(plugin.PagesScopeGlob))
+			Expect(ps.Glob).To(Equal("/blog/**"),
+				"Glob field must hold the path pattern for Go-side filtering (issue #528)")
+		})
+
+		It("represents taxonomy scope with Mode and Taxonomies fields", func() {
+			ps := plugin.PagesScope{
+				Mode: plugin.PagesScopeTaxonomy,
+				Taxonomies: map[string][]string{
+					"tags":     {"component", "form"},
+					"category": {"ui"},
+				},
+			}
+			Expect(ps.Mode).To(Equal(plugin.PagesScopeTaxonomy))
+			Expect(ps.Taxonomies).To(HaveKeyWithValue("tags", []string{"component", "form"}),
+				"multiple terms within same taxonomy are OR'd — union (issue #528)")
+			Expect(ps.Taxonomies).To(HaveKeyWithValue("category", []string{"ui"}),
+				"multiple taxonomies are AND'd — intersection (issue #528)")
+		})
+	})
+
+	// ── RegisterWithOptions ────────────────────────────────────────
+
+	Describe("RegisterWithOptions", func() {
+		It("registers hook that executes via RunWithTimeout", func() {
+			registry := plugin.NewHookRegistry()
+			scope := plugin.HookScope{
+				Data: []string{"elements"},
+			}
+			called := false
+			fn := func(_ context.Context, payload interface{}) (interface{}, error) {
+				called = true
+				return "scoped-result", nil
+			}
+			registry.RegisterWithOptions(plugin.OnPagesReady, fn, scope, 50)
+
+			Expect(registry.HasHooks(plugin.OnPagesReady)).To(BeTrue(),
+				"HasHooks must return true after RegisterWithOptions (issue #528)")
+
+			result, err := registry.RunWithTimeout(plugin.OnPagesReady, "input")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(called).To(BeTrue(), "hook registered via RegisterWithOptions must be callable")
+			Expect(result).To(Equal("scoped-result"))
+		})
+
+		It("preserves priority ordering with scoped hooks", func() {
+			registry := plugin.NewHookRegistry()
+			var order []string
+
+			fn1 := func(_ context.Context, p interface{}) (interface{}, error) {
+				order = append(order, "high")
+				return p, nil
+			}
+			fn2 := func(_ context.Context, p interface{}) (interface{}, error) {
+				order = append(order, "low")
+				return p, nil
+			}
+
+			scope := plugin.HookScope{Pages: plugin.PagesScope{Mode: plugin.PagesScopeAll}}
+			registry.RegisterWithOptions(plugin.OnContentLoaded, fn1, scope, 100)
+			registry.RegisterWithOptions(plugin.OnContentLoaded, fn2, scope, 10)
+
+			_, err := registry.RunWithTimeout(plugin.OnContentLoaded, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(order).To(Equal([]string{"low", "high"}),
+				"lower priority must run first, same as RegisterWithPriority (issue #528)")
+		})
+	})
+
+	// ── RegisterBatchWithOptions ───────────────────────────────────
+
+	Describe("RegisterBatchWithOptions", func() {
+		It("registers batch-capable hook with scope", func() {
+			registry := plugin.NewHookRegistry()
+			scope := plugin.HookScope{
+				Pages:      plugin.PagesScope{Mode: plugin.PagesScopeAll},
+				PageFields: []string{"html"},
+			}
+			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+			batchCalled := false
+			batchFn := func(_ context.Context, ps []interface{}) ([]interface{}, error) {
+				batchCalled = true
+				return ps, nil
+			}
+			registry.RegisterBatchWithOptions(plugin.OnPageRendered, singleFn, batchFn, scope, 50)
+
+			Expect(registry.HasHooks(plugin.OnPageRendered)).To(BeTrue())
+
+			_, err := registry.RunBatchWithTimeout(plugin.OnPageRendered, []interface{}{"<html>"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(batchCalled).To(BeTrue(),
+				"batch function must be called via RunBatchWithTimeout (issue #528)")
+		})
+	})
+
+	// ── ScopeFor ───────────────────────────────────────────────────
+
+	Describe("ScopeFor", func() {
+		It("returns scope for registered hooks in priority order", func() {
+			registry := plugin.NewHookRegistry()
+			scope := plugin.HookScope{
+				Data:  []string{"elements"},
+				Pages: plugin.PagesScope{Mode: plugin.PagesScopeNone},
+			}
+			fn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+			registry.RegisterWithOptions(plugin.OnPagesReady, fn, scope, 50)
+
+			scopes := registry.ScopeFor(plugin.OnPagesReady)
+			Expect(scopes).To(HaveLen(1),
+				"ScopeFor must return one scope per registered hook (issue #528)")
+			Expect(scopes[0]).NotTo(BeNil())
+			Expect(scopes[0].Data).To(Equal([]string{"elements"}))
+			Expect(scopes[0].Pages.Mode).To(Equal(plugin.PagesScopeNone))
+		})
+
+		It("returns nil for events with no hooks", func() {
+			registry := plugin.NewHookRegistry()
+			scopes := registry.ScopeFor(plugin.OnPagesReady)
+			Expect(scopes).To(BeNil(),
+				"ScopeFor must return nil when no hooks registered (issue #528)")
+		})
+
+		It("returns nil scope entries for unscoped hooks registered via Register", func() {
+			registry := plugin.NewHookRegistry()
+			fn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+			registry.Register(plugin.OnContentLoaded, fn)
+
+			scopes := registry.ScopeFor(plugin.OnContentLoaded)
+			Expect(scopes).To(HaveLen(1),
+				"ScopeFor must return entries for all hooks including unscoped (issue #528)")
+			Expect(scopes[0]).To(BeNil(),
+				"unscoped hooks (registered via Register) must have nil scope (issue #528)")
+		})
+	})
+
+	// ── Multiple hooks with independent scopes ─────────────────────
+
+	Describe("Multiple hooks with independent scopes", func() {
+		It("two hooks on same event have distinct scopes retrievable via ScopeFor", func() {
+			registry := plugin.NewHookRegistry()
+			fn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+
+			scope1 := plugin.HookScope{
+				Data:  []string{"elements"},
+				Pages: plugin.PagesScope{Mode: plugin.PagesScopeNone},
+			}
+			scope2 := plugin.HookScope{
+				Data:       []string{"*"},
+				Pages:      plugin.PagesScope{Mode: plugin.PagesScopeAll},
+				PageFields: []string{"frontMatter"},
+			}
+
+			registry.RegisterWithOptions(plugin.OnContentLoaded, fn, scope1, 10)
+			registry.RegisterWithOptions(plugin.OnContentLoaded, fn, scope2, 20)
+
+			scopes := registry.ScopeFor(plugin.OnContentLoaded)
+			Expect(scopes).To(HaveLen(2))
+
+			Expect(scopes[0].Data).To(Equal([]string{"elements"}),
+				"first scope (priority 10) must have Data=[elements] (issue #528)")
+			Expect(scopes[0].Pages.Mode).To(Equal(plugin.PagesScopeNone))
+
+			Expect(scopes[1].Data).To(Equal([]string{"*"}),
+				"second scope (priority 20) must have Data=[*] (issue #528)")
+			Expect(scopes[1].Pages.Mode).To(Equal(plugin.PagesScopeAll))
+			Expect(scopes[1].PageFields).To(Equal([]string{"frontMatter"}))
+		})
+	})
+
+	// ── ValidateScope ──────────────────────────────────────────────
+
+	Describe("ValidateScope", func() {
+		It("rejects taxonomy filtering on onPagesReady", func() {
+			scope := plugin.HookScope{
+				Pages: plugin.PagesScope{
+					Mode:       plugin.PagesScopeTaxonomy,
+					Taxonomies: map[string][]string{"tags": {"component"}},
+				},
+			}
+			err := plugin.ValidateScope(plugin.OnPagesReady, scope)
+			Expect(err).To(HaveOccurred(),
+				"taxonomy filtering on onPagesReady must error — taxonomy indices not built yet (issue #528)")
+			Expect(err.Error()).To(ContainSubstring("taxonomy"),
+				"error must mention taxonomy (issue #528)")
+		})
+
+		It("rejects taxonomy filtering on onConfig", func() {
+			scope := plugin.HookScope{
+				Pages: plugin.PagesScope{
+					Mode:       plugin.PagesScopeTaxonomy,
+					Taxonomies: map[string][]string{"tags": {"component"}},
+				},
+			}
+			err := plugin.ValidateScope(plugin.OnConfig, scope)
+			Expect(err).To(HaveOccurred(),
+				"taxonomy filtering on pre-taxonomy hooks must error (issue #528)")
+		})
+
+		It("accepts taxonomy filtering on onContentLoaded", func() {
+			scope := plugin.HookScope{
+				Pages: plugin.PagesScope{
+					Mode:       plugin.PagesScopeTaxonomy,
+					Taxonomies: map[string][]string{"tags": {"component"}},
+				},
+			}
+			err := plugin.ValidateScope(plugin.OnContentLoaded, scope)
+			Expect(err).NotTo(HaveOccurred(),
+				"taxonomy filtering on post-taxonomy hooks must be valid (issue #528)")
+		})
+
+		It("accepts taxonomy filtering on onContentTransformed", func() {
+			scope := plugin.HookScope{
+				Pages: plugin.PagesScope{
+					Mode:       plugin.PagesScopeTaxonomy,
+					Taxonomies: map[string][]string{"category": {"docs"}},
+				},
+			}
+			err := plugin.ValidateScope(plugin.OnContentTransformed, scope)
+			Expect(err).NotTo(HaveOccurred(),
+				"onContentTransformed fires after taxonomy collection (issue #528)")
+		})
+
+		It("accepts glob filtering on onPagesReady", func() {
+			scope := plugin.HookScope{
+				Pages: plugin.PagesScope{
+					Mode: plugin.PagesScopeGlob,
+					Glob: "/blog/**",
+				},
+			}
+			err := plugin.ValidateScope(plugin.OnPagesReady, scope)
+			Expect(err).NotTo(HaveOccurred(),
+				"glob filtering is valid on any hook — no dependency on taxonomy indices (issue #528)")
+		})
+
+		It("accepts PagesScopeNone on any hook", func() {
+			scope := plugin.HookScope{
+				Pages: plugin.PagesScope{Mode: plugin.PagesScopeNone},
+			}
+			for _, event := range []plugin.HookName{
+				plugin.OnPagesReady,
+				plugin.OnContentLoaded,
+				plugin.OnContentTransformed,
+				plugin.OnConfig,
+			} {
+				err := plugin.ValidateScope(event, scope)
+				Expect(err).NotTo(HaveOccurred(),
+					"PagesScopeNone (skip pages) must be valid on all hooks (issue #528)")
+			}
+		})
+
+		It("accepts PagesScopeAll on any hook", func() {
+			scope := plugin.HookScope{
+				Pages: plugin.PagesScope{Mode: plugin.PagesScopeAll},
+			}
+			for _, event := range []plugin.HookName{
+				plugin.OnPagesReady,
+				plugin.OnContentLoaded,
+				plugin.OnContentTransformed,
+			} {
+				err := plugin.ValidateScope(event, scope)
+				Expect(err).NotTo(HaveOccurred(),
+					"PagesScopeAll must be valid on hooks that receive pages (issue #528)")
+			}
+		})
+	})
+
+	// ── HasHooks with scoped hooks ─────────────────────────────────
+
+	Describe("HasHooks with scoped hooks", func() {
+		It("returns true when only scoped hooks are registered", func() {
+			registry := plugin.NewHookRegistry()
+			scope := plugin.HookScope{
+				Data: []string{"elements"},
+			}
+			fn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+			registry.RegisterWithOptions(plugin.OnPagesReady, fn, scope, 50)
+
+			Expect(registry.HasHooks(plugin.OnPagesReady)).To(BeTrue(),
+				"HasHooks must work with scoped hooks — they are still hooks (issue #528)")
+			Expect(registry.HasHooks(plugin.OnContentLoaded)).To(BeFalse(),
+				"HasHooks must return false for events with no hooks (issue #528)")
+		})
+	})
+})
