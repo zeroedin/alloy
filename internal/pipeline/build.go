@@ -1990,14 +1990,39 @@ func buildTaxonomiesContext(taxonomies map[string]*collection.TaxonomyCollection
 // convertOrderedMaps recursively converts *ordered.Map values to
 // map[string]interface{} for fast JSON serialization in hook payloads.
 func convertOrderedMaps(m map[string]interface{}) map[string]interface{} {
-	if m == nil {
-		return nil
+	if m == nil || !needsOrderedMapConversion(m) {
+		return m
 	}
 	out := make(map[string]interface{}, len(m))
 	for k, v := range m {
 		out[k] = convertOrderedValue(v)
 	}
 	return out
+}
+
+func needsOrderedMapConversion(m map[string]interface{}) bool {
+	for _, v := range m {
+		if needsConversion(v) {
+			return true
+		}
+	}
+	return false
+}
+
+func needsConversion(v interface{}) bool {
+	switch val := v.(type) {
+	case *ordered.Map:
+		return true
+	case map[string]interface{}:
+		return needsOrderedMapConversion(val)
+	case []interface{}:
+		for _, item := range val {
+			if needsConversion(item) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func convertOrderedValue(v interface{}) interface{} {
