@@ -260,6 +260,10 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 				plugin.OnBeforeValidation,
 				plugin.OnAfterValidation,
 				plugin.OnDataFetched,
+				plugin.OnAssetProcess,
+				plugin.OnBuildComplete,
+				plugin.OnDevServerStart,
+				plugin.OnFileChanged,
 			} {
 				err := plugin.ValidateScope(event, scope)
 				Expect(err).To(HaveOccurred(),
@@ -281,6 +285,10 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 				plugin.OnBeforeValidation,
 				plugin.OnAfterValidation,
 				plugin.OnDataFetched,
+				plugin.OnAssetProcess,
+				plugin.OnBuildComplete,
+				plugin.OnDevServerStart,
+				plugin.OnFileChanged,
 			} {
 				err := plugin.ValidateScope(event, scope)
 				Expect(err).To(HaveOccurred(),
@@ -300,6 +308,10 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 				plugin.OnBeforeValidation,
 				plugin.OnAfterValidation,
 				plugin.OnDataFetched,
+				plugin.OnAssetProcess,
+				plugin.OnBuildComplete,
+				plugin.OnDevServerStart,
+				plugin.OnFileChanged,
 			} {
 				err := plugin.ValidateScope(event, scope)
 				Expect(err).To(HaveOccurred(),
@@ -365,6 +377,10 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 				plugin.OnBeforeValidation,
 				plugin.OnAfterValidation,
 				plugin.OnDataFetched,
+				plugin.OnAssetProcess,
+				plugin.OnBuildComplete,
+				plugin.OnDevServerStart,
+				plugin.OnFileChanged,
 				plugin.OnPagesReady,
 				plugin.OnContentLoaded,
 				plugin.OnDataCascadeReady,
