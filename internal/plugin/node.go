@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -187,10 +188,12 @@ func (r *NodeRuntime) EvalFile(path string) error {
 				}
 				scopeBytes, err := json.Marshal(scopeMap)
 				if err != nil {
+					log.Printf("warning: plugin hook %s: failed to marshal scope: %v", name, err)
 					continue
 				}
 				scope, err := parseScopeJSON(string(scopeBytes))
 				if err != nil {
+					log.Printf("warning: plugin hook %s: malformed scope JSON: %v", name, err)
 					continue
 				}
 				r.hookScopes[name] = scope

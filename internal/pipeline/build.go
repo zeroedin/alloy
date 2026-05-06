@@ -498,17 +498,25 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			return nil, fmt.Errorf("plugin hook onContentLoaded: %w", err)
 		}
 		if returnedPages, ok := contentResult.([]interface{}); ok {
-			if len(returnedPages) > len(pages) {
-				return nil, fmt.Errorf("plugin hook onContentLoaded: returned %d pages but input had %d — virtual page injection must use onPagesReady instead", len(returnedPages), len(pages))
+			inputLen := len(contentPayload)
+			if len(returnedPages) > inputLen {
+				return nil, fmt.Errorf("plugin hook onContentLoaded: returned %d pages but input had %d — virtual page injection must use onPagesReady instead", len(returnedPages), inputLen)
 			}
-			if len(returnedPages) < len(pages) {
-				return nil, fmt.Errorf("plugin hook onContentLoaded: returned %d pages but input had %d — plugins must not remove pages", len(returnedPages), len(pages))
+			if len(returnedPages) < inputLen {
+				return nil, fmt.Errorf("plugin hook onContentLoaded: returned %d pages but input had %d — plugins must not remove pages", len(returnedPages), inputLen)
 			}
-			for i, rp := range returnedPages {
+			pathToIdx := make(map[string]int, len(pages))
+			for i, page := range pages {
+				pathToIdx[page.RelPath] = i
+			}
+			for _, rp := range returnedPages {
 				if pageMap, ok := rp.(map[string]interface{}); ok {
 					if fm, ok := pageMap["frontMatter"].(map[string]interface{}); ok {
-						for k, v := range fm {
-							pages[i].FrontMatter[k] = v
+						returnedPath, _ := pageMap["path"].(string)
+						if origIdx, ok := pathToIdx[returnedPath]; ok {
+							for k, v := range fm {
+								pages[origIdx].FrontMatter[k] = v
+							}
 						}
 					}
 				}
@@ -2229,6 +2237,9 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 		return nil
 	}
 	scope := computeUnionScope(hooks.ScopeFor(plugin.OnContentTransformed))
+	if scope != nil && scope.Pages.Mode == plugin.PagesScopeNone {
+		return nil
+	}
 	for _, page := range pages {
 		if scope != nil && scope.Pages.Mode == plugin.PagesScopeGlob {
 			if !matchPageGlob(scope.Pages.Glob, page.URL) {
@@ -2439,13 +2450,8 @@ func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineSt
 func runOnPagesReady(pages []*content.Page, ps *PipelineState) ([]*content.Page, error) {
 	originalCount := len(pages)
 	scope := computeUnionScope(ps.Hooks.ScopeFor(plugin.OnPagesReady))
-	serialized := make([]plugin.HookPagePayload, 0, len(pages))
-	for _, page := range pages {
-		if scope != nil && scope.Pages.Mode == plugin.PagesScopeGlob {
-			if !matchPageGlob(scope.Pages.Glob, page.URL) {
-				continue
-			}
-		}
+	serialized := make([]plugin.HookPagePayload, len(pages))
+	for i, page := range pages {
 		p := plugin.HookPagePayload{
 			Path: page.RelPath,
 			URL:  page.URL,
@@ -2456,7 +2462,7 @@ func runOnPagesReady(pages []*content.Page, ps *PipelineState) ([]*content.Page,
 		if scope == nil || scope.WantsField("content") {
 			p.Content = string(page.Body)
 		}
-		serialized = append(serialized, p)
+		serialized[i] = p
 	}
 	payload := plugin.HookPagesReadyPayload{
 		Pages: serialized,

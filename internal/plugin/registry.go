@@ -272,6 +272,9 @@ func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, ho
 					return caller.CallHook(name, payload)
 				}
 				if reg.Scope != nil {
+					if err := ValidateScope(HookName(name), *reg.Scope); err != nil {
+						hooks.warnings = append(hooks.warnings, fmt.Sprintf("plugin %s: hook %s: %v", pluginName, name, err))
+					}
 					if hasBatch {
 						batchFn := func(ctx context.Context, payloads []interface{}) ([]interface{}, error) {
 							return batcher.BatchCallHook(name, payloads)

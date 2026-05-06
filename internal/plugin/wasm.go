@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -80,7 +81,9 @@ func (r *QuickJSRuntime) Init() error {
 				scopeJSON := args[2].String()
 				if scopeJSON != "" {
 					scope, err := parseScopeJSON(scopeJSON)
-					if err == nil && scope != nil {
+					if err != nil {
+						log.Printf("warning: plugin hook %s: malformed scope JSON: %v", name, err)
+					} else if scope != nil {
 						r.hookScopes[name] = scope
 					}
 				}
@@ -481,7 +484,8 @@ func parseScopeJSON(raw string) (*HookScope, error) {
 			}
 		}
 	case nil:
-		// pages omitted — leave as zero value (PagesScopeNone)
+		// pages omitted — default to all pages for backward compatibility
+		scope.Pages.Mode = PagesScopeAll
 	}
 
 	return scope, nil
