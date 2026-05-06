@@ -16,6 +16,7 @@ const (
 	OnAfterValidation    HookName = "onAfterValidation"
 	OnDataFetched        HookName = "onDataFetched"
 	OnDataCascadeReady   HookName = "onDataCascadeReady"
+	OnPagesReady         HookName = "onPagesReady"
 	OnContentLoaded      HookName = "onContentLoaded"
 	OnContentTransformed HookName = "onContentTransformed"
 	OnPageRendered       HookName = "onPageRendered"

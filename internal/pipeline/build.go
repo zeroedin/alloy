@@ -401,8 +401,12 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			}
 		}
 
-		// Cascade + collections + taxonomies
-		bc := applyBatchContext(batchPages, cfg, ps, permalinkCfg)
+		// Cascade + onPagesReady + collections + taxonomies
+		var bc *batchContext
+		batchPages, bc, err = applyBatchContext(batchPages, cfg, ps, permalinkCfg)
+		if err != nil {
+			return nil, err
+		}
 
 		// Pagination
 		batchPages = processPagination(batchPages, cfg, siteData, bc.Collections, engine)
@@ -492,37 +496,16 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			return nil, fmt.Errorf("plugin hook onContentLoaded: %w", err)
 		}
 		if returnedPages, ok := contentResult.([]interface{}); ok {
-			originalCount := len(pages)
-			urlIndex := make(map[string]string, len(pages))
-			for _, p := range pages {
-				if p.URL != "" {
-					urlIndex[p.URL] = p.RelPath
-				}
+			if len(returnedPages) > len(pages) {
+				return nil, fmt.Errorf("plugin hook onContentLoaded: returned %d pages but input had %d — virtual page injection must use onPagesReady instead", len(returnedPages), len(pages))
 			}
 			for i, rp := range returnedPages {
-				pageMap, ok := rp.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				if i < originalCount {
+				if pageMap, ok := rp.(map[string]interface{}); ok {
 					if fm, ok := pageMap["frontMatter"].(map[string]interface{}); ok {
 						for k, v := range fm {
 							pages[i].FrontMatter[k] = v
 						}
 					}
-					continue
-				}
-				vp, err := virtualPageFromMap(pageMap)
-				if err != nil {
-					return nil, fmt.Errorf("plugin hook onContentLoaded: virtual page %d: %w", i-originalCount, err)
-				}
-				if existingPath, ok := urlIndex[vp.URL]; ok {
-					return nil, fmt.Errorf("plugin hook onContentLoaded: virtual page URL %q collides with existing page %s", vp.URL, existingPath)
-				}
-				urlIndex[vp.URL] = vp.RelPath
-				pages = append(pages, vp)
-				if len(batches) > 0 {
-					batches[len(batches)-1].pages = append(batches[len(batches)-1].pages, vp)
 				}
 			}
 		}
@@ -1113,7 +1096,10 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		page.URL = url
 	}
 
-	bc := applyBatchContext(allPages, cfg, ps, permalinkCfg)
+	allPages, bc, err := applyBatchContext(allPages, cfg, ps, permalinkCfg)
+	if err != nil {
+		return nil, err
+	}
 
 	// Track which RelPaths need rendering before pagination expands them
 	renderRelPaths := make(map[string]bool, len(pagesToRender))
@@ -2226,9 +2212,12 @@ type batchContext struct {
 	TaxonomiesCtx map[string]interface{}
 }
 
-// applyBatchContext applies cascade data, builds collections and taxonomies
-// for a set of pages. Used in both Build()'s per-batch loop and BuildIncremental().
-func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineState, permalinkCfg map[string]string) *batchContext {
+// applyBatchContext applies cascade data, runs onPagesReady hook for virtual
+// page injection, then builds collections and taxonomies for a set of pages.
+// Used in both Build()'s per-batch loop and BuildIncremental().
+// Returns the updated pages slice (which may have grown via virtual page injection)
+// and the batch context.
+func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineState, permalinkCfg map[string]string) ([]*content.Page, *batchContext, error) {
 	for _, page := range pages {
 		var dirData map[string]interface{}
 		if len(ps.CascadeData) > 0 {
@@ -2236,6 +2225,14 @@ func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineSt
 		}
 		pctx := cascade.BuildContext(ps.SiteData, dirData, page.FrontMatter)
 		page.FrontMatter = pctx.ToMap()
+	}
+
+	if ps.Hooks.HasHooks(plugin.OnPagesReady) {
+		var err error
+		pages, err = runOnPagesReady(pages, ps)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	bc := &batchContext{
@@ -2254,7 +2251,67 @@ func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineSt
 			}
 		}
 	}
-	return bc
+	return pages, bc, nil
+}
+
+func runOnPagesReady(pages []*content.Page, ps *PipelineState) ([]*content.Page, error) {
+	originalCount := len(pages)
+	serialized := make([]interface{}, len(pages))
+	for i, page := range pages {
+		serialized[i] = map[string]interface{}{
+			"path":        page.RelPath,
+			"url":         page.URL,
+			"frontMatter": convertOrderedMaps(page.FrontMatter),
+			"content":     string(page.Content),
+		}
+	}
+	payload := map[string]interface{}{
+		"pages":    serialized,
+		"siteData": ps.SiteData,
+	}
+
+	result, err := ps.Hooks.RunWithTimeout(plugin.OnPagesReady, payload)
+	if err != nil {
+		return nil, fmt.Errorf("plugin hook onPagesReady: %w", err)
+	}
+
+	resultMap, ok := result.(map[string]interface{})
+	if !ok {
+		return pages, nil
+	}
+	returnedPages, ok := resultMap["pages"].([]interface{})
+	if !ok {
+		return pages, nil
+	}
+
+	urlIndex := make(map[string]string, len(pages))
+	for _, p := range pages {
+		if p.URL != "" {
+			urlIndex[p.URL] = p.RelPath
+		}
+	}
+
+	for i := originalCount; i < len(returnedPages); i++ {
+		pageMap, ok := returnedPages[i].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		vp, err := virtualPageFromMap(pageMap)
+		if err != nil {
+			return nil, fmt.Errorf("plugin hook onPagesReady: virtual page %d: %w", i-originalCount, err)
+		}
+		if rawContent, ok := pageMap["content"].(string); ok {
+			vp.Content = []byte(rawContent)
+			vp.Body = []byte(rawContent)
+		}
+		if existingPath, ok := urlIndex[vp.URL]; ok {
+			return nil, fmt.Errorf("plugin hook onPagesReady: virtual page URL %q collides with existing page %s", vp.URL, existingPath)
+		}
+		urlIndex[vp.URL] = vp.RelPath
+		pages = append(pages, vp)
+	}
+
+	return pages, nil
 }
 
 // buildPermalinkCfg builds a section-to-pattern permalink map by extracting
