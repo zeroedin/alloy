@@ -41,7 +41,7 @@ var _ = Describe("Scope-aware pipeline integration (issue #539)", func() {
 		Expect(result).NotTo(BeNil())
 	})
 
-	It("onPagesReady with pages: false omits page field data but keeps the pages array", func() {
+	It("onPagesReady with pages: false still provides the pages array for injection", func() {
 		cfg := &config.Config{
 			Title:   "Pages False Test",
 			BaseURL: "https://example.com",
@@ -59,6 +59,9 @@ var _ = Describe("Scope-aware pipeline integration (issue #539)", func() {
     if (payload.siteData.tokens) {
       throw new Error('siteData.tokens must not be present when data scope is ["elements"]');
     }
+    if (!payload.pages || typeof payload.pages.push !== 'function') {
+      throw new Error('pages array must be present for virtual page injection');
+    }
     var elements = payload.siteData.elements;
     for (var i = 0; i < elements.length; i++) {
       payload.pages.push({
@@ -74,9 +77,9 @@ var _ = Describe("Scope-aware pipeline integration (issue #539)", func() {
 		}
 		result, err := pipeline.BuildWithContent(cfg, contentMap)
 		Expect(err).NotTo(HaveOccurred(),
-			"onPagesReady with pages: false must still send the pages array "+
-				"(the hook needs it for page injection) — only field data is "+
-				"controlled by the pages scope on this hook (issue #539)")
+			"onPagesReady always sends the pages array regardless of pages scope — "+
+				"runOnPagesReady does not check Pages.Mode because the hook needs "+
+				"the array for virtual page injection (issue #539)")
 		Expect(result).NotTo(BeNil())
 		Expect(result.PageCount).To(Equal(2),
 			"1 real page + 1 data-driven virtual page = 2 total (issue #539)")

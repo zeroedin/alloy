@@ -14,8 +14,9 @@ var _ = Describe("parseScopeJSON (issue #539)", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeNone),
 			"pages: false must produce PagesScopeNone — "+
-				"plugins that declare pages: false opt out of receiving "+
-				"any page data in the hook payload (issue #539)")
+				"hooks that check Pages.Mode (e.g. onContentTransformed) "+
+				"skip page dispatch entirely; onPagesReady is a special case "+
+				"that always sends the pages array for injection (issue #539)")
 	})
 
 	It("pages: true → PagesScopeAll", func() {
