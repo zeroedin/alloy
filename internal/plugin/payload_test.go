@@ -64,6 +64,22 @@ var _ = Describe("Typed outbound payload structs (issue #529)", func() {
 			Expect(parsed).NotTo(HaveKey("html"),
 				"html must use omitempty — onPagesReady fires before content rendering, no html exists yet (issue #529)")
 		})
+
+		It("serializes nil FrontMatter as null (not omitted)", func() {
+			payload := plugin.HookPagePayload{
+				Path: "bare.md",
+				URL:  "/bare/",
+			}
+
+			data, err := json.Marshal(payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			var parsed map[string]interface{}
+			Expect(json.Unmarshal(data, &parsed)).To(Succeed())
+
+			Expect(parsed).To(HaveKey("frontMatter"),
+				"frontMatter must always be present even when nil — plugins expect the key to exist (issue #529)")
+		})
 	})
 
 	// ── HookTransformPayload ────────────────────────────────────────
@@ -105,6 +121,24 @@ var _ = Describe("Typed outbound payload structs (issue #529)", func() {
 			Expect(tocEntry).To(HaveKeyWithValue("level", float64(2)),
 				"level must serialize as a number (issue #529)")
 		})
+
+		It("omits toc when nil", func() {
+			payload := plugin.HookTransformPayload{
+				Path:        "plain.md",
+				URL:         "/plain/",
+				FrontMatter: map[string]interface{}{"title": "Plain"},
+				HTML:        "<p>No headings</p>",
+			}
+
+			data, err := json.Marshal(payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			var parsed map[string]interface{}
+			Expect(json.Unmarshal(data, &parsed)).To(Succeed())
+
+			Expect(parsed).NotTo(HaveKey("toc"),
+				"toc must use omitempty — pages with no headings have no TOC entries (issue #529)")
+		})
 	})
 
 	// ── TOCEntry ────────────────────────────────────────────────────
@@ -133,7 +167,8 @@ var _ = Describe("Typed outbound payload structs (issue #529)", func() {
 			Expect(ok).To(BeTrue())
 			Expect(children).To(HaveLen(1))
 
-			child := children[0].(map[string]interface{})
+			child, ok := children[0].(map[string]interface{})
+			Expect(ok).To(BeTrue(), "child entry must be a JSON object")
 			Expect(child).To(HaveKeyWithValue("id", "subsection"))
 			Expect(child).To(HaveKeyWithValue("text", "Subsection"))
 			Expect(child).To(HaveKeyWithValue("level", float64(3)))
@@ -196,6 +231,22 @@ var _ = Describe("Typed outbound payload structs (issue #529)", func() {
 			siteData, ok := parsed["siteData"].(map[string]interface{})
 			Expect(ok).To(BeTrue())
 			Expect(siteData).To(HaveKey("elements"))
+		})
+
+		It("serializes empty pages as empty array, not null", func() {
+			payload := plugin.HookPagesReadyPayload{
+				Pages:    []plugin.HookPagePayload{},
+				SiteData: map[string]interface{}{},
+			}
+
+			data, err := json.Marshal(payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			raw := string(data)
+			Expect(raw).To(ContainSubstring(`"pages":[]`),
+				"empty pages slice must serialize as [] not null — plugins distinguish empty batch from missing field (issue #529)")
+			Expect(raw).To(ContainSubstring(`"siteData":{}`),
+				"empty siteData must serialize as {} not null (issue #529)")
 		})
 	})
 
