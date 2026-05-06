@@ -2002,23 +2002,23 @@ func convertOrderedMaps(m map[string]interface{}) map[string]interface{} {
 
 func needsOrderedMapConversion(m map[string]interface{}) bool {
 	for _, v := range m {
-		switch val := v.(type) {
-		case *ordered.Map:
+		if needsConversion(v) {
 			return true
-		case map[string]interface{}:
-			if needsOrderedMapConversion(val) {
+		}
+	}
+	return false
+}
+
+func needsConversion(v interface{}) bool {
+	switch val := v.(type) {
+	case *ordered.Map:
+		return true
+	case map[string]interface{}:
+		return needsOrderedMapConversion(val)
+	case []interface{}:
+		for _, item := range val {
+			if needsConversion(item) {
 				return true
-			}
-		case []interface{}:
-			for _, item := range val {
-				if _, ok := item.(*ordered.Map); ok {
-					return true
-				}
-				if nested, ok := item.(map[string]interface{}); ok {
-					if needsOrderedMapConversion(nested) {
-						return true
-					}
-				}
 			}
 		}
 	}
