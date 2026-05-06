@@ -33,13 +33,17 @@ type HookPagesReadyPayload struct {
 	SiteData map[string]interface{} `json:"siteData"`
 }
 
-// HookCascadePayload is the outbound payload for onDataCascadeReady (per-page).
+// HookCascadePayload is the target outbound payload for onDataCascadeReady (per-page).
+// Not yet wired — the pipeline currently sends []HookPagePayload to this hook.
+// Defined here for spec compliance; will be wired when the cascade hook is refactored.
 type HookCascadePayload struct {
 	Path string                 `json:"path"`
 	Data map[string]interface{} `json:"data"`
 }
 
-// HookAssetPayload is the outbound payload for onAssetProcess (per-asset).
+// HookAssetPayload is the target outbound payload for per-asset onAssetProcess dispatch.
+// Not yet wired — the pipeline currently sends directory-level info to this hook.
+// Defined here for spec compliance; will be wired when per-asset dispatch is implemented.
 type HookAssetPayload struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`

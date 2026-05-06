@@ -318,7 +318,7 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 	}
 
 	// Set the payload as a global variable accessible from JS.
-	// Complex types (maps, slices) are JSON-serialized and parsed in the VM.
+	// Non-primitive types (maps, slices, structs) are JSON-serialized and parsed in the VM.
 	switch v := payload.(type) {
 	case string:
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(v))
