@@ -35,22 +35,7 @@ const alloy = {
       priority: (typeof options.priority === 'number') ? options.priority : 50,
     };
   },
-  on(name, options, fn) {
-    if (typeof options === 'function') {
-      throw new Error('alloy.on() requires options object as second argument: alloy.on(name, { pages: true }, fn)');
-    }
-    if (typeof fn !== 'function') {
-      throw new Error('alloy.on() requires a function as third argument: alloy.on(name, options, fn)');
-    }
-    if (!options || typeof options !== 'object') { options = {}; }
-    hooks[name] = fn;
-    hookScopes[name] = {
-      data: options.data || null,
-      pages: options.pages !== undefined ? options.pages : null,
-      pageFields: options.pageFields || null,
-      priority: (typeof options.priority === 'number') ? options.priority : 50,
-    };
-  },
+  on(name, options, fn) { alloy.hook(name, options, fn); },
 };
 
 function sendMessage(msg) {

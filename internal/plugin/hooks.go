@@ -59,6 +59,13 @@ type HookScope struct {
 	PageFields []string   `json:"pageFields"` // per-page fields; nil = all
 }
 
+// HookRegistration pairs a hook name with its priority and optional scope.
+type HookRegistration struct {
+	Name     string
+	Priority int
+	Scope    *HookScope
+}
+
 type priorityHook struct {
 	fn       HookFunc
 	batchFn  BatchHookFunc  // optional batch-capable variant
@@ -108,62 +115,40 @@ func (r *HookRegistry) Register(event HookName, fn HookFunc) {
 	r.RegisterWithPriority(event, fn, 50)
 }
 
-// RegisterBatchWithPriority adds a hook with both single and batch dispatch functions.
-// The batch function is used by RunBatchWithTimeout to distribute work across workers.
-func (r *HookRegistry) RegisterBatchWithPriority(event HookName, fn HookFunc, batchFn BatchHookFunc, priority int) {
-	h := priorityHook{fn: fn, batchFn: batchFn, priority: priority, index: r.nextIdx}
+// insertHook adds a priorityHook into the event's slice in sorted order.
+func (r *HookRegistry) insertHook(event HookName, h priorityHook) {
+	h.index = r.nextIdx
 	r.nextIdx++
 	hooks := r.hooks[event]
 	i := sort.Search(len(hooks), func(i int) bool {
-		return hooks[i].priority > priority || (hooks[i].priority == priority && hooks[i].index > h.index)
+		return hooks[i].priority > h.priority || (hooks[i].priority == h.priority && hooks[i].index > h.index)
 	})
 	hooks = append(hooks, priorityHook{})
 	copy(hooks[i+1:], hooks[i:])
 	hooks[i] = h
 	r.hooks[event] = hooks
+}
+
+// RegisterBatchWithPriority adds a hook with both single and batch dispatch functions.
+// The batch function is used by RunBatchWithTimeout to distribute work across workers.
+func (r *HookRegistry) RegisterBatchWithPriority(event HookName, fn HookFunc, batchFn BatchHookFunc, priority int) {
+	r.insertHook(event, priorityHook{fn: fn, batchFn: batchFn, priority: priority})
 }
 
 // RegisterWithPriority adds a hook function for the given event with explicit priority.
 // Lower priority runs first. Hooks with the same priority preserve registration order.
 func (r *HookRegistry) RegisterWithPriority(event HookName, fn HookFunc, priority int) {
-	h := priorityHook{fn: fn, priority: priority, index: r.nextIdx}
-	r.nextIdx++
-	hooks := r.hooks[event]
-	i := sort.Search(len(hooks), func(i int) bool {
-		return hooks[i].priority > priority || (hooks[i].priority == priority && hooks[i].index > h.index)
-	})
-	hooks = append(hooks, priorityHook{})
-	copy(hooks[i+1:], hooks[i:])
-	hooks[i] = h
-	r.hooks[event] = hooks
+	r.insertHook(event, priorityHook{fn: fn, priority: priority})
 }
 
 // RegisterWithOptions adds a hook with scope and explicit priority.
 func (r *HookRegistry) RegisterWithOptions(event HookName, fn HookFunc, scope HookScope, priority int) {
-	h := priorityHook{fn: fn, priority: priority, index: r.nextIdx, scope: &scope}
-	r.nextIdx++
-	hooks := r.hooks[event]
-	i := sort.Search(len(hooks), func(i int) bool {
-		return hooks[i].priority > priority || (hooks[i].priority == priority && hooks[i].index > h.index)
-	})
-	hooks = append(hooks, priorityHook{})
-	copy(hooks[i+1:], hooks[i:])
-	hooks[i] = h
-	r.hooks[event] = hooks
+	r.insertHook(event, priorityHook{fn: fn, priority: priority, scope: &scope})
 }
 
 // RegisterBatchWithOptions adds a batch-capable hook with scope and explicit priority.
 func (r *HookRegistry) RegisterBatchWithOptions(event HookName, singleFn HookFunc, batchFn BatchHookFunc, scope HookScope, priority int) {
-	h := priorityHook{fn: singleFn, batchFn: batchFn, priority: priority, index: r.nextIdx, scope: &scope}
-	r.nextIdx++
-	hooks := r.hooks[event]
-	i := sort.Search(len(hooks), func(i int) bool {
-		return hooks[i].priority > priority || (hooks[i].priority == priority && hooks[i].index > h.index)
-	})
-	hooks = append(hooks, priorityHook{})
-	copy(hooks[i+1:], hooks[i:])
-	hooks[i] = h
-	r.hooks[event] = hooks
+	r.insertHook(event, priorityHook{fn: singleFn, batchFn: batchFn, priority: priority, scope: &scope})
 }
 
 // ScopeFor returns the scope for each hook registered on the event, in priority order.
@@ -232,6 +217,62 @@ func ValidateScope(event HookName, scope HookScope) error {
 		return fmt.Errorf("hook %s fires before taxonomy indices are built — taxonomy filtering is not supported", event)
 	}
 	return nil
+}
+
+// parseScopeJSON parses a JSON scope object from the JS bridge into a HookScope.
+// The pages field is polymorphic: false, true, string (glob), or object (taxonomy map).
+func parseScopeJSON(raw string) (*HookScope, error) {
+	var wire struct {
+		Data       []string    `json:"data"`
+		Pages      interface{} `json:"pages"`
+		PageFields []string    `json:"pageFields"`
+	}
+	if err := json.Unmarshal([]byte(raw), &wire); err != nil {
+		return nil, err
+	}
+
+	scope := &HookScope{
+		Data:       wire.Data,
+		PageFields: wire.PageFields,
+	}
+
+	switch v := wire.Pages.(type) {
+	case bool:
+		if v {
+			scope.Pages.Mode = PagesScopeAll
+		} else {
+			scope.Pages.Mode = PagesScopeNone
+		}
+	case string:
+		if v == "**" {
+			scope.Pages.Mode = PagesScopeAll
+		} else {
+			scope.Pages.Mode = PagesScopeGlob
+			scope.Pages.Glob = v
+		}
+	case map[string]interface{}:
+		scope.Pages.Mode = PagesScopeTaxonomy
+		scope.Pages.Taxonomies = make(map[string][]string)
+		for k, val := range v {
+			arr, ok := val.([]interface{})
+			if !ok {
+				return nil, fmt.Errorf("taxonomy %q: expected array of terms, got %T", k, val)
+			}
+			terms := make([]string, 0, len(arr))
+			for _, item := range arr {
+				if s, ok := item.(string); ok {
+					terms = append(terms, s)
+				}
+			}
+			scope.Pages.Taxonomies[k] = terms
+		}
+	case nil:
+		scope.Pages.Mode = PagesScopeAll
+	default:
+		return nil, fmt.Errorf("unsupported pages type %T — expected boolean, string, or object", wire.Pages)
+	}
+
+	return scope, nil
 }
 
 // Run executes all hooks for an event in priority order, chaining results.

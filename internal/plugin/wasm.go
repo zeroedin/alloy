@@ -17,13 +17,6 @@ import (
 // QuickJSRuntime wraps a QuickJS instance for Tier 2 in-process JS plugins.
 // JavaScript is executed via QuickJS compiled to WASM, running on wazero
 // (pure Go, zero CGo). See PLAN.md §5.
-// HookRegistration pairs a hook name with its priority and optional scope.
-type HookRegistration struct {
-	Name     string
-	Priority int
-	Scope    *HookScope
-}
-
 type QuickJSRuntime struct {
 	initialized bool
 	rt          *qjs.Runtime
@@ -126,22 +119,7 @@ func (r *QuickJSRuntime) Init() error {
 					pageFields: options.pageFields || null
 				}));
 			},
-			on: function(name, options, fn) {
-				if (typeof options === 'function') {
-					throw new Error('alloy.on() requires options object as second argument: alloy.on(name, { pages: true }, fn)');
-				}
-				if (typeof fn !== 'function') {
-					throw new Error('alloy.on() requires a function as third argument: alloy.on(name, options, fn)');
-				}
-				if (!options || typeof options !== 'object') { options = {}; }
-				__hooks[name] = fn;
-				var p = (typeof options.priority === 'number') ? Math.floor(options.priority) : 50;
-				__registerHook(name, p, JSON.stringify({
-					data: options.data || null,
-					pages: options.pages !== undefined ? options.pages : null,
-					pageFields: options.pageFields || null
-				}));
-			}
+			on: function(name, options, fn) { alloy.hook(name, options, fn); }
 		};
 	`))
 	if err != nil {
@@ -443,61 +421,6 @@ func (r *QuickJSRuntime) RegisteredHookDetails() []HookRegistration {
 		regs = append(regs, HookRegistration{Name: name, Priority: priority, Scope: r.hookScopes[name]})
 	}
 	return regs
-}
-
-// parseScopeJSON parses a JSON scope object from the JS bridge into a HookScope.
-// The pages field is polymorphic: false, true, string (glob), or object (taxonomy map).
-func parseScopeJSON(raw string) (*HookScope, error) {
-	var wire struct {
-		Data       []string    `json:"data"`
-		Pages      interface{} `json:"pages"`
-		PageFields []string    `json:"pageFields"`
-	}
-	if err := json.Unmarshal([]byte(raw), &wire); err != nil {
-		return nil, err
-	}
-
-	scope := &HookScope{
-		Data:       wire.Data,
-		PageFields: wire.PageFields,
-	}
-
-	switch v := wire.Pages.(type) {
-	case bool:
-		if v {
-			scope.Pages.Mode = PagesScopeAll
-		} else {
-			scope.Pages.Mode = PagesScopeNone
-		}
-	case string:
-		if v == "**" {
-			scope.Pages.Mode = PagesScopeAll
-		} else {
-			scope.Pages.Mode = PagesScopeGlob
-			scope.Pages.Glob = v
-		}
-	case map[string]interface{}:
-		scope.Pages.Mode = PagesScopeTaxonomy
-		scope.Pages.Taxonomies = make(map[string][]string)
-		for k, val := range v {
-			if arr, ok := val.([]interface{}); ok {
-				terms := make([]string, 0, len(arr))
-				for _, item := range arr {
-					if s, ok := item.(string); ok {
-						terms = append(terms, s)
-					}
-				}
-				scope.Pages.Taxonomies[k] = terms
-			}
-		}
-	case nil:
-		// pages omitted — default to all pages for backward compatibility
-		scope.Pages.Mode = PagesScopeAll
-	default:
-		return nil, fmt.Errorf("unsupported pages type %T — expected boolean, string, or object", wire.Pages)
-	}
-
-	return scope, nil
 }
 
 // Close releases resources held by the QuickJS runtime.

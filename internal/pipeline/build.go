@@ -505,6 +505,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			if len(returnedPages) < inputLen {
 				return nil, fmt.Errorf("plugin hook onContentLoaded: returned %d pages but input had %d — plugins must not remove pages", len(returnedPages), inputLen)
 			}
+			scopedPaths := make(map[string]bool, len(contentPayload))
+			for _, cp := range contentPayload {
+				scopedPaths[cp.Path] = true
+			}
 			pathToIdx := make(map[string]int, len(pages))
 			for i, page := range pages {
 				pathToIdx[page.RelPath] = i
@@ -513,6 +517,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				if pageMap, ok := rp.(map[string]interface{}); ok {
 					if fm, ok := pageMap["frontMatter"].(map[string]interface{}); ok {
 						returnedPath, _ := pageMap["path"].(string)
+						if !scopedPaths[returnedPath] {
+							continue
+						}
 						if origIdx, ok := pathToIdx[returnedPath]; ok {
 							for k, v := range fm {
 								pages[origIdx].FrontMatter[k] = v
@@ -2175,10 +2182,26 @@ func matchPageGlob(pattern, pageURL string) bool {
 			return true
 		}
 		rest := pageURL[len(prefix):]
-		matched, _ := path.Match("*"+suffix, path.Base(rest))
-		return matched
+		suffixSegments := strings.Count(suffix, "/")
+		restParts := strings.Split(rest, "/")
+		for i := 0; i <= len(restParts)-suffixSegments-1; i++ {
+			candidate := strings.Join(restParts[i:], "/")
+			matched, err := path.Match("*"+suffix, candidate)
+			if err != nil {
+				log.Printf("warning: invalid glob pattern %q: %v", pattern, err)
+				return false
+			}
+			if matched {
+				return true
+			}
+		}
+		return false
 	}
-	matched, _ := path.Match(pattern, pageURL)
+	matched, err := path.Match(pattern, pageURL)
+	if err != nil {
+		log.Printf("warning: invalid glob pattern %q: %v", pattern, err)
+		return false
+	}
 	return matched
 }
 
@@ -2460,6 +2483,7 @@ func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineSt
 func runOnPagesReady(pages []*content.Page, ps *PipelineState) ([]*content.Page, error) {
 	originalCount := len(pages)
 	scope := computeUnionScope(ps.Hooks.ScopeFor(plugin.OnPagesReady))
+	// Pages.Mode intentionally ignored — virtual page injection needs the full set.
 	serialized := make([]plugin.HookPagePayload, len(pages))
 	for i, page := range pages {
 		p := plugin.HookPagePayload{
