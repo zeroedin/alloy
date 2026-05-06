@@ -1882,50 +1882,208 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
-	// ── Virtual page injection via onContentLoaded (issue #518) ─────
-	// Plugins can return additional pages beyond the original array.
-	// Virtual pages go through the remaining pipeline: layout resolution,
-	// template rendering, permalink computation, and output writing.
+	// ── onContentLoaded rejects virtual page injection (issues #518, #525, #521) ─────
+	// Virtual page injection has moved exclusively to onPagesReady (#525).
+	// onContentLoaded is limited to modifying existing pages — if the
+	// returned array is longer than the input, the pipeline produces
+	// a validation error. This also resolves #521 (virtual pages appended
+	// to wrong language batch) since onContentLoaded no longer handles injection.
 
-	Describe("Virtual page injection via onContentLoaded (issue #518)", func() {
-		It("plugin can inject a virtual page that appears in build output", func() {
+	Describe("onContentLoaded rejects virtual page injection (issues #518, #525, #521)", func() {
+		It("onContentLoaded returning extra pages produces a validation error", func() {
 			cfg := &config.Config{
-				Title:   "Virtual Page Test",
+				Title:   "Reject Virtual Test",
 				BaseURL: "https://example.com",
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
-				"plugins/virtual-pages.js": `export default function(alloy) {
+				"plugins/inject-rejected.js": `export default function(alloy) {
   alloy.hook('onContentLoaded', function(pages) {
     pages.push({
       path: 'demos/button.html',
       url: '/demos/button/',
       frontMatter: { title: 'Button Demo', layout: 'default' },
-      html: '<h1>Button Demo</h1><p>Interactive button component.</p>'
+      html: '<h1>Button Demo</h1>'
     });
     return pages;
   });
 }`,
 			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"onContentLoaded must reject virtual page injection — "+
+					"returned array length exceeds input length. "+
+					"Virtual pages belong in onPagesReady (#525). "+
+					"This also prevents the wrong-batch routing bug (#521)")
+		})
+
+		It("onContentLoaded can still modify existing page front matter", func() {
+			cfg := &config.Config{
+				Title:   "Modify Only Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body><h1>{{ page.title }}</h1>{{ content }}</body></html>",
+				"plugins/modify-only.js": `export default function(alloy) {
+  alloy.hook('onContentLoaded', function(pages) {
+    for (var i = 0; i < pages.length; i++) {
+      pages[i].frontMatter.title = pages[i].frontMatter.title + ' (modified)';
+    }
+    return pages;
+  });
+}`,
+			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
-			Expect(err).NotTo(HaveOccurred())
+			Expect(err).NotTo(HaveOccurred(),
+				"onContentLoaded modifying existing pages must not error — "+
+					"same-length return is valid (#525)")
 			Expect(result).NotTo(BeNil())
 
-			// Virtual page must be rendered and included in output
-			Expect(result.PageCount).To(Equal(2),
-				"virtual page must be counted — 1 real + 1 virtual (issue #518)")
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("Home (modified)"),
+				"onContentLoaded must still apply front matter modifications to existing pages — "+
+					"only virtual page injection is removed, not mutation (#525)")
+		})
+	})
 
-			html := result.RenderedContent["demos/button.html"]
-			Expect(html).To(ContainSubstring("Button Demo"),
-				"virtual page must be rendered and accessible in build output — "+
-					"pages beyond the original array length must be constructed as new content.Page entries (issue #518)")
+	// ── onPagesReady hook for pre-taxonomy virtual page injection (issue #525) ─────
+	// onPagesReady fires after data cascade but before taxonomy collection.
+	// Virtual pages injected here participate in taxonomy collections —
+	// unlike onContentLoaded which fires after taxonomies are built.
+	// Payload: { pages: [...], siteData: {...} }. No html field.
+	// Virtual pages provide raw content (markdown) that flows through
+	// the content rendering pipeline.
+
+	Describe("onPagesReady pre-taxonomy virtual page injection (issue #525)", func() {
+		It("plugin can inject a virtual page via onPagesReady that appears in build output", func() {
+			cfg := &config.Config{
+				Title:   "PagesReady Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/inject-pages.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', function(payload) {
+    payload.pages.push({
+      path: 'demos/button.md',
+      url: '/demos/button/',
+      frontMatter: { title: 'Button Demo', layout: 'default' },
+      content: '# Button\n\nA button component.'
+    });
+    return payload;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onPagesReady hook must not error when returning virtual pages (issue #525)")
+			Expect(result).NotTo(BeNil())
+
+			Expect(result.PageCount).To(Equal(2),
+				"1 real + 1 virtual page injected via onPagesReady = 2 total (issue #525)")
+			Expect(result.RenderedContent).To(HaveKey("demos/button.md"),
+				"virtual page injected via onPagesReady must appear in RenderedContent (issue #525)")
+		})
+
+		It("virtual page injected via onPagesReady participates in taxonomy collections", func() {
+			renderFalse := false
+			cfg := &config.Config{
+				Title:   "PagesReady Taxonomy Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags": {Render: &renderFalse},
+				},
+			}
+			contentMap := map[string]string{
+				"content/index.md": "---\ntitle: Home\nlayout: default\ntags: [\"core\"]\n---\n{% for p in taxonomies.tags.demo %}<span class=\"injected\">{{ p.title }}</span>{% endfor %}",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/inject-tagged.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', function(payload) {
+    payload.pages.push({
+      path: 'demos/accordion.md',
+      url: '/demos/accordion/',
+      frontMatter: {
+        title: 'Accordion Demo',
+        layout: 'default',
+        tags: ['demo']
+      },
+      content: '# Accordion'
+    });
+    payload.pages.push({
+      path: 'demos/tabs.md',
+      url: '/demos/tabs/',
+      frontMatter: {
+        title: 'Tabs Demo',
+        layout: 'default',
+        tags: ['demo']
+      },
+      content: '# Tabs'
+    });
+    return payload;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onPagesReady with taxonomy terms must not error (issue #525)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring(`class="injected"`),
+				"taxonomies.tags.demo must be iterable in templates — "+
+					"if empty, onPagesReady virtual pages did not participate in taxonomy collection (issue #525)")
+			Expect(html).To(ContainSubstring("Accordion Demo"),
+				"virtual page 'Accordion Demo' tagged 'demo' must appear in taxonomies.tags.demo — "+
+					"this is the core value of onPagesReady over onContentLoaded (issue #525)")
+			Expect(html).To(ContainSubstring("Tabs Demo"),
+				"virtual page 'Tabs Demo' tagged 'demo' must appear in taxonomies.tags.demo (issue #525)")
+		})
+
+		It("virtual page raw content is rendered through the markdown pipeline", func() {
+			cfg := &config.Config{
+				Title:   "PagesReady Content Render Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/inject-md.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', function(payload) {
+    payload.pages.push({
+      path: 'demos/button.md',
+      url: '/demos/button/',
+      frontMatter: { title: 'Button', layout: 'default' },
+      content: '## Button Component\n\nA **bold** button.'
+    });
+    return payload;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onPagesReady with markdown content must not error (issue #525)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["demos/button.md"]
+			Expect(html).To(ContainSubstring("<h2"),
+				"markdown ## heading must be rendered to <h2> — "+
+					"onPagesReady virtual pages with raw content must flow through content rendering (issue #525)")
+			Expect(html).To(ContainSubstring("<strong>bold</strong>"),
+				"markdown **bold** must be rendered to <strong> — "+
+					"raw content from onPagesReady must be processed by goldmark (issue #525)")
 		})
 
 		It("virtual page with layout: false skips layout wrapping", func() {
 			cfg := &config.Config{
-				Title:   "Virtual No Layout",
+				Title:   "PagesReady No Layout Test",
 				BaseURL: "https://example.com",
 				Build:   config.BuildConfig{Output: "_site"},
 			}
@@ -1933,149 +2091,121 @@ var _ = Describe("Build Pipeline", func() {
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				"plugins/raw-page.js": `export default function(alloy) {
-  alloy.hook('onContentLoaded', function(pages) {
-    pages.push({
+  alloy.hook('onPagesReady', function(payload) {
+    payload.pages.push({
       path: 'embed/widget.html',
       url: '/embed/widget/',
       frontMatter: { title: 'Widget', layout: false },
-      html: '<div class="widget">Embeddable widget</div>'
+      content: '<div class="widget">Embeddable widget</div>'
     });
-    return pages;
+    return payload;
   });
 }`,
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
-			Expect(err).NotTo(HaveOccurred())
+			Expect(err).NotTo(HaveOccurred(),
+				"onPagesReady with layout: false must not error (issue #525)")
 			Expect(result).NotTo(BeNil())
 
 			html := result.RenderedContent["embed/widget.html"]
 			Expect(html).To(ContainSubstring("Embeddable widget"),
-				"virtual page with layout: false must appear in output")
+				"virtual page with layout: false must appear in output (issue #525)")
 			Expect(html).NotTo(ContainSubstring("<html>"),
 				"virtual page with layout: false must NOT be wrapped in a layout — "+
-					"it should be written as-is (issue #518)")
+					"content should be written as-is (issue #525)")
 		})
 
-		It("virtual page goes through layout rendering", func() {
+		It("output-path collision between onPagesReady virtual page and real page produces error", func() {
 			cfg := &config.Config{
-				Title:   "Virtual Layout Test",
-				BaseURL: "https://example.com",
-				Build:   config.BuildConfig{Output: "_site"},
-			}
-			contentMap := map[string]string{
-				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
-				"layouts/default.liquid": "<html><body><h1>{{ page.title }}</h1>{{ content }}</body></html>",
-				"plugins/laid-out-page.js": `export default function(alloy) {
-  alloy.hook('onContentLoaded', function(pages) {
-    pages.push({
-      path: 'about/team.html',
-      url: '/about/team/',
-      frontMatter: { title: 'Our Team', layout: 'default' },
-      html: '<p>Meet the team.</p>'
-    });
-    return pages;
-  });
-}`,
-			}
-			result, err := pipeline.BuildWithContent(cfg, contentMap)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).NotTo(BeNil())
-
-			html := result.RenderedContent["about/team.html"]
-			Expect(html).To(ContainSubstring("<html>"),
-				"virtual page with layout: 'default' must go through layout rendering")
-			Expect(html).To(ContainSubstring("Our Team"),
-				"virtual page title must be accessible as page.title in layout (issue #518)")
-			Expect(html).To(ContainSubstring("Meet the team."),
-				"virtual page content must be injected as {{ content }} in layout")
-		})
-
-		It("virtual page URL collision with real page is an error", func() {
-			cfg := &config.Config{
-				Title:   "Collision Test",
-				BaseURL: "https://example.com",
-				Build:   config.BuildConfig{Output: "_site"},
-			}
-			contentMap := map[string]string{
-				"content/index.md": "---\ntitle: Home\n---\n# Home",
-				"plugins/collision.js": `export default function(alloy) {
-  alloy.hook('onContentLoaded', function(pages) {
-    pages.push({
-      path: 'index.md',
-      url: '/',
-      frontMatter: { title: 'Collision' },
-      html: '<p>This collides with the real index page.</p>'
-    });
-    return pages;
-  });
-}`,
-			}
-			_, err := pipeline.BuildWithContent(cfg, contentMap)
-			Expect(err).To(HaveOccurred(),
-				"virtual page with same URL as a real page must produce an error — "+
-					"silent overwrites would cause data loss (issue #518)")
-		})
-
-		It("malformed virtual page missing required fields is an error", func() {
-			cfg := &config.Config{
-				Title:   "Malformed Test",
-				BaseURL: "https://example.com",
-				Build:   config.BuildConfig{Output: "_site"},
-			}
-			contentMap := map[string]string{
-				"content/index.md": "---\ntitle: Home\n---\n# Home",
-				"plugins/malformed.js": `export default function(alloy) {
-  alloy.hook('onContentLoaded', function(pages) {
-    pages.push({
-      frontMatter: { title: 'No Path' }
-    });
-    return pages;
-  });
-}`,
-			}
-			_, err := pipeline.BuildWithContent(cfg, contentMap)
-			Expect(err).To(HaveOccurred(),
-				"virtual page without path or url must produce a validation error — "+
-					"a page with no output path cannot be written (issue #518)")
-		})
-
-		It("multiple virtual pages from a single hook call", func() {
-			cfg := &config.Config{
-				Title:   "Multi Virtual",
+				Title:   "PagesReady Collision Test",
 				BaseURL: "https://example.com",
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
-				"plugins/multi-virtual.js": `export default function(alloy) {
-  alloy.hook('onContentLoaded', function(pages) {
-    var demos = ['button', 'card', 'dialog'];
-    for (var i = 0; i < demos.length; i++) {
-      pages.push({
-        path: 'demos/' + demos[i] + '.html',
-        url: '/demos/' + demos[i] + '/',
-        frontMatter: { title: demos[i] + ' Demo', layout: 'default' },
-        html: '<h1>' + demos[i] + '</h1>'
+				"plugins/collide.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', function(payload) {
+    payload.pages.push({
+      path: 'virtual-index.md',
+      url: '/',
+      frontMatter: { title: 'Collision', layout: 'default' },
+      content: '# Collision'
+    });
+    return payload;
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"output-path collision between a virtual page and a real page must produce a build error — "+
+					"silent overwrites would cause data loss (issue #525)")
+		})
+
+		It("onPagesReady virtual page missing path or url produces validation error", func() {
+			cfg := &config.Config{
+				Title:   "PagesReady Validation Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/bad-page.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', function(payload) {
+    payload.pages.push({
+      frontMatter: { title: 'No Path' },
+      content: '# Missing fields'
+    });
+    return payload;
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"a virtual page with no path/url cannot be routed — "+
+					"must produce a validation error (issue #525)")
+		})
+
+		It("onPagesReady payload includes siteData for data-driven page generation", func() {
+			cfg := &config.Config{
+				Title:   "PagesReady SiteData Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"data/elements.json":     `[{"name":"Button","slug":"button"},{"name":"Card","slug":"card"},{"name":"Dialog","slug":"dialog"}]`,
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/data-pages.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', function(payload) {
+    var elements = payload.siteData.elements || [];
+    for (var i = 0; i < elements.length; i++) {
+      var el = elements[i];
+      payload.pages.push({
+        path: 'demos/' + el.slug + '.md',
+        url: '/demos/' + el.slug + '/',
+        frontMatter: { title: el.name + ' Demo', layout: 'default' },
+        content: '# ' + el.name
       });
     }
-    return pages;
+    return payload;
   });
 }`,
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
-			Expect(err).NotTo(HaveOccurred())
+			Expect(err).NotTo(HaveOccurred(),
+				"onPagesReady with siteData-driven page generation must not error (issue #525)")
 			Expect(result).NotTo(BeNil())
 
 			Expect(result.PageCount).To(Equal(4),
-				"1 real page + 3 virtual pages = 4 total (issue #518)")
-
-			Expect(result.RenderedContent["demos/button.html"]).To(ContainSubstring("button"),
-				"first virtual page must be rendered")
-			Expect(result.RenderedContent["demos/card.html"]).To(ContainSubstring("card"),
-				"second virtual page must be rendered")
-			Expect(result.RenderedContent["demos/dialog.html"]).To(ContainSubstring("dialog"),
-				"third virtual page must be rendered")
+				"1 real page + 3 data-driven virtual pages = 4 total (issue #525)")
+			Expect(result.RenderedContent).To(HaveKey("demos/button.md"),
+				"data-driven virtual page 'button' must appear in output (issue #525)")
+			Expect(result.RenderedContent).To(HaveKey("demos/card.md"),
+				"data-driven virtual page 'card' must appear in output (issue #525)")
+			Expect(result.RenderedContent).To(HaveKey("demos/dialog.md"),
+				"data-driven virtual page 'dialog' must appear in output (issue #525)")
 		})
 	})
 
