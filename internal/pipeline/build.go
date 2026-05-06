@@ -2262,7 +2262,7 @@ func runOnPagesReady(pages []*content.Page, ps *PipelineState) ([]*content.Page,
 			"path":        page.RelPath,
 			"url":         page.URL,
 			"frontMatter": convertOrderedMaps(page.FrontMatter),
-			"content":     string(page.Content),
+			"content":     string(page.Body),
 		}
 	}
 	payload := map[string]interface{}{
@@ -2282,6 +2282,9 @@ func runOnPagesReady(pages []*content.Page, ps *PipelineState) ([]*content.Page,
 	returnedPages, ok := resultMap["pages"].([]interface{})
 	if !ok {
 		return pages, nil
+	}
+	if len(returnedPages) < originalCount {
+		return nil, fmt.Errorf("plugin hook onPagesReady: returned %d pages but input had %d — plugins must not remove pages", len(returnedPages), originalCount)
 	}
 
 	urlIndex := make(map[string]string, len(pages))
