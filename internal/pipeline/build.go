@@ -2165,8 +2165,18 @@ func computeUnionScope(scopes []*plugin.HookScope) *plugin.HookScope {
 
 func matchPageGlob(pattern, pageURL string) bool {
 	if strings.Contains(pattern, "**") {
-		prefix := strings.SplitN(pattern, "**", 2)[0]
-		return strings.HasPrefix(pageURL, prefix)
+		parts := strings.SplitN(pattern, "**", 2)
+		prefix := parts[0]
+		suffix := parts[1]
+		if !strings.HasPrefix(pageURL, prefix) {
+			return false
+		}
+		if suffix == "" || suffix == "/" {
+			return true
+		}
+		rest := pageURL[len(prefix):]
+		matched, _ := path.Match("*"+suffix, path.Base(rest))
+		return matched
 	}
 	matched, _ := path.Match(pattern, pageURL)
 	return matched
@@ -2467,9 +2477,9 @@ func runOnPagesReady(pages []*content.Page, ps *PipelineState) ([]*content.Page,
 	payload := plugin.HookPagesReadyPayload{
 		Pages: serialized,
 	}
-	if scope == nil || scope.WantsAllData() {
+	if scope == nil || scope.Data == nil || scope.WantsAllData() {
 		payload.SiteData = ps.SiteData
-	} else if scope != nil && scope.Data != nil {
+	} else if len(scope.Data) > 0 {
 		filtered := make(map[string]interface{})
 		for _, key := range scope.Data {
 			if v, ok := ps.SiteData[key]; ok {

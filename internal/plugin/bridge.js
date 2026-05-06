@@ -23,6 +23,9 @@ const alloy = {
     if (typeof options === 'function') {
       throw new Error('alloy.hook() requires options object as second argument: alloy.hook(name, { pages: true }, fn)');
     }
+    if (typeof fn !== 'function') {
+      throw new Error('alloy.hook() requires a function as third argument: alloy.hook(name, options, fn)');
+    }
     if (!options || typeof options !== 'object') { options = {}; }
     hooks[name] = fn;
     hookScopes[name] = {
@@ -35,6 +38,9 @@ const alloy = {
   on(name, options, fn) {
     if (typeof options === 'function') {
       throw new Error('alloy.on() requires options object as second argument: alloy.on(name, { pages: true }, fn)');
+    }
+    if (typeof fn !== 'function') {
+      throw new Error('alloy.on() requires a function as third argument: alloy.on(name, options, fn)');
     }
     if (!options || typeof options !== 'object') { options = {}; }
     hooks[name] = fn;

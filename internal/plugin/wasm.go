@@ -82,7 +82,8 @@ func (r *QuickJSRuntime) Init() error {
 				if scopeJSON != "" {
 					scope, err := parseScopeJSON(scopeJSON)
 					if err != nil {
-						log.Printf("warning: plugin hook %s: malformed scope JSON: %v", name, err)
+						log.Printf("warning: plugin hook %s: malformed scope JSON, using default scope: %v", name, err)
+						r.hookScopes[name] = &HookScope{Pages: PagesScope{Mode: PagesScopeAll}}
 					} else if scope != nil {
 						r.hookScopes[name] = scope
 					}
@@ -113,6 +114,9 @@ func (r *QuickJSRuntime) Init() error {
 				if (typeof options === 'function') {
 					throw new Error('alloy.hook() requires options object as second argument: alloy.hook(name, { pages: true }, fn)');
 				}
+				if (typeof fn !== 'function') {
+					throw new Error('alloy.hook() requires a function as third argument: alloy.hook(name, options, fn)');
+				}
 				if (!options || typeof options !== 'object') { options = {}; }
 				__hooks[name] = fn;
 				var p = (typeof options.priority === 'number') ? Math.floor(options.priority) : 50;
@@ -125,6 +129,9 @@ func (r *QuickJSRuntime) Init() error {
 			on: function(name, options, fn) {
 				if (typeof options === 'function') {
 					throw new Error('alloy.on() requires options object as second argument: alloy.on(name, { pages: true }, fn)');
+				}
+				if (typeof fn !== 'function') {
+					throw new Error('alloy.on() requires a function as third argument: alloy.on(name, options, fn)');
 				}
 				if (!options || typeof options !== 'object') { options = {}; }
 				__hooks[name] = fn;
@@ -486,6 +493,8 @@ func parseScopeJSON(raw string) (*HookScope, error) {
 	case nil:
 		// pages omitted — default to all pages for backward compatibility
 		scope.Pages.Mode = PagesScopeAll
+	default:
+		return nil, fmt.Errorf("unsupported pages type %T — expected boolean, string, or object", wire.Pages)
 	}
 
 	return scope, nil

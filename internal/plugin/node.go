@@ -193,7 +193,8 @@ func (r *NodeRuntime) EvalFile(path string) error {
 				}
 				scope, err := parseScopeJSON(string(scopeBytes))
 				if err != nil {
-					log.Printf("warning: plugin hook %s: malformed scope JSON: %v", name, err)
+					log.Printf("warning: plugin hook %s: malformed scope JSON, using default scope: %v", name, err)
+					r.hookScopes[name] = &HookScope{Pages: PagesScope{Mode: PagesScopeAll}}
 					continue
 				}
 				r.hookScopes[name] = scope
