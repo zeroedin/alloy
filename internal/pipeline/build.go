@@ -2017,15 +2017,15 @@ func convertOrderedValue(v interface{}) interface{} {
 	}
 }
 
-func serializePagesForHook(pages []*content.Page) []interface{} {
-	result := make([]interface{}, len(pages))
+func serializePagesForHook(pages []*content.Page) []plugin.HookPagePayload {
+	result := make([]plugin.HookPagePayload, len(pages))
 	for i, page := range pages {
-		result[i] = map[string]interface{}{
-			"path":        page.RelPath,
-			"url":         page.URL,
-			"frontMatter": convertOrderedMaps(page.FrontMatter),
-			"content":     string(page.Content),
-			"html":        string(page.RenderedBody),
+		result[i] = plugin.HookPagePayload{
+			Path:        page.RelPath,
+			URL:         page.URL,
+			FrontMatter: convertOrderedMaps(page.FrontMatter),
+			Content:     string(page.Content),
+			HTML:        string(page.RenderedBody),
 		}
 	}
 	return result
@@ -2067,13 +2067,12 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 		return nil
 	}
 	for _, page := range pages {
-		convertedFM := convertOrderedMaps(page.FrontMatter)
-		payload := map[string]interface{}{
-			"html":        string(page.RenderedBody),
-			"toc":         serializeTOC(page.TOC),
-			"path":        page.RelPath,
-			"url":         page.URL,
-			"frontMatter": convertedFM,
+		payload := plugin.HookTransformPayload{
+			Path:        page.RelPath,
+			URL:         page.URL,
+			FrontMatter: convertOrderedMaps(page.FrontMatter),
+			HTML:        string(page.RenderedBody),
+			TOC:         contentTOCToPlugin(page.TOC),
 		}
 
 		result, err := hooks.RunWithTimeout(plugin.OnContentTransformed, payload)
@@ -2101,18 +2100,18 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 	return nil
 }
 
-func serializeTOC(entries []content.TOCEntry) []map[string]interface{} {
-	result := make([]map[string]interface{}, 0, len(entries))
-	for _, entry := range entries {
-		m := map[string]interface{}{
-			"id":    entry.ID,
-			"text":  entry.Text,
-			"level": entry.Level,
+func contentTOCToPlugin(entries []content.TOCEntry) []plugin.TOCEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	result := make([]plugin.TOCEntry, len(entries))
+	for i, e := range entries {
+		result[i] = plugin.TOCEntry{
+			ID:       e.ID,
+			Text:     e.Text,
+			Level:    e.Level,
+			Children: contentTOCToPlugin(e.Children),
 		}
-		if len(entry.Children) > 0 {
-			m["children"] = serializeTOC(entry.Children)
-		}
-		result = append(result, m)
 	}
 	return result
 }
@@ -2268,18 +2267,18 @@ func runOnPagesReady(pages []*content.Page, ps *PipelineState) ([]*content.Page,
 	// Intentionally uses page.Body (raw markdown) not page.Content (raw file with front matter).
 	// serializePagesForHook uses Content because post-render hooks need the full file;
 	// onPagesReady fires pre-render so plugins get source markdown for transformation.
-	serialized := make([]interface{}, len(pages))
+	serialized := make([]plugin.HookPagePayload, len(pages))
 	for i, page := range pages {
-		serialized[i] = map[string]interface{}{
-			"path":        page.RelPath,
-			"url":         page.URL,
-			"frontMatter": convertOrderedMaps(page.FrontMatter),
-			"content":     string(page.Body),
+		serialized[i] = plugin.HookPagePayload{
+			Path:        page.RelPath,
+			URL:         page.URL,
+			FrontMatter: convertOrderedMaps(page.FrontMatter),
+			Content:     string(page.Body),
 		}
 	}
-	payload := map[string]interface{}{
-		"pages":    serialized,
-		"siteData": ps.SiteData,
+	payload := plugin.HookPagesReadyPayload{
+		Pages:    serialized,
+		SiteData: ps.SiteData,
 	}
 
 	result, err := ps.Hooks.RunWithTimeout(plugin.OnPagesReady, payload)
