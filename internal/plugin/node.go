@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -86,13 +87,15 @@ func DecodeMessage(data []byte) (*Message, error) {
 // NodeRuntime runs Tier 3 Node plugins via a persistent subprocess.
 // Communicates via JSON-RPC over stdin/stdout using the embedded bridge.js.
 type NodeRuntime struct {
-	bridge      *NodeBridge
-	projectRoot string
-	filters     []string
-	shortcodes  []string
-	hooks       []string
-	pluginPaths []string     // paths loaded via EvalFile, for worker replication
-	workerPool  []*NodeBridge // additional bridges for parallel hook dispatch
+	bridge         *NodeBridge
+	projectRoot    string
+	filters        []string
+	shortcodes     []string
+	hooks          []string
+	hookScopes     map[string]*HookScope // hook name → scope from bridge
+	hookPriorities map[string]int        // hook name → priority from bridge
+	pluginPaths    []string              // paths loaded via EvalFile, for worker replication
+	workerPool     []*NodeBridge         // additional bridges for parallel hook dispatch
 }
 
 // NewNodeRuntime creates a new Node.js plugin runtime with its own bridge.
@@ -170,6 +173,33 @@ func (r *NodeRuntime) EvalFile(path string) error {
 				}
 			}
 		}
+		if hs, ok := resultMap["hookScopes"].(map[string]interface{}); ok {
+			if r.hookScopes == nil {
+				r.hookScopes = make(map[string]*HookScope)
+				r.hookPriorities = make(map[string]int)
+			}
+			for name, scopeVal := range hs {
+				scopeMap, ok := scopeVal.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if p, ok := scopeMap["priority"].(float64); ok {
+					r.hookPriorities[name] = int(p)
+				}
+				scopeBytes, err := json.Marshal(scopeMap)
+				if err != nil {
+					log.Printf("warning: plugin hook %s: failed to marshal scope: %v", name, err)
+					continue
+				}
+				scope, err := parseScopeJSON(string(scopeBytes))
+				if err != nil {
+					log.Printf("warning: plugin hook %s: malformed scope JSON, using default scope: %v", name, err)
+					r.hookScopes[name] = &HookScope{Pages: PagesScope{Mode: PagesScopeAll}}
+					continue
+				}
+				r.hookScopes[name] = scope
+			}
+		}
 	}
 
 	return nil
@@ -230,6 +260,25 @@ func (r *NodeRuntime) CallShortcode(name string, args []string, innerContent str
 // RegisteredHooks returns the names of hooks registered by the Node plugin.
 func (r *NodeRuntime) RegisteredHooks() []string {
 	return r.hooks
+}
+
+// RegisteredHookDetails returns hook registrations with priority and scope.
+func (r *NodeRuntime) RegisteredHookDetails() []HookRegistration {
+	regs := make([]HookRegistration, 0, len(r.hooks))
+	for _, name := range r.hooks {
+		priority := 50
+		if r.hookPriorities != nil {
+			if p, ok := r.hookPriorities[name]; ok {
+				priority = p
+			}
+		}
+		var scope *HookScope
+		if r.hookScopes != nil {
+			scope = r.hookScopes[name]
+		}
+		regs = append(regs, HookRegistration{Name: name, Priority: priority, Scope: scope})
+	}
+	return regs
 }
 
 // CallHook routes a hook call through the Node subprocess.

@@ -14,12 +14,28 @@ console.debug = (...args) => process.stderr.write(args.join(' ') + '\n');
 const filters = {};
 const shortcodes = {};
 const hooks = {};
+const hookScopes = {};
 
 const alloy = {
   filter(name, fn) { filters[name] = fn; },
   shortcode(name, fn) { shortcodes[name] = fn; },
-  hook(name, fn) { hooks[name] = fn; },
-  on(name, fn) { hooks[name] = fn; },
+  hook(name, options, fn) {
+    if (typeof options === 'function') {
+      throw new Error('alloy.hook() requires options object as second argument: alloy.hook(name, { pages: true }, fn)');
+    }
+    if (typeof fn !== 'function') {
+      throw new Error('alloy.hook() requires a function as third argument: alloy.hook(name, options, fn)');
+    }
+    if (!options || typeof options !== 'object') { options = {}; }
+    hooks[name] = fn;
+    hookScopes[name] = {
+      data: options.data !== undefined ? options.data : null,
+      pages: options.pages !== undefined ? options.pages : null,
+      pageFields: options.pageFields !== undefined ? options.pageFields : null,
+      priority: (typeof options.priority === 'number') ? options.priority : 50,
+    };
+  },
+  on(name, options, fn) { alloy.hook(name, options, fn); },
 };
 
 function sendMessage(msg) {
@@ -81,6 +97,7 @@ async function handleMessage(msg) {
             filters: Object.keys(filters),
             shortcodes: Object.keys(shortcodes),
             hooks: Object.keys(hooks),
+            hookScopes: hookScopes,
           },
         });
         break;

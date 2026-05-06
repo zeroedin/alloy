@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,19 +17,14 @@ import (
 // QuickJSRuntime wraps a QuickJS instance for Tier 2 in-process JS plugins.
 // JavaScript is executed via QuickJS compiled to WASM, running on wazero
 // (pure Go, zero CGo). See PLAN.md §5.
-// HookRegistration pairs a hook name with its priority.
-type HookRegistration struct {
-	Name     string
-	Priority int
-}
-
 type QuickJSRuntime struct {
 	initialized bool
 	rt          *qjs.Runtime
 	ctx         *qjs.Context
 	filters     map[string]bool
 	shortcodes  map[string]bool
-	hooks       map[string]int // hook name → priority
+	hooks       map[string]int        // hook name → priority
+	hookScopes  map[string]*HookScope // hook name → scope
 }
 
 // NewQuickJSRuntime creates a new QuickJS runtime instance.
@@ -38,6 +34,7 @@ func NewQuickJSRuntime() *QuickJSRuntime {
 		filters:    make(map[string]bool),
 		shortcodes: make(map[string]bool),
 		hooks:      make(map[string]int),
+		hookScopes: make(map[string]*HookScope),
 	}
 }
 
@@ -71,7 +68,20 @@ func (r *QuickJSRuntime) Init() error {
 	r.ctx.SetFunc("__registerHook", func(this *qjs.This) (*qjs.Value, error) {
 		args := this.Args()
 		if len(args) >= 2 {
-			r.hooks[args[0].String()] = int(args[1].Int32())
+			name := args[0].String()
+			r.hooks[name] = int(args[1].Int32())
+			if len(args) >= 3 {
+				scopeJSON := args[2].String()
+				if scopeJSON != "" {
+					scope, err := parseScopeJSON(scopeJSON)
+					if err != nil {
+						log.Printf("warning: plugin hook %s: malformed scope JSON, using default scope: %v", name, err)
+						r.hookScopes[name] = &HookScope{Pages: PagesScope{Mode: PagesScopeAll}}
+					} else if scope != nil {
+						r.hookScopes[name] = scope
+					}
+				}
+			}
 		} else if len(args) >= 1 {
 			r.hooks[args[0].String()] = 50
 		}
@@ -93,16 +103,23 @@ func (r *QuickJSRuntime) Init() error {
 				__shortcodes[name] = fn;
 				__registerShortcode(name);
 			},
-			hook: function(name, fn, opts) {
+			hook: function(name, options, fn) {
+				if (typeof options === 'function') {
+					throw new Error('alloy.hook() requires options object as second argument: alloy.hook(name, { pages: true }, fn)');
+				}
+				if (typeof fn !== 'function') {
+					throw new Error('alloy.hook() requires a function as third argument: alloy.hook(name, options, fn)');
+				}
+				if (!options || typeof options !== 'object') { options = {}; }
 				__hooks[name] = fn;
-				var p = (opts && typeof opts.priority === 'number') ? Math.floor(opts.priority) : 50;
-				__registerHook(name, p);
+				var p = (typeof options.priority === 'number') ? Math.floor(options.priority) : 50;
+				__registerHook(name, p, JSON.stringify({
+					data: options.data !== undefined ? options.data : null,
+					pages: options.pages !== undefined ? options.pages : null,
+					pageFields: options.pageFields !== undefined ? options.pageFields : null
+				}));
 			},
-			on: function(name, fn, opts) {
-				__hooks[name] = fn;
-				var p = (opts && typeof opts.priority === 'number') ? Math.floor(opts.priority) : 50;
-				__registerHook(name, p);
-			}
+			on: function(name, options, fn) { alloy.hook(name, options, fn); }
 		};
 	`))
 	if err != nil {
@@ -397,11 +414,11 @@ func (r *QuickJSRuntime) RegisteredHooks() []string {
 	return names
 }
 
-// RegisteredHookDetails returns hook registrations with priority info.
+// RegisteredHookDetails returns hook registrations with priority and scope info.
 func (r *QuickJSRuntime) RegisteredHookDetails() []HookRegistration {
 	regs := make([]HookRegistration, 0, len(r.hooks))
 	for name, priority := range r.hooks {
-		regs = append(regs, HookRegistration{Name: name, Priority: priority})
+		regs = append(regs, HookRegistration{Name: name, Priority: priority, Scope: r.hookScopes[name]})
 	}
 	return regs
 }

@@ -271,13 +271,27 @@ func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, ho
 				singleFn := func(ctx context.Context, payload interface{}) (interface{}, error) {
 					return caller.CallHook(name, payload)
 				}
-				if hasBatch {
-					batchFn := func(ctx context.Context, payloads []interface{}) ([]interface{}, error) {
-						return batcher.BatchCallHook(name, payloads)
+				if reg.Scope != nil {
+					if err := ValidateScope(HookName(name), *reg.Scope); err != nil {
+						hooks.warnings = append(hooks.warnings, fmt.Sprintf("plugin %s: hook %s: %v", pluginName, name, err))
 					}
-					hooks.RegisterBatchWithPriority(HookName(name), singleFn, batchFn, reg.Priority)
+					if hasBatch {
+						batchFn := func(ctx context.Context, payloads []interface{}) ([]interface{}, error) {
+							return batcher.BatchCallHook(name, payloads)
+						}
+						hooks.RegisterBatchWithOptions(HookName(name), singleFn, batchFn, *reg.Scope, reg.Priority)
+					} else {
+						hooks.RegisterWithOptions(HookName(name), singleFn, *reg.Scope, reg.Priority)
+					}
 				} else {
-					hooks.RegisterWithPriority(HookName(name), singleFn, reg.Priority)
+					if hasBatch {
+						batchFn := func(ctx context.Context, payloads []interface{}) ([]interface{}, error) {
+							return batcher.BatchCallHook(name, payloads)
+						}
+						hooks.RegisterBatchWithPriority(HookName(name), singleFn, batchFn, reg.Priority)
+					} else {
+						hooks.RegisterWithPriority(HookName(name), singleFn, reg.Priority)
+					}
 				}
 			}
 		} else {
