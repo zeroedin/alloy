@@ -2115,7 +2115,7 @@ var _ = Describe("Build Pipeline", func() {
 					"content should be written as-is (issue #525)")
 		})
 
-		It("URL collision between onPagesReady virtual page and real page produces error", func() {
+		It("output-path collision between onPagesReady virtual page and real page produces error", func() {
 			cfg := &config.Config{
 				Title:   "PagesReady Collision Test",
 				BaseURL: "https://example.com",
@@ -2128,7 +2128,7 @@ var _ = Describe("Build Pipeline", func() {
   alloy.hook('onPagesReady', function(payload) {
     payload.pages.push({
       path: 'virtual-index.md',
-      url: '/index.html',
+      url: '/',
       frontMatter: { title: 'Collision', layout: 'default' },
       content: '# Collision'
     });
@@ -2138,7 +2138,7 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			_, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).To(HaveOccurred(),
-				"URL collision between a virtual page and a real page must produce a build error — "+
+				"output-path collision between a virtual page and a real page must produce a build error — "+
 					"silent overwrites would cause data loss (issue #525)")
 		})
 

@@ -1119,7 +1119,7 @@ Data cascade and front matter are already assembled from Phase 0; taxonomy data 
 
 12. **Content Transformation** — Markdown → HTML (via goldmark with template tag auto-detection), raw HTML passthrough. `{{ }}` and `{% %}` patterns survive goldmark automatically.
 13. **Plugin Hook: `onContentTransformed`** — Plugins can modify rendered content, TOC, and front matter. Fires once per page with a page-scoped object payload: `{ html, toc, path, url, frontMatter }` (see Lifecycle Events in §5 for payload contract). **This hook fires after Markdown→HTML but before layout rendering in all modes** — single-language and i18n pipelines must fire at the same stage. The i18n pipeline must not defer this hook to after layout rendering or taxonomy generation.
-14. **Plugin Hook: `onContentLoaded`** — Plugins can modify existing pages after content rendering. Fires once with the full pages array. Plugins can mutate front matter, HTML, and other fields on existing pages. Cannot inject virtual pages — return array must be same length as input (use `onPagesReady` for injection).
+14. **Plugin Hook: `onContentLoaded`** — Plugins can modify `frontMatter` and `html` on existing pages after content rendering. Fires once with the full pages array. Other fields (`content`, `path`, `url`) are present for inspection but mutations are not applied back. Cannot inject virtual pages — return array must be same length and same order as input (use `onPagesReady` for injection).
 15. **Template Resolution** — Match each content file to its layout (lookup order)
 16. **Content Template Rendering** — Content body is rendered through the template engine with page data + site data context, producing an HTML string.
 17. **Layout Rendering** — The rendered content HTML is injected into the resolved layout as `{{ content }}` (Liquid) or `{{ .content }}` (Go), then the layout is rendered. Content and layout have isolated scopes — variables defined in content do not leak into layout or vice versa.
@@ -1212,8 +1212,8 @@ Simplified from 11ty's model. **6 levels, last wins:**
 2. Directory data            (content/blog/_data.yaml — cascades into subdirs)
 3. Front matter              (per-file YAML/TOML block)
 4. Pre-taxonomy computed data (onPagesReady plugins — before taxonomy collection, before Markdown)
-5. Post-render mutation      (onContentLoaded plugins — after Markdown→HTML, modifies existing pages)
-6. Per-page transform        (onContentTransformed plugins — after Markdown→HTML, per-page mutation before layout)
+5. Per-page transform        (onContentTransformed plugins — after Markdown→HTML, per-page; fires at step 13)
+6. Batch mutation             (onContentLoaded plugins — after Markdown→HTML, batch-level; fires at step 14, wins for frontMatter and html)
 ```
 
 ### Directory Data Cascading
@@ -2159,7 +2159,7 @@ export default function(alloy) {
 }
 ```
 
-**Distinction from `onContentLoaded`**: `onPagesReady` fires before taxonomy collection and content rendering — injected pages get taxonomy terms indexed and raw `content` rendered through the markdown pipeline. `onContentLoaded` fires after content rendering and is limited to **modifying existing pages** (front matter, HTML, TOC). It cannot inject virtual pages — the return array must be the same length as the input. If extra pages are appended, the pipeline produces a validation error. Use `onPagesReady` for all virtual page injection; use `onContentLoaded` for post-render mutation of existing pages.
+**Distinction from `onContentLoaded`**: `onPagesReady` fires before taxonomy collection and content rendering — injected pages get taxonomy terms indexed and raw `content` rendered through the markdown pipeline. `onContentLoaded` fires after content rendering and is limited to **modifying existing pages** (`frontMatter` and `html` are mutable; `content`, `path`, `url` are present for inspection but mutations are not applied back). It cannot inject virtual pages — the return array must be the same length as the input and preserve the original order (indexed by position). If extra pages are appended, the pipeline produces a validation error. Use `onPagesReady` for all virtual page injection; use `onContentLoaded` for post-render front matter enrichment and HTML post-processing.
 
 This also resolves #521 (virtual pages appended to wrong language batch): since `onContentLoaded` no longer supports virtual page injection, the batch routing problem is eliminated. `onPagesReady` fires per language batch inside `applyBatchContext()`, so injected pages are always in the correct batch.
 
@@ -2167,7 +2167,7 @@ This also resolves #521 (virtual pages appended to wrong language batch): since 
 
 | Event | Payload | Returns | When |
 |---|---|---|---|
-| `onContentLoaded` | `[{ path, url, frontMatter: { ... }, content: "...", html: "..." }, ...]` | Same shape, same length (modify existing pages only — no virtual page injection) | After content rendering. Fires once with full pages array. Plugin modifies page metadata, front matter, or rendered HTML on existing pages. Virtual page injection is not supported — use `onPagesReady` instead (#525). Return array length must equal input length (extra pages produce a validation error). |
+| `onContentLoaded` | `[{ path, url, frontMatter: { ... }, content: "...", html: "..." }, ...]` | Same shape, same length, same order (modify `frontMatter` and `html` on existing pages) | After content rendering. Fires once with full pages array. Plugin modifies `frontMatter` and `html` on existing pages — `content`, `path`, `url` are present for inspection but mutations are not applied back. Return array must equal input length and preserve order (indexed by position). Extra pages produce a validation error — use `onPagesReady` for injection (#525). |
 | `onDataCascadeReady` | `{ path, data: { ... } }` | Same shape | After cascade resolved. Fires once per page. Plugin enriches cascade data. |
 
 #### Per-build hooks (JSON objects)
@@ -2183,7 +2183,7 @@ Fire **once per build**. Payload is a JSON-serializable representation of the Go
 
 **Data mutation via hooks** — To modify site data that templates see, use per-build hooks. The hook receives the data object, modifies it, and returns it. The pipeline applies the returned value. This is the only way to add or change data that flows into templates — `alloy.data` in filters/shortcodes is read-only.
 
-**Virtual page injection (issues #518, #525)** — `onPagesReady` is the only hook that supports virtual page injection. Virtual pages are appended to the `pages` array in the returned payload. Required fields: `path` (source-relative identifier, e.g. `demos/button.md` — used as `RelPath` and `RenderedContent` key) and `url` (permalink, e.g. `/demos/button/` — used for output path computation). Optional: `frontMatter` (including `layout` and taxonomy terms like `tags`), `content` (raw markdown — rendered through the content pipeline). Virtual pages flow through the full remaining pipeline: taxonomy collection, content rendering, layout resolution, template rendering, and output writing. `layout: false` skips layout wrapping. URL collisions between a virtual page and a real page produce a build error. Missing `path`/`url` produces a validation error. Virtual pages are included in `PageCount`. `onContentLoaded` cannot inject virtual pages — it is limited to modifying existing pages.
+**Virtual page injection (issues #518, #525)** — `onPagesReady` is the only hook that supports virtual page injection. Virtual pages are appended to the `pages` array in the returned payload. Required fields: `path` (source-relative identifier, e.g. `demos/button.md` — used as `RelPath` and `RenderedContent` key) and `url` (permalink, e.g. `/demos/button/` — used for output path computation). Optional: `frontMatter` (including `layout` and taxonomy terms like `tags`), `content` (raw markdown — rendered through the content pipeline). Virtual pages flow through the full remaining pipeline: taxonomy collection, content rendering, layout resolution, template rendering, and output writing. `layout: false` skips layout wrapping. Output-path collisions between a virtual page and a real page produce a build error (e.g., `/demos/button/` and an existing page that writes to the same output file). Missing `path`/`url` produces a validation error. Virtual pages are included in `PageCount`. `onContentLoaded` cannot inject virtual pages — it is limited to modifying `frontMatter` and `html` on existing pages.
 
 ```javascript
 // plugins/enrich-data.js
