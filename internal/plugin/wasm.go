@@ -16,10 +16,11 @@ import (
 // QuickJSRuntime wraps a QuickJS instance for Tier 2 in-process JS plugins.
 // JavaScript is executed via QuickJS compiled to WASM, running on wazero
 // (pure Go, zero CGo). See PLAN.md §5.
-// HookRegistration pairs a hook name with its priority.
+// HookRegistration pairs a hook name with its priority and optional scope.
 type HookRegistration struct {
 	Name     string
 	Priority int
+	Scope    *HookScope
 }
 
 type QuickJSRuntime struct {
@@ -28,7 +29,8 @@ type QuickJSRuntime struct {
 	ctx         *qjs.Context
 	filters     map[string]bool
 	shortcodes  map[string]bool
-	hooks       map[string]int // hook name → priority
+	hooks       map[string]int        // hook name → priority
+	hookScopes  map[string]*HookScope // hook name → scope
 }
 
 // NewQuickJSRuntime creates a new QuickJS runtime instance.
@@ -38,6 +40,7 @@ func NewQuickJSRuntime() *QuickJSRuntime {
 		filters:    make(map[string]bool),
 		shortcodes: make(map[string]bool),
 		hooks:      make(map[string]int),
+		hookScopes: make(map[string]*HookScope),
 	}
 }
 
@@ -71,7 +74,17 @@ func (r *QuickJSRuntime) Init() error {
 	r.ctx.SetFunc("__registerHook", func(this *qjs.This) (*qjs.Value, error) {
 		args := this.Args()
 		if len(args) >= 2 {
-			r.hooks[args[0].String()] = int(args[1].Int32())
+			name := args[0].String()
+			r.hooks[name] = int(args[1].Int32())
+			if len(args) >= 3 {
+				scopeJSON := args[2].String()
+				if scopeJSON != "" {
+					scope, err := parseScopeJSON(scopeJSON)
+					if err == nil && scope != nil {
+						r.hookScopes[name] = scope
+					}
+				}
+			}
 		} else if len(args) >= 1 {
 			r.hooks[args[0].String()] = 50
 		}
@@ -93,15 +106,31 @@ func (r *QuickJSRuntime) Init() error {
 				__shortcodes[name] = fn;
 				__registerShortcode(name);
 			},
-			hook: function(name, fn, opts) {
+			hook: function(name, options, fn) {
+				if (typeof options === 'function') {
+					throw new Error('alloy.hook() requires options object as second argument: alloy.hook(name, { pages: true }, fn)');
+				}
+				if (!options || typeof options !== 'object') { options = {}; }
 				__hooks[name] = fn;
-				var p = (opts && typeof opts.priority === 'number') ? Math.floor(opts.priority) : 50;
-				__registerHook(name, p);
+				var p = (typeof options.priority === 'number') ? Math.floor(options.priority) : 50;
+				__registerHook(name, p, JSON.stringify({
+					data: options.data || null,
+					pages: options.pages !== undefined ? options.pages : null,
+					pageFields: options.pageFields || null
+				}));
 			},
-			on: function(name, fn, opts) {
+			on: function(name, options, fn) {
+				if (typeof options === 'function') {
+					throw new Error('alloy.on() requires options object as second argument: alloy.on(name, { pages: true }, fn)');
+				}
+				if (!options || typeof options !== 'object') { options = {}; }
 				__hooks[name] = fn;
-				var p = (opts && typeof opts.priority === 'number') ? Math.floor(opts.priority) : 50;
-				__registerHook(name, p);
+				var p = (typeof options.priority === 'number') ? Math.floor(options.priority) : 50;
+				__registerHook(name, p, JSON.stringify({
+					data: options.data || null,
+					pages: options.pages !== undefined ? options.pages : null,
+					pageFields: options.pageFields || null
+				}));
 			}
 		};
 	`))
@@ -397,13 +426,65 @@ func (r *QuickJSRuntime) RegisteredHooks() []string {
 	return names
 }
 
-// RegisteredHookDetails returns hook registrations with priority info.
+// RegisteredHookDetails returns hook registrations with priority and scope info.
 func (r *QuickJSRuntime) RegisteredHookDetails() []HookRegistration {
 	regs := make([]HookRegistration, 0, len(r.hooks))
 	for name, priority := range r.hooks {
-		regs = append(regs, HookRegistration{Name: name, Priority: priority})
+		regs = append(regs, HookRegistration{Name: name, Priority: priority, Scope: r.hookScopes[name]})
 	}
 	return regs
+}
+
+// parseScopeJSON parses a JSON scope object from the JS bridge into a HookScope.
+// The pages field is polymorphic: false, true, string (glob), or object (taxonomy map).
+func parseScopeJSON(raw string) (*HookScope, error) {
+	var wire struct {
+		Data       []string    `json:"data"`
+		Pages      interface{} `json:"pages"`
+		PageFields []string    `json:"pageFields"`
+	}
+	if err := json.Unmarshal([]byte(raw), &wire); err != nil {
+		return nil, err
+	}
+
+	scope := &HookScope{
+		Data:       wire.Data,
+		PageFields: wire.PageFields,
+	}
+
+	switch v := wire.Pages.(type) {
+	case bool:
+		if v {
+			scope.Pages.Mode = PagesScopeAll
+		} else {
+			scope.Pages.Mode = PagesScopeNone
+		}
+	case string:
+		if v == "**" {
+			scope.Pages.Mode = PagesScopeAll
+		} else {
+			scope.Pages.Mode = PagesScopeGlob
+			scope.Pages.Glob = v
+		}
+	case map[string]interface{}:
+		scope.Pages.Mode = PagesScopeTaxonomy
+		scope.Pages.Taxonomies = make(map[string][]string)
+		for k, val := range v {
+			if arr, ok := val.([]interface{}); ok {
+				terms := make([]string, 0, len(arr))
+				for _, item := range arr {
+					if s, ok := item.(string); ok {
+						terms = append(terms, s)
+					}
+				}
+				scope.Pages.Taxonomies[k] = terms
+			}
+		}
+	case nil:
+		// pages omitted — leave as zero value (PagesScopeNone)
+	}
+
+	return scope, nil
 }
 
 // Close releases resources held by the QuickJS runtime.

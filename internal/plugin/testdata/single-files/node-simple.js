@@ -4,5 +4,5 @@ export const runtime = "node";
 
 export default function(alloy) {
     alloy.filter("nodeUpper", (input) => String(input).toUpperCase());
-    alloy.hook("onContentTransformed", (html) => html + "<!-- node-plugin -->");
+    alloy.hook("onContentTransformed", { pages: true, pageFields: ["*"] }, (html) => html + "<!-- node-plugin -->");
 }
