@@ -65,7 +65,7 @@ var _ = Describe("Typed outbound payload structs (issue #529)", func() {
 				"html must use omitempty — onPagesReady fires before content rendering, no html exists yet (issue #529)")
 		})
 
-		It("serializes nil FrontMatter as null (not omitted)", func() {
+		It("serializes nil FrontMatter as null — serialization path must coerce to {}", func() {
 			payload := plugin.HookPagePayload{
 				Path: "bare.md",
 				URL:  "/bare/",
@@ -79,6 +79,9 @@ var _ = Describe("Typed outbound payload structs (issue #529)", func() {
 
 			Expect(parsed).To(HaveKey("frontMatter"),
 				"frontMatter must always be present even when nil — plugins expect the key to exist (issue #529)")
+			Expect(parsed["frontMatter"]).To(BeNil(),
+				"nil FrontMatter serializes as null — the serialization path in build.go must "+
+					"coerce nil to empty map before building the struct to avoid JS TypeError on property access (issue #529)")
 		})
 	})
 

@@ -2168,7 +2168,7 @@ This also resolves #521 (virtual pages appended to wrong language batch): since 
 | Event | Payload | Returns | When |
 |---|---|---|---|
 | `onContentLoaded` | `[{ path, url, frontMatter: { ... }, content: "...", html: "..." }, ...]` | Same shape, same length, same order (modify `frontMatter` and `html` on existing pages) | After content rendering. Fires once with full pages array. Plugin modifies `frontMatter` and `html` on existing pages — `content`, `path`, `url` are present for inspection but mutations are not applied back. Return array must equal input length and preserve order (indexed by position). Extra pages produce a validation error — use `onPagesReady` for injection (#525). |
-| `onDataCascadeReady` | `{ path, data: { ... } }` | Same shape | After cascade resolved. Fires once per page. Plugin enriches cascade data. |
+| `onDataCascadeReady` | `[{ path, data: { ... } }, ...]` | Same shape, same length | After cascade resolved. Fires once with full pages array (each entry has per-page cascade data). Plugin enriches cascade data. |
 
 #### Per-build hooks (JSON objects)
 
