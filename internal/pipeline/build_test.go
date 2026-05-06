@@ -1890,7 +1890,7 @@ var _ = Describe("Build Pipeline", func() {
 	// to wrong language batch) since onContentLoaded no longer handles injection.
 
 	Describe("onContentLoaded rejects virtual page injection (issues #518, #525, #521)", func() {
-		It("onContentLoaded returns extra pages produces a validation error", func() {
+		It("onContentLoaded returning extra pages produces a validation error", func() {
 			cfg := &config.Config{
 				Title:   "Reject Virtual Test",
 				BaseURL: "https://example.com",
@@ -2079,6 +2079,40 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(html).To(ContainSubstring("<strong>bold</strong>"),
 				"markdown **bold** must be rendered to <strong> — "+
 					"raw content from onPagesReady must be processed by goldmark (issue #525)")
+		})
+
+		It("virtual page with layout: false skips layout wrapping", func() {
+			cfg := &config.Config{
+				Title:   "PagesReady No Layout Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/raw-page.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', function(payload) {
+    payload.pages.push({
+      path: 'embed/widget.html',
+      url: '/embed/widget/',
+      frontMatter: { title: 'Widget', layout: false },
+      content: '<div class="widget">Embeddable widget</div>'
+    });
+    return payload;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onPagesReady with layout: false must not error (issue #525)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["embed/widget.html"]
+			Expect(html).To(ContainSubstring("Embeddable widget"),
+				"virtual page with layout: false must appear in output (issue #525)")
+			Expect(html).NotTo(ContainSubstring("<html>"),
+				"virtual page with layout: false must NOT be wrapped in a layout — "+
+					"content should be written as-is (issue #525)")
 		})
 
 		It("URL collision between onPagesReady virtual page and real page produces error", func() {
