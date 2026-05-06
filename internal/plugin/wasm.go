@@ -328,7 +328,7 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewFloat64(v))
 	case bool:
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewBool(v))
-	case map[string]interface{}, []interface{}:
+	default:
 		jsonBytes, err := json.Marshal(v)
 		if err != nil {
 			return nil, fmt.Errorf("hook %q: marshaling payload: %w", name, err)
@@ -340,8 +340,6 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 			return nil, fmt.Errorf("hook %q: parsing payload: %w", name, err)
 		}
 		r.ctx.Global().SetPropertyStr("__callInput", parsed)
-	default:
-		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(fmt.Sprint(v)))
 	}
 
 	r.ctx.Global().SetPropertyStr("__callHookName", r.ctx.NewString(name))
