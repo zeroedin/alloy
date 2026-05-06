@@ -1748,7 +1748,7 @@ var _ = Describe("Build Pipeline", func() {
 			contentMap := map[string]string{
 				"content/about.md": "---\ntitle: About\nlayout: default\n---\n## Section One\n\nContent here.\n\n## Section Two\n\nMore content.",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
-				"plugins/toc-check.js": "export default function(alloy) {\n  alloy.hook('onContentTransformed', (page) => {\n    if (typeof page === 'string') throw new Error('payload must be object, got string');\n    if (!page.html) throw new Error('page.html missing');\n    if (!page.path) throw new Error('page.path missing');\n    if (!page.frontMatter) throw new Error('page.frontMatter missing');\n    return page;\n  });\n}",
+				"plugins/toc-check.js": "export default function(alloy) {\n  alloy.hook('onContentTransformed', {}, (page) => {\n    if (typeof page === 'string') throw new Error('payload must be object, got string');\n    if (!page.html) throw new Error('page.html missing');\n    if (!page.path) throw new Error('page.path missing');\n    if (!page.frontMatter) throw new Error('page.frontMatter missing');\n    return page;\n  });\n}",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred(),
@@ -1768,7 +1768,7 @@ var _ = Describe("Build Pipeline", func() {
 			contentMap := map[string]string{
 				"content/index.html": "---\ntitle: Index\nlayout: default\n---\n<h2 id=\"custom\">Custom Heading</h2>\n<p>No goldmark TOC for HTML content.</p>",
 				"layouts/default.liquid": "<html><body>{% for entry in page.toc %}<a href=\"#{{ entry.id }}\">{{ entry.text }}</a>{% endfor %}{{ content }}</body></html>",
-				"plugins/toc-builder.js": "export default function(alloy) {\n  alloy.hook('onContentTransformed', (page) => {\n    if (!page.toc || page.toc.length === 0) {\n      page.toc = [{id: 'custom', text: 'Custom Heading', level: 2}];\n    }\n    return page;\n  });\n}",
+				"plugins/toc-builder.js": "export default function(alloy) {\n  alloy.hook('onContentTransformed', {}, (page) => {\n    if (!page.toc || page.toc.length === 0) {\n      page.toc = [{id: 'custom', text: 'Custom Heading', level: 2}];\n    }\n    return page;\n  });\n}",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred())
@@ -1800,7 +1800,7 @@ var _ = Describe("Build Pipeline", func() {
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body>{{ content }}<p>Count: {{ site.data.demos | size }}</p></body></html>",
 				"plugins/inject-data.js": `export default function(alloy) {
-  alloy.hook('onDataFetched', (data) => {
+  alloy.hook('onDataFetched', { data: ["*"] }, (data) => {
     data.demos = [
       { name: 'button', slug: 'button' },
       { name: 'card', slug: 'card' },
@@ -1832,7 +1832,7 @@ var _ = Describe("Build Pipeline", func() {
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body>{{ content }}<p>Team: {{ site.data.team | size }}</p></body></html>",
 				"plugins/enrich-data.js": `export default function(alloy) {
-  alloy.hook('onDataFetched', (data) => {
+  alloy.hook('onDataFetched', { data: ["*"] }, (data) => {
     if (data.team) {
       data.team.push({ name: 'Charlie' });
     }
@@ -1862,7 +1862,7 @@ var _ = Describe("Build Pipeline", func() {
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body><h1>{{ page.title }}</h1>{{ content }}</body></html>",
 				"plugins/enrich-pages.js": `export default function(alloy) {
-  alloy.hook('onContentLoaded', function(pages) {
+  alloy.hook('onContentLoaded', { pages: true, pageFields: ["*"] }, function(pages) {
     for (var i = 0; i < pages.length; i++) {
       pages[i].frontMatter.title = pages[i].frontMatter.title + ' (enriched)';
     }
@@ -1900,7 +1900,7 @@ var _ = Describe("Build Pipeline", func() {
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				"plugins/inject-rejected.js": `export default function(alloy) {
-  alloy.hook('onContentLoaded', function(pages) {
+  alloy.hook('onContentLoaded', { pages: true, pageFields: ["*"] }, function(pages) {
     pages.push({
       path: 'demos/button.html',
       url: '/demos/button/',
@@ -1929,7 +1929,7 @@ var _ = Describe("Build Pipeline", func() {
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body><h1>{{ page.title }}</h1>{{ content }}</body></html>",
 				"plugins/modify-only.js": `export default function(alloy) {
-  alloy.hook('onContentLoaded', function(pages) {
+  alloy.hook('onContentLoaded', { pages: true, pageFields: ["*"] }, function(pages) {
     for (var i = 0; i < pages.length; i++) {
       pages[i].frontMatter.title = pages[i].frontMatter.title + ' (modified)';
     }
@@ -1969,7 +1969,7 @@ var _ = Describe("Build Pipeline", func() {
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				"plugins/inject-pages.js": `export default function(alloy) {
-  alloy.hook('onPagesReady', function(payload) {
+  alloy.hook('onPagesReady', { pages: true, pageFields: ["*"] }, function(payload) {
     payload.pages.push({
       path: 'demos/button.md',
       url: '/demos/button/',
@@ -2005,7 +2005,7 @@ var _ = Describe("Build Pipeline", func() {
 				"content/index.md": "---\ntitle: Home\nlayout: default\ntags: [\"core\"]\n---\n{% for p in taxonomies.tags.demo %}<span class=\"injected\">{{ p.title }}</span>{% endfor %}",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				"plugins/inject-tagged.js": `export default function(alloy) {
-  alloy.hook('onPagesReady', function(payload) {
+  alloy.hook('onPagesReady', { pages: true, pageFields: ["*"] }, function(payload) {
     payload.pages.push({
       path: 'demos/accordion.md',
       url: '/demos/accordion/',
@@ -2056,7 +2056,7 @@ var _ = Describe("Build Pipeline", func() {
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				"plugins/inject-md.js": `export default function(alloy) {
-  alloy.hook('onPagesReady', function(payload) {
+  alloy.hook('onPagesReady', { pages: true, pageFields: ["*"] }, function(payload) {
     payload.pages.push({
       path: 'demos/button.md',
       url: '/demos/button/',
@@ -2091,7 +2091,7 @@ var _ = Describe("Build Pipeline", func() {
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				"plugins/raw-page.js": `export default function(alloy) {
-  alloy.hook('onPagesReady', function(payload) {
+  alloy.hook('onPagesReady', { pages: true, pageFields: ["*"] }, function(payload) {
     payload.pages.push({
       path: 'embed/widget.html',
       url: '/embed/widget/',
@@ -2125,7 +2125,7 @@ var _ = Describe("Build Pipeline", func() {
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				"plugins/collide.js": `export default function(alloy) {
-  alloy.hook('onPagesReady', function(payload) {
+  alloy.hook('onPagesReady', { pages: true, pageFields: ["*"] }, function(payload) {
     payload.pages.push({
       path: 'virtual-index.md',
       url: '/',
@@ -2152,7 +2152,7 @@ var _ = Describe("Build Pipeline", func() {
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				"plugins/bad-page.js": `export default function(alloy) {
-  alloy.hook('onPagesReady', function(payload) {
+  alloy.hook('onPagesReady', { pages: true, pageFields: ["*"] }, function(payload) {
     payload.pages.push({
       frontMatter: { title: 'No Path' },
       content: '# Missing fields'
@@ -2178,7 +2178,7 @@ var _ = Describe("Build Pipeline", func() {
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				"plugins/data-pages.js": `export default function(alloy) {
-  alloy.hook('onPagesReady', function(payload) {
+  alloy.hook('onPagesReady', { pages: true, pageFields: ["*"], data: ["*"] }, function(payload) {
     var elements = payload.siteData.elements || [];
     for (var i = 0; i < elements.length; i++) {
       var el = elements[i];
