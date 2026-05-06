@@ -499,6 +499,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			if len(returnedPages) > len(pages) {
 				return nil, fmt.Errorf("plugin hook onContentLoaded: returned %d pages but input had %d — virtual page injection must use onPagesReady instead", len(returnedPages), len(pages))
 			}
+			if len(returnedPages) < len(pages) {
+				return nil, fmt.Errorf("plugin hook onContentLoaded: returned %d pages but input had %d — plugins must not remove pages", len(returnedPages), len(pages))
+			}
 			for i, rp := range returnedPages {
 				if pageMap, ok := rp.(map[string]interface{}); ok {
 					if fm, ok := pageMap["frontMatter"].(map[string]interface{}); ok {
@@ -2028,6 +2031,9 @@ func serializePagesForHook(pages []*content.Page) []interface{} {
 	return result
 }
 
+// virtualPageFromMap creates a Page from a plugin-returned map with path, url, frontMatter,
+// and html fields. Only sets RenderedBody from html — callers must populate Content/Body
+// if the page needs to flow through the markdown renderer.
 func virtualPageFromMap(m map[string]interface{}) (*content.Page, error) {
 	path, _ := m["path"].(string)
 	url, _ := m["url"].(string)
@@ -2217,6 +2223,9 @@ type batchContext struct {
 // Used in both Build()'s per-batch loop and BuildIncremental().
 // Returns the updated pages slice (which may have grown via virtual page injection)
 // and the batch context.
+// applyBatchContext applies data cascade, fires onPagesReady, and builds taxonomy context.
+// In multi-language builds this runs once per language batch — plugins receive only that
+// language's pages, not the full site. Cross-language virtual page injection is not supported.
 func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineState, permalinkCfg map[string]string) ([]*content.Page, *batchContext, error) {
 	for _, page := range pages {
 		var dirData map[string]interface{}
@@ -2256,6 +2265,9 @@ func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineSt
 
 func runOnPagesReady(pages []*content.Page, ps *PipelineState) ([]*content.Page, error) {
 	originalCount := len(pages)
+	// Intentionally uses page.Body (raw markdown) not page.Content (raw file with front matter).
+	// serializePagesForHook uses Content because post-render hooks need the full file;
+	// onPagesReady fires pre-render so plugins get source markdown for transformation.
 	serialized := make([]interface{}, len(pages))
 	for i, page := range pages {
 		serialized[i] = map[string]interface{}{
@@ -2287,6 +2299,8 @@ func runOnPagesReady(pages []*content.Page, ps *PipelineState) ([]*content.Page,
 		return nil, fmt.Errorf("plugin hook onPagesReady: returned %d pages but input had %d — plugins must not remove pages", len(returnedPages), originalCount)
 	}
 
+	// urlIndex tracks all known URLs. Seeded with original pages, then updated as
+	// each virtual page is appended — so virtual-to-virtual collisions are caught too.
 	urlIndex := make(map[string]string, len(pages))
 	for _, p := range pages {
 		if p.URL != "" {
@@ -2297,7 +2311,7 @@ func runOnPagesReady(pages []*content.Page, ps *PipelineState) ([]*content.Page,
 	for i := originalCount; i < len(returnedPages); i++ {
 		pageMap, ok := returnedPages[i].(map[string]interface{})
 		if !ok {
-			continue
+			return nil, fmt.Errorf("plugin hook onPagesReady: virtual page %d: expected map, got %T", i-originalCount, returnedPages[i])
 		}
 		vp, err := virtualPageFromMap(pageMap)
 		if err != nil {
