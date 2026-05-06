@@ -1100,22 +1100,23 @@ For sites with translated content in a CMS or database, the existing `sources` +
 2. **Content Discovery** — Walk `content/` dir, collect all source files
 3. **Front Matter Extraction** — Parse YAML/TOML/JSON front matter from each content file (fast: reads front matter only, not body). Files without front matter delimiters are a build error.
 4. **Data Cascade Assembly** — Load `data/` globals, `_data.yaml` per-directory, merge with front matter per-file in defined order. This data is reused by Phase 1 — no duplicate reads.
-5. **Output Path Computation** — Compute all output paths from content (using permalink patterns + front matter data), static, passthrough, auto-generated files, aliases, taxonomy pages, and pagination
-6. **Plugin Hook: `onBeforeValidation`** — Plugins register additional output paths
-7. **Conflict Detection** — Check for duplicate output paths across all sources. Fail fast with clear error if conflicts found.
-8. **Plugin Hook: `onAfterValidation`** — Plugins receive the validated output manifest (read-only) and the assembled data cascade (mutable, shared pointer). This is the point where plugins can inspect what pages will be built, inject data into the cascade for templates, compute derived values, or validate the merged dataset. The cascade is trustworthy here — validation has passed, all pages are confirmed valid.
+5. **Plugin Hook: `onPagesReady`** — Plugins can inject virtual pages with front matter (including taxonomy terms) before taxonomy collection. Fires once per language batch after data cascade is applied. Payload: array of discovered pages with cascaded front matter + site data. Return value: same array with additional virtual pages appended. Virtual pages require `path` and `url`; optional `frontMatter` (with taxonomy terms like `tags`) and `content` (raw markdown — will be rendered in Phase 1). No `html` field — content has not been rendered yet. Injected pages flow through the full remaining pipeline: taxonomy collection, content rendering, layout rendering, and output. This is Alloy's equivalent of Hugo's content adapters — a dedicated early-pipeline mechanism for data→pages conversion that runs before taxonomy indexing. Unlike `onContentLoaded` (which fires after content rendering), pages injected here participate in taxonomy collections. Per-batch firing avoids the language routing problem described in #521.
+6. **Output Path Computation** — Compute all output paths from content (using permalink patterns + front matter data), static, passthrough, auto-generated files, aliases, taxonomy pages, and pagination
+7. **Plugin Hook: `onBeforeValidation`** — Plugins register additional output paths
+8. **Conflict Detection** — Check for duplicate output paths across all sources. Fail fast with clear error if conflicts found.
+9. **Plugin Hook: `onAfterValidation`** — Plugins receive the validated output manifest (read-only) and the assembled data cascade (mutable, shared pointer). This is the point where plugins can inspect what pages will be built, inject data into the cascade for templates, compute derived values, or validate the merged dataset. The cascade is trustworthy here — validation has passed, all pages are confirmed valid.
 
 **Phase 1 — Content Rendering (Liquid + Markdown → Intermediate HTML)**
 
 Data cascade and front matter are already assembled from Phase 0 — Phase 1 starts at rendering.
 
-9. **Plugin Hook: `onContentLoaded`** — Plugins can inspect/modify content+data before processing
-10. **Content Transformation** — Markdown → HTML (via goldmark with template tag auto-detection), raw HTML passthrough. `{{ }}` and `{% %}` patterns survive goldmark automatically.
-11. **Plugin Hook: `onContentTransformed`** — Plugins can modify rendered content, TOC, and front matter. Fires once per page with a page-scoped object payload: `{ html, toc, path, url, frontMatter }` (see Lifecycle Events in §5 for payload contract). **This hook fires after Markdown→HTML but before layout rendering in all modes** — single-language and i18n pipelines must fire at the same stage. The i18n pipeline must not defer this hook to after layout rendering or taxonomy generation.
-12. **Template Resolution** — Match each content file to its layout (lookup order)
-13. **Content Template Rendering** — Content body is rendered through the template engine with page data + site data context, producing an HTML string.
-14. **Layout Rendering** — The rendered content HTML is injected into the resolved layout as `{{ content }}` (Liquid) or `{{ .content }}` (Go), then the layout is rendered. Content and layout have isolated scopes — variables defined in content do not leak into layout or vice versa.
-15. **Plugin Hook: `onPageRendered`** — Plugins can post-process intermediate page HTML
+10. **Plugin Hook: `onContentLoaded`** — Plugins can inspect/modify content+data before processing
+11. **Content Transformation** — Markdown → HTML (via goldmark with template tag auto-detection), raw HTML passthrough. `{{ }}` and `{% %}` patterns survive goldmark automatically.
+12. **Plugin Hook: `onContentTransformed`** — Plugins can modify rendered content, TOC, and front matter. Fires once per page with a page-scoped object payload: `{ html, toc, path, url, frontMatter }` (see Lifecycle Events in §5 for payload contract). **This hook fires after Markdown→HTML but before layout rendering in all modes** — single-language and i18n pipelines must fire at the same stage. The i18n pipeline must not defer this hook to after layout rendering or taxonomy generation.
+13. **Template Resolution** — Match each content file to its layout (lookup order)
+14. **Content Template Rendering** — Content body is rendered through the template engine with page data + site data context, producing an HTML string.
+15. **Layout Rendering** — The rendered content HTML is injected into the resolved layout as `{{ content }}` (Liquid) or `{{ .content }}` (Go), then the layout is rendered. Content and layout have isolated scopes — variables defined in content do not leak into layout or vice versa.
+16. **Plugin Hook: `onPageRendered`** — Plugins can post-process intermediate page HTML
 
 **Phase 2 — SSR Transform (opt-in, only runs if `ssr:` is configured)**
 
@@ -1203,8 +1204,9 @@ Simplified from 11ty's model. **5 levels, last wins:**
 1. Global data              (data/*.yaml, data/*.json)
 2. Directory data            (content/blog/_data.yaml — cascades into subdirs)
 3. Front matter              (per-file YAML/TOML block)
-4. Pre-render computed data  (onContentLoaded plugins — before Markdown)
-5. Post-render computed data (onContentTransformed plugins — after Markdown, before Liquid)
+4. Pre-taxonomy computed data (onPagesReady plugins — before taxonomy collection, before Markdown)
+5. Pre-render computed data  (onContentLoaded plugins — after Markdown, before layout)
+6. Post-render computed data (onContentTransformed plugins — after Markdown, before Liquid)
 ```
 
 ### Directory Data Cascading
@@ -2119,11 +2121,44 @@ alloy.hook("onAssetProcess", (asset) => {
 });
 ```
 
+#### Pre-taxonomy hook (JSON objects)
+
+Fires **once per language batch** after data cascade but before taxonomy collection. This is the injection point for data-driven pages that need taxonomy participation — Alloy's equivalent of Hugo's content adapters.
+
+| Event | Payload | Returns | When |
+|---|---|---|---|
+| `onPagesReady` | `{ pages: [{ path, url, frontMatter: { ... }, content: "..." }, ...], siteData: { ... } }` | Same shape (may include additional virtual pages appended to `pages`) | After data cascade, before taxonomy collection. Plugin injects virtual pages with front matter (including taxonomy terms). Per-batch firing avoids #521. |
+
+```javascript
+// plugins/data-pages.js — Generate per-element demo pages from data
+export default function(alloy) {
+  alloy.hook('onPagesReady', function(payload) {
+    var elements = payload.siteData.elements || [];
+    for (var i = 0; i < elements.length; i++) {
+      var el = elements[i];
+      payload.pages.push({
+        path: 'demos/' + el.slug + '.md',
+        url: '/demos/' + el.slug + '/',
+        frontMatter: {
+          title: el.name + ' Demo',
+          layout: 'demo',
+          tags: [el.tagName + '-tabs']
+        },
+        content: '## ' + el.name + '\n\n' + el.description
+      });
+    }
+    return payload;
+  });
+}
+```
+
+**Distinction from `onContentLoaded`**: `onPagesReady` fires before taxonomy collection and content rendering — injected pages get taxonomy terms indexed and raw `content` rendered through the markdown pipeline. `onContentLoaded` fires after content rendering — injected pages provide pre-rendered `html` and do NOT participate in taxonomy collections. Use `onPagesReady` for data→pages conversion; use `onContentLoaded` for content transformation and late injection.
+
 #### Content hooks (JSON objects)
 
 | Event | Payload | Returns | When |
 |---|---|---|---|
-| `onContentLoaded` | `[{ path, url, frontMatter: { ... }, content: "...", html: "..." }, ...]` | Same shape (may include additional virtual pages) | After discovery. Fires once with full pages array. Plugin modifies page metadata or injects virtual pages (#518). |
+| `onContentLoaded` | `[{ path, url, frontMatter: { ... }, content: "...", html: "..." }, ...]` | Same shape (may include additional virtual pages) | After content rendering. Fires once with full pages array. Plugin modifies page metadata or injects virtual pages (#518). |
 | `onDataCascadeReady` | `{ path, data: { ... } }` | Same shape | After cascade resolved. Fires once per page. Plugin enriches cascade data. |
 
 #### Per-build hooks (JSON objects)
