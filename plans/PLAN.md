@@ -940,14 +940,14 @@ Two plugin hooks surround the validation pass:
 
 ```javascript
 // Plugin registering additional output paths
-alloy.on("onBeforeValidation", (outputMap) => {
+alloy.on("onBeforeValidation", {}, (outputMap) => {
   outputMap.add("_redirects", { source: "plugin:netlify-redirects" });
   outputMap.add("_headers", { source: "plugin:netlify-headers" });
   return outputMap;
 });
 
 // Plugin inspecting the validated manifest
-alloy.on("onAfterValidation", (outputMap) => {
+alloy.on("onAfterValidation", {}, (outputMap) => {
   console.log(`Build will produce ${outputMap.size} output files`);
 });
 ```
@@ -1838,17 +1838,88 @@ Alloy uses a tiered plugin runtime. Plugin authors write in their preferred lang
 **Hook execution order**: Hooks execute by priority (lower runs first), then by alphabetical filename order within the same priority. Default priority is 50. Each hook receives the output of the previous one — they chain, not race.
 
 ```javascript
-// Runs first (priority 10)
-alloy.hook("onPageRendered", transformsFn, { priority: 10 });
+// alloy.hook(event, options, fn)
+// options is required — declares what data the hook needs
+
+// Runs first (priority 10) — onPageRendered receives HTML string, pages/pageFields don't apply
+alloy.hook("onPageRendered", { priority: 10 }, transformsFn);
 
 // Runs second (default priority 50)
-alloy.hook("onPageRendered", analyticsFn);
+alloy.hook("onPageRendered", {}, analyticsFn);
 
 // Runs last (priority 100)
-alloy.hook("onPageRendered", ssrFn, { priority: 100 });
+alloy.hook("onPageRendered", { priority: 100 }, ssrFn);
 ```
 
-The `priority` option is available on all lifecycle hooks. Omitting it defaults to 50, preserving backward compatibility with existing plugins that rely on alphabetical order.
+The `priority` option is available on all lifecycle hooks. Omitting it defaults to 50. The `alloy.on()` alias follows the same signature: `alloy.on(event, options, fn)`.
+
+#### Hook scoping options
+
+The options object is required on `alloy.hook()` and `alloy.on()`. It declares what subset of site data and pages the hook needs. The pipeline uses these declarations to serialize only the requested subset — avoiding full-site serialization on every hook dispatch.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `priority` | `number` | `50` | Execution order (lower runs first) |
+| `data` | `string[]` | `undefined` (skip) | Site data keys to include. `["*"]` = all keys. `undefined`/omitted = no site data. |
+| `pages` | `boolean \| string \| object` | `false` | Page filtering mode. `false` = no pages. `true` or `"**"` = all pages. `"/blog/**"` = glob filter. `{ tags: ["component"] }` = taxonomy filter. |
+| `pageFields` | `string[]` | `undefined` (all) | Per-page fields to include when pages are requested. `["frontMatter", "url"]` = only those fields. `undefined`/omitted = all fields. `["*"]` = all fields (explicit). |
+
+**Pages option modes**:
+
+| Value | Mode | Serialization |
+|---|---|---|
+| `false` (default) | Skip | No pages serialized |
+| `true` or `"**"` | All | All pages, all requested fields |
+| `"/blog/**"` | Glob | Only pages matching the path glob |
+| `{ tags: ["component", "form"] }` | Taxonomy | Only pages matching taxonomy terms |
+
+**Taxonomy filtering rules**: Multiple terms within the same taxonomy are OR'd (union) — a page tagged `component` OR `form` matches. Multiple taxonomies are AND'd (intersection) — `{ tags: ["component"], category: ["ui"] }` matches pages tagged `component` AND categorized `ui`. Taxonomy filtering is only available on hooks that fire after taxonomy collection (see hook availability matrix below).
+
+**`addPages` return shape**: When a hook declares `pages: false` and needs to inject virtual pages (e.g., `onPagesReady` generating pages from site data), the return value uses `{ addPages: [...] }` instead of returning a full pages array. This avoids round-tripping hundreds of existing pages through the plugin bridge:
+
+```javascript
+alloy.hook('onPagesReady', { data: ["elements"], pages: false }, function(payload) {
+  var elements = payload.siteData.elements || [];
+  var newPages = [];
+  for (var i = 0; i < elements.length; i++) {
+    var el = elements[i];
+    newPages.push({
+      path: 'demos/' + el.slug + '.md',
+      url: '/demos/' + el.slug + '/',
+      frontMatter: { title: el.name + ' Demo', layout: 'demo', tags: [el.tagName] },
+      content: '## ' + el.name + '\n\n' + el.description
+    });
+  }
+  return { addPages: newPages };
+});
+```
+
+#### Hook availability matrix
+
+Not all page filtering modes are available on all hooks. Two constraints apply:
+
+1. **Pageless hooks** (`onConfig`, `onBeforeValidation`, `onAfterValidation`, `onDataFetched`) do not receive pages — any page scope mode other than `PagesScopeNone` (`pages: false`) is rejected with a validation error. `data` and `pageFields` are also meaningless on these hooks.
+2. **Pre-taxonomy hooks** that do receive pages (`onPagesReady`) cannot use taxonomy filtering because taxonomy indices are built during step 10 (`BuildTaxonomies`).
+
+Per-page hooks (`onContentTransformed`, `onPageRendered`) fire once per page with a fixed payload shape — `pages`/`pageFields` scope does not apply (the pipeline already knows which page to serialize). `onPageRendered` receives an HTML string, not a page object. Scope options on per-page hooks are limited to `data` (site data subset) and `priority`.
+
+| Hook | Pipeline step | Pages in payload | Glob filter | Taxonomy filter |
+|---|:---:|:---:|:---:|:---:|
+| `onConfig` | 2 | no | **error** | **error** |
+| `onBeforeValidation` | 4 | no | **error** | **error** |
+| `onAfterValidation` | 5 | no | **error** | **error** |
+| `onDataFetched` | 6 | no | **error** | **error** |
+| `onPagesReady` | 9 | yes (batch) | yes | **error** — taxonomy indices not built yet |
+| `onContentLoaded` | 11+ | yes (batch) | yes | yes |
+| `onDataCascadeReady` | 11+ | yes (batch) | yes | yes |
+| `onContentTransformed` | 12+ | yes (per-page) | n/a | n/a |
+| `onPageRendered` | 14+ | yes (per-page) | n/a | n/a |
+| `onAssetProcess` | 16+ | no (per-asset) | n/a | n/a |
+| `onBuildComplete` | 24 | no | n/a | n/a |
+| `onDevServerStart` | — | no | n/a | n/a |
+| `onFileChanged` | — | no | n/a | n/a |
+
+Registering a page scope mode on a pageless hook, or a taxonomy filter on a pre-taxonomy hook, produces a validation error at plugin load time.
 
 ### Tier 1: Go Built-in Filters
 
@@ -2042,7 +2113,7 @@ import postcss from 'postcss';
 import cssnano from 'cssnano';
 
 export default function(alloy) {
-  alloy.on("onAssetProcess", async (file) => {
+  alloy.on("onAssetProcess", {}, async (file) => {
     if (file.path.endsWith('.css')) {
       const result = await postcss([cssnano]).process(file.content, { from: file.path });
       return { ...file, content: result.css };
@@ -2093,7 +2164,7 @@ These fire **once per page**. `onContentTransformed` receives a page-scoped obje
 
 ```javascript
 // Example: add lazy loading + build TOC for non-markdown pages
-alloy.hook("onContentTransformed", (page) => {
+alloy.hook("onContentTransformed", {}, (page) => {
   page.html = page.html.replace(/<img /g, '<img loading="lazy" ');
   
   // Build TOC from HTML for pages that didn't go through goldmark
@@ -2105,7 +2176,8 @@ alloy.hook("onContentTransformed", (page) => {
 });
 
 // Example: minify final HTML (post-processing, no page data needed)
-alloy.hook("onPageRendered", (html) => {
+// onPageRendered receives an HTML string, not a page object — pages/pageFields do not apply
+alloy.hook("onPageRendered", {}, (html) => {
   return html.replace(/\s+/g, ' ').trim();
 });
 ```
@@ -2120,7 +2192,7 @@ Fires **once per asset file**. Payload is a JSON object with `path` and `content
 
 ```javascript
 // Example: CSS minification
-alloy.hook("onAssetProcess", (asset) => {
+alloy.hook("onAssetProcess", {}, (asset) => {
   if (asset.path.endsWith('.css')) {
     return { content: minifyCSS(asset.content) };
   }
@@ -2139,11 +2211,12 @@ Fires **once per language batch** after data cascade but before taxonomy collect
 ```javascript
 // plugins/data-pages.js — Generate per-element demo pages from data
 export default function(alloy) {
-  alloy.hook('onPagesReady', function(payload) {
+  alloy.hook('onPagesReady', { data: ["elements"], pages: false }, function(payload) {
     var elements = payload.siteData.elements || [];
+    var newPages = [];
     for (var i = 0; i < elements.length; i++) {
       var el = elements[i];
-      payload.pages.push({
+      newPages.push({
         path: 'demos/' + el.slug + '.md',
         url: '/demos/' + el.slug + '/',
         frontMatter: {
@@ -2154,7 +2227,7 @@ export default function(alloy) {
         content: '## ' + el.name + '\n\n' + el.description
       });
     }
-    return payload;
+    return { addPages: newPages };
   });
 }
 ```
@@ -2189,7 +2262,7 @@ Fire **once per build**. Payload is a JSON-serializable representation of the Go
 // plugins/enrich-data.js
 export default function(alloy) {
     // Add computed data after external sources are fetched
-    alloy.on("onDataFetched", (data) => {
+    alloy.on("onDataFetched", { data: ["team"] }, (data) => {
         if (data.team) {
             data.teamCount = data.team.length;
             data.teamByDepartment = {};
@@ -2203,7 +2276,7 @@ export default function(alloy) {
     });
 
     // Inject data into the cascade after validation
-    alloy.on("onAfterValidation", (payload) => {
+    alloy.on("onAfterValidation", {}, (payload) => {
         payload.cascade.buildTimestamp = new Date().toISOString();
         return payload;  // cascade changes are applied
     });
