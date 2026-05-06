@@ -1841,14 +1841,14 @@ Alloy uses a tiered plugin runtime. Plugin authors write in their preferred lang
 // alloy.hook(event, options, fn)
 // options is required — declares what data the hook needs
 
-// Runs first (priority 10), only needs HTML field
-alloy.hook("onPageRendered", { priority: 10, pages: true, pageFields: ["html"] }, transformsFn);
+// Runs first (priority 10) — onPageRendered receives HTML string, pages/pageFields don't apply
+alloy.hook("onPageRendered", { priority: 10 }, transformsFn);
 
-// Runs second (default priority 50), needs all page fields
-alloy.hook("onPageRendered", { pages: true }, analyticsFn);
+// Runs second (default priority 50)
+alloy.hook("onPageRendered", {}, analyticsFn);
 
-// Runs last (priority 100), needs all page fields
-alloy.hook("onPageRendered", { priority: 100, pages: true }, ssrFn);
+// Runs last (priority 100)
+alloy.hook("onPageRendered", { priority: 100 }, ssrFn);
 ```
 
 The `priority` option is available on all lifecycle hooks. Omitting it defaults to 50. The `alloy.on()` alias follows the same signature: `alloy.on(event, options, fn)`.
@@ -2164,7 +2164,7 @@ These fire **once per page**. `onContentTransformed` receives a page-scoped obje
 
 ```javascript
 // Example: add lazy loading + build TOC for non-markdown pages
-alloy.hook("onContentTransformed", { pages: true, pageFields: ["html", "toc"] }, (page) => {
+alloy.hook("onContentTransformed", {}, (page) => {
   page.html = page.html.replace(/<img /g, '<img loading="lazy" ');
   
   // Build TOC from HTML for pages that didn't go through goldmark
