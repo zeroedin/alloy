@@ -1896,21 +1896,30 @@ alloy.hook('onPagesReady', { data: ["elements"], pages: false }, function(payloa
 
 #### Hook availability matrix
 
-Not all page filtering modes are available on all hooks. Taxonomy filtering requires taxonomy indices, which are built during step 10 (`BuildTaxonomies`). Hooks that fire before that step cannot use taxonomy filtering.
+Not all page filtering modes are available on all hooks. Two constraints apply:
 
-| Hook | Pipeline step | Glob filter | Taxonomy filter |
-|---|:---:|:---:|:---:|
-| `onConfig` | 2 | n/a | n/a |
-| `onBeforeValidation` | 4 | n/a | n/a |
-| `onAfterValidation` | 5 | n/a | n/a |
-| `onDataFetched` | 6 | n/a | n/a |
-| `onPagesReady` | 9 | yes | **no** — taxonomy indices not built yet |
-| `onContentLoaded` | 11+ | yes | yes |
-| `onDataCascadeReady` | 11+ | yes | yes |
-| `onContentTransformed` | 12+ | yes | yes |
-| `onPageRendered` | 14+ | yes | yes |
+1. **Pageless hooks** (`onConfig`, `onBeforeValidation`, `onAfterValidation`, `onDataFetched`) do not receive pages — any page scope mode other than `PagesScopeNone` (`pages: false`) is rejected with a validation error. `data` and `pageFields` are also meaningless on these hooks.
+2. **Pre-taxonomy hooks** that do receive pages (`onPagesReady`) cannot use taxonomy filtering because taxonomy indices are built during step 10 (`BuildTaxonomies`).
 
-Registering a taxonomy filter on a pre-taxonomy hook produces a validation error at plugin load time.
+Per-page hooks (`onContentTransformed`, `onPageRendered`) fire once per page with a fixed payload shape — `pages`/`pageFields` scope does not apply (the pipeline already knows which page to serialize). `onPageRendered` receives an HTML string, not a page object. Scope options on per-page hooks are limited to `data` (site data subset) and `priority`.
+
+| Hook | Pipeline step | Pages in payload | Glob filter | Taxonomy filter |
+|---|:---:|:---:|:---:|:---:|
+| `onConfig` | 2 | no | **error** | **error** |
+| `onBeforeValidation` | 4 | no | **error** | **error** |
+| `onAfterValidation` | 5 | no | **error** | **error** |
+| `onDataFetched` | 6 | no | **error** | **error** |
+| `onPagesReady` | 9 | yes (batch) | yes | **error** — taxonomy indices not built yet |
+| `onContentLoaded` | 11+ | yes (batch) | yes | yes |
+| `onDataCascadeReady` | 11+ | yes (batch) | yes | yes |
+| `onContentTransformed` | 12+ | yes (per-page) | n/a | n/a |
+| `onPageRendered` | 14+ | yes (per-page) | n/a | n/a |
+| `onAssetProcess` | 16+ | no (per-asset) | n/a | n/a |
+| `onBuildComplete` | 24 | no | n/a | n/a |
+| `onDevServerStart` | — | no | n/a | n/a |
+| `onFileChanged` | — | no | n/a | n/a |
+
+Registering a page scope mode on a pageless hook, or a taxonomy filter on a pre-taxonomy hook, produces a validation error at plugin load time.
 
 ### Tier 1: Go Built-in Filters
 
@@ -2167,7 +2176,8 @@ alloy.hook("onContentTransformed", { pages: true, pageFields: ["html", "toc"] },
 });
 
 // Example: minify final HTML (post-processing, no page data needed)
-alloy.hook("onPageRendered", { pages: true, pageFields: ["html"] }, (html) => {
+// onPageRendered receives an HTML string, not a page object — pages/pageFields do not apply
+alloy.hook("onPageRendered", {}, (html) => {
   return html.replace(/\s+/g, ' ').trim();
 });
 ```

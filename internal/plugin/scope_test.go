@@ -211,7 +211,7 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 	// ── Multiple hooks with independent scopes ─────────────────────
 
 	Describe("Multiple hooks with independent scopes", func() {
-		It("two hooks on same event have distinct scopes retrievable via ScopeFor", func() {
+		It("two hooks on same event have distinct scopes retrievable via ScopeFor in priority order", func() {
 			registry := plugin.NewHookRegistry()
 			fn := func(_ context.Context, p interface{}) (interface{}, error) {
 				return p, nil
@@ -227,8 +227,9 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 				PageFields: []string{"frontMatter"},
 			}
 
-			registry.RegisterWithOptions(plugin.OnContentLoaded, fn, scope1, 10)
+			// Register higher priority first to prove ScopeFor returns priority order, not insertion order
 			registry.RegisterWithOptions(plugin.OnContentLoaded, fn, scope2, 20)
+			registry.RegisterWithOptions(plugin.OnContentLoaded, fn, scope1, 10)
 
 			scopes := registry.ScopeFor(plugin.OnContentLoaded)
 			Expect(scopes).To(HaveLen(2))
@@ -247,6 +248,67 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 	// ── ValidateScope ──────────────────────────────────────────────
 
 	Describe("ValidateScope", func() {
+
+		// ── Pageless hook rejection ──────────────────────────────────
+
+		It("rejects PagesScopeAll on pageless hooks", func() {
+			scope := plugin.HookScope{
+				Pages: plugin.PagesScope{Mode: plugin.PagesScopeAll},
+			}
+			for _, event := range []plugin.HookName{
+				plugin.OnConfig,
+				plugin.OnBeforeValidation,
+				plugin.OnAfterValidation,
+				plugin.OnDataFetched,
+			} {
+				err := plugin.ValidateScope(event, scope)
+				Expect(err).To(HaveOccurred(),
+					"PagesScopeAll on pageless hook %s must error — hook has no pages (issue #528)", event)
+				Expect(err.Error()).To(ContainSubstring("pages"),
+					"error must mention pages (issue #528)")
+			}
+		})
+
+		It("rejects PagesScopeGlob on pageless hooks", func() {
+			scope := plugin.HookScope{
+				Pages: plugin.PagesScope{
+					Mode: plugin.PagesScopeGlob,
+					Glob: "/blog/**",
+				},
+			}
+			for _, event := range []plugin.HookName{
+				plugin.OnConfig,
+				plugin.OnBeforeValidation,
+				plugin.OnAfterValidation,
+				plugin.OnDataFetched,
+			} {
+				err := plugin.ValidateScope(event, scope)
+				Expect(err).To(HaveOccurred(),
+					"PagesScopeGlob on pageless hook %s must error — hook has no pages (issue #528)", event)
+			}
+		})
+
+		It("rejects PagesScopeTaxonomy on pageless hooks", func() {
+			scope := plugin.HookScope{
+				Pages: plugin.PagesScope{
+					Mode:       plugin.PagesScopeTaxonomy,
+					Taxonomies: map[string][]string{"tags": {"component"}},
+				},
+			}
+			for _, event := range []plugin.HookName{
+				plugin.OnConfig,
+				plugin.OnBeforeValidation,
+				plugin.OnAfterValidation,
+				plugin.OnDataFetched,
+			} {
+				err := plugin.ValidateScope(event, scope)
+				Expect(err).To(HaveOccurred(),
+					"PagesScopeTaxonomy on pageless hook %s must error (issue #528)", event)
+			}
+		})
+
+		// ── Pre-taxonomy rejection (hooks that have pages but no taxonomy indices) ──
+
 		It("rejects taxonomy filtering on onPagesReady", func() {
 			scope := plugin.HookScope{
 				Pages: plugin.PagesScope{
@@ -261,40 +323,25 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 				"error must mention taxonomy (issue #528)")
 		})
 
-		It("rejects taxonomy filtering on onConfig", func() {
+		// ── Post-taxonomy acceptance ──────────────────────────────────
+
+		It("accepts taxonomy filtering on post-taxonomy hooks", func() {
 			scope := plugin.HookScope{
 				Pages: plugin.PagesScope{
 					Mode:       plugin.PagesScopeTaxonomy,
 					Taxonomies: map[string][]string{"tags": {"component"}},
 				},
 			}
-			err := plugin.ValidateScope(plugin.OnConfig, scope)
-			Expect(err).To(HaveOccurred(),
-				"taxonomy filtering on pre-taxonomy hooks must error (issue #528)")
-		})
-
-		It("accepts taxonomy filtering on onContentLoaded", func() {
-			scope := plugin.HookScope{
-				Pages: plugin.PagesScope{
-					Mode:       plugin.PagesScopeTaxonomy,
-					Taxonomies: map[string][]string{"tags": {"component"}},
-				},
+			for _, event := range []plugin.HookName{
+				plugin.OnContentLoaded,
+				plugin.OnDataCascadeReady,
+				plugin.OnContentTransformed,
+				plugin.OnPageRendered,
+			} {
+				err := plugin.ValidateScope(event, scope)
+				Expect(err).NotTo(HaveOccurred(),
+					"taxonomy filtering on post-taxonomy hook %s must be valid (issue #528)", event)
 			}
-			err := plugin.ValidateScope(plugin.OnContentLoaded, scope)
-			Expect(err).NotTo(HaveOccurred(),
-				"taxonomy filtering on post-taxonomy hooks must be valid (issue #528)")
-		})
-
-		It("accepts taxonomy filtering on onContentTransformed", func() {
-			scope := plugin.HookScope{
-				Pages: plugin.PagesScope{
-					Mode:       plugin.PagesScopeTaxonomy,
-					Taxonomies: map[string][]string{"category": {"docs"}},
-				},
-			}
-			err := plugin.ValidateScope(plugin.OnContentTransformed, scope)
-			Expect(err).NotTo(HaveOccurred(),
-				"onContentTransformed fires after taxonomy collection (issue #528)")
 		})
 
 		It("accepts glob filtering on onPagesReady", func() {
@@ -306,7 +353,7 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 			}
 			err := plugin.ValidateScope(plugin.OnPagesReady, scope)
 			Expect(err).NotTo(HaveOccurred(),
-				"glob filtering is valid on any hook — no dependency on taxonomy indices (issue #528)")
+				"glob filtering is valid on page-aware hooks — no dependency on taxonomy indices (issue #528)")
 		})
 
 		It("accepts PagesScopeNone on any hook", func() {
@@ -314,10 +361,15 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 				Pages: plugin.PagesScope{Mode: plugin.PagesScopeNone},
 			}
 			for _, event := range []plugin.HookName{
+				plugin.OnConfig,
+				plugin.OnBeforeValidation,
+				plugin.OnAfterValidation,
+				plugin.OnDataFetched,
 				plugin.OnPagesReady,
 				plugin.OnContentLoaded,
+				plugin.OnDataCascadeReady,
 				plugin.OnContentTransformed,
-				plugin.OnConfig,
+				plugin.OnPageRendered,
 			} {
 				err := plugin.ValidateScope(event, scope)
 				Expect(err).NotTo(HaveOccurred(),
@@ -325,14 +377,16 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 			}
 		})
 
-		It("accepts PagesScopeAll on any hook", func() {
+		It("accepts PagesScopeAll on hooks that receive pages", func() {
 			scope := plugin.HookScope{
 				Pages: plugin.PagesScope{Mode: plugin.PagesScopeAll},
 			}
 			for _, event := range []plugin.HookName{
 				plugin.OnPagesReady,
 				plugin.OnContentLoaded,
+				plugin.OnDataCascadeReady,
 				plugin.OnContentTransformed,
+				plugin.OnPageRendered,
 			} {
 				err := plugin.ValidateScope(event, scope)
 				Expect(err).NotTo(HaveOccurred(),
