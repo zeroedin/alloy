@@ -29,9 +29,9 @@ const alloy = {
     if (!options || typeof options !== 'object') { options = {}; }
     hooks[name] = fn;
     hookScopes[name] = {
-      data: options.data || null,
+      data: options.data !== undefined ? options.data : null,
       pages: options.pages !== undefined ? options.pages : null,
-      pageFields: options.pageFields || null,
+      pageFields: options.pageFields !== undefined ? options.pageFields : null,
       priority: (typeof options.priority === 'number') ? options.priority : 50,
     };
   },

@@ -114,9 +114,9 @@ func (r *QuickJSRuntime) Init() error {
 				__hooks[name] = fn;
 				var p = (typeof options.priority === 'number') ? Math.floor(options.priority) : 50;
 				__registerHook(name, p, JSON.stringify({
-					data: options.data || null,
+					data: options.data !== undefined ? options.data : null,
 					pages: options.pages !== undefined ? options.pages : null,
-					pageFields: options.pageFields || null
+					pageFields: options.pageFields !== undefined ? options.pageFields : null
 				}));
 			},
 			on: function(name, options, fn) { alloy.hook(name, options, fn); }

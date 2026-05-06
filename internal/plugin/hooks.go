@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"time"
 )
@@ -262,6 +263,8 @@ func parseScopeJSON(raw string) (*HookScope, error) {
 			for _, item := range arr {
 				if s, ok := item.(string); ok {
 					terms = append(terms, s)
+				} else {
+					log.Printf("warning: taxonomy %q: ignoring non-string term %v (%T)", k, item, item)
 				}
 			}
 			scope.Pages.Taxonomies[k] = terms

@@ -2078,6 +2078,8 @@ func computeUnionScope(scopes []*plugin.HookScope) *plugin.HookScope {
 	var globs []string
 	for _, s := range scopes {
 		switch s.Pages.Mode {
+		case plugin.PagesScopeNone:
+			// Hook opted out of pages — does not widen the union.
 		case plugin.PagesScopeAll:
 			hasAll = true
 		case plugin.PagesScopeGlob:
@@ -2182,6 +2184,14 @@ func matchPageGlob(pattern, pageURL string) bool {
 			return true
 		}
 		rest := pageURL[len(prefix):]
+		// Zero-segment match: ** matches nothing, check rest against suffix directly.
+		trimSuffix := strings.TrimPrefix(suffix, "/")
+		if matched, err := path.Match(trimSuffix, rest); err != nil {
+			log.Printf("warning: invalid glob pattern %q: %v", pattern, err)
+			return false
+		} else if matched {
+			return true
+		}
 		suffixSegments := strings.Count(suffix, "/")
 		restParts := strings.Split(rest, "/")
 		for i := 0; i <= len(restParts)-suffixSegments-1; i++ {
@@ -2300,14 +2310,20 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 
 		switch modified := result.(type) {
 		case map[string]interface{}:
-			if html, ok := modified["html"].(string); ok {
-				page.RenderedBody = []byte(html)
+			if (scope == nil || scope.WantsField("html")) {
+				if html, ok := modified["html"].(string); ok {
+					page.RenderedBody = []byte(html)
+				}
 			}
-			if tocSlice, ok := modified["toc"].([]interface{}); ok {
-				page.TOC = deserializeTOC(tocSlice)
+			if (scope == nil || scope.WantsField("toc")) {
+				if tocSlice, ok := modified["toc"].([]interface{}); ok {
+					page.TOC = deserializeTOC(tocSlice)
+				}
 			}
-			if returnedFM, ok := modified["frontMatter"].(map[string]interface{}); ok {
-				page.FrontMatter = returnedFM
+			if (scope == nil || scope.WantsField("frontMatter")) {
+				if returnedFM, ok := modified["frontMatter"].(map[string]interface{}); ok {
+					page.FrontMatter = returnedFM
+				}
 			}
 		case string:
 			page.RenderedBody = []byte(modified)
