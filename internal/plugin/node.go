@@ -186,12 +186,7 @@ func (r *NodeRuntime) EvalFile(path string) error {
 				if p, ok := scopeMap["priority"].(float64); ok {
 					r.hookPriorities[name] = int(p)
 				}
-				scopeBytes, err := json.Marshal(scopeMap)
-				if err != nil {
-					log.Printf("warning: plugin hook %s: failed to marshal scope: %v", name, err)
-					continue
-				}
-				scope, err := parseScopeJSON(string(scopeBytes))
+				scope, err := parseScopeMap(scopeMap)
 				if err != nil {
 					log.Printf("warning: plugin hook %s: malformed scope JSON, using default scope: %v", name, err)
 					r.hookScopes[name] = &HookScope{Pages: PagesScope{Mode: PagesScopeAll}}
