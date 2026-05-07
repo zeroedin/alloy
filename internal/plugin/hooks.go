@@ -223,27 +223,39 @@ func ValidateScope(event HookName, scope HookScope) error {
 // parseScopeMap builds a HookScope directly from a Go map without JSON serialization.
 // Handles the same polymorphic pages field as parseScopeJSON.
 func parseScopeMap(m map[string]interface{}) (*HookScope, error) {
-	return nil, fmt.Errorf("parseScopeMap not implemented (issue #545)")
-}
+	scope := &HookScope{}
 
-// parseScopeJSON parses a JSON scope object from the JS bridge into a HookScope.
-// The pages field is polymorphic: false, true, string (glob), or object (taxonomy map).
-func parseScopeJSON(raw string) (*HookScope, error) {
-	var wire struct {
-		Data       []string    `json:"data"`
-		Pages      interface{} `json:"pages"`
-		PageFields []string    `json:"pageFields"`
-	}
-	if err := json.Unmarshal([]byte(raw), &wire); err != nil {
-		return nil, err
-	}
-
-	scope := &HookScope{
-		Data:       wire.Data,
-		PageFields: wire.PageFields,
+	if raw, exists := m["data"]; exists && raw != nil {
+		data, ok := raw.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("data: expected array, got %T", raw)
+		}
+		scope.Data = make([]string, 0, len(data))
+		for _, d := range data {
+			s, ok := d.(string)
+			if !ok {
+				return nil, fmt.Errorf("data: expected string element, got %T", d)
+			}
+			scope.Data = append(scope.Data, s)
+		}
 	}
 
-	switch v := wire.Pages.(type) {
+	if raw, exists := m["pageFields"]; exists && raw != nil {
+		pf, ok := raw.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("pageFields: expected array, got %T", raw)
+		}
+		scope.PageFields = make([]string, 0, len(pf))
+		for _, f := range pf {
+			s, ok := f.(string)
+			if !ok {
+				return nil, fmt.Errorf("pageFields: expected string element, got %T", f)
+			}
+			scope.PageFields = append(scope.PageFields, s)
+		}
+	}
+
+	switch v := m["pages"].(type) {
 	case bool:
 		if v {
 			scope.Pages.Mode = PagesScopeAll
@@ -270,6 +282,7 @@ func parseScopeJSON(raw string) (*HookScope, error) {
 				if s, ok := item.(string); ok {
 					terms = append(terms, s)
 				} else {
+					// Lenient: taxonomy values come from user content where non-string terms are a data quality issue, not a structural error.
 					log.Printf("warning: taxonomy %q: ignoring non-string term %v (%T)", k, item, item)
 				}
 			}
@@ -278,10 +291,20 @@ func parseScopeJSON(raw string) (*HookScope, error) {
 	case nil:
 		scope.Pages.Mode = PagesScopeAll
 	default:
-		return nil, fmt.Errorf("unsupported pages type %T — expected boolean, string, or object", wire.Pages)
+		return nil, fmt.Errorf("unsupported pages type %T — expected boolean, string, or object", m["pages"])
 	}
 
 	return scope, nil
+}
+
+// parseScopeJSON unmarshals a JSON scope string and delegates to parseScopeMap.
+// Retained for the WASM plugin path which receives scope as a JSON string.
+func parseScopeJSON(raw string) (*HookScope, error) {
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil, err
+	}
+	return parseScopeMap(m)
 }
 
 // Run executes all hooks for an event in priority order, chaining results.
