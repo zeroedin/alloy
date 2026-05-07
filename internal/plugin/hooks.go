@@ -230,6 +230,7 @@ func parseScopeMap(m map[string]interface{}) (*HookScope, error) {
 		if !ok {
 			return nil, fmt.Errorf("data: expected array, got %T", raw)
 		}
+		scope.Data = make([]string, 0, len(data))
 		for _, d := range data {
 			s, ok := d.(string)
 			if !ok {
@@ -244,6 +245,7 @@ func parseScopeMap(m map[string]interface{}) (*HookScope, error) {
 		if !ok {
 			return nil, fmt.Errorf("pageFields: expected array, got %T", raw)
 		}
+		scope.PageFields = make([]string, 0, len(pf))
 		for _, f := range pf {
 			s, ok := f.(string)
 			if !ok {
@@ -280,6 +282,7 @@ func parseScopeMap(m map[string]interface{}) (*HookScope, error) {
 				if s, ok := item.(string); ok {
 					terms = append(terms, s)
 				} else {
+					// Lenient: taxonomy values come from user content where non-string terms are a data quality issue, not a structural error.
 					log.Printf("warning: taxonomy %q: ignoring non-string term %v (%T)", k, item, item)
 				}
 			}
@@ -294,6 +297,8 @@ func parseScopeMap(m map[string]interface{}) (*HookScope, error) {
 	return scope, nil
 }
 
+// parseScopeJSON unmarshals a JSON scope string and delegates to parseScopeMap.
+// Retained for the WASM plugin path which receives scope as a JSON string.
 func parseScopeJSON(raw string) (*HookScope, error) {
 	var m map[string]interface{}
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
