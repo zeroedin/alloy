@@ -34,13 +34,14 @@ func GlobRoot(pattern string) string {
 }
 
 func normalizeExcludePattern(pattern string) string {
-	if !strings.Contains(pattern, "/") {
-		return "**/" + pattern
+	p := filepath.ToSlash(pattern)
+	if !strings.Contains(p, "/") {
+		return "**/" + p
 	}
-	if strings.HasSuffix(pattern, "/") {
-		return pattern + "**"
+	if strings.HasSuffix(p, "/") {
+		return p + "**"
 	}
-	return pattern
+	return p
 }
 
 // NormalizeExcludePatterns pre-normalizes exclude patterns for repeated matching.
@@ -54,10 +55,10 @@ func NormalizeExcludePatterns(patterns []string) []string {
 
 // MatchExclude reports whether relPath matches any of the exclude patterns.
 func MatchExclude(patterns []string, relPath string) (bool, error) {
-	return matchExcludeNormalized(NormalizeExcludePatterns(patterns), relPath)
+	return MatchExcludeNormalized(NormalizeExcludePatterns(patterns), relPath)
 }
 
-func matchExcludeNormalized(normalized []string, relPath string) (bool, error) {
+func MatchExcludeNormalized(normalized []string, relPath string) (bool, error) {
 	slashed := filepath.ToSlash(relPath)
 	for _, norm := range normalized {
 		matched, err := doublestar.Match(norm, slashed)
@@ -155,7 +156,7 @@ func copyGlob(m config.PassthroughMapping, projectRoot, outputDir string) error 
 	normalized := NormalizeExcludePatterns(m.Exclude)
 	for _, match := range matches {
 		if len(normalized) > 0 {
-			excluded, err := matchExcludeNormalized(normalized, match)
+			excluded, err := MatchExcludeNormalized(normalized, match)
 			if err != nil {
 				return err
 			}
@@ -232,7 +233,7 @@ func copyDirConcurrent(src, dst string, excludes []string) error {
 			return err
 		}
 		if rel != "." && len(normalized) > 0 {
-			excluded, matchErr := matchExcludeNormalized(normalized, rel)
+			excluded, matchErr := MatchExcludeNormalized(normalized, rel)
 			if matchErr != nil {
 				return matchErr
 			}

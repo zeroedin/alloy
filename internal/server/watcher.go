@@ -161,8 +161,9 @@ func RecopyPassthroughFile(path string, cfg *config.Config) (string, error) {
 				continue
 			}
 			relPath, _ := filepath.Rel(root, path)
-			if len(pt.Exclude) > 0 {
-				excluded, err := static.MatchExclude(pt.Exclude, relPath)
+			normalized := static.NormalizeExcludePatterns(pt.Exclude)
+			if len(normalized) > 0 {
+				excluded, err := static.MatchExcludeNormalized(normalized, relPath)
 				if err != nil {
 					return "", err
 				}
@@ -177,8 +178,9 @@ func RecopyPassthroughFile(path string, cfg *config.Config) (string, error) {
 			continue
 		}
 		relPath, _ := filepath.Rel(pt.From, path)
-		if len(pt.Exclude) > 0 {
-			excluded, err := static.MatchExclude(pt.Exclude, relPath)
+		normalized := static.NormalizeExcludePatterns(pt.Exclude)
+		if len(normalized) > 0 {
+			excluded, err := static.MatchExcludeNormalized(normalized, relPath)
 			if err != nil {
 				return "", err
 			}
