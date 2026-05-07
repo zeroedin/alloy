@@ -306,6 +306,57 @@ var _ = Describe("File Watcher", func() {
 			Expect(err).To(HaveOccurred(),
 				"RecopyPassthroughFile must error when path doesn't match any passthrough mapping")
 		})
+
+		It("RecopyPassthroughFile skips files matching exclude patterns (issue #547)", func() {
+			cfg := &config.Config{
+				Title: "Recopy Exclude Test",
+				Build: config.BuildConfig{Output: "_site"},
+				Passthrough: []config.PassthroughMapping{
+					{From: "elements", To: "assets/elements", Exclude: []string{"*.html", "demo/"}},
+				},
+			}
+			_, err := server.RecopyPassthroughFile("elements/rh-button/demo.html", cfg)
+			Expect(err).To(HaveOccurred(),
+				"RecopyPassthroughFile must reject files matching an exclude pattern — "+
+					"*.html should match demo.html at any depth (issue #547)")
+
+			_, err = server.RecopyPassthroughFile("elements/demo/example.js", cfg)
+			Expect(err).To(HaveOccurred(),
+				"RecopyPassthroughFile must reject files under an excluded directory — "+
+					"demo/ should exclude the entire demo/ tree (issue #547)")
+
+			outputPath, err := server.RecopyPassthroughFile("elements/rh-button/rh-button.js", cfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"RecopyPassthroughFile must accept non-excluded files (issue #547)")
+			Expect(outputPath).To(Equal("_site/assets/elements/rh-button/rh-button.js"),
+				"non-excluded files must map to correct output path (issue #547)")
+		})
+
+		It("RecopyPassthroughFile with glob from rejects non-matching and excluded files (issue #547)", func() {
+			cfg := &config.Config{
+				Title: "Recopy Glob Test",
+				Build: config.BuildConfig{Output: "_site"},
+				Passthrough: []config.PassthroughMapping{
+					{From: "elements/**/*.{js,css}", To: "assets/elements", Exclude: []string{"*.min.js"}},
+				},
+			}
+
+			_, err := server.RecopyPassthroughFile("elements/rh-button/rh-button.html", cfg)
+			Expect(err).To(HaveOccurred(),
+				"RecopyPassthroughFile must reject files that don't match the from glob — "+
+					".html does not match **/*.{js,css} (issue #547)")
+
+			_, err = server.RecopyPassthroughFile("elements/rh-button/rh-button.min.js", cfg)
+			Expect(err).To(HaveOccurred(),
+				"RecopyPassthroughFile must reject files matching exclude even if they match the from glob — "+
+					"*.min.js is excluded (issue #547)")
+
+			outputPath, err := server.RecopyPassthroughFile("elements/rh-button/rh-button.js", cfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"RecopyPassthroughFile must accept files matching glob and not excluded (issue #547)")
+			Expect(outputPath).To(Equal("_site/assets/elements/rh-button/rh-button.js"),
+				"glob from must preserve path relative to glob root in output (issue #547)")
+		})
 	})
 
 	// ── Serve mode rebuild dispatch (issue #291) ─────────────────────

@@ -41,6 +41,15 @@ passthrough:
     to: "elements"
   - from: "../shared-assets/fonts"
     to: "assets/fonts"
+  - from: "elements"
+    to: "assets/packages/elements"
+    exclude:
+      - "*.html"
+      - "demo/"
+  - from: "elements/**/*.{js,css}"
+    to: "assets/elements"
+    exclude:
+      - "*.min.js"
 
 sources:
   posts:

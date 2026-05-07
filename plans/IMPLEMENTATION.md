@@ -293,11 +293,23 @@ Key points:
   
   Register both in `goEngine.AddFilter` or directly in the FuncMap during engine creation. The `*ordered.Map` in `siteData` is never mutated. Liquid uses it directly via `Each` and `LiquidMethodMissing`.
 
-### 4C: `internal/static` — 6 tests
+### 4C: `internal/static` — 10 tests + 12 passthrough filtering tests (issue #547)
 **File**: `internal/static/copy.go`
 
 - `CopyStatic`/`CopyPassthrough`: Walk and copy preserving structure
 - `CopyPassthroughWithValidation(mappings, projectRoot, outputDir, managedDirs)`: Same as `CopyPassthrough`, but silently skips any mapping where the `from` path resolves to a managed directory (content, layouts, assets, static, data). Prevents passthrough configs from accidentally overwriting managed content.
+
+**Passthrough filtering (issue #547):**
+
+- `PassthroughMapping.Exclude []string` — optional, gitignore-style exclude patterns added to `internal/config/config.go`
+- New dependency: `github.com/bmatcuk/doublestar/v4` — glob matching with `**`, `{a,b}`, `[chars]` support
+- `normalizeExcludePattern(pattern string) string` — gitignore-style normalization: patterns without `/` get `**/` prepended (match at any depth); patterns ending with `/` get `**` appended (match directory tree); patterns with `/` pass through as-is
+- `matchExclude(patterns []string, relPath string) bool` — returns true if `relPath` matches any normalized exclude pattern via `doublestar.Match`. Called during file walk or glob iteration to skip excluded files.
+- `globRoot(pattern string) string` — returns the longest directory prefix of a glob pattern before any metacharacter (`*`, `?`, `[`, `{`). `elements/**/*.js` → `elements`. Used to compute relative output paths.
+- `containsGlobChars(path string) bool` — returns true if path contains any glob metacharacter. Used to branch between glob and directory-walk modes.
+- `CopyPassthrough` updated: if `from` contains glob chars → resolve `from` relative to `projectRoot`, use `doublestar.Glob` to find matching files, compute each file's relPath from `globRoot`, filter by `matchExclude`, copy to `outputDir/to/relPath`. If `from` is a plain directory → existing `filepath.Walk` behavior with `matchExclude` filter added during walk.
+- `copyDirConcurrent(src, dst string, excludes []string)` — add `excludes` parameter; during `filepath.Walk`, compute each file's relative path from `src` and skip if `matchExclude(excludes, relPath)` returns true. Callers without excludes pass `nil`.
+- `RecopyPassthroughFile` in `internal/server/watcher.go` — check exclude patterns before recopying; if `from` is a glob, also verify the changed file matches the `from` glob. Return error (or skip indicator) for excluded/non-matching files.
 
 ### 4D: `internal/pipeline` — 19 tests
 **File**: `internal/pipeline/build.go`
