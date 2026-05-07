@@ -293,7 +293,7 @@ Key points:
   
   Register both in `goEngine.AddFilter` or directly in the FuncMap during engine creation. The `*ordered.Map` in `siteData` is never mutated. Liquid uses it directly via `Each` and `LiquidMethodMissing`.
 
-### 4C: `internal/static` — 6 tests + 12 passthrough filtering tests (issue #547)
+### 4C: `internal/static` — 10 tests + 12 passthrough filtering tests (issue #547)
 **File**: `internal/static/copy.go`
 
 - `CopyStatic`/`CopyPassthrough`: Walk and copy preserving structure

@@ -186,6 +186,8 @@ var _ = Describe("Static file handling", func() {
 				{"sub/data.map", "map-sub"},
 				{"demo/example.html", "html-demo"},
 				{"demo/example.js", "js-demo"},
+				{"sub/demo/nested.html", "html-sub-demo"},
+				{"sub/demo/nested.js", "js-sub-demo"},
 			} {
 				full := filepath.Join(srcDir, f.path)
 				Expect(os.MkdirAll(filepath.Dir(full), 0755)).To(Succeed())
@@ -253,6 +255,25 @@ var _ = Describe("Static file handling", func() {
 			Expect(filepath.Join(outDir, "index.html")).To(BeAnExistingFile(),
 				"demo/*.html must not exclude .html files outside demo/ — "+
 					"pattern contains / so matches against relative path, not filename (issue #547)")
+		})
+
+		It("exclude sub/demo/*.html skips .html only in sub/demo/ (multi-segment path)", func() {
+			mappings := []config.PassthroughMapping{
+				{From: srcDir, To: "out", Exclude: []string{"sub/demo/*.html"}},
+			}
+			err := static.CopyPassthrough(mappings, "/", dstDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			outDir := filepath.Join(dstDir, "out")
+			Expect(filepath.Join(outDir, "sub", "demo", "nested.html")).NotTo(BeAnExistingFile(),
+				"sub/demo/*.html must exclude .html files in sub/demo/ (issue #547)")
+			Expect(filepath.Join(outDir, "sub", "demo", "nested.js")).To(BeAnExistingFile(),
+				"sub/demo/*.html must not exclude non-.html files in sub/demo/ (issue #547)")
+			Expect(filepath.Join(outDir, "demo", "example.html")).To(BeAnExistingFile(),
+				"sub/demo/*.html must not exclude .html in top-level demo/ — "+
+					"multi-segment pattern matches against full relative path (issue #547)")
+			Expect(filepath.Join(outDir, "index.html")).To(BeAnExistingFile(),
+				"sub/demo/*.html must not exclude root-level .html files (issue #547)")
 		})
 
 		It("multiple exclude patterns applied together", func() {
