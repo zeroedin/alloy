@@ -220,6 +220,12 @@ func ValidateScope(event HookName, scope HookScope) error {
 	return nil
 }
 
+// parseScopeMap builds a HookScope directly from a Go map without JSON serialization.
+// Handles the same polymorphic pages field as parseScopeJSON.
+func parseScopeMap(m map[string]interface{}) (*HookScope, error) {
+	return nil, fmt.Errorf("parseScopeMap not implemented (issue #545)")
+}
+
 // parseScopeJSON parses a JSON scope object from the JS bridge into a HookScope.
 // The pages field is polymorphic: false, true, string (glob), or object (taxonomy map).
 func parseScopeJSON(raw string) (*HookScope, error) {
