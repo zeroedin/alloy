@@ -141,6 +141,30 @@ var _ = Describe("computeUnionScope (issue #539)", func() {
 				"the union must be [\"*\"] (issue #539)")
 	})
 
+	It("taxonomy union deduplicates terms (issue #546)", func() {
+		s1 := &plugin.HookScope{Pages: plugin.PagesScope{
+			Mode:       plugin.PagesScopeTaxonomy,
+			Taxonomies: map[string][]string{"tags": {"go", "ssg"}},
+		}}
+		s2 := &plugin.HookScope{Pages: plugin.PagesScope{
+			Mode:       plugin.PagesScopeTaxonomy,
+			Taxonomies: map[string][]string{"tags": {"go", "web"}, "categories": {"tools"}},
+		}}
+		result := pipeline.ComputeUnionScope([]*plugin.HookScope{s1, s2})
+		Expect(result).NotTo(BeNil())
+		Expect(result.Pages.Mode).To(Equal(plugin.PagesScopeTaxonomy))
+
+		tags := make([]string, len(result.Pages.Taxonomies["tags"]))
+		copy(tags, result.Pages.Taxonomies["tags"])
+		sort.Strings(tags)
+		Expect(tags).To(Equal([]string{"go", "ssg", "web"}),
+			"taxonomy term union must deduplicate — 'go' appears in both scopes "+
+				"but must appear only once in the union (issue #546)")
+
+		Expect(result.Pages.Taxonomies["categories"]).To(Equal([]string{"tools"}),
+			"taxonomy keys from only one scope must pass through unchanged (issue #546)")
+	})
+
 	It("data union: all scopes with nil Data → nil", func() {
 		s1 := &plugin.HookScope{Data: nil}
 		s2 := &plugin.HookScope{Data: nil}
