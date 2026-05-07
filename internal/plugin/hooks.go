@@ -225,19 +225,31 @@ func ValidateScope(event HookName, scope HookScope) error {
 func parseScopeMap(m map[string]interface{}) (*HookScope, error) {
 	scope := &HookScope{}
 
-	if data, ok := m["data"].([]interface{}); ok {
+	if raw, exists := m["data"]; exists && raw != nil {
+		data, ok := raw.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("data: expected array, got %T", raw)
+		}
 		for _, d := range data {
-			if s, ok := d.(string); ok {
-				scope.Data = append(scope.Data, s)
+			s, ok := d.(string)
+			if !ok {
+				return nil, fmt.Errorf("data: expected string element, got %T", d)
 			}
+			scope.Data = append(scope.Data, s)
 		}
 	}
 
-	if pf, ok := m["pageFields"].([]interface{}); ok {
+	if raw, exists := m["pageFields"]; exists && raw != nil {
+		pf, ok := raw.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("pageFields: expected array, got %T", raw)
+		}
 		for _, f := range pf {
-			if s, ok := f.(string); ok {
-				scope.PageFields = append(scope.PageFields, s)
+			s, ok := f.(string)
+			if !ok {
+				return nil, fmt.Errorf("pageFields: expected string element, got %T", f)
 			}
+			scope.PageFields = append(scope.PageFields, s)
 		}
 	}
 
