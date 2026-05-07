@@ -43,16 +43,32 @@ func normalizeExcludePattern(pattern string) string {
 	return pattern
 }
 
+// NormalizeExcludePatterns pre-normalizes exclude patterns for repeated matching.
+func NormalizeExcludePatterns(patterns []string) []string {
+	normalized := make([]string, len(patterns))
+	for i, p := range patterns {
+		normalized[i] = normalizeExcludePattern(p)
+	}
+	return normalized
+}
+
 // MatchExclude reports whether relPath matches any of the exclude patterns.
-func MatchExclude(patterns []string, relPath string) bool {
+func MatchExclude(patterns []string, relPath string) (bool, error) {
+	return matchExcludeNormalized(NormalizeExcludePatterns(patterns), relPath)
+}
+
+func matchExcludeNormalized(normalized []string, relPath string) (bool, error) {
 	slashed := filepath.ToSlash(relPath)
-	for _, p := range patterns {
-		norm := normalizeExcludePattern(p)
-		if matched, _ := doublestar.Match(norm, slashed); matched {
-			return true
+	for _, norm := range normalized {
+		matched, err := doublestar.Match(norm, slashed)
+		if err != nil {
+			return false, fmt.Errorf("exclude pattern %q: %w", norm, err)
+		}
+		if matched {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // CopyStatic copies all files from staticDir to outputDir.
@@ -101,6 +117,15 @@ func CopyPassthrough(mappings []config.PassthroughMapping, projectRoot, outputDi
 				return err
 			}
 		} else {
+			if len(m.Exclude) > 0 {
+				excluded, err := MatchExclude(m.Exclude, filepath.Base(fromPath))
+				if err != nil {
+					return err
+				}
+				if excluded {
+					continue
+				}
+			}
 			if err := fileutil.CopyFile(fromPath, toPath); err != nil {
 				return err
 			}
@@ -127,9 +152,16 @@ func copyGlob(m config.PassthroughMapping, projectRoot, outputDir string) error 
 		return fmt.Errorf("passthrough glob %q: %w", m.From, err)
 	}
 
+	normalized := NormalizeExcludePatterns(m.Exclude)
 	for _, match := range matches {
-		if len(m.Exclude) > 0 && MatchExclude(m.Exclude, match) {
-			continue
+		if len(normalized) > 0 {
+			excluded, err := matchExcludeNormalized(normalized, match)
+			if err != nil {
+				return err
+			}
+			if excluded {
+				continue
+			}
 		}
 		srcPath := filepath.Join(root, filepath.FromSlash(match))
 		dstPath := filepath.Join(outputDir, m.To, filepath.FromSlash(match))
@@ -143,14 +175,17 @@ func copyGlob(m config.PassthroughMapping, projectRoot, outputDir string) error 
 	return nil
 }
 
-
 // CopyPassthroughWithValidation copies files according to passthrough mappings,
 // silently ignoring any mapping where the "from" path resolves to a managed directory
 // (content, layouts, assets, static, data).
 func CopyPassthroughWithValidation(mappings []config.PassthroughMapping, projectRoot, outputDir string, managedDirs []string) error {
 	var filtered []config.PassthroughMapping
 	for _, m := range mappings {
-		fromAbs := m.From
+		fromDir := m.From
+		if ContainsGlobChars(fromDir) {
+			fromDir = GlobRoot(fromDir)
+		}
+		fromAbs := fromDir
 		if !filepath.IsAbs(fromAbs) {
 			fromAbs = filepath.Join(projectRoot, fromAbs)
 		}
@@ -185,6 +220,7 @@ type copyJob struct {
 // copyDirConcurrent walks the source tree, creates directories synchronously,
 // and copies files concurrently using a bounded worker pool.
 func copyDirConcurrent(src, dst string, excludes []string) error {
+	normalized := NormalizeExcludePatterns(excludes)
 	var jobs []copyJob
 
 	if err := filepath.Walk(src, func(path string, fi os.FileInfo, err error) error {
@@ -195,11 +231,17 @@ func copyDirConcurrent(src, dst string, excludes []string) error {
 		if err != nil {
 			return err
 		}
-		if rel != "." && len(excludes) > 0 && MatchExclude(excludes, rel) {
-			if fi.IsDir() {
-				return filepath.SkipDir
+		if rel != "." && len(normalized) > 0 {
+			excluded, matchErr := matchExcludeNormalized(normalized, rel)
+			if matchErr != nil {
+				return matchErr
 			}
-			return nil
+			if excluded {
+				if fi.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 		}
 		target := filepath.Join(dst, rel)
 		if fi.IsDir() {

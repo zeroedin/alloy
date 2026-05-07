@@ -75,7 +75,11 @@ func WatchDirs(cfg *config.Config) []string {
 		dirs = append(dirs, "components")
 	}
 	for _, pt := range cfg.Passthrough {
-		dirs = append(dirs, pt.From)
+		if static.ContainsGlobChars(pt.From) {
+			dirs = append(dirs, static.GlobRoot(pt.From))
+		} else {
+			dirs = append(dirs, pt.From)
+		}
 	}
 	return dirs
 }
@@ -104,7 +108,11 @@ func ClassifyChange(path string, cfg *config.Config) ChangeType {
 		return ComponentChange
 	default:
 		for _, pt := range cfg.Passthrough {
-			if hasPathPrefix(path, pt.From) {
+			dir := pt.From
+			if static.ContainsGlobChars(dir) {
+				dir = static.GlobRoot(dir)
+			}
+			if hasPathPrefix(path, dir) {
 				return PassthroughChange
 			}
 		}
@@ -145,13 +153,22 @@ func RecopyPassthroughFile(path string, cfg *config.Config) (string, error) {
 			slashedFrom := filepath.ToSlash(pt.From)
 			slashedRoot := filepath.ToSlash(root)
 			relGlob := strings.TrimPrefix(slashedFrom, slashedRoot+"/")
-			matched, _ := doublestar.Match(relGlob, strings.TrimPrefix(slashedPath, slashedRoot+"/"))
+			matched, err := doublestar.Match(relGlob, strings.TrimPrefix(slashedPath, slashedRoot+"/"))
+			if err != nil {
+				return "", fmt.Errorf("passthrough glob %q: %w", pt.From, err)
+			}
 			if !matched {
 				continue
 			}
 			relPath, _ := filepath.Rel(root, path)
-			if len(pt.Exclude) > 0 && static.MatchExclude(pt.Exclude, relPath) {
-				return "", fmt.Errorf("path %q is excluded by passthrough mapping", path)
+			if len(pt.Exclude) > 0 {
+				excluded, err := static.MatchExclude(pt.Exclude, relPath)
+				if err != nil {
+					return "", err
+				}
+				if excluded {
+					return "", fmt.Errorf("path %q is excluded by passthrough mapping", path)
+				}
 			}
 			return filepath.Join(outputDir, pt.To, relPath), nil
 		}
@@ -160,8 +177,14 @@ func RecopyPassthroughFile(path string, cfg *config.Config) (string, error) {
 			continue
 		}
 		relPath, _ := filepath.Rel(pt.From, path)
-		if len(pt.Exclude) > 0 && static.MatchExclude(pt.Exclude, relPath) {
-			return "", fmt.Errorf("path %q is excluded by passthrough mapping", path)
+		if len(pt.Exclude) > 0 {
+			excluded, err := static.MatchExclude(pt.Exclude, relPath)
+			if err != nil {
+				return "", err
+			}
+			if excluded {
+				return "", fmt.Errorf("path %q is excluded by passthrough mapping", path)
+			}
 		}
 		return filepath.Join(outputDir, pt.To, relPath), nil
 	}
