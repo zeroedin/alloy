@@ -129,10 +129,11 @@ type PaginationConfig struct {
 	Path string `yaml:"path" toml:"path" json:"path"`
 }
 
-// PassthroughMapping maps an external directory to an output path.
+// PassthroughMapping maps an external directory (or glob pattern) to an output path.
 type PassthroughMapping struct {
-	From string `yaml:"from" toml:"from" json:"from"`
-	To   string `yaml:"to" toml:"to" json:"to"`
+	From    string   `yaml:"from" toml:"from" json:"from"`
+	To      string   `yaml:"to" toml:"to" json:"to"`
+	Exclude []string `yaml:"exclude,omitempty" toml:"exclude,omitempty" json:"exclude,omitempty"`
 }
 
 // SourceConfig holds external data source settings.

@@ -109,11 +109,31 @@ var _ = Describe("Config", func() {
 
 			It("parses passthrough array with from/to", func() {
 				Expect(err).NotTo(HaveOccurred())
-				Expect(cfg.Passthrough).To(HaveLen(2))
+				Expect(cfg.Passthrough).To(HaveLen(4))
 				Expect(cfg.Passthrough[0].From).To(Equal("../design-system/dist/elements"))
 				Expect(cfg.Passthrough[0].To).To(Equal("elements"))
 				Expect(cfg.Passthrough[1].From).To(Equal("../shared-assets/fonts"))
 				Expect(cfg.Passthrough[1].To).To(Equal("assets/fonts"))
+			})
+
+			It("parses passthrough exclude array (issue #547)", func() {
+				Expect(err).NotTo(HaveOccurred())
+				Expect(cfg.Passthrough).To(HaveLen(4),
+					"valid.yaml must have 4 passthrough mappings (issue #547)")
+				Expect(cfg.Passthrough[2].From).To(Equal("elements"))
+				Expect(cfg.Passthrough[2].To).To(Equal("assets/packages/elements"))
+				Expect(cfg.Passthrough[2].Exclude).To(Equal([]string{"*.html", "demo/"}),
+					"exclude field must parse into a string slice (issue #547)")
+			})
+
+			It("parses passthrough glob from with exclude (issue #547)", func() {
+				Expect(err).NotTo(HaveOccurred())
+				Expect(cfg.Passthrough).To(HaveLen(4))
+				Expect(cfg.Passthrough[3].From).To(Equal("elements/**/*.{js,css}"),
+					"from field must preserve glob pattern with brace expansion as-is (issue #547)")
+				Expect(cfg.Passthrough[3].To).To(Equal("assets/elements"))
+				Expect(cfg.Passthrough[3].Exclude).To(Equal([]string{"*.min.js"}),
+					"exclude on glob-from mapping must parse correctly (issue #547)")
 			})
 
 			It("parses sources map with rest type", func() {

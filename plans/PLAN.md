@@ -881,6 +881,54 @@ passthrough:
 
 `from` paths are resolved relative to the project root. Absolute paths are also supported.
 
+#### Passthrough Filtering (issue #547)
+
+Passthrough mappings support two filtering mechanisms to control which files are copied:
+
+**1. Glob `from`** — The `from` field accepts glob patterns (`**`, `{a,b}`, `[chars]`) via the `doublestar` library. When `from` contains glob metacharacters, only matching files are copied. The output path preserves directory structure relative to the glob root (the longest static prefix before any metacharacter).
+
+```yaml
+passthrough:
+  # Copy only .js and .css files from elements/
+  - from: "elements/**/*.{js,css}"
+    to: "assets/packages/@rhds/elements/elements"
+    # elements/rh-button/rh-button.js → _site/assets/.../rh-button/rh-button.js
+
+  # Copy only .woff2 font files
+  - from: "../shared-assets/fonts/**/*.woff2"
+    to: "assets/fonts"
+```
+
+Glob root extraction: `elements/**/*.js` → root = `elements`. Matched files are resolved relative to this root. When `from` has no glob characters, it is treated as a plain directory path (existing behavior).
+
+**2. `exclude` patterns** — An optional `exclude` array of gitignore-style patterns. Files matching any exclude pattern are skipped during copy. Works with both plain-directory and glob `from` values.
+
+```yaml
+passthrough:
+  # Copy everything except demo HTML and sourcemaps
+  - from: "elements"
+    to: "assets/packages/@rhds/elements/elements"
+    exclude:
+      - "*.html"         # any .html file at any depth
+      - "demo/"          # entire demo/ directory tree
+      - "**/*.map"       # any .map file at any depth (explicit)
+
+  # Glob from + exclude
+  - from: "elements/**/*.{js,css}"
+    to: "assets/packages/@rhds/elements/elements"
+    exclude:
+      - "*.min.js"       # skip minified JS
+```
+
+**Exclude pattern normalization** (gitignore-style): patterns without `/` match filenames at any depth (internally prepended with `**/`); patterns ending with `/` match entire directory trees (internally appended with `**`); patterns containing `/` (not just trailing) match against the relative path as-is. All matching uses `doublestar.Match`.
+
+| Pattern | Normalized | Matches |
+|---------|-----------|---------|
+| `*.html` | `**/*.html` | `foo.html`, `sub/bar.html`, `a/b/c.html` |
+| `demo/` | `demo/**` | `demo/index.html`, `demo/sub/file.js` |
+| `demo/*.html` | `demo/*.html` | `demo/foo.html` (not `demo/sub/bar.html`) |
+| `**/*.map` | `**/*.map` | `foo.map`, `sub/bar.map` |
+
 **Passthrough overlap with managed directories:** If a passthrough `from:` path resolves to any of the configured structure directories (`content`, `layouts`, `assets`, `static`, `data`), it is silently ignored — those directories are already processed by the pipeline. This prevents duplicate processing and output conflicts.
 
 ### Build vs Dev
