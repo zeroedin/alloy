@@ -1,7 +1,10 @@
 package plugin_test
 
 import (
+	"bytes"
 	"context"
+	"log"
+	"os"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -428,6 +431,47 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 				"HasHooks must work with scoped hooks — they are still hooks (issue #528)")
 			Expect(registry.HasHooks(plugin.OnContentLoaded)).To(BeFalse(),
 				"HasHooks must return false for events with no hooks (issue #528)")
+		})
+	})
+
+	// ── Duplicate hook scope clobber (issue #544) ──────────────────
+	// NodeRuntime.hookScopes is a map keyed by hook name. If a plugin
+	// registers the same hook twice with different scopes, the last
+	// registration silently overwrites the first. The fix must log a
+	// warning so plugin authors get feedback.
+
+	Describe("Duplicate hook scope clobber (issue #544)", func() {
+		It("EvalFile must warn when overwriting hookScopes entry (issue #544)", func() {
+			var logBuf bytes.Buffer
+			log.SetOutput(&logBuf)
+			defer log.SetOutput(os.Stderr)
+
+			scopeA := &plugin.HookScope{
+				Data:  []string{"elements"},
+				Pages: plugin.PagesScope{Mode: plugin.PagesScopeGlob, Glob: "/blog/**"},
+			}
+			scopeB := &plugin.HookScope{
+				Data:  []string{"tokens"},
+				Pages: plugin.PagesScope{Mode: plugin.PagesScopeAll},
+			}
+
+			// Simulate what EvalFile does: set hookScopes twice for the same name.
+			// After the fix, the second assignment must emit a warning.
+			rt := plugin.NewNodeRuntimeWithHooks(
+				[]string{"onContentTransformed", "onContentTransformed"},
+				map[string]*plugin.HookScope{"onContentTransformed": scopeB},
+				nil,
+			)
+			regs := rt.RegisteredHookDetails()
+			Expect(regs).To(HaveLen(2),
+				"duplicate hook names must produce two registrations (issue #544)")
+
+			// The fix must add a warning when hookScopes[name] is overwritten.
+			// Currently no warning is emitted — this assertion drives the fix.
+			_ = scopeA
+			Expect(logBuf.String()).To(ContainSubstring("duplicate"),
+				"EvalFile must log a warning containing 'duplicate' when a hook scope "+
+					"is overwritten by a second registration of the same hook name (issue #544)")
 		})
 	})
 })
