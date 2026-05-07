@@ -77,3 +77,107 @@ var _ = Describe("parseScopeJSON (issue #539)", func() {
 			"parseScopeJSON must return an error for malformed JSON input (issue #539)")
 	})
 })
+
+// ── parseScopeMap (issue #545) ─────────────────────────────────
+// parseScopeMap builds a HookScope directly from a Go map without
+// JSON serialization. It must handle the same polymorphic pages
+// field as parseScopeJSON. parseScopeJSON should delegate to
+// parseScopeMap after unmarshaling.
+
+var _ = Describe("parseScopeMap (issue #545)", func() {
+
+	It("pages: false → PagesScopeNone", func() {
+		scope, err := plugin.ParseScopeMap(map[string]interface{}{
+			"pages": false,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeNone),
+			"parseScopeMap must handle bool false the same as parseScopeJSON (issue #545)")
+	})
+
+	It("pages: true → PagesScopeAll", func() {
+		scope, err := plugin.ParseScopeMap(map[string]interface{}{
+			"pages": true,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeAll),
+			"parseScopeMap must handle bool true the same as parseScopeJSON (issue #545)")
+	})
+
+	It("pages: \"**\" → PagesScopeAll", func() {
+		scope, err := plugin.ParseScopeMap(map[string]interface{}{
+			"pages": "**",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeAll),
+			"parseScopeMap must treat \"**\" as PagesScopeAll shorthand (issue #545)")
+	})
+
+	It("pages: \"/blog/**\" → PagesScopeGlob with Glob field", func() {
+		scope, err := plugin.ParseScopeMap(map[string]interface{}{
+			"pages": "/blog/**",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeGlob),
+			"parseScopeMap must produce PagesScopeGlob for non-** glob strings (issue #545)")
+		Expect(scope.Pages.Glob).To(Equal("/blog/**"),
+			"the Glob field must store the original pattern (issue #545)")
+	})
+
+	It("pages: map with taxonomy terms → PagesScopeTaxonomy", func() {
+		scope, err := plugin.ParseScopeMap(map[string]interface{}{
+			"pages": map[string]interface{}{
+				"tags": []interface{}{"component", "design-system"},
+			},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeTaxonomy),
+			"parseScopeMap must handle map[string]interface{} as taxonomy scope (issue #545)")
+		Expect(scope.Pages.Taxonomies).To(HaveKeyWithValue("tags", []string{"component", "design-system"}),
+			"taxonomy terms must be extracted from []interface{} to []string (issue #545)")
+	})
+
+	It("pages: nil (omitted) → PagesScopeAll (backward compat)", func() {
+		scope, err := plugin.ParseScopeMap(map[string]interface{}{
+			"data": []interface{}{"elements"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeAll),
+			"omitted pages key must default to PagesScopeAll — "+
+				"backward compatibility with existing plugins (issue #545)")
+	})
+
+	It("preserves data and pageFields arrays", func() {
+		scope, err := plugin.ParseScopeMap(map[string]interface{}{
+			"data":       []interface{}{"elements", "tokens"},
+			"pages":      true,
+			"pageFields": []interface{}{"frontMatter", "url"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(scope.Data).To(Equal([]string{"elements", "tokens"}),
+			"data array must be converted from []interface{} to []string (issue #545)")
+		Expect(scope.PageFields).To(Equal([]string{"frontMatter", "url"}),
+			"pageFields array must be converted from []interface{} to []string (issue #545)")
+	})
+
+	It("parseScopeMap and parseScopeJSON produce identical results (issue #545)", func() {
+		jsonScope, err := plugin.ParseScopeJSON(`{"data": ["elements"], "pages": {"tags": ["go"]}, "pageFields": ["frontMatter"]}`)
+		Expect(err).NotTo(HaveOccurred())
+
+		mapScope, err := plugin.ParseScopeMap(map[string]interface{}{
+			"data":       []interface{}{"elements"},
+			"pages":      map[string]interface{}{"tags": []interface{}{"go"}},
+			"pageFields": []interface{}{"frontMatter"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(mapScope.Data).To(Equal(jsonScope.Data),
+			"parseScopeMap and parseScopeJSON must produce identical Data (issue #545)")
+		Expect(mapScope.Pages.Mode).To(Equal(jsonScope.Pages.Mode),
+			"parseScopeMap and parseScopeJSON must produce identical Pages.Mode (issue #545)")
+		Expect(mapScope.Pages.Taxonomies).To(Equal(jsonScope.Pages.Taxonomies),
+			"parseScopeMap and parseScopeJSON must produce identical Taxonomies (issue #545)")
+		Expect(mapScope.PageFields).To(Equal(jsonScope.PageFields),
+			"parseScopeMap and parseScopeJSON must produce identical PageFields (issue #545)")
+	})
+})
