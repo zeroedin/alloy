@@ -8,9 +8,52 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/fileutil"
 )
+
+// ContainsGlobChars reports whether path contains glob metacharacters.
+func ContainsGlobChars(path string) bool {
+	return strings.ContainsAny(path, "*?[{")
+}
+
+// GlobRoot returns the longest directory prefix before any glob metacharacter.
+func GlobRoot(pattern string) string {
+	slashed := filepath.ToSlash(pattern)
+	for i, c := range slashed {
+		if c == '*' || c == '?' || c == '[' || c == '{' {
+			dir := slashed[:i]
+			if last := strings.LastIndex(dir, "/"); last >= 0 {
+				return filepath.FromSlash(dir[:last])
+			}
+			return "."
+		}
+	}
+	return filepath.FromSlash(slashed)
+}
+
+func normalizeExcludePattern(pattern string) string {
+	if !strings.Contains(pattern, "/") {
+		return "**/" + pattern
+	}
+	if strings.HasSuffix(pattern, "/") {
+		return pattern + "**"
+	}
+	return pattern
+}
+
+// MatchExclude reports whether relPath matches any of the exclude patterns.
+func MatchExclude(patterns []string, relPath string) bool {
+	slashed := filepath.ToSlash(relPath)
+	for _, p := range patterns {
+		norm := normalizeExcludePattern(p)
+		if matched, _ := doublestar.Match(norm, slashed); matched {
+			return true
+		}
+	}
+	return false
+}
 
 // CopyStatic copies all files from staticDir to outputDir.
 // If staticDir does not exist or is empty, it returns nil (no error).
@@ -26,7 +69,7 @@ func CopyStatic(staticDir, outputDir string) error {
 		return fmt.Errorf("static path %q is not a directory", staticDir)
 	}
 
-	return copyDirConcurrent(staticDir, outputDir)
+	return copyDirConcurrent(staticDir, outputDir, nil)
 }
 
 // CopyPassthrough copies files according to passthrough mappings.
@@ -34,6 +77,13 @@ func CopyStatic(staticDir, outputDir string) error {
 // Returns an error if a From path does not exist.
 func CopyPassthrough(mappings []config.PassthroughMapping, projectRoot, outputDir string) error {
 	for _, m := range mappings {
+		if ContainsGlobChars(m.From) {
+			if err := copyGlob(m, projectRoot, outputDir); err != nil {
+				return err
+			}
+			continue
+		}
+
 		fromPath := m.From
 		if !filepath.IsAbs(fromPath) {
 			fromPath = filepath.Join(projectRoot, fromPath)
@@ -47,7 +97,7 @@ func CopyPassthrough(mappings []config.PassthroughMapping, projectRoot, outputDi
 		toPath := filepath.Join(outputDir, m.To)
 
 		if info.IsDir() {
-			if err := copyDirConcurrent(fromPath, toPath); err != nil {
+			if err := copyDirConcurrent(fromPath, toPath, m.Exclude); err != nil {
 				return err
 			}
 		} else {
@@ -58,6 +108,41 @@ func CopyPassthrough(mappings []config.PassthroughMapping, projectRoot, outputDi
 	}
 	return nil
 }
+
+func copyGlob(m config.PassthroughMapping, projectRoot, outputDir string) error {
+	absPattern := m.From
+	if !filepath.IsAbs(absPattern) {
+		absPattern = filepath.Join(projectRoot, absPattern)
+	}
+
+	root := GlobRoot(absPattern)
+	relPattern, err := filepath.Rel(root, absPattern)
+	if err != nil {
+		return fmt.Errorf("passthrough glob %q: %w", m.From, err)
+	}
+	relPattern = filepath.ToSlash(relPattern)
+
+	matches, err := doublestar.Glob(os.DirFS(root), relPattern, doublestar.WithFilesOnly())
+	if err != nil {
+		return fmt.Errorf("passthrough glob %q: %w", m.From, err)
+	}
+
+	for _, match := range matches {
+		if len(m.Exclude) > 0 && MatchExclude(m.Exclude, match) {
+			continue
+		}
+		srcPath := filepath.Join(root, filepath.FromSlash(match))
+		dstPath := filepath.Join(outputDir, m.To, filepath.FromSlash(match))
+		if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
+			return err
+		}
+		if err := fileutil.CopyFile(srcPath, dstPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 
 // CopyPassthroughWithValidation copies files according to passthrough mappings,
 // silently ignoring any mapping where the "from" path resolves to a managed directory
@@ -99,7 +184,7 @@ type copyJob struct {
 
 // copyDirConcurrent walks the source tree, creates directories synchronously,
 // and copies files concurrently using a bounded worker pool.
-func copyDirConcurrent(src, dst string) error {
+func copyDirConcurrent(src, dst string, excludes []string) error {
 	var jobs []copyJob
 
 	if err := filepath.Walk(src, func(path string, fi os.FileInfo, err error) error {
@@ -109,6 +194,12 @@ func copyDirConcurrent(src, dst string) error {
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
 			return err
+		}
+		if rel != "." && len(excludes) > 0 && MatchExclude(excludes, rel) {
+			if fi.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		target := filepath.Join(dst, rel)
 		if fi.IsDir() {

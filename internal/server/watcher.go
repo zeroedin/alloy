@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/zeroedin/alloy/internal/config"
+	"github.com/zeroedin/alloy/internal/static"
 )
 
 // ChangeType classifies a file change to determine rebuild scope.
@@ -127,15 +129,41 @@ func RebuildScopeForChangeType(ct ChangeType) RebuildScope {
 
 // RecopyPassthroughFile computes the output path for a changed passthrough file.
 func RecopyPassthroughFile(path string, cfg *config.Config) (string, error) {
+	outputDir := cfg.Build.Output
+	if outputDir == "" {
+		outputDir = "_site"
+	}
+
+	slashedPath := filepath.ToSlash(path)
+
 	for _, pt := range cfg.Passthrough {
-		if hasPathPrefix(path, pt.From) {
-			relPath, _ := filepath.Rel(pt.From, path)
-			outputDir := cfg.Build.Output
-			if outputDir == "" {
-				outputDir = "_site"
+		if static.ContainsGlobChars(pt.From) {
+			root := static.GlobRoot(pt.From)
+			if !hasPathPrefix(path, root) {
+				continue
+			}
+			slashedFrom := filepath.ToSlash(pt.From)
+			slashedRoot := filepath.ToSlash(root)
+			relGlob := strings.TrimPrefix(slashedFrom, slashedRoot+"/")
+			matched, _ := doublestar.Match(relGlob, strings.TrimPrefix(slashedPath, slashedRoot+"/"))
+			if !matched {
+				continue
+			}
+			relPath, _ := filepath.Rel(root, path)
+			if len(pt.Exclude) > 0 && static.MatchExclude(pt.Exclude, relPath) {
+				return "", fmt.Errorf("path %q is excluded by passthrough mapping", path)
 			}
 			return filepath.Join(outputDir, pt.To, relPath), nil
 		}
+
+		if !hasPathPrefix(path, pt.From) {
+			continue
+		}
+		relPath, _ := filepath.Rel(pt.From, path)
+		if len(pt.Exclude) > 0 && static.MatchExclude(pt.Exclude, relPath) {
+			return "", fmt.Errorf("path %q is excluded by passthrough mapping", path)
+		}
+		return filepath.Join(outputDir, pt.To, relPath), nil
 	}
 	return "", fmt.Errorf("path %q does not match any passthrough mapping", path)
 }
