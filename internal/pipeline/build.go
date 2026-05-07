@@ -2091,7 +2091,18 @@ func computeUnionScope(scopes []*plugin.HookScope) *plugin.HookScope {
 				union.Pages.Taxonomies = make(map[string][]string)
 			}
 			for k, v := range s.Pages.Taxonomies {
-				union.Pages.Taxonomies[k] = append(union.Pages.Taxonomies[k], v...)
+				existing := union.Pages.Taxonomies[k]
+				seen := make(map[string]bool, len(existing))
+				for _, t := range existing {
+					seen[t] = true
+				}
+				for _, t := range v {
+					if !seen[t] {
+						existing = append(existing, t)
+						seen[t] = true
+					}
+				}
+				union.Pages.Taxonomies[k] = existing
 			}
 		}
 	}
