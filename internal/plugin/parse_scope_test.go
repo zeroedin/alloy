@@ -160,7 +160,7 @@ var _ = Describe("parseScopeMap (issue #545)", func() {
 			"pageFields array must be converted from []interface{} to []string (issue #545)")
 	})
 
-	It("parseScopeJSON delegates to parseScopeMap (issue #545)", func() {
+	It("parseScopeMap and parseScopeJSON produce identical results (issue #545)", func() {
 		jsonScope, err := plugin.ParseScopeJSON(`{"data": ["elements"], "pages": {"tags": ["go"]}, "pageFields": ["frontMatter"]}`)
 		Expect(err).NotTo(HaveOccurred())
 
