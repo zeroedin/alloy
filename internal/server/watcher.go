@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/zeroedin/alloy/internal/config"
+	"github.com/zeroedin/alloy/internal/static"
 )
 
 // ChangeType classifies a file change to determine rebuild scope.
@@ -73,7 +75,11 @@ func WatchDirs(cfg *config.Config) []string {
 		dirs = append(dirs, "components")
 	}
 	for _, pt := range cfg.Passthrough {
-		dirs = append(dirs, pt.From)
+		if static.ContainsGlobChars(pt.From) {
+			dirs = append(dirs, static.GlobRoot(pt.From))
+		} else {
+			dirs = append(dirs, pt.From)
+		}
 	}
 	return dirs
 }
@@ -102,7 +108,11 @@ func ClassifyChange(path string, cfg *config.Config) ChangeType {
 		return ComponentChange
 	default:
 		for _, pt := range cfg.Passthrough {
-			if hasPathPrefix(path, pt.From) {
+			dir := pt.From
+			if static.ContainsGlobChars(dir) {
+				dir = static.GlobRoot(dir)
+			}
+			if hasPathPrefix(path, dir) {
 				return PassthroughChange
 			}
 		}
@@ -127,15 +137,58 @@ func RebuildScopeForChangeType(ct ChangeType) RebuildScope {
 
 // RecopyPassthroughFile computes the output path for a changed passthrough file.
 func RecopyPassthroughFile(path string, cfg *config.Config) (string, error) {
+	outputDir := cfg.Build.Output
+	if outputDir == "" {
+		outputDir = "_site"
+	}
+
+	slashedPath := filepath.ToSlash(path)
+
 	for _, pt := range cfg.Passthrough {
-		if hasPathPrefix(path, pt.From) {
-			relPath, _ := filepath.Rel(pt.From, path)
-			outputDir := cfg.Build.Output
-			if outputDir == "" {
-				outputDir = "_site"
+		if static.ContainsGlobChars(pt.From) {
+			root := static.GlobRoot(pt.From)
+			if !hasPathPrefix(path, root) {
+				continue
+			}
+			slashedFrom := filepath.ToSlash(pt.From)
+			slashedRoot := filepath.ToSlash(root)
+			relGlob := strings.TrimPrefix(slashedFrom, slashedRoot+"/")
+			matched, err := doublestar.Match(relGlob, strings.TrimPrefix(slashedPath, slashedRoot+"/"))
+			if err != nil {
+				return "", fmt.Errorf("passthrough glob %q: %w", pt.From, err)
+			}
+			if !matched {
+				continue
+			}
+			relPath, _ := filepath.Rel(root, path)
+			normalized := static.NormalizeExcludePatterns(pt.Exclude)
+			if len(normalized) > 0 {
+				excluded, err := static.MatchExcludeNormalized(normalized, relPath)
+				if err != nil {
+					return "", err
+				}
+				if excluded {
+					return "", fmt.Errorf("path %q is excluded by passthrough mapping", path)
+				}
 			}
 			return filepath.Join(outputDir, pt.To, relPath), nil
 		}
+
+		if !hasPathPrefix(path, pt.From) {
+			continue
+		}
+		relPath, _ := filepath.Rel(pt.From, path)
+		normalized := static.NormalizeExcludePatterns(pt.Exclude)
+		if len(normalized) > 0 {
+			excluded, err := static.MatchExcludeNormalized(normalized, relPath)
+			if err != nil {
+				return "", err
+			}
+			if excluded {
+				return "", fmt.Errorf("path %q is excluded by passthrough mapping", path)
+			}
+		}
+		return filepath.Join(outputDir, pt.To, relPath), nil
 	}
 	return "", fmt.Errorf("path %q does not match any passthrough mapping", path)
 }
