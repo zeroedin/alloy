@@ -96,6 +96,7 @@ type NodeRuntime struct {
 	hookPriorities map[string]int        // hook name → priority from bridge
 	pluginPaths    []string              // paths loaded via EvalFile, for worker replication
 	workerPool     []*NodeBridge         // additional bridges for parallel hook dispatch
+	evalWarnings   []string              // warnings from bridge eval (e.g., duplicate hooks)
 }
 
 // NewNodeRuntime creates a new Node.js plugin runtime with its own bridge.
@@ -274,6 +275,11 @@ func (r *NodeRuntime) RegisteredHookDetails() []HookRegistration {
 		regs = append(regs, HookRegistration{Name: name, Priority: priority, Scope: scope})
 	}
 	return regs
+}
+
+// EvalWarnings returns warnings collected during EvalFile calls.
+func (r *NodeRuntime) EvalWarnings() []string {
+	return r.evalWarnings
 }
 
 // CallHook routes a hook call through the Node subprocess.

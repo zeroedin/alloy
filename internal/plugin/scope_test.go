@@ -2,6 +2,7 @@ package plugin_test
 
 import (
 	"context"
+	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -428,6 +429,58 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 				"HasHooks must work with scoped hooks — they are still hooks (issue #528)")
 			Expect(registry.HasHooks(plugin.OnContentLoaded)).To(BeFalse(),
 				"HasHooks must return false for events with no hooks (issue #528)")
+		})
+	})
+
+	// ── Duplicate hookScope clobber warning (issue #544) ─────────────
+	// When a plugin registers the same hook name twice with different
+	// scopes, bridge.js must detect the duplicate at registration time
+	// and include a warning in the eval response. Go surfaces it via
+	// EvalWarnings(). Last-wins semantics are preserved.
+
+	Describe("Duplicate hookScope clobber warning (issue #544)", func() {
+		It("EvalFile warns when a plugin registers the same hook twice", func() {
+			rt := plugin.NewNodeRuntime()
+			DeferCleanup(rt.Close)
+
+			err := rt.EvalFile(filepath.Join(testdataDir(), "single-files", "duplicate-hook.js"))
+			Expect(err).NotTo(HaveOccurred(),
+				"EvalFile must succeed even when a plugin registers duplicate hooks — "+
+					"duplicate registration is a warning, not an error (issue #544)")
+
+			warnings := rt.EvalWarnings()
+			Expect(warnings).NotTo(BeEmpty(),
+				"EvalWarnings must contain at least one warning when a plugin "+
+					"registers the same hook name twice with different scopes — "+
+					"currently returns nil because bridge.js does not detect duplicates (issue #544)")
+			Expect(warnings[0]).To(ContainSubstring("duplicate"),
+				"warning message must mention 'duplicate' to identify the problem (issue #544)")
+			Expect(warnings[0]).To(ContainSubstring("onContentTransformed"),
+				"warning message must include the hook name (issue #544)")
+		})
+
+		It("last registration wins for hookScopes on duplicate", func() {
+			rt := plugin.NewNodeRuntime()
+			DeferCleanup(rt.Close)
+
+			err := rt.EvalFile(filepath.Join(testdataDir(), "single-files", "duplicate-hook.js"))
+			Expect(err).NotTo(HaveOccurred())
+
+			details := rt.RegisteredHookDetails()
+			var found *plugin.HookRegistration
+			for i := range details {
+				if details[i].Name == "onContentTransformed" {
+					found = &details[i]
+					break
+				}
+			}
+			Expect(found).NotTo(BeNil(),
+				"onContentTransformed must be registered even with duplicate declarations (issue #544)")
+			Expect(found.Scope).NotTo(BeNil(),
+				"scope must be present for duplicate-registered hook (issue #544)")
+			Expect(found.Scope.Pages.Mode).To(Equal(plugin.PagesScopeAll),
+				"last registration must win — second registration used pages: true "+
+					"(PagesScopeAll), not pages: false (PagesScopeNone) from the first (issue #544)")
 		})
 	})
 })
