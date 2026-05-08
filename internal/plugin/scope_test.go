@@ -483,4 +483,29 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 					"(PagesScopeAll), not pages: false (PagesScopeNone) from the first (issue #544)")
 		})
 	})
+
+	// ── Within-plugin hook dedup (issue #555) ────────────────────────
+	// EvalFile appends hook names to r.hooks unconditionally. If the
+	// bridge response (or a future protocol change) delivers duplicate
+	// hook names, RegisteredHookDetails must deduplicate so each hook
+	// fires once, not N times.
+
+	Describe("Within-plugin hook dedup (issue #555)", func() {
+		It("RegisteredHookDetails deduplicates hook names", func() {
+			rt := plugin.NewNodeRuntime()
+			plugin.AppendHook(rt, "onContentTransformed")
+			plugin.AppendHook(rt, "onContentTransformed")
+
+			details := rt.RegisteredHookDetails()
+			count := 0
+			for _, d := range details {
+				if d.Name == "onContentTransformed" {
+					count++
+				}
+			}
+			Expect(count).To(Equal(1),
+				"RegisteredHookDetails must deduplicate within-plugin hook names — "+
+					"two entries for the same name must produce one registration, not two (issue #555)")
+		})
+	})
 })
