@@ -15,6 +15,7 @@ const filters = {};
 const shortcodes = {};
 const hooks = {};
 const hookScopes = {};
+const warnings = [];
 
 const alloy = {
   filter(name, fn) { filters[name] = fn; },
@@ -27,6 +28,9 @@ const alloy = {
       throw new Error('alloy.hook() requires a function as third argument: alloy.hook(name, options, fn)');
     }
     if (!options || typeof options !== 'object') { options = {}; }
+    if (hooks[name]) {
+      warnings.push(`duplicate hook registration: "${name}" registered multiple times, last registration wins`);
+    }
     hooks[name] = fn;
     hookScopes[name] = {
       data: options.data !== undefined ? options.data : null,
@@ -98,6 +102,7 @@ async function handleMessage(msg) {
             shortcodes: Object.keys(shortcodes),
             hooks: Object.keys(hooks),
             hookScopes: hookScopes,
+            warnings: warnings,
           },
         });
         break;
