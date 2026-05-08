@@ -1,10 +1,8 @@
 package plugin_test
 
 import (
-	"bytes"
 	"context"
-	"log"
-	"os"
+	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -434,44 +432,55 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 		})
 	})
 
-	// ── Duplicate hook scope clobber (issue #544) ──────────────────
-	// NodeRuntime.hookScopes is a map keyed by hook name. If a plugin
-	// registers the same hook twice with different scopes, the last
-	// registration silently overwrites the first. The fix must log a
-	// warning so plugin authors get feedback.
+	// ── Duplicate hookScope clobber warning (issue #544) ─────────────
+	// When a plugin registers the same hook name twice with different
+	// scopes, bridge.js must detect the duplicate at registration time
+	// and include a warning in the eval response. Go surfaces it via
+	// EvalWarnings(). Last-wins semantics are preserved.
 
-	Describe("Duplicate hook scope clobber (issue #544)", func() {
-		It("EvalFile must warn when overwriting hookScopes entry (issue #544)", func() {
-			var logBuf bytes.Buffer
-			log.SetOutput(&logBuf)
-			defer log.SetOutput(os.Stderr)
+	Describe("Duplicate hookScope clobber warning (issue #544)", func() {
+		It("EvalFile warns when a plugin registers the same hook twice", func() {
+			rt := plugin.NewNodeRuntime()
+			DeferCleanup(rt.Close)
 
-			scopeA := &plugin.HookScope{
-				Data:  []string{"elements"},
-				Pages: plugin.PagesScope{Mode: plugin.PagesScopeGlob, Glob: "/blog/**"},
+			err := rt.EvalFile(filepath.Join(testdataDir(), "single-files", "duplicate-hook.js"))
+			Expect(err).NotTo(HaveOccurred(),
+				"EvalFile must succeed even when a plugin registers duplicate hooks — "+
+					"duplicate registration is a warning, not an error (issue #544)")
+
+			warnings := rt.EvalWarnings()
+			Expect(warnings).NotTo(BeEmpty(),
+				"EvalWarnings must contain at least one warning when a plugin "+
+					"registers the same hook name twice with different scopes — "+
+					"currently returns nil because bridge.js does not detect duplicates (issue #544)")
+			Expect(warnings[0]).To(ContainSubstring("duplicate"),
+				"warning message must mention 'duplicate' to identify the problem (issue #544)")
+			Expect(warnings[0]).To(ContainSubstring("onContentTransformed"),
+				"warning message must include the hook name (issue #544)")
+		})
+
+		It("last registration wins for hookScopes on duplicate", func() {
+			rt := plugin.NewNodeRuntime()
+			DeferCleanup(rt.Close)
+
+			err := rt.EvalFile(filepath.Join(testdataDir(), "single-files", "duplicate-hook.js"))
+			Expect(err).NotTo(HaveOccurred())
+
+			details := rt.RegisteredHookDetails()
+			var found *plugin.HookRegistration
+			for i := range details {
+				if details[i].Name == "onContentTransformed" {
+					found = &details[i]
+					break
+				}
 			}
-			scopeB := &plugin.HookScope{
-				Data:  []string{"tokens"},
-				Pages: plugin.PagesScope{Mode: plugin.PagesScopeAll},
-			}
-
-			// Simulate what EvalFile does: set hookScopes twice for the same name.
-			// After the fix, the second assignment must emit a warning.
-			rt := plugin.NewNodeRuntimeWithHooks(
-				[]string{"onContentTransformed", "onContentTransformed"},
-				map[string]*plugin.HookScope{"onContentTransformed": scopeB},
-				nil,
-			)
-			regs := rt.RegisteredHookDetails()
-			Expect(regs).To(HaveLen(2),
-				"duplicate hook names must produce two registrations (issue #544)")
-
-			// The fix must add a warning when hookScopes[name] is overwritten.
-			// Currently no warning is emitted — this assertion drives the fix.
-			_ = scopeA
-			Expect(logBuf.String()).To(ContainSubstring("duplicate"),
-				"EvalFile must log a warning containing 'duplicate' when a hook scope "+
-					"is overwritten by a second registration of the same hook name (issue #544)")
+			Expect(found).NotTo(BeNil(),
+				"onContentTransformed must be registered even with duplicate declarations (issue #544)")
+			Expect(found.Scope).NotTo(BeNil(),
+				"scope must be present for duplicate-registered hook (issue #544)")
+			Expect(found.Scope.Pages.Mode).To(Equal(plugin.PagesScopeAll),
+				"last registration must win — second registration used pages: true "+
+					"(PagesScopeAll), not pages: false (PagesScopeNone) from the first (issue #544)")
 		})
 	})
 })
