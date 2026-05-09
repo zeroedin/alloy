@@ -630,6 +630,7 @@ var _ = Describe("Built-in Filters", func() {
 			"markdownify", "findRE", "replaceRE",
 			"json", "default", "fingerprint", "safeHTML",
 			"flatten",
+			"cachebust", "get_hash", // issue #559: asset fingerprinting
 		}
 
 		It("IsBuiltinFilter returns true for all registered filters", func() {

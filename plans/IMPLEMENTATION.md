@@ -108,6 +108,11 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
 - **Regex**: FindRE, ReplaceRE
 - **Data**: JSONFilter, Default
 - **Assets**: Fingerprint, SafeHTML
+- **Asset fingerprinting (issue #559)**: Two new built-in filters requiring filesystem access. Both resolve paths against source directories in order: `config.Structure.Static` → `config.Structure.Assets` → `config.Structure.Content` (for co-located assets like `content/blog/post-1/hero.svg`). They cannot be plugin-provided because all plugin tiers lack filesystem access. Passthrough mappings are not searched (v1 limitation — consistent with Hugo/Zola precedent). liquidgo only supports positional args, so keyword-arg syntax from Zola (`cachebust: true`) is not available.
+  - **`cachebust`**: Reads file at resolved source path, computes SHA-256 of file contents, returns `/<input>?h=<hex12>` (12-char truncated hex). Prepends `/` like the `url` filter. File not found → returns `/<input>` without hash (graceful degradation, no error). Query-string style, not filename rewriting.
+  - **`get_hash`**: Reads file at resolved source path, computes digest. Positional args: `sha_type` (int: 256/384/512, default 256), `base64` (bool, default true). Returns digest string (base64 or hex). File not found → returns empty string.
+  - **Registration**: These filters need the project root path and `StructureConfig` at registration time. Register as closures in `createEngine(cfg)` via `engine.AddFilter()`, and also populate `builtinFilters` map so `IsBuiltinFilter`/`ApplyFilter` discover them.
+  - **Documented limitation**: Hash reflects pre-processed source files. If `onAssetProcess` transforms the asset after template rendering, the hash is stale.
 - `RegisterBuiltinFilters`: Register all filters on engine via `AddFilter`
 
 **Verify**: `go test ./internal/cache/... ./internal/data/... ./internal/cascade/... ./internal/validation/... ./internal/pagination/...`
