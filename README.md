@@ -18,7 +18,7 @@ Static site generators tend to make you choose between speed and extensibility. 
 - **Multiple output formats** — HTML, JSON, XML, or anything else from a single content file
 - **i18n** — Opt-in multilingual support with per-language content trees and shared layouts
 - **Incremental rebuilds (dev mode)** — Content-hash change detection in `alloy dev` for fast rebuilds on file changes. `alloy build` always does a full clean rebuild for CI/CD reliability.
-- **Web Component SSR** — Opt-in two-phase rendering: pipe each page to an external SSR engine via stdin/stdout for Declarative Shadow DOM
+- **Web Component SSR (experimental)** — Server-render Lit components into Declarative Shadow DOM at build time via hooks
 - **Tiered plugin system** — Built-in Go filters (ns), in-process JS/WASM plugins (us), Node subprocess plugins (ms)
 - **Dev server** — File watching, WebSocket live reload, in-memory rendering, error reporting
 
@@ -244,27 +244,31 @@ Plugins can hook into 13 lifecycle events. Hooks chain in alphabetical filename 
 | `onDevServerStart` | Dev server ready | No |
 | `onFileChanged` | File changed in watch mode | No |
 
-## Web Component SSR (Opt-In)
+## Web Component SSR (Experimental)
 
-Alloy's two-phase rendering separates content rendering from component SSR. Phase 1 produces intermediate HTML with raw component tags. Phase 2 (if configured) extracts the `<body>` inner content and pipes it to an external SSR engine via stdin. The engine handles all component rendering internally — element discovery, deduplication, shadow root rendering, and Declarative Shadow DOM injection — and returns the transformed body content via stdout. Alloy re-inserts the result into the original document skeleton, preserving `<head>`, `<script>` tags, and other document structure.
+Alloy can server-render Lit components into Declarative Shadow DOM at build time using the `onPageRendered` hook. A Node plugin wraps `@lit-labs/ssr` to transform custom elements in your rendered HTML:
 
-Two communication modes:
+```javascript
+// plugins/lit-ssr.js
+export const runtime = "node";
 
-```yaml
-# Exec mode (default) — one process per page
-ssr:
-  command: "golit render --defs ./bundles"
-
-# Stream mode — persistent process, NUL-delimited, amortized startup
-ssr:
-  command: "golit serve --stdio"
-  mode: "stream"
-  timeout: "30s"
+export default function(alloy) {
+  alloy.hook("onPageRendered", async (html) => {
+    const { render } = await import("@lit-labs/ssr");
+    const { collectResult } = await import("@lit-labs/ssr/lib/render-result.js");
+    return collectResult(render(html));
+  });
+}
 ```
 
-Pages without custom elements skip SSR entirely. Failed pages preserve their original HTML — one bad page doesn't abort a 500-page build.
+Use Lit components directly in your templates — the plugin handles the rest:
 
-Compatible with any SSR engine that reads stdin and writes stdout. [golit](https://github.com/zeroedin/golit) is recommended.
+```html
+<my-header site-name="{{ site.title }}"></my-header>
+{{ content }}
+```
+
+This is experimental. The hook-based approach means SSR is just a plugin, not a core dependency — swap in any rendering library that accepts HTML strings.
 
 ## Dev Server
 
