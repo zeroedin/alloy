@@ -10,7 +10,7 @@ Static site generators tend to make you choose between speed and extensibility. 
 
 - **Fast builds** — Go-powered concurrent pipeline targeting < 5s for 1,000 pages
 - **Liquid templates** — Familiar syntax with Go `html/template` as an alternative
-- **Data cascade** — Global data, directory-level `_data.yaml`, and front matter merge predictably (5 levels, last wins)
+- **Data cascade** — Global data, directory-level `_data.yaml`, and front matter merge predictably (6 levels, last wins)
 - **Collections and taxonomies** — Date-based section collections, cross-cutting taxonomy groups, auto-generated term pages
 - **Pagination** — Paginated lists and virtual page generation from data
 - **Content lifecycle** — Draft/future/expired content with sensible defaults
@@ -60,17 +60,46 @@ my-site/
 # alloy.config.yaml
 title: "My Site"
 baseURL: "https://example.com"
+language: "en"                       # Default language code
 
+# Build output settings
 build:
-  output: "_site"
-  clean: true
+  output: "_site"                    # Output directory
+  clean: true                        # Remove output dir before build
 
+# Content file discovery
 content:
-  formats: ["md", "html"]
+  formats: ["md", "html"]           # File extensions treated as content
 
+# Template engine selection
+templates:
+  engine: "liquid"                   # "liquid" (default) or "gotemplate"
+
+# Taxonomy groupings — keys become collection types
 taxonomies:
   tags:
   categories:
+
+# Pagination URL segment — e.g. "p" produces /products/p/2/ instead of /products/page/2/
+pagination:
+  path: "page"
+
+# Override default source directory names
+structure:
+  content: "content"
+  layouts: "layouts"
+  assets: "assets"
+  static: "static"
+  data: "data"
+
+# Copy external directories into output without processing
+passthrough:
+  - from: "node_modules/bootstrap/dist"
+    to: "vendor/bootstrap"
+
+# Plugin runtime settings
+plugins:
+  timeout: 5000                      # Max plugin execution time (ms)
 ```
 
 All directory paths are configurable via the `structure:` block. External directories can be mapped into the output with `passthrough:`.
@@ -123,13 +152,14 @@ Both engines share the same layout lookup order, data context, and built-in filt
 
 ## Data Cascade
 
-Five levels, last wins:
+Six levels, last wins:
 
-1. Global data (`data/*.yaml`)
+1. Global data (`data/*.yaml`, `data/*.json`)
 2. Directory data (`content/blog/_data.yaml` — cascades into subdirs)
 3. Front matter (per-file)
-4. Pre-render computed data (plugin hook)
-5. Post-render computed data (plugin hook)
+4. Pre-taxonomy computed data (`onPagesReady` plugins — before taxonomy collection, before Markdown)
+5. Per-page transform (`onContentTransformed` plugins — after Markdown rendering, per-page)
+6. Batch mutation (`onContentLoaded` plugins — after Markdown rendering, batch-level; wins for `frontMatter` and `html`)
 
 Objects deep-merge. Arrays replace. Shared data is loaded once and referenced by pointer — no deep copies per page.
 
@@ -196,7 +226,7 @@ Cached to `.alloy/fetch-cache/` on disk. Use `--refetch` to bypass the cache.
 
 ## Lifecycle Hooks
 
-Plugins can hook into 12 lifecycle events. Hooks chain in alphabetical filename order — each receives the previous hook's output.
+Plugins can hook into 13 lifecycle events. Hooks chain in alphabetical filename order — each receives the previous hook's output.
 
 | Hook | When | Mutable? |
 |------|------|----------|
@@ -205,6 +235,7 @@ Plugins can hook into 12 lifecycle events. Hooks chain in alphabetical filename 
 | `onAfterValidation` | After validation passes | Cascade only |
 | `onDataFetched` | After external data fetch | Yes |
 | `onDataCascadeReady` | Cascade fully resolved | Yes |
+| `onPagesReady` | After data cascade, before taxonomy collection — inject virtual pages | Yes |
 | `onContentLoaded` | After content discovery | Yes |
 | `onContentTransformed` | After Markdown rendering (per page, receives `{ html, toc, path, url, frontMatter }`) | Yes |
 | `onPageRendered` | After layout rendering (per page, receives HTML string) | Yes |
@@ -264,6 +295,8 @@ alloy version               Print version
 --quiet, -q        Suppress output
 --no-drafts        Hide drafts in dev mode (alloy dev only)
 --refetch          Bypass external data cache
+--profile          Per-stage timing + pprof profiling (alloy build only)
+--profile-dir      Profile output directory (default: .alloy/profiles)
 ```
 
 ## Performance Targets
