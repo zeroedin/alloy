@@ -68,12 +68,15 @@ func (r *QuickJSRuntime) Init() error {
 
 	r.ctx.SetFunc("__registerHook", func(this *qjs.This) (*qjs.Value, error) {
 		args := this.Args()
+		if len(args) < 1 {
+			return this.Context().NewUndefined(), nil
+		}
+		name := args[0].String()
+		if _, exists := r.hooks[name]; exists {
+			r.evalWarnings = append(r.evalWarnings,
+				fmt.Sprintf("duplicate hook registration: %q registered multiple times, last registration wins", name))
+		}
 		if len(args) >= 2 {
-			name := args[0].String()
-			if _, exists := r.hooks[name]; exists {
-				r.evalWarnings = append(r.evalWarnings,
-					fmt.Sprintf("duplicate hook registration: %q registered multiple times, last registration wins", name))
-			}
 			r.hooks[name] = int(args[1].Int32())
 			if len(args) >= 3 {
 				scopeJSON := args[2].String()
@@ -87,12 +90,7 @@ func (r *QuickJSRuntime) Init() error {
 					}
 				}
 			}
-		} else if len(args) >= 1 {
-			name := args[0].String()
-			if _, exists := r.hooks[name]; exists {
-				r.evalWarnings = append(r.evalWarnings,
-					fmt.Sprintf("duplicate hook registration: %q registered multiple times, last registration wins", name))
-			}
+		} else {
 			r.hooks[name] = 50
 		}
 		return this.Context().NewUndefined(), nil
