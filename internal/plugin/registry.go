@@ -63,6 +63,11 @@ type HookDetailer interface {
 	RegisteredHookDetails() []HookRegistration
 }
 
+// EvalWarner is implemented by runtimes that collect warnings during plugin evaluation.
+type EvalWarner interface {
+	EvalWarnings() []string
+}
+
 // initializedPlugin pairs a discovered plugin with its Phase-A-initialized runtime.
 type initializedPlugin struct {
 	info    PluginInfo
@@ -311,7 +316,7 @@ func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, ho
 			}
 		}
 	}
-	if warner, ok := rt.(interface{ EvalWarnings() []string }); ok {
+	if warner, ok := rt.(EvalWarner); ok {
 		for _, w := range warner.EvalWarnings() {
 			hooks.warnings = append(hooks.warnings, fmt.Sprintf("plugin %s: %s", pluginName, w))
 		}

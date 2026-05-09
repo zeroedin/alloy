@@ -28,7 +28,7 @@ const alloy = {
       throw new Error('alloy.hook() requires a function as third argument: alloy.hook(name, options, fn)');
     }
     if (!options || typeof options !== 'object') { options = {}; }
-    if (hooks[name]) {
+    if (Object.hasOwn(hooks, name)) {
       warnings.push(`duplicate hook registration: "${name}" registered multiple times, last registration wins`);
     }
     hooks[name] = fn;

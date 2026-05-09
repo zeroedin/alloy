@@ -101,7 +101,7 @@ func (r *HookRegistry) Timeout() int {
 	return r.timeout
 }
 
-// Warnings returns any warnings produced during hook execution (e.g., timeouts).
+// Warnings returns warnings from hook execution (e.g., timeouts) and plugin loading (e.g., duplicate registrations).
 func (r *HookRegistry) Warnings() []string {
 	return r.warnings
 }
