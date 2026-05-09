@@ -508,4 +508,54 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 					"two entries for the same name must produce one registration, not two (issue #555)")
 		})
 	})
+
+	// ── QuickJS duplicate hookScope clobber warning (issue #558) ─────
+	// Mirrors the Node runtime tests from issue #544 for the Tier 2
+	// QuickJS runtime. PR #560 adds EvalWarnings() and duplicate
+	// detection in __registerHook. These tests validate that path.
+
+	Describe("QuickJS duplicate hookScope clobber warning (issue #558)", func() {
+		It("EvalFile warns when a QuickJS plugin registers the same hook twice", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+
+			err := rt.EvalFile(filepath.Join(testdataDir(), "single-files", "duplicate-hook.js"))
+			Expect(err).NotTo(HaveOccurred(),
+				"EvalFile must succeed even when a plugin registers duplicate hooks — "+
+					"duplicate registration is a warning, not an error (issue #558)")
+
+			warnings := rt.EvalWarnings()
+			Expect(warnings).NotTo(BeEmpty(),
+				"EvalWarnings must contain at least one warning when a QuickJS plugin "+
+					"registers the same hook name twice with different scopes (issue #558)")
+			Expect(warnings[0]).To(ContainSubstring("duplicate"),
+				"warning message must mention 'duplicate' to identify the problem (issue #558)")
+			Expect(warnings[0]).To(ContainSubstring("onContentTransformed"),
+				"warning message must include the hook name (issue #558)")
+		})
+
+		It("last registration wins for hookScopes on duplicate in QuickJS", func() {
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+
+			err := rt.EvalFile(filepath.Join(testdataDir(), "single-files", "duplicate-hook.js"))
+			Expect(err).NotTo(HaveOccurred())
+
+			details := rt.RegisteredHookDetails()
+			var found *plugin.HookRegistration
+			for i := range details {
+				if details[i].Name == "onContentTransformed" {
+					found = &details[i]
+					break
+				}
+			}
+			Expect(found).NotTo(BeNil(),
+				"onContentTransformed must be registered even with duplicate declarations (issue #558)")
+			Expect(found.Scope).NotTo(BeNil(),
+				"scope must be present for duplicate-registered hook (issue #558)")
+			Expect(found.Scope.Pages.Mode).To(Equal(plugin.PagesScopeAll),
+				"last registration must win — second registration used pages: true "+
+					"(PagesScopeAll), not pages: false (PagesScopeNone) from the first (issue #558)")
+		})
+	})
 })
