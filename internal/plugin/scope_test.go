@@ -517,6 +517,7 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 	Describe("QuickJS duplicate hookScope clobber warning (issue #558)", func() {
 		It("EvalFile warns when a QuickJS plugin registers the same hook twice", func() {
 			rt := plugin.NewQuickJSRuntime()
+			DeferCleanup(rt.Close)
 			Expect(rt.Init()).To(Succeed())
 
 			err := rt.EvalFile(filepath.Join(testdataDir(), "single-files", "duplicate-hook.js"))
@@ -536,6 +537,7 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 
 		It("last registration wins for hookScopes on duplicate in QuickJS", func() {
 			rt := plugin.NewQuickJSRuntime()
+			DeferCleanup(rt.Close)
 			Expect(rt.Init()).To(Succeed())
 
 			err := rt.EvalFile(filepath.Join(testdataDir(), "single-files", "duplicate-hook.js"))
