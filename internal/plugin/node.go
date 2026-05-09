@@ -196,6 +196,13 @@ func (r *NodeRuntime) EvalFile(path string) error {
 				r.hookScopes[name] = scope
 			}
 		}
+		if ws, ok := resultMap["warnings"].([]interface{}); ok {
+			for _, w := range ws {
+				if s, ok := w.(string); ok {
+					r.evalWarnings = append(r.evalWarnings, s)
+				}
+			}
+		}
 	}
 
 	return nil
