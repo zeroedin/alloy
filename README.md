@@ -228,21 +228,21 @@ Cached to `.alloy/fetch-cache/` on disk. Use `--refetch` to bypass the cache.
 
 Plugins can hook into 13 lifecycle events. Hooks chain in alphabetical filename order — each receives the previous hook's output.
 
-| Hook | When | Mutable? |
+| Hook | When | Receives |
 |------|------|----------|
-| `onConfig` | After config load | Yes |
-| `onBeforeValidation` | Before output path conflict check | Yes (add paths) |
-| `onAfterValidation` | After validation passes | Cascade only |
-| `onDataFetched` | After external data fetch | Yes |
-| `onDataCascadeReady` | Cascade fully resolved | Yes |
-| `onPagesReady` | After data cascade, before taxonomy collection — inject virtual pages | Yes |
-| `onContentLoaded` | After content discovery | Yes |
-| `onContentTransformed` | After Markdown rendering (per page, receives `{ html, toc, path, url, frontMatter }`) | Yes |
-| `onPageRendered` | After layout rendering (per page, receives HTML string) | Yes |
-| `onAssetProcess` | Per-asset processing (receives `{ path, content }`) | Yes |
-| `onBuildComplete` | Build finished | No |
-| `onDevServerStart` | Dev server ready | No |
-| `onFileChanged` | File changed in watch mode | No |
+| `onConfig` | After config load | `{ title, baseURL, build, ... }` |
+| `onBeforeValidation` | Before output path conflict check | `{ paths: ["/about/", ...] }` |
+| `onAfterValidation` | After validation passes | `{ paths, cascade }` (cascade mutable) |
+| `onDataFetched` | After external data fetch | `{ <sourceName>: <data>, ... }` |
+| `onDataCascadeReady` | Cascade fully resolved | `[{ path, data }]` per page |
+| `onPagesReady` | Before taxonomy collection | `{ pages, siteData }` — inject virtual pages |
+| `onContentLoaded` | After content rendering (batch) | `[{ path, url, frontMatter, content, html }]` |
+| `onContentTransformed` | After Markdown rendering (per page) | `{ html, toc, path, url, frontMatter }` |
+| `onPageRendered` | After layout rendering (per page) | HTML string |
+| `onAssetProcess` | Per-asset processing | `{ path, content }` |
+| `onBuildComplete` | Build finished | notification |
+| `onDevServerStart` | Dev server ready | notification |
+| `onFileChanged` | File changed in watch mode | notification |
 
 ## Web Component SSR (Experimental)
 
