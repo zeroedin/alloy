@@ -357,7 +357,7 @@ go test ./test/integration/...
 go test ./... -v
 ```
 
-Tests use [Ginkgo](https://onsi.github.io/ginkgo/) + [Gomega](https://onsi.github.io/gomega/). Tests are spec-derived and immutable — they define expected behavior. If a test fails, the implementation must change, not the test.
+Tests use [Ginkgo](https://onsi.github.io/ginkgo/) + [Gomega](https://onsi.github.io/gomega/). Tests are required for all new features.
 
 ### Project Layout
 
