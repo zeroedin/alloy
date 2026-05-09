@@ -102,7 +102,7 @@ async function handleMessage(msg) {
             shortcodes: Object.keys(shortcodes),
             hooks: Object.keys(hooks),
             hookScopes: hookScopes,
-            warnings: warnings,
+            warnings: warnings.splice(0),
           },
         });
         break;
