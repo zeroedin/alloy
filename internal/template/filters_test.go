@@ -1,6 +1,10 @@
 package template_test
 
 import (
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base64"
+	"encoding/hex"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -794,6 +798,79 @@ var _ = Describe("Built-in Filters", func() {
 			Expect(foundSlots).To(HaveLen(2),
 				"must find 2 slots for rh-accordion through nested where — "+
 					"this simulates the CEM use case from issue #477")
+		})
+	})
+
+	// ── Asset fingerprinting filters (issue #559) ──────────────────
+	// cachebust and get_hash resolve file paths against source directories
+	// (static → assets → content), read file contents, and compute hashes.
+	// Fixture: testdata/static/css/main.css contains "body{color:red}".
+	// Implementation must register these filters via RegisterAssetFilters
+	// (or equivalent) configured to resolve against testdata/ in tests.
+
+	Context("cachebust filter (issue #559)", func() {
+		// Known fixture content — must match testdata/static/css/main.css exactly.
+		knownContent := []byte("body{color:red}")
+
+		It("returns /<path>?h=<hex12> for an existing file", func() {
+			h := sha256.Sum256(knownContent)
+			expectedHex12 := hex.EncodeToString(h[:])[:12]
+
+			result := tmpl.ApplyFilter("cachebust", "css/main.css")
+			Expect(result).NotTo(BeNil(),
+				"cachebust must be registered as a built-in filter — "+
+					"ApplyFilter returns nil when the filter is missing from builtinFilters (issue #559)")
+			Expect(result).To(Equal("/css/main.css?h="+expectedHex12),
+				"cachebust must return /<path>?h=<hex12> where hex12 is the first 12 hex "+
+					"chars of the SHA-256 of the file at testdata/static/css/main.css (issue #559)")
+		})
+
+		It("returns /<path> without hash when file is not found", func() {
+			result := tmpl.ApplyFilter("cachebust", "nonexistent/file.css")
+			Expect(result).NotTo(BeNil(),
+				"cachebust must be registered — even for missing files it returns "+
+					"a value (graceful degradation, not nil) (issue #559)")
+			Expect(result).To(Equal("/nonexistent/file.css"),
+				"cachebust must prepend / and return path without hash query when the "+
+					"file cannot be found in any source directory (issue #559)")
+		})
+	})
+
+	Context("get_hash filter (issue #559)", func() {
+		knownContent := []byte("body{color:red}")
+
+		It("returns SHA-256 base64 digest by default", func() {
+			h := sha256.Sum256(knownContent)
+			expectedB64 := base64.StdEncoding.EncodeToString(h[:])
+
+			result := tmpl.ApplyFilter("get_hash", "css/main.css")
+			Expect(result).NotTo(BeNil(),
+				"get_hash must be registered as a built-in filter (issue #559)")
+			Expect(result).To(Equal(expectedB64),
+				"get_hash with no args must return SHA-256 base64 digest of file "+
+					"contents at testdata/static/css/main.css (issue #559)")
+		})
+
+		It("returns SHA-384 hex digest with positional args 384, false", func() {
+			h := sha512.Sum384(knownContent)
+			expectedHex := hex.EncodeToString(h[:])
+
+			result := tmpl.ApplyFilter("get_hash", "css/main.css", 384, false)
+			Expect(result).NotTo(BeNil(),
+				"get_hash must be registered as a built-in filter (issue #559)")
+			Expect(result).To(Equal(expectedHex),
+				"get_hash with sha_type=384 and base64=false must return SHA-384 hex "+
+					"digest of file contents at testdata/static/css/main.css (issue #559)")
+		})
+
+		It("returns empty string when file is not found", func() {
+			result := tmpl.ApplyFilter("get_hash", "nonexistent/file.css")
+			Expect(result).NotTo(BeNil(),
+				"get_hash must be registered — even for missing files it returns "+
+					"a value (empty string, not nil) (issue #559)")
+			Expect(result).To(Equal(""),
+				"get_hash must return empty string when the file cannot be found "+
+					"in any source directory (issue #559)")
 		})
 	})
 
