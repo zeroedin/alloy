@@ -411,6 +411,62 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(result.PagesSkipped).To(Equal(1),
 				"pages using a different layout (blog) must be skipped")
 		})
+
+		It("writes rendered pages to the output directory (issue #581)", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			outputDir := filepath.Join(tmpDir, "_site")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("{{ content }}"), 0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home\n---\nOriginal content"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Disk Write Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+				},
+			}
+
+			initialResult, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(initialResult.PageCount).To(BeNumerically(">=", 1))
+
+			initialHTML, err := os.ReadFile(filepath.Join(outputDir, "index.html"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(initialHTML)).To(ContainSubstring("Original content"))
+
+			previousCache := cache.New()
+			previousCache.SetHash("index.md", cache.HashContent(
+				[]byte("---\ntitle: Home\n---\nOriginal content")))
+
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home\n---\nUpdated content"), 0644)).To(Succeed())
+
+			result, err := pipeline.BuildIncremental(cfg, nil, previousCache,
+				[]string{"content/index.md"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.PageCount).To(Equal(1),
+				"incremental build must render the changed page")
+
+			updatedHTML, err := os.ReadFile(filepath.Join(outputDir, "index.html"))
+			Expect(err).NotTo(HaveOccurred(),
+				"BuildIncremental must write rendered pages to the output directory — "+
+					"currently renders to RenderedContent in memory but never calls "+
+					"output.WriteFile, so _site/ remains stale (issue #581)")
+			Expect(string(updatedHTML)).To(ContainSubstring("Updated content"),
+				"output file must contain the updated content after incremental rebuild — "+
+					"if this shows 'Original content', BuildIncremental rendered correctly "+
+					"but did not write the result to disk (issue #581)")
+		})
 	})
 
 	// ── Incremental rebuild with SSR (issue #231) ──────────────────
