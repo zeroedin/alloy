@@ -1307,7 +1307,7 @@ type PageContext struct {
 
 Deep merging happens **lazily** — only when a nested key is accessed at multiple cascade levels (e.g., global has `author.name`, front matter has `author.email`). Pages that never access conflicting nested keys pay zero merge cost.
 
-**Plugin mutation model**: Hooks that receive cascade data (e.g., `onDataCascadeReady`) get the shared pointer, not a copy. Mutations apply globally — all pages see the changes. This is intentional: the hook exists to enrich the cascade before rendering. Plugin trust is the user's responsibility (same model as npm packages, 11ty plugins, Hugo modules). If a plugin corrupts the cascade, that's a bad plugin, not a framework bug.
+**Plugin mutation model**: Go-native hooks that receive cascade data get the shared pointer, not a copy — mutations apply globally and all pages see the changes. However, plugin hooks (QuickJS, Node) cross the JSON serialization boundary: the payload is serialized to JSON on dispatch and the return value must be deserialized and applied back. For these hooks, JS-side mutations to the payload are lost unless the return value is captured and written back to page state (same pattern as `onContentLoaded`). Plugin trust is the user's responsibility (same model as npm packages, 11ty plugins, Hugo modules). If a plugin corrupts the cascade, that's a bad plugin, not a framework bug.
 
 **Memory**: 3000 pages with 50KB shared data ≈ 50KB (shared) + 1.5MB (front matter), not 150MB (deep copies).
 
