@@ -127,6 +127,8 @@ func ClassifyChange(path string, cfg *config.Config) ChangeType {
 					return LayoutChange
 				case "data":
 					return DataChange
+				default:
+					continue
 				}
 			}
 		}

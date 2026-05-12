@@ -389,8 +389,16 @@ func Validate(cfg *Config) error {
 		}
 
 		if !strings.ContainsAny(from, "*?[{") {
-			if _, err := os.Stat(from); err != nil {
+			statPath := from
+			if cfg.ProjectRoot != "" {
+				statPath = filepath.Join(cfg.ProjectRoot, from)
+			}
+			info, err := os.Stat(statPath)
+			if err != nil {
 				return fmt.Errorf("validation error: watch from: %q directory does not exist", from)
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("validation error: watch from: %q is not a directory", from)
 			}
 		}
 	}
