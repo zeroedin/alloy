@@ -55,7 +55,7 @@ const (
 // structureDir returns a config directory or falls back to the default name.
 func structureDir(configured, fallback string) string {
 	if configured != "" {
-		return configured
+		return strings.TrimRight(configured, "/\\")
 	}
 	return fallback
 }

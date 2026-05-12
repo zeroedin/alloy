@@ -382,23 +382,40 @@ func Validate(cfg *Config) error {
 		}
 		seen[from] = true
 
-		if baseDirs[from] {
-			return fmt.Errorf("validation error: watch from: %q overlaps a base structure directory", from)
+		for baseDir := range baseDirs {
+			if from == baseDir || strings.HasPrefix(from, baseDir+"/") || strings.HasPrefix(from, baseDir+"\\") {
+				return fmt.Errorf("validation error: watch from: %q overlaps base structure directory %q", from, baseDir)
+			}
 		}
 
-		if !strings.ContainsAny(from, "*?[{") {
-			statPath := from
+		isGlob := strings.ContainsAny(from, "*?[{")
+		statTarget := from
+		if isGlob {
+			if idx := strings.IndexAny(from, "*?[{"); idx > 0 {
+				statTarget = filepath.Dir(from[:idx])
+			} else {
+				statTarget = ""
+			}
+		}
+		if statTarget != "" && statTarget != "." {
+			statPath := statTarget
 			if cfg.ProjectRoot != "" {
-				statPath = filepath.Join(cfg.ProjectRoot, from)
+				statPath = filepath.Join(cfg.ProjectRoot, statTarget)
 			}
 			info, err := os.Stat(statPath)
 			if err != nil {
 				if os.IsNotExist(err) {
+					if isGlob {
+						return fmt.Errorf("validation error: watch from: %q glob root %q does not exist", from, statTarget)
+					}
 					return fmt.Errorf("validation error: watch from: %q directory does not exist", from)
 				}
 				return fmt.Errorf("validation error: watch from: %q: %w", from, err)
 			}
 			if !info.IsDir() {
+				if isGlob {
+					return fmt.Errorf("validation error: watch from: %q glob root %q is not a directory", from, statTarget)
+				}
 				return fmt.Errorf("validation error: watch from: %q is not a directory", from)
 			}
 		}
