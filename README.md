@@ -159,7 +159,7 @@ Six levels, last wins:
 3. Front matter (per-file)
 4. Pre-taxonomy computed data (`onPagesReady` plugins — before taxonomy collection, before Markdown)
 5. Per-page transform (`onContentTransformed` plugins — after Markdown rendering, per-page)
-6. Batch mutation (`onContentLoaded` plugins — after Markdown rendering, batch-level; wins for `frontMatter` and `html`)
+6. Batch mutation (`onContentLoaded` plugins — after Markdown rendering, batch-level; wins for `frontMatter`)
 
 Objects deep-merge. Arrays replace. Shared data is loaded once and referenced by pointer — no deep copies per page.
 
@@ -357,7 +357,7 @@ go test ./test/integration/...
 go test ./... -v
 ```
 
-Tests use [Ginkgo](https://onsi.github.io/ginkgo/) + [Gomega](https://onsi.github.io/gomega/). Tests are required for all new features.
+Tests use [Ginkgo](https://onsi.github.io/ginkgo/) + [Gomega](https://onsi.github.io/gomega/). Tests are spec-derived and immutable — they define expected behavior. If a test fails, the implementation must change, not the test.
 
 ### Project Layout
 
