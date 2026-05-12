@@ -21,7 +21,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-replace github.com/Notifuse/liquidgo => github.com/zeroedin/liquidgo v0.0.0-20260505181404-03c275270b95
+replace github.com/Notifuse/liquidgo => github.com/zeroedin/liquidgo v0.0.0-20260512043442-13cfbb81b595
 
 require (
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect

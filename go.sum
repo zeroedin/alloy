@@ -95,8 +95,8 @@ github.com/twitchyliquid64/golang-asm v0.15.1 h1:SU5vSMR7hnwNxj24w34ZyCi/FmDZTkS
 github.com/twitchyliquid64/golang-asm v0.15.1/go.mod h1:a1lVb/DtPvCB8fslRZhAngC2+aY1QWCk3Cedj/Gdt08=
 github.com/yuin/goldmark v1.8.2 h1:kEGpgqJXdgbkhcOgBxkC0X0PmoPG1ZyoZ117rDVp4zE=
 github.com/yuin/goldmark v1.8.2/go.mod h1:ip/1k0VRfGynBgxOz0yCqHrbZXhcjxyuS66Brc7iBKg=
-github.com/zeroedin/liquidgo v0.0.0-20260505181404-03c275270b95 h1:PiakGmO9d/PMY/zyXqoRwidWf/h4/hhY4Be79LpajGs=
-github.com/zeroedin/liquidgo v0.0.0-20260505181404-03c275270b95/go.mod h1:iK21HTEIAybTQbbDuLUeHPMhlOfeZTxKDskDbxIMt0o=
+github.com/zeroedin/liquidgo v0.0.0-20260512043442-13cfbb81b595 h1:tAWXYMLCdhtxbJuP79Dxf0aHUtU0KC7BQvXKccoyke4=
+github.com/zeroedin/liquidgo v0.0.0-20260512043442-13cfbb81b595/go.mod h1:iK21HTEIAybTQbbDuLUeHPMhlOfeZTxKDskDbxIMt0o=
 go.yaml.in/yaml/v3 v3.0.4 h1:tfq32ie2Jv2UxXFdLJdh3jXuOzWiL1fo0bu/FbuKpbc=
 go.yaml.in/yaml/v3 v3.0.4/go.mod h1:DhzuOOF2ATzADvBadXxruRBLzYTpT36CKvDb3+aBEFg=
 golang.org/x/arch v0.0.0-20210923205945-b76863e36670 h1:18EFjUmQOcUvxNYSkA6jO9VAiXCnxFY6NyDX0bHDmkU=

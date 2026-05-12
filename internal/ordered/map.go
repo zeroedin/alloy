@@ -256,7 +256,24 @@ func decodeArray(data []byte) ([]interface{}, error) {
 // restoring Each()/LiquidMethodMissing() after JSON round-trip through
 // the plugin serialization boundary.
 func RewrapValue(v interface{}) interface{} {
-	return v
+	switch val := v.(type) {
+	case *Map:
+		return val
+	case map[string]interface{}:
+		m := New()
+		for k, v := range val {
+			m.Set(k, RewrapValue(v))
+		}
+		return m
+	case []interface{}:
+		result := make([]interface{}, len(val))
+		for i, item := range val {
+			result[i] = RewrapValue(item)
+		}
+		return result
+	default:
+		return v
+	}
 }
 
 // UnmarshalJSONValue parses a top-level JSON value, using *Map for objects.
