@@ -1155,7 +1155,7 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 	// ── Hook priority through EvalFile → registerRuntime (issue #478) ────
 	// Unit tests exercise RegisterWithPriority directly on HookRegistry.
 	// This integration test verifies the full JS→Go bridge path:
-	// alloy.hook({ priority }) → __registerHook → RegisteredHookDetails →
+	// alloy.hook(name, { priority }, fn) → __registerHook → RegisteredHookDetails →
 	// registerRuntime → RegisterWithOptions → execution order.
 	// (QuickJS always passes scope JSON, so registerRuntime takes the
 	// RegisterWithOptions path, not RegisterWithPriority.)
@@ -1220,8 +1220,8 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).To(Equal("<p>test</p>[default][explicit]"),
 				"omitted priority must default to 50 and run before explicit priority 100 — "+
-					"verifies Math.floor default in alloy.hook() JS bridge survives "+
-					"the full registration path (issue #478)")
+					"verifies the ternary default branch in alloy.hook() JS bridge "+
+					"survives the full registration path (issue #478)")
 		})
 
 		It("priority 0 is a valid priority through full JS→Go bridge path", func() {

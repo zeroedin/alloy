@@ -1901,7 +1901,7 @@ alloy.hook("onPageRendered", { priority: 100 }, ssrFn);
 
 The `priority` option is available on all lifecycle hooks. Omitting it defaults to 50. The `alloy.on()` alias follows the same signature: `alloy.on(event, options, fn)`.
 
-**Integration test coverage (issue #478)**: The full JS→Go bridge path for hook priority is covered by integration tests in `wasm_test.go`. These exercise `DiscoverPlugins` → `LoadPlugins` → `registerRuntime` → `RegisterWithOptions` (QuickJS always passes scope JSON, so the scoped path is used). Edge cases covered: explicit priority ordering, default priority (omitted → 50), priority 0 as valid, same-priority preserving registration order, negative priority, and non-integer flooring (`priority: 10.9` → 10).
+**Integration test coverage (issue #478)**: The full JS→Go bridge path for hook priority is covered by integration tests in `internal/plugin/wasm_test.go`. These exercise `DiscoverPlugins` → `LoadPlugins` → `registerRuntime` → `RegisterWithOptions` (QuickJS always passes scope JSON, so the scoped path is used). Edge cases covered: explicit priority ordering, default priority (omitted → 50), priority 0 as valid, same-priority preserving registration order, negative priority, and non-integer flooring (`priority: 10.9` → 10).
 
 #### Hook scoping options
 
