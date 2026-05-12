@@ -7,3 +7,8 @@ var ParseScopeMap = parseScopeMap
 func AppendHook(r *NodeRuntime, name string) {
 	r.hooks = append(r.hooks, name)
 }
+
+// RegisterRuntime exposes Registry.registerRuntime for testing EvalWarner forwarding.
+func RegisterRuntime(reg *Registry, rt PluginFilterRuntime, name string, hooks *HookRegistry) {
+	reg.registerRuntime(rt, name, hooks)
+}

@@ -559,5 +559,51 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 				"last registration must win — second registration used pages: true "+
 					"(PagesScopeAll), not pages: false (PagesScopeNone) from the first (issue #558)")
 		})
+
+		It("registerRuntime forwards QuickJS EvalWarnings to HookRegistry.Warnings via EvalWarner", func() {
+			rt := plugin.NewQuickJSRuntime()
+			DeferCleanup(rt.Close)
+			Expect(rt.Init()).To(Succeed())
+
+			err := rt.EvalFile(filepath.Join(testdataDir(), "single-files", "duplicate-hook.js"))
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(rt.EvalWarnings()).NotTo(BeEmpty(),
+				"precondition: QuickJS runtime must have eval warnings from duplicate hooks")
+
+			hooks := plugin.NewHookRegistry()
+			registry := plugin.NewRegistry(testdataDir())
+			plugin.RegisterRuntime(registry, rt, "test-plugin", hooks)
+
+			Expect(hooks.Warnings()).NotTo(BeEmpty(),
+				"registerRuntime must forward QuickJS EvalWarnings to HookRegistry.Warnings — "+
+					"the EvalWarner interface check in registerRuntime must detect that "+
+					"QuickJSRuntime implements EvalWarnings() and copy the warnings (issue #558)")
+			Expect(hooks.Warnings()[0]).To(ContainSubstring("duplicate"),
+				"forwarded warning must preserve the original duplicate warning content (issue #558)")
+			Expect(hooks.Warnings()[0]).To(ContainSubstring("test-plugin"),
+				"forwarded warning must include the plugin name for debugging (issue #558)")
+		})
+
+		It("duplicate detection fires on __registerHook 1-arg fallback path", func() {
+			rt := plugin.NewQuickJSRuntime()
+			DeferCleanup(rt.Close)
+			Expect(rt.Init()).To(Succeed())
+
+			err := rt.EvalFile(filepath.Join(testdataDir(), "single-files", "duplicate-hook-no-scope.js"))
+			Expect(err).NotTo(HaveOccurred(),
+				"EvalFile must succeed for 1-arg __registerHook calls — "+
+					"duplicate registration is a warning, not an error (issue #558)")
+
+			warnings := rt.EvalWarnings()
+			Expect(warnings).NotTo(BeEmpty(),
+				"EvalWarnings must detect duplicates even when __registerHook is called "+
+					"with a single argument (no priority, no scope) — the 1-arg fallback path "+
+					"must trigger the same duplicate detection as the 3-arg path (issue #558)")
+			Expect(warnings[0]).To(ContainSubstring("duplicate"),
+				"warning must mention 'duplicate' on the 1-arg path (issue #558)")
+			Expect(warnings[0]).To(ContainSubstring("onContentTransformed"),
+				"warning must include the hook name on the 1-arg path (issue #558)")
+		})
 	})
 })
