@@ -353,7 +353,7 @@ func Validate(cfg *Config) error {
 
 	structDir := func(configured, fallback string) string {
 		if configured != "" {
-			return configured
+			return strings.TrimRight(configured, "/\\")
 		}
 		return fallback
 	}
@@ -366,9 +366,7 @@ func Validate(cfg *Config) error {
 	}
 	seen := make(map[string]bool)
 	for i := range cfg.Watch {
-		cfg.Watch[i].From = strings.TrimRight(cfg.Watch[i].From, "/\\")
-
-		from := cfg.Watch[i].From
+		from := strings.TrimRight(cfg.Watch[i].From, "/\\")
 		if from == "" {
 			return fmt.Errorf("validation error: watch[%d].from must not be empty", i)
 		}
@@ -395,7 +393,10 @@ func Validate(cfg *Config) error {
 			}
 			info, err := os.Stat(statPath)
 			if err != nil {
-				return fmt.Errorf("validation error: watch from: %q directory does not exist", from)
+				if os.IsNotExist(err) {
+					return fmt.Errorf("validation error: watch from: %q directory does not exist", from)
+				}
+				return fmt.Errorf("validation error: watch from: %q: %w", from, err)
 			}
 			if !info.IsDir() {
 				return fmt.Errorf("validation error: watch from: %q is not a directory", from)
