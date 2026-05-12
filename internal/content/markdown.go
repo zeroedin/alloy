@@ -283,10 +283,10 @@ func escapeTemplateTags(src []byte) []byte {
 		s := string(match)
 		// Insert zero-width space between {{ and }} / {% and %}
 		// so the template engine won't recognize them.
-		s = strings.ReplaceAll(s, "{{", "{​{")
-		s = strings.ReplaceAll(s, "}}", "}​}")
-		s = strings.ReplaceAll(s, "{%", "{​%")
-		s = strings.ReplaceAll(s, "%}", "%​}")
+		s = strings.ReplaceAll(s, "{{", "{\u200B{")
+		s = strings.ReplaceAll(s, "}}", "}\u200B}")
+		s = strings.ReplaceAll(s, "{%", "{\u200B%")
+		s = strings.ReplaceAll(s, "%}", "%\u200B}")
 		return []byte(s)
 	})
 	return result
