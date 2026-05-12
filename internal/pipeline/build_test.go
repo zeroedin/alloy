@@ -1985,10 +1985,11 @@ var _ = Describe("Build Pipeline", func() {
 			html := result.RenderedContent["index.md"]
 			Expect(html).To(ContainSubstring("cascade-injected"),
 				"onDataCascadeReady return value must be applied back to page cascade — "+
-					"currently the return is discarded at build.go:541. "+
-					"The payload shape is { path, data } per HookCascadePayload "+
-					"(payload.go:39-42), and data mutations must be written back "+
-					"to page.FrontMatter like onContentLoaded does (issue #520)")
+					"currently the return is discarded in the onDataCascadeReady "+
+					"RunWithTimeout call. The payload shape is { path, data } per "+
+					"HookCascadePayload (payload.go), and data mutations must be "+
+					"written back to page.FrontMatter like onContentLoaded does "+
+					"(issue #520)")
 		})
 
 		It("onDataCascadeReady returning extra entries produces a validation error", func() {
