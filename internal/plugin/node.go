@@ -268,7 +268,12 @@ func (r *NodeRuntime) RegisteredHooks() []string {
 // RegisteredHookDetails returns hook registrations with priority and scope.
 func (r *NodeRuntime) RegisteredHookDetails() []HookRegistration {
 	regs := make([]HookRegistration, 0, len(r.hooks))
+	seen := make(map[string]bool, len(r.hooks))
 	for _, name := range r.hooks {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
 		priority := 50
 		if r.hookPriorities != nil {
 			if p, ok := r.hookPriorities[name]; ok {
