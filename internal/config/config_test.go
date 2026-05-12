@@ -717,6 +717,54 @@ var _ = Describe("Config", func() {
 				Expect(err.Error()).To(ContainSubstring("watch[1]"),
 					"validation error must include array index (issue #530)")
 			})
+
+			It("rejects duplicate watch entries with same from", func() {
+				cfg := &config.Config{
+					Title:   "Test",
+					BaseURL: "https://example.com",
+					Watch: []config.WatchMapping{
+						{From: "elements", Type: "content"},
+						{From: "elements", Type: "layout"},
+					},
+				}
+				err := config.Validate(cfg)
+				Expect(err).To(HaveOccurred(),
+					"duplicate watch from: paths create ambiguous classification — "+
+						"which type wins? Must reject at validation time (issue #530)")
+				Expect(err.Error()).To(ContainSubstring("elements"),
+					"error must name the duplicate path (issue #530)")
+			})
+
+			It("rejects watch from: that overlaps a base structure directory", func() {
+				cfg := &config.Config{
+					Title:   "Test",
+					BaseURL: "https://example.com",
+					Watch: []config.WatchMapping{
+						{From: "content", Type: "layout"},
+					},
+				}
+				err := config.Validate(cfg)
+				Expect(err).To(HaveOccurred(),
+					"watch from: matching a base structure dir (content, layouts, data, "+
+						"assets, static) creates conflicting classification — the base dir "+
+						"already has a fixed ChangeType (issue #530)")
+				Expect(err.Error()).To(ContainSubstring("content"),
+					"error must name the conflicting directory (issue #530)")
+			})
+
+			It("normalizes trailing slash in watch from: path", func() {
+				cfg := &config.Config{
+					Title:   "Test",
+					BaseURL: "https://example.com",
+					Watch: []config.WatchMapping{
+						{From: "elements/", Type: "content"},
+					},
+				}
+				err := config.Validate(cfg)
+				Expect(err).NotTo(HaveOccurred(),
+					"trailing slash in from: must be accepted and normalized — "+
+						"rejecting would punish a harmless typo (issue #530)")
+			})
 		})
 	})
 

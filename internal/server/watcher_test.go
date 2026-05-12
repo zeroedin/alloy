@@ -221,6 +221,18 @@ var _ = Describe("File Watcher", func() {
 					"while passthrough triggers RebuildRecopy (issue #530)")
 		})
 
+		It("ClassifyChange matches watch dir with trailing slash in from", func() {
+			cfg := &config.Config{
+				Title: "Trailing Slash Site",
+				Watch: []config.WatchMapping{{From: "elements/", Type: "content"}},
+			}
+			changeType := server.ClassifyChange("elements/rh-button/docs/overview.md", cfg)
+			Expect(changeType).To(Equal(server.ContentChange),
+				"trailing slash in from: must not break path matching — "+
+					"the slash should be normalized before ClassifyChange "+
+					"compares prefixes (issue #530)")
+		})
+
 		It("watch type content triggers RebuildPipeline", func() {
 			scope := server.RebuildScopeForChangeType(server.ContentChange)
 			Expect(scope).To(Equal(server.RebuildPipeline),
