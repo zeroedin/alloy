@@ -394,7 +394,7 @@ func Validate(cfg *Config) error {
 			if idx := strings.IndexAny(from, "*?[{"); idx > 0 {
 				statTarget = filepath.Dir(from[:idx])
 			} else {
-				statTarget = ""
+				return fmt.Errorf("validation error: watch[%d].from %q has no directory prefix before glob — would watch the entire project root", i, from)
 			}
 		}
 		if statTarget != "" && statTarget != "." {
