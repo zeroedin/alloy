@@ -208,6 +208,19 @@ var _ = Describe("File Watcher", func() {
 					"watch dirs must not interfere with existing classification (issue #530)")
 		})
 
+		It("ClassifyChange prefers watch over passthrough for same directory", func() {
+			cfg := &config.Config{
+				Title: "Overlap Site",
+				Watch:       []config.WatchMapping{{From: "elements", Type: "content"}},
+				Passthrough: []config.PassthroughMapping{{From: "elements", To: "assets/elements"}},
+			}
+			changeType := server.ClassifyChange("elements/rh-button/docs/overview.md", cfg)
+			Expect(changeType).To(Equal(server.ContentChange),
+				"when a directory appears in both watch and passthrough, "+
+					"watch must take precedence — watch triggers RebuildPipeline "+
+					"while passthrough triggers RebuildRecopy (issue #530)")
+		})
+
 		It("watch type content triggers RebuildPipeline", func() {
 			scope := server.RebuildScopeForChangeType(server.ContentChange)
 			Expect(scope).To(Equal(server.RebuildPipeline),

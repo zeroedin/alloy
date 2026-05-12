@@ -674,6 +674,8 @@ var _ = Describe("Config", func() {
 				err := config.Validate(cfg)
 				Expect(err).To(HaveOccurred(),
 					"empty type does not match content/layout/data (issue #530)")
+				Expect(err.Error()).To(ContainSubstring("type"),
+					"error message must mention the invalid field (issue #530)")
 			})
 
 			It("accepts valid watch entries for all three types", func() {
