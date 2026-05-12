@@ -115,6 +115,118 @@ var _ = Describe("File Watcher", func() {
 		})
 	})
 
+	// ── Watch directory watching (issue #530) ────────────────────────
+	// Watch from: directories must be included in WatchDirs and
+	// classified as the declared type (content/layout/data), triggering
+	// RebuildPipeline instead of RebuildRecopy.
+
+	Describe("Watch directory watching (issue #530)", func() {
+		It("WatchDirs includes watch from: directories", func() {
+			cfg := &config.Config{
+				Title: "Watch Site",
+				Watch: []config.WatchMapping{
+					{From: "elements", Type: "content"},
+					{From: "shared-layouts", Type: "layout"},
+				},
+			}
+			dirs := server.WatchDirs(cfg)
+			Expect(dirs).To(ContainElement("elements"),
+				"watch from: directories must be in WatchDirs — "+
+					"without this, changes to watched sources are never detected (issue #530)")
+			Expect(dirs).To(ContainElement("shared-layouts"),
+				"all watch from: directories must be watched (issue #530)")
+		})
+
+		It("WatchDirs includes both base dirs and watch dirs", func() {
+			cfg := &config.Config{
+				Title: "Mixed Site",
+				Watch: []config.WatchMapping{{From: "elements", Type: "content"}},
+			}
+			dirs := server.WatchDirs(cfg)
+			Expect(dirs).To(ContainElements("content", "layouts", "data", "assets", "static"),
+				"base directories must still be present (issue #530)")
+			Expect(dirs).To(ContainElement("elements"),
+				"watch directories must be added alongside base directories (issue #530)")
+			Expect(len(dirs)).To(Equal(6),
+				"5 base dirs + 1 watch dir = 6 total (issue #530)")
+		})
+
+		It("WatchDirs handles watch from: with glob pattern", func() {
+			cfg := &config.Config{
+				Title: "Glob Watch Site",
+				Watch: []config.WatchMapping{
+					{From: "elements/**/docs/*.md", Type: "content"},
+				},
+			}
+			dirs := server.WatchDirs(cfg)
+			Expect(dirs).To(ContainElement("elements"),
+				"glob watch from: must add the glob root — "+
+					"same pattern as passthrough glob handling (issue #530)")
+		})
+
+		It("ClassifyChange identifies watch content file as ContentChange", func() {
+			cfg := &config.Config{
+				Title: "Watch Site",
+				Watch: []config.WatchMapping{{From: "elements", Type: "content"}},
+			}
+			changeType := server.ClassifyChange("elements/rh-button/docs/overview.md", cfg)
+			Expect(changeType).To(Equal(server.ContentChange),
+				"watch type: content must classify as ContentChange — "+
+					"this triggers RebuildPipeline (issue #530)")
+		})
+
+		It("ClassifyChange identifies watch layout file as LayoutChange", func() {
+			cfg := &config.Config{
+				Title: "Watch Site",
+				Watch: []config.WatchMapping{{From: "shared-layouts", Type: "layout"}},
+			}
+			changeType := server.ClassifyChange("shared-layouts/header.liquid", cfg)
+			Expect(changeType).To(Equal(server.LayoutChange),
+				"watch type: layout must classify as LayoutChange — "+
+					"this triggers RebuildPipeline (issue #530)")
+		})
+
+		It("ClassifyChange identifies watch data file as DataChange", func() {
+			cfg := &config.Config{
+				Title: "Watch Site",
+				Watch: []config.WatchMapping{{From: "external-data", Type: "data"}},
+			}
+			changeType := server.ClassifyChange("external-data/navigation.yaml", cfg)
+			Expect(changeType).To(Equal(server.DataChange),
+				"watch type: data must classify as DataChange — "+
+					"this triggers RebuildPipeline (issue #530)")
+		})
+
+		It("ClassifyChange does not misclassify standard dirs as watch", func() {
+			cfg := &config.Config{
+				Title: "Watch Site",
+				Watch: []config.WatchMapping{{From: "elements", Type: "content"}},
+			}
+			changeType := server.ClassifyChange("layouts/default.liquid", cfg)
+			Expect(changeType).To(Equal(server.LayoutChange),
+				"standard dirs must classify correctly — "+
+					"watch dirs must not interfere with existing classification (issue #530)")
+		})
+
+		It("watch type content triggers RebuildPipeline", func() {
+			scope := server.RebuildScopeForChangeType(server.ContentChange)
+			Expect(scope).To(Equal(server.RebuildPipeline),
+				"ContentChange must trigger pipeline rebuild, not recopy (issue #530)")
+		})
+
+		It("watch type layout triggers RebuildPipeline", func() {
+			scope := server.RebuildScopeForChangeType(server.LayoutChange)
+			Expect(scope).To(Equal(server.RebuildPipeline),
+				"LayoutChange must trigger pipeline rebuild (issue #530)")
+		})
+
+		It("watch type data triggers RebuildPipeline", func() {
+			scope := server.RebuildScopeForChangeType(server.DataChange)
+			Expect(scope).To(Equal(server.RebuildPipeline),
+				"DataChange must trigger pipeline rebuild (issue #530)")
+		})
+	})
+
 	// ── Change classification ─────────────────────────────────────────
 
 	Describe("ClassifyChange", func() {

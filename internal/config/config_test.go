@@ -615,6 +615,109 @@ var _ = Describe("Config", func() {
 		})
 	})
 
+	// ── Watch config (issue #530) ────────────────────────────────────
+	// The watch: config key registers extra directories for pipeline-
+	// triggering file watching during serve mode. Unlike passthrough
+	// (which triggers RebuildRecopy), watch dirs trigger RebuildPipeline.
+
+	Describe("Watch config (issue #530)", func() {
+		Context("YAML parsing", func() {
+			It("parses watch array with from and type", func() {
+				cfg, err := config.Load("testdata/valid.yaml")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(cfg.Watch).To(HaveLen(2),
+					"valid.yaml must include watch entries for testing (issue #530)")
+				Expect(cfg.Watch[0].From).To(Equal("elements"),
+					"watch[0].from must parse the directory path (issue #530)")
+				Expect(cfg.Watch[0].Type).To(Equal("content"),
+					"watch[0].type must parse the watch type (issue #530)")
+				Expect(cfg.Watch[1].From).To(Equal("shared-layouts"),
+					"watch[1].from must parse the second entry (issue #530)")
+				Expect(cfg.Watch[1].Type).To(Equal("layout"),
+					"watch[1].type must parse the second entry's type (issue #530)")
+			})
+		})
+
+		Context("validation", func() {
+			It("rejects watch entry with empty from", func() {
+				cfg := &config.Config{
+					Title:   "Test",
+					BaseURL: "https://example.com",
+					Watch:   []config.WatchMapping{{From: "", Type: "content"}},
+				}
+				err := config.Validate(cfg)
+				Expect(err).To(HaveOccurred(),
+					"watch entry with empty from must fail validation (issue #530)")
+				Expect(err.Error()).To(ContainSubstring("from"),
+					"error must mention the invalid field (issue #530)")
+			})
+
+			It("rejects watch entry with invalid type", func() {
+				cfg := &config.Config{
+					Title:   "Test",
+					BaseURL: "https://example.com",
+					Watch:   []config.WatchMapping{{From: "elements", Type: "invalid"}},
+				}
+				err := config.Validate(cfg)
+				Expect(err).To(HaveOccurred(),
+					"watch entry with invalid type must fail validation (issue #530)")
+				Expect(err.Error()).To(ContainSubstring("type"),
+					"error must mention the invalid field (issue #530)")
+			})
+
+			It("rejects watch entry with empty type", func() {
+				cfg := &config.Config{
+					Title:   "Test",
+					BaseURL: "https://example.com",
+					Watch:   []config.WatchMapping{{From: "elements", Type: ""}},
+				}
+				err := config.Validate(cfg)
+				Expect(err).To(HaveOccurred(),
+					"empty type does not match content/layout/data (issue #530)")
+			})
+
+			It("accepts valid watch entries for all three types", func() {
+				cfg := &config.Config{
+					Title:   "Test",
+					BaseURL: "https://example.com",
+					Watch: []config.WatchMapping{
+						{From: "elements", Type: "content"},
+						{From: "shared-layouts", Type: "layout"},
+						{From: "external-data", Type: "data"},
+					},
+				}
+				err := config.Validate(cfg)
+				Expect(err).NotTo(HaveOccurred(),
+					"all three watch types must be valid (issue #530)")
+			})
+
+			It("accepts config with no watch entries", func() {
+				cfg := &config.Config{
+					Title:   "Test",
+					BaseURL: "https://example.com",
+				}
+				err := config.Validate(cfg)
+				Expect(err).NotTo(HaveOccurred(),
+					"omitting watch entirely must be valid (issue #530)")
+			})
+
+			It("includes index in validation error for second entry", func() {
+				cfg := &config.Config{
+					Title:   "Test",
+					BaseURL: "https://example.com",
+					Watch: []config.WatchMapping{
+						{From: "elements", Type: "content"},
+						{From: "", Type: "data"},
+					},
+				}
+				err := config.Validate(cfg)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("watch[1]"),
+					"validation error must include array index (issue #530)")
+			})
+		})
+	})
+
 	// ── GoldmarkConfig explicit false (issue #398) ───────────────────
 	// When goldmark options are explicitly set to false in config,
 	// the *bool tri-state must preserve false — not override to true.

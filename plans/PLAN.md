@@ -947,6 +947,28 @@ passthrough:
 
 **Passthrough file watching** — `WatchDirs()` must include all passthrough `from:` directories from config. Passthrough sources are directory trees — the watcher must recursively watch subdirectories, including subdirectories created after the server starts. Changes to passthrough files are classified as `PassthroughChange` and trigger a targeted file recopy instead of a full pipeline rebuild.
 
+### Watch Directories (issue #530)
+
+Plugin filters may read files from directories outside the standard content tree (e.g., `elements/rh-*/docs/*.md` for component documentation). These directories are invisible to the file watcher, so changes never trigger rebuilds during `alloy serve`.
+
+The `watch:` config key registers extra directories for pipeline-triggering watches:
+
+```yaml
+watch:
+  - from: "elements"
+    type: content
+  - from: "shared-layouts"
+    type: layout
+  - from: "external-data"
+    type: data
+```
+
+**Fields:** `from` (required) — directory path relative to project root, glob patterns supported (same rules as passthrough `from`). `type` (required) — one of `content`, `layout`, `data`. Determines the `ChangeType` classification, which controls rebuild scope.
+
+**Behavior:** `WatchDirs()` includes all watch `from:` directories (or glob roots) in the watch list. `ClassifyChange()` maps files under watch directories to `ContentChange`, `LayoutChange`, or `DataChange` based on their declared `type`. All three types map to `RebuildPipeline` via `RebuildScopeForChangeType()` — this is the key difference from passthrough (which triggers `RebuildRecopy`). Watch directories are checked before passthrough directories in `ClassifyChange` — a directory in both `watch:` and `passthrough:` uses the watch classification.
+
+**Validation:** `from` must not be empty. `type` must be one of: `content`, `layout`, `data`. Invalid entries produce a validation error with the array index (e.g., `watch[1].type must be content, layout, or data`).
+
 ### Pre-Build Validation
 
 Before any content rendering begins, Alloy extracts front matter, assembles the data cascade, and computes every output path to detect conflicts. Front matter extraction is fast (reads only the metadata block, not the body) and the parsed data is reused by Phase 1 — no duplicate reads. This catches path conflicts early, before spending time on Markdown rendering and template execution.

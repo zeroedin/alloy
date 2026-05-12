@@ -30,6 +30,7 @@ type Config struct {
 	Permalinks    map[string]string            `yaml:"permalinks" toml:"permalinks" json:"permalinks"`
 	Pagination    PaginationConfig             `yaml:"pagination" toml:"pagination" json:"pagination"`
 	Passthrough   []PassthroughMapping         `yaml:"passthrough" toml:"passthrough" json:"passthrough"`
+	Watch         []WatchMapping               `yaml:"watch" toml:"watch" json:"watch"`
 	Sources       map[string]*SourceConfig     `yaml:"sources" toml:"sources" json:"sources"`
 	Sitemap       SitemapConfig                `yaml:"sitemap" toml:"sitemap" json:"sitemap"`
 	Structure     StructureConfig              `yaml:"structure" toml:"structure" json:"structure"`
@@ -134,6 +135,13 @@ type PassthroughMapping struct {
 	From    string   `yaml:"from" toml:"from" json:"from"`
 	To      string   `yaml:"to" toml:"to" json:"to"`
 	Exclude []string `yaml:"exclude" toml:"exclude" json:"exclude"`
+}
+
+// WatchMapping registers an external directory for pipeline-triggering
+// file watching during serve mode.
+type WatchMapping struct {
+	From string `yaml:"from" toml:"from" json:"from"`
+	Type string `yaml:"type" toml:"type" json:"type"`
 }
 
 // SourceConfig holds external data source settings.
