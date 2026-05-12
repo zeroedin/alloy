@@ -2006,6 +2006,95 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── onDataCascadeReady return value applied to cascade (issue #520) ───────
+	// onDataCascadeReady fires after cascade resolution with the full pages
+	// array. Payload shape is [{ path, data: { ... } }] per HookCascadePayload
+	// (payload.go:39-42). Return must be same shape, same length — plugins can
+	// modify cascade data values but cannot inject or remove pages.
+	// The return value must be deserialized and applied back to page state,
+	// same pattern as onContentLoaded (build.go:501-536).
+
+	Describe("onDataCascadeReady return value applied to cascade (issue #520)", func() {
+		It("plugin can enrich page cascade data via onDataCascadeReady", func() {
+			cfg := &config.Config{
+				Title:   "Cascade Hook Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body><h1>{{ page.title }}</h1><span>{{ page.enriched }}</span>{{ content }}</body></html>",
+				"plugins/cascade-enrich.js": `export default function(alloy) {
+  alloy.hook('onDataCascadeReady', { pages: true }, function(pages) {
+    for (var i = 0; i < pages.length; i++) {
+      pages[i].data.enriched = 'cascade-injected';
+    }
+    return pages;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onDataCascadeReady hook must not error when returning modified cascade data")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("cascade-injected"),
+				"onDataCascadeReady return value must be applied back to page cascade — "+
+					"currently the return is discarded in the onDataCascadeReady "+
+					"RunWithTimeout call. The payload shape is { path, data } per "+
+					"HookCascadePayload (payload.go), and data mutations must be "+
+					"written back to page.FrontMatter like onContentLoaded does "+
+					"(issue #520)")
+		})
+
+		It("onDataCascadeReady returning extra entries produces a validation error", func() {
+			cfg := &config.Config{
+				Title:   "Cascade Reject Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/cascade-inject.js": `export default function(alloy) {
+  alloy.hook('onDataCascadeReady', { pages: true }, function(pages) {
+    pages.push({ path: 'fake/page.md', data: { title: 'Fake' } });
+    return pages;
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"onDataCascadeReady must reject virtual page injection — "+
+					"returned array length exceeds input length. "+
+					"Same constraint as onContentLoaded (issue #520)")
+		})
+
+		It("onDataCascadeReady returning fewer entries produces a validation error", func() {
+			cfg := &config.Config{
+				Title:   "Cascade Remove Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"content/about.md":      "---\ntitle: About\nlayout: default\n---\n# About",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/cascade-remove.js": `export default function(alloy) {
+  alloy.hook('onDataCascadeReady', { pages: true }, function(pages) {
+    return pages.slice(0, 1);
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"onDataCascadeReady must reject page removal — "+
+					"returned array length less than input length. "+
+					"Same constraint as onContentLoaded (issue #520)")
+		})
+	})
+
 	// ── onPagesReady hook for pre-taxonomy virtual page injection (issue #525) ─────
 	// onPagesReady fires after data cascade but before taxonomy collection.
 	// Virtual pages injected here participate in taxonomy collections —
