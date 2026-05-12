@@ -446,13 +446,14 @@ func (r *QuickJSRuntime) Close() {
 
 // WASMRuntime wraps a wazero WASM module for Tier 2 compiled plugins.
 type WASMRuntime struct {
-	modulePath string
-	moduleName string
-	exports    map[string]bool
-	rt         wazero.Runtime
-	mod        api.Module
-	cacheDir   string                  // issue #391: wazero compilation cache directory
-	cache      wazero.CompilationCache // owned by this runtime (closed in Close)
+	modulePath  string
+	moduleName  string
+	exports     map[string]bool
+	hookNames   []string
+	rt          wazero.Runtime
+	mod         api.Module
+	cacheDir    string                  // issue #391: wazero compilation cache directory
+	cache       wazero.CompilationCache // owned by this runtime (closed in Close)
 	sharedCache wazero.CompilationCache // owned by Registry (not closed here)
 }
 
@@ -482,6 +483,7 @@ func (r *WASMRuntime) LoadModule(path string) error {
 	// Close any previously loaded module/runtime
 	r.Close()
 	r.exports = make(map[string]bool)
+	r.hookNames = nil
 
 	wasmBytes, err := os.ReadFile(path)
 	if err != nil {
@@ -541,6 +543,11 @@ func (r *WASMRuntime) LoadModule(path string) error {
 		r.Close()
 		return fmt.Errorf("wasm module %s missing required alloc export — "+
 			"alloc(size i32) -> (ptr i32) is needed for safe memory allocation", filepath.Base(path))
+	}
+
+	if err := r.discoverHooks(ctx); err != nil {
+		r.Close()
+		return fmt.Errorf("wasm module %s: %w", filepath.Base(path), err)
 	}
 
 	return nil
@@ -726,7 +733,7 @@ func (r *WASMRuntime) CallExportRaw(name string, ptr, length uint32) (string, er
 // wasmRuntimeExports are well-known WASM exports that are not plugin filters.
 var wasmRuntimeExports = map[string]bool{
 	"memory": true, "alloc": true, "last_error": true,
-	"hook": true, "shortcode": true,
+	"hook": true, "hooks": true, "shortcode": true,
 	"_start": true, "_initialize": true,
 	"__data_end": true, "__heap_base": true, "__stack_pointer": true,
 	"__dso_handle": true, "__global_base": true,
@@ -762,8 +769,124 @@ func (r *WASMRuntime) CallShortcode(name string, args []string, innerContent str
 	return innerContent, nil
 }
 
-// RegisteredHooks returns an empty list — WASM modules don't register hooks.
+// RegisteredHooks returns hook names discovered from the hooks() export.
 func (r *WASMRuntime) RegisteredHooks() []string {
+	return r.hookNames
+}
+
+// RegisteredHookDetails returns hook registrations with default priority 50.
+// The WASM ABI has no mechanism for per-hook priority or scope metadata.
+func (r *WASMRuntime) RegisteredHookDetails() []HookRegistration {
+	details := make([]HookRegistration, 0, len(r.hookNames))
+	for _, name := range r.hookNames {
+		details = append(details, HookRegistration{
+			Name:     name,
+			Priority: 50,
+		})
+	}
+	return details
+}
+
+// CallHook marshals a JSON envelope and dispatches to the hook(ptr, len) export.
+func (r *WASMRuntime) CallHook(name string, payload interface{}) (interface{}, error) {
+	if r.mod == nil {
+		return nil, fmt.Errorf("wasm module not loaded — call LoadModule first")
+	}
+	hookFn := r.mod.ExportedFunction("hook")
+	if hookFn == nil {
+		return nil, fmt.Errorf("wasm module %s has no hook export", r.moduleName)
+	}
+
+	envelope := map[string]interface{}{
+		"event":   name,
+		"payload": payload,
+	}
+	inputJSON, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling hook payload: %w", err)
+	}
+
+	result, err := r.callStringFilter(hookFn, string(inputJSON))
+	if err != nil {
+		return nil, fmt.Errorf("wasm hook %q: %w", name, err)
+	}
+
+	resultStr, ok := result.(string)
+	if !ok {
+		return result, nil
+	}
+	var parsed interface{}
+	if err := json.Unmarshal([]byte(resultStr), &parsed); err != nil {
+		return nil, fmt.Errorf("wasm hook %q returned invalid JSON: %w", name, err)
+	}
+	return parsed, nil
+}
+
+// discoverHooks calls the hooks() export to discover registered hook names.
+// Validates that hook() exists when hooks are declared, filters empty names,
+// and deduplicates.
+func (r *WASMRuntime) discoverHooks(ctx context.Context) error {
+	r.hookNames = nil
+	hooksFn := r.mod.ExportedFunction("hooks")
+	if hooksFn == nil {
+		return nil
+	}
+
+	results, err := hooksFn.Call(ctx)
+	if err != nil {
+		return fmt.Errorf("calling hooks() export: %w", err)
+	}
+	if len(results) < 2 {
+		return fmt.Errorf("hooks() export returned %d values, expected 2 (ptr, len)", len(results))
+	}
+
+	ptr := uint32(results[0])
+	length := uint32(results[1])
+	if ptr == 0 && length == 0 {
+		if lastErrFn := r.mod.ExportedFunction("last_error"); lastErrFn != nil {
+			if errResults, errErr := lastErrFn.Call(ctx); errErr == nil && len(errResults) >= 2 {
+				errPtr, errLen := uint32(errResults[0]), uint32(errResults[1])
+				if errPtr != 0 && errLen != 0 {
+					if mem := r.mod.Memory(); mem != nil {
+						if errMsg, ok := mem.Read(errPtr, errLen); ok {
+							return fmt.Errorf("hooks() export failed: %s", string(errMsg))
+						}
+					}
+				}
+			}
+		}
+		return nil
+	}
+
+	mem := r.mod.Memory()
+	if mem == nil {
+		return fmt.Errorf("hooks() returned data but module has no exported memory")
+	}
+	data, ok := mem.Read(ptr, length)
+	if !ok {
+		return fmt.Errorf("hooks() memory read failed at offset %d len %d", ptr, length)
+	}
+
+	var names []string
+	if err := json.Unmarshal(data, &names); err != nil {
+		return fmt.Errorf("hooks() export returned invalid JSON (expected array of strings): %w", err)
+	}
+
+	seen := make(map[string]bool, len(names))
+	filtered := make([]string, 0, len(names))
+	for _, name := range names {
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		filtered = append(filtered, name)
+	}
+
+	if len(filtered) > 0 && r.mod.ExportedFunction("hook") == nil {
+		return fmt.Errorf("hooks() declares %d hooks but module has no hook() export", len(filtered))
+	}
+
+	r.hookNames = filtered
 	return nil
 }
 
@@ -781,6 +904,7 @@ func (r *WASMRuntime) HasExport(name string) bool {
 // Close releases wazero resources.
 func (r *WASMRuntime) Close() {
 	ctx := context.Background()
+	r.hookNames = nil
 	if r.mod != nil {
 		r.mod.Close(ctx)
 		r.mod = nil
