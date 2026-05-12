@@ -424,6 +424,14 @@ func (f *alloyFilterBridge) SafeHTML(input interface{}, args ...interface{}) int
 	return f.call("safeHTML", input, args...)
 }
 
+func (f *alloyFilterBridge) Cachebust(input interface{}, args ...interface{}) interface{} {
+	return f.call("cachebust", input, args...)
+}
+
+func (f *alloyFilterBridge) GetHash(input interface{}, args ...interface{}) interface{} {
+	return f.call("get_hash", input, args...)
+}
+
 // Url is the Go-exported name for the "url" filter.
 // liquidgo converts "url" → "URL" via its acronym map, so we provide both.
 func (f *alloyFilterBridge) Url(input interface{}, args ...interface{}) interface{} {

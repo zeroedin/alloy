@@ -2426,7 +2426,7 @@ func InitPipelineState(cfg *config.Config, registry *plugin.Registry, hooks *plu
 	if err != nil {
 		return nil, err
 	}
-	tmpl.RegisterAssetFilters(cfg.ProjectRoot)
+	tmpl.RegisterAssetFilters(cfg.ProjectRoot, cfg.Structure.Static, cfg.Structure.Assets, cfg.Structure.Content)
 	if err := registerPluginExtensions(registry, engine); err != nil {
 		return nil, err
 	}

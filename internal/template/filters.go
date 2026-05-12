@@ -772,7 +772,7 @@ func SafeHTML(input interface{}, args ...interface{}) interface{} {
 // --- Asset fingerprinting filters ---
 
 func CacheBust(input interface{}, args ...interface{}) interface{} {
-	path := toString(input)
+	path := strings.TrimLeft(toString(input), "/")
 	data, err := resolveAssetFile(path)
 	if err != nil {
 		return "/" + path
