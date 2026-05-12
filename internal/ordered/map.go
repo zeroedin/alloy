@@ -266,10 +266,11 @@ func RewrapValue(v interface{}) interface{} {
 		}
 		return m
 	case []interface{}:
+		result := make([]interface{}, len(val))
 		for i, item := range val {
-			val[i] = RewrapValue(item)
+			result[i] = RewrapValue(item)
 		}
-		return val
+		return result
 	default:
 		return v
 	}

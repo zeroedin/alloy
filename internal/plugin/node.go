@@ -425,7 +425,7 @@ func (r *NodeRuntime) BatchCallHook(name string, payloads []interface{}) ([]inte
 					})
 					return
 				}
-				results[i] = resp.Result
+				results[i] = ordered.RewrapValue(resp.Result)
 			}
 		}(bridges[w], start, end)
 	}
