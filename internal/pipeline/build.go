@@ -290,9 +290,14 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("plugin hook onDataFetched: %w", err)
 	}
-	if modified, ok := dataResult.(map[string]interface{}); ok {
+	switch modified := dataResult.(type) {
+	case map[string]interface{}:
 		for k, v := range modified {
 			siteData[k] = v
+		}
+	case *ordered.Map:
+		for _, entry := range modified.Entries() {
+			siteData[entry.Key] = entry.Value
 		}
 	}
 
@@ -514,8 +519,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				pathToIdx[page.RelPath] = i
 			}
 			for _, rp := range returnedPages {
-				if pageMap, ok := rp.(map[string]interface{}); ok {
-					if fm, ok := pageMap["frontMatter"].(map[string]interface{}); ok {
+				if pageMap, ok := toGoMap(rp); ok {
+					if fm, ok := toGoMap(pageMap["frontMatter"]); ok {
 						returnedPath, _ := pageMap["path"].(string)
 						if !scopedPaths[returnedPath] {
 							continue
@@ -2060,6 +2065,19 @@ func convertOrderedValue(v interface{}) interface{} {
 	}
 }
 
+// toGoMap coerces a value to map[string]interface{}, accepting either
+// map[string]interface{} directly or *ordered.Map (from JSON round-trip).
+func toGoMap(v interface{}) (map[string]interface{}, bool) {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		return val, true
+	case *ordered.Map:
+		return val.ToGoMap(), true
+	default:
+		return nil, false
+	}
+}
+
 func computeUnionScope(scopes []*plugin.HookScope) *plugin.HookScope {
 	if len(scopes) == 0 {
 		return nil
@@ -2319,27 +2337,26 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 			return fmt.Errorf("plugin hook onContentTransformed (%s): %w", page.RelPath, err)
 		}
 
-		switch modified := result.(type) {
-		case map[string]interface{}:
-			if (scope == nil || scope.WantsField("html")) {
+		if modified, ok := toGoMap(result); ok {
+			if scope == nil || scope.WantsField("html") {
 				if html, ok := modified["html"].(string); ok {
 					page.RenderedBody = []byte(html)
 				}
 			}
-			if (scope == nil || scope.WantsField("toc")) {
+			if scope == nil || scope.WantsField("toc") {
 				if tocSlice, ok := modified["toc"].([]interface{}); ok {
 					page.TOC = deserializeTOC(tocSlice)
 				}
 			}
-			if (scope == nil || scope.WantsField("frontMatter")) {
-				if returnedFM, ok := modified["frontMatter"].(map[string]interface{}); ok {
+			if scope == nil || scope.WantsField("frontMatter") {
+				if returnedFM, ok := toGoMap(modified["frontMatter"]); ok {
 					page.FrontMatter = returnedFM
 				}
 			}
-		case string:
-			page.RenderedBody = []byte(modified)
-		case []byte:
-			page.RenderedBody = modified
+		} else if s, ok := result.(string); ok {
+			page.RenderedBody = []byte(s)
+		} else if b, ok := result.([]byte); ok {
+			page.RenderedBody = b
 		}
 	}
 	return nil
@@ -2546,7 +2563,7 @@ func runOnPagesReady(pages []*content.Page, ps *PipelineState) ([]*content.Page,
 		return nil, fmt.Errorf("plugin hook onPagesReady: %w", err)
 	}
 
-	resultMap, ok := result.(map[string]interface{})
+	resultMap, ok := toGoMap(result)
 	if !ok {
 		return pages, nil
 	}
@@ -2568,7 +2585,7 @@ func runOnPagesReady(pages []*content.Page, ps *PipelineState) ([]*content.Page,
 	}
 
 	for i := originalCount; i < len(returnedPages); i++ {
-		pageMap, ok := returnedPages[i].(map[string]interface{})
+		pageMap, ok := toGoMap(returnedPages[i])
 		if !ok {
 			return nil, fmt.Errorf("plugin hook onPagesReady: virtual page %d: expected map, got %T", i-originalCount, returnedPages[i])
 		}

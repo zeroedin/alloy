@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/zeroedin/alloy/internal/ordered"
 )
 
 //go:embed bridge.js
@@ -315,7 +317,7 @@ func (r *NodeRuntime) CallHook(name string, payload interface{}) (interface{}, e
 	if err != nil {
 		return nil, fmt.Errorf("node hook %q: %w", name, err)
 	}
-	return resp.Result, nil
+	return ordered.RewrapValue(resp.Result), nil
 }
 
 // PrepareWorkerPool starts n-1 additional Node bridges for parallel hook dispatch.

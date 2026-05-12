@@ -12,6 +12,7 @@ import (
 	"github.com/fastschema/qjs"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
+	"github.com/zeroedin/alloy/internal/ordered"
 )
 
 // QuickJSRuntime wraps a QuickJS instance for Tier 2 in-process JS plugins.
@@ -383,10 +384,9 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 
 	if result.IsString() {
 		s := result.String()
-		var obj interface{}
 		if len(s) > 0 && (s[0] == '{' || s[0] == '[') {
-			if err := json.Unmarshal([]byte(s), &obj); err == nil {
-				return obj, nil
+			if parsed, err := ordered.UnmarshalJSONValue([]byte(s)); err == nil {
+				return parsed, nil
 			}
 		}
 		return s, nil
@@ -815,8 +815,8 @@ func (r *WASMRuntime) CallHook(name string, payload interface{}) (interface{}, e
 	if !ok {
 		return result, nil
 	}
-	var parsed interface{}
-	if err := json.Unmarshal([]byte(resultStr), &parsed); err != nil {
+	parsed, err := ordered.UnmarshalJSONValue([]byte(resultStr))
+	if err != nil {
 		return nil, fmt.Errorf("wasm hook %q returned invalid JSON: %w", name, err)
 	}
 	return parsed, nil
