@@ -2103,9 +2103,12 @@ The `alloc` export is required to avoid writing at hardcoded memory offsets that
 
 ```
 shortcode(ptr i32, len i32) -> (ptr i32, len i32)   # Shortcode: input is JSON { name, args, content }
-hook(ptr i32, len i32) -> (ptr i32, len i32)         # Hook: input is JSON payload, returns modified payload
+hooks() -> (ptr i32, len i32)                        # Hook discovery: returns JSON array of hook name strings
+hook(ptr i32, len i32) -> (ptr i32, len i32)         # Hook execution: input is JSON payload with event name
 last_error() -> (ptr i32, len i32)                   # Error details; host calls after any export returns (0, 0)
 ```
+
+**Hook discovery and execution:** The `hooks` export is called once during `LoadModule` (no input arguments, same pattern as `last_error`). It returns a JSON array of hook name strings (e.g., `["onContentTransformed", "onBuildComplete"]`). If no `hooks` export exists, the module has no hooks. The `hook` export receives a JSON object with an `"event"` key containing the hook name plus the hook-specific payload fields (e.g., `{"event": "onContentTransformed", "html": "<p>test</p>", ...}`). The module dispatches internally by event name and returns the (possibly modified) payload JSON. The host strips the `"event"` key before applying changes. WASM hooks get default priority 50 — no mechanism for per-hook priority in the export ABI.
 
 #### Sandboxing
 
