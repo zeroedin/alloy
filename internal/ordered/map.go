@@ -252,6 +252,13 @@ func decodeArray(data []byte) ([]interface{}, error) {
 	return result, nil
 }
 
+// RewrapValue recursively converts map[string]interface{} values to *Map,
+// restoring Each()/LiquidMethodMissing() after JSON round-trip through
+// the plugin serialization boundary.
+func RewrapValue(v interface{}) interface{} {
+	return v
+}
+
 // UnmarshalJSONValue parses a top-level JSON value, using *Map for objects.
 // For arrays and scalars, returns the standard Go types.
 func UnmarshalJSONValue(data []byte) (interface{}, error) {

@@ -264,4 +264,71 @@ var _ = Describe("Ordered Map", func() {
 			Expect(result).To(Equal("hello"))
 		})
 	})
+
+	// ── RewrapValue (issue #571) ────────────────────────────────────
+	// After JSON round-trip through plugin serialization, *ordered.Map
+	// values become map[string]interface{}. RewrapValue converts them
+	// back so Each() and LiquidMethodMissing() are available.
+
+	Context("RewrapValue (issue #571)", func() {
+		It("converts map[string]interface{} to *ordered.Map", func() {
+			input := map[string]interface{}{"a": 1, "b": 2}
+			result := ordered.RewrapValue(input)
+			m, ok := result.(*ordered.Map)
+			Expect(ok).To(BeTrue(),
+				"RewrapValue must convert map[string]interface{} to *ordered.Map — "+
+					"this restores Each() and LiquidMethodMissing() after JSON round-trip (issue #571)")
+			Expect(m.Len()).To(Equal(2))
+			Expect(m.Get("a")).To(BeNumerically("==", 1))
+			Expect(m.Get("b")).To(BeNumerically("==", 2))
+		})
+
+		It("recursively converts nested maps", func() {
+			input := map[string]interface{}{
+				"color": map[string]interface{}{
+					"red": "#f00",
+				},
+			}
+			result := ordered.RewrapValue(input)
+			m, ok := result.(*ordered.Map)
+			Expect(ok).To(BeTrue())
+			nested, ok := m.Get("color").(*ordered.Map)
+			Expect(ok).To(BeTrue(),
+				"nested map[string]interface{} must also be converted to *ordered.Map — "+
+					"JSON data structures are deeply nested (issue #571)")
+			Expect(nested.Get("red")).To(Equal("#f00"))
+		})
+
+		It("converts maps inside arrays", func() {
+			input := []interface{}{
+				map[string]interface{}{"name": "Alice"},
+				map[string]interface{}{"name": "Bob"},
+			}
+			result := ordered.RewrapValue(input)
+			arr, ok := result.([]interface{})
+			Expect(ok).To(BeTrue(), "arrays must remain arrays")
+			Expect(arr).To(HaveLen(2))
+			first, ok := arr[0].(*ordered.Map)
+			Expect(ok).To(BeTrue(),
+				"maps inside arrays must be converted — JSON data files "+
+					"contain arrays of objects (issue #571)")
+			Expect(first.Get("name")).To(Equal("Alice"))
+		})
+
+		It("passes through primitives unchanged", func() {
+			Expect(ordered.RewrapValue("hello")).To(Equal("hello"))
+			Expect(ordered.RewrapValue(42.0)).To(BeNumerically("==", 42))
+			Expect(ordered.RewrapValue(true)).To(BeTrue())
+			Expect(ordered.RewrapValue(nil)).To(BeNil())
+		})
+
+		It("passes through *ordered.Map unchanged", func() {
+			m := ordered.New()
+			m.Set("a", 1)
+			result := ordered.RewrapValue(m)
+			Expect(result).To(BeIdenticalTo(m),
+				"RewrapValue must not re-wrap an already-ordered map — "+
+					"avoids unnecessary allocation when data was never serialized (issue #571)")
+		})
+	})
 })
