@@ -2415,8 +2415,9 @@ Watch this video: {% youtube "abc123" %}
 
 The block extension activates when:
 1. A line starts with `{% tagname` (with optional arguments)
-2. A matching `{% endtagname %}` exists later in the content
-3. The opening tag is on its own line (not mixed with other inline content)
+2. The tag is on its own line (not mixed with other inline content)
+
+Note: the goldmark block parser treats each `{% %}` line as an independent single-line block node. Tag pairing (`{% tagname %}` / `{% endtagname %}`) is semantic — it is resolved by the Liquid template engine, not by goldmark. The block parser does not track open/close state; it only prevents `<p>` wrapping for any `{% %}` tag that occupies a line by itself.
 
 When the opening tag is embedded in a line with other text, the inline TemplateTags extension handles it instead — the tag stays inline and `<p>` wrapping is correct.
 

@@ -311,7 +311,7 @@ var _ = Describe("RenderMarkdown", func() {
 			out, err := content.RenderMarkdown(source, defaultOpts)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
-			Expect(html).To(ContainSubstring("<p>"),
+			Expect(html).To(ContainSubstring("<p>{% if show %}Visible{% endif %}</p>"),
 				"multiple template tags on one line must be treated as inline — "+
 					"the block parser must only match lines with exactly one tag "+
 					"and no other content (issue #564)")
