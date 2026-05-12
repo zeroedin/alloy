@@ -600,6 +600,8 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 				"EvalWarnings must detect duplicates even when __registerHook is called "+
 					"with a single argument (no priority, no scope) — the 1-arg fallback path "+
 					"must trigger the same duplicate detection as the 3-arg path (issue #558)")
+			Expect(warnings[0]).To(ContainSubstring("duplicate"),
+				"warning must mention 'duplicate' on the 1-arg path (issue #558)")
 			Expect(warnings[0]).To(ContainSubstring("onContentTransformed"),
 				"warning must include the hook name on the 1-arg path (issue #558)")
 		})
