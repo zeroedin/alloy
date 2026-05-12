@@ -2124,6 +2124,10 @@ Tier 2 plugins run through multiple layers (Go → wazero → QuickJS → user c
 - Surface WASM trap messages (out of bounds, unreachable) with the plugin name and which call triggered it
 - In dev mode, display plugin errors in the browser error overlay alongside template and content errors
 
+#### Warning Propagation via EvalWarner
+
+Runtimes that collect non-fatal warnings during plugin evaluation (duplicate hook registrations, deprecated API usage) implement the `EvalWarner` interface (`EvalWarnings() []string`). When `registerRuntime` processes a runtime, it checks for `EvalWarner` and forwards all accumulated warnings to `HookRegistry.Warnings()` with a `"plugin <name>: "` prefix. This surfaces runtime-level warnings through the same `HookRegistry.Warnings()` API used for timeout warnings, giving the build pipeline a single warning channel. Both QuickJS and Node runtimes implement `EvalWarner`; WASM runtimes surface errors through the trap/`last_error()` mechanism instead.
+
 #### Hook Serialization Boundary — Type Preservation
 
 When hook payloads pass through the plugin serialization boundary (QuickJS VM or Node subprocess), JSON round-trip strips Go-specific types. In particular, `*ordered.Map` values (from JSON data files) become `map[string]interface{}`, losing insertion-order iteration (`Each()`) and property access (`LiquidMethodMissing()`). The host must deserialize hook return values through `ordered.UnmarshalJSONValue` (not standard `json.Unmarshal`) so JSON objects are restored as `*ordered.Map`. This applies to all runtimes (QuickJS, Node, WASM) at their respective deserialization points. Without this, any hook that returns structured data (e.g., `onDataFetched` returning the full `siteData`) silently destroys ordered map types for all keys — even those the plugin did not modify.
