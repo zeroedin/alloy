@@ -296,6 +296,155 @@ var _ = Describe("RenderMarkdown", func() {
 		})
 	})
 
+	// ── Goldmark template tag extensions (issue #564) ──────────────────
+	// Tests that the goldmark template tag implementation uses proper custom
+	// AST nodes and parsers (not placeholder regex substitution). Custom AST
+	// nodes must be preserved regardless of the unsafe setting.
+
+	Context("Goldmark template tag extensions (issue #564)", func() {
+		safeOpts := content.MarkdownOptions{
+			Unsafe: false, Typographer: true, TemplateTags: true, AutoHeadingID: true,
+		}
+
+		It("multiple template tags on one line are inline, not block", func() {
+			source := []byte("{% if show %}Visible{% endif %}\n")
+			out, err := content.RenderMarkdown(source, defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<p>"),
+				"multiple template tags on one line must be treated as inline — "+
+					"the block parser must only match lines with exactly one tag "+
+					"and no other content (issue #564)")
+		})
+
+		It("preserves block template tags when unsafe is false", func() {
+			source := []byte("{% hero %}\nContent here.\n{% endhero %}\n")
+			out, err := content.RenderMarkdown(source, safeOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("{% hero %}"),
+				"block template tags must be preserved regardless of unsafe setting — "+
+					"implementation must use custom AST nodes, not ast.RawHTML (issue #564)")
+			Expect(html).To(ContainSubstring("{% endhero %}"))
+			Expect(html).NotTo(ContainSubstring("<!-- raw HTML omitted -->"),
+				"template tags must not be treated as raw HTML by goldmark")
+		})
+
+		It("preserves inline expression tags when unsafe is false", func() {
+			source := []byte("Hello {{ name }}!\n")
+			out, err := content.RenderMarkdown(source, safeOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("{{ name }}"),
+				"inline expression tags must be preserved regardless of unsafe setting — "+
+					"implementation must use custom AST nodes, not ast.RawHTML (issue #564)")
+			Expect(html).NotTo(ContainSubstring("<!-- raw HTML omitted -->"))
+		})
+
+		It("preserves inline {% %} control tags when unsafe is false", func() {
+			source := []byte("Show {% if active %}this{% endif %} text.\n")
+			out, err := content.RenderMarkdown(source, safeOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("{% if active %}"),
+				"inline control tags must be preserved regardless of unsafe setting (issue #564)")
+			Expect(html).To(ContainSubstring("{% endif %}"))
+			Expect(html).NotTo(ContainSubstring("<!-- raw HTML omitted -->"))
+		})
+
+		It("does not produce empty <p></p> from blank lines adjacent to block template tags", func() {
+			source := []byte("{% helmet %}\n<style>\n  .intro h2 { color: red; }\n</style>\n{% endhelmet %}\n\n<section class=\"intro\">\nHello\n</section>\n")
+			out, err := content.RenderMarkdown(source, defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).NotTo(ContainSubstring("<p></p>"),
+				"blank lines adjacent to block template tags must not produce empty paragraphs — "+
+					"the implementation must not inject artificial blank-line boundaries (issue #564)")
+			Expect(html).To(ContainSubstring("{% helmet %}"))
+			Expect(html).To(ContainSubstring("{% endhelmet %}"))
+		})
+
+		It("handles multiple consecutive block tags without blank lines between them", func() {
+			source := []byte("{% note %}\nFirst.\n{% endnote %}\n{% warning %}\nSecond.\n{% endwarning %}\n")
+			out, err := content.RenderMarkdown(source, defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("{% note %}"))
+			Expect(html).To(ContainSubstring("{% endnote %}"))
+			Expect(html).To(ContainSubstring("{% warning %}"))
+			Expect(html).To(ContainSubstring("{% endwarning %}"))
+			Expect(html).NotTo(ContainSubstring("<p></p>"),
+				"no empty paragraphs between consecutive block tags (issue #564)")
+			Expect(html).NotTo(ContainSubstring("<p>{% note"),
+				"block-level template tags must not be wrapped in <p> (issue #564)")
+		})
+
+		It("adjacent HTML blocks next to template tags do not interfere", func() {
+			source := []byte("<style>\n.foo { color: red; }\n</style>\n\n{% hero %}\nContent\n{% endhero %}\n\n<div class=\"box\">\nMore\n</div>\n")
+			out, err := content.RenderMarkdown(source, defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<style>"))
+			Expect(html).To(ContainSubstring("{% hero %}"))
+			Expect(html).To(ContainSubstring("{% endhero %}"))
+			Expect(html).To(ContainSubstring("<div class=\"box\">"))
+			Expect(html).NotTo(ContainSubstring("<p></p>"),
+				"no empty paragraphs between HTML blocks and template tags (issue #564)")
+		})
+
+		It("block template tag with blank lines inside renders inner content correctly", func() {
+			source := []byte("{% hero %}\n\nParagraph after blank.\n\n{% endhero %}\n")
+			out, err := content.RenderMarkdown(source, defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<p>Paragraph after blank.</p>"),
+				"inner content between block template tags must render as normal markdown (issue #564)")
+			Expect(html).To(ContainSubstring("{% hero %}"))
+			Expect(html).NotTo(ContainSubstring("<p>{% hero"),
+				"block template tags must not be wrapped in <p> (issue #564)")
+		})
+
+		It("preserves whitespace-trimming template tags ({%- -%})", func() {
+			source := []byte("{%- if show -%}\nVisible\n{%- endif -%}\n")
+			out, err := content.RenderMarkdown(source, defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("{%- if show -%}"))
+			Expect(html).To(ContainSubstring("{%- endif -%}"))
+		})
+
+		It("preserves template tags inside blockquotes", func() {
+			source := []byte("> {{ page.pullquote }}\n>\n> -- {{ page.author }}\n")
+			out, err := content.RenderMarkdown(source, defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("{{ page.pullquote }}"))
+			Expect(html).To(ContainSubstring("{{ page.author }}"))
+			Expect(html).To(ContainSubstring("<blockquote>"))
+		})
+
+		It("preserves template tags inside list items", func() {
+			source := []byte("- {{ item.title }}\n- {% include \"partial\" %}\n- Regular text\n")
+			out, err := content.RenderMarkdown(source, defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("{{ item.title }}"))
+			Expect(html).To(ContainSubstring("{% include"))
+			Expect(html).To(ContainSubstring("<li>"))
+		})
+
+		It("does not leave placeholder artifacts in output", func() {
+			source := []byte("{% hero %}\n{{ page.title }}\n{% endhero %}\n")
+			out, err := content.RenderMarkdown(source, defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).NotTo(ContainSubstring("ALLOY_TPL"),
+				"no placeholder artifacts must appear in output (issue #564)")
+			Expect(html).NotTo(ContainSubstring("ELPMT"),
+				"no placeholder artifacts must appear in output (issue #564)")
+		})
+	})
+
 	// ── Goldmark extensions (§6 footnotes, typographer) ──────────────
 
 	Context("Goldmark extensions", func() {

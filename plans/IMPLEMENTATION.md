@@ -160,7 +160,53 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
   Default `content.formats`: `["md", "html"]`. `.liquid` is a valid content format only when engine is `liquid` — when engine is `gotemplate`, `.liquid` files are always passthrough even if in formats list.
 
 **markdown.go**:
-- `RenderMarkdown`: Configure goldmark with extensions (tables, task lists, typographer, footnotes). Handle `Unsafe` (raw HTML passthrough). Handle `TemplateTags` (preserve `{{ }}`/`{% %}` through rendering via placeholder substitution). Handle `TemplateBlocks` (issue #202): register a block-level parser that detects `{% tagname %}...{% endtagname %}` when the opening tag starts a line. Emit the opening/closing tags as custom AST block nodes with a custom renderer that outputs the tag text verbatim — do NOT use `ast.RawHTML` which is gated by the `unsafe` setting. Template tags must be preserved regardless of whether `unsafe` is true or false (same as the inline TemplateTags extension). Inner content between the tags is parsed as normal markdown. This prevents block shortcodes producing `<div>` from being wrapped in `<p>` tags.
+- `RenderMarkdown`: Configure goldmark with extensions (tables, task lists, typographer, footnotes). Handle `Unsafe` (raw HTML passthrough). Handle `TemplateTags` via a custom goldmark extension (issue #564) — see **Template tag goldmark extension** below. Handle `TemplateBlocks` (issue #202) via the same extension's block parser. NO placeholder substitution — the `protectTemplateTags`/`restoreTemplateTags` functions, `blockShortcodeLineRe` regex, and all placeholder logic must be removed and replaced by proper goldmark parser extensions.
+
+  **Template tag goldmark extension** (issue #564):
+
+  **Custom AST node types** (in `markdown.go`):
+  - `TemplateTagInline` — embeds `ast.BaseInline`, stores `TagText []byte`. `Kind()` returns `KindTemplateTagInline`. `IsRaw()` returns `true`.
+  - `TemplateTagBlock` — embeds `ast.BaseBlock`, stores `TagText []byte`. `Kind()` returns `KindTemplateTagBlock`. `IsRaw()` returns `true`.
+
+  Both use custom AST node kinds (NOT `ast.RawHTML`) so template tags are preserved regardless of the `unsafe` setting.
+
+  **Inline parser** (`templateTagInlineParser`, implements `parser.InlineParser`):
+  - `Trigger()` returns `[]byte{'{'}`.
+  - `Parse()` checks for `{{` or `{%` at position, scans for matching `}}` or `%}` (including `{%-`/`-%}` whitespace-trimming variants). On match: creates `TemplateTagInline` with tag text, advances reader. Handles multiline tags via line advancement (for `{{ "hello\nworld" | filter }}`).
+  - Priority: 90.
+
+  **Block parser** (`templateTagBlockParser`, implements `parser.BlockParser`):
+  - `Trigger()` returns `[]byte{'{'}`.
+  - `Open()` matches a line containing EXACTLY ONE `{% ... %}` tag with only whitespace before/after. Must NOT match lines with multiple tags or mixed content (e.g., `{% if %}Visible{% endif %}` is NOT a block match — it contains text between tags). Creates `TemplateTagBlock`, returns `(node, NoChildren)`.
+  - `Continue()` returns `parser.Close` (single-line block).
+  - `CanInterruptParagraph()` returns `true`.
+  - `CanAcceptIndentedLine()` returns `false`.
+  - Priority: 50.
+
+  **Custom renderer** (`templateTagRenderer`, implements `renderer.NodeRenderer`):
+  - Registers for `KindTemplateTagInline` and `KindTemplateTagBlock`.
+  - Inline: writes `node.TagText` verbatim. No HTML escaping, no `unsafe` check.
+  - Block: writes `node.TagText` + `\n` verbatim. No `<p>` wrapping.
+  - Priority: 100. Follows pattern in `render_hooks.go`.
+
+  **Extension** (`templateTagsExtension`, implements `goldmark.Extender`):
+  - `Extend()` adds inline parser, block parser, and renderer.
+  - Registered in `CreateGoldmark()` when `opts.TemplateTags` is `true`.
+
+  **Code to remove**:
+  - `protectTemplateTags()` function
+  - `restoreTemplateTags()` function
+  - `blockShortcodeLineRe` regex
+  - `preprocessSource()` reduced to only the escape path (or removed, with escape logic inlined)
+  - All placeholder logic in `RenderMarkdown()` and `RenderMarkdownWithTOC()`
+
+  **What remains unchanged**:
+  - `escapeTemplateTags()` and `templateTagPattern` (used for `templateTags: false` path)
+  - `CreateGoldmark()` signature and `MarkdownOptions` struct
+  - All render hook logic in `render_hooks.go`
+  - `escapeTemplateTagsInCode()` in `build.go` (runs after markdown rendering, independent)
+
+  **TOC integration**: `extractText()` in `markdown.go` only collects `ast.Text` nodes for TOC entries. With the new extension, `TemplateTagInline` inside headings (e.g., `## {{ page.section_title }}`) must also contribute to TOC text. Update `extractText` to write `node.TagText` for `TemplateTagInline` nodes.
 - `RenderText`: Wrap in `<pre>` tags.
 - **Auto heading IDs + heading attributes (issue #274, #306)**: Add `AutoHeadingID bool` to `MarkdownOptions` (default true from `cfg.Content.Markdown.AutoHeadingID`). When true, enable `parser.WithAutoHeadingID()` and `parser.WithAttribute()` in goldmark parser options. When false, skip both — headings render without `id` attributes. These are goldmark core options, not extensions. Heading attributes (`{#custom-id .class}`) only work when `AutoHeadingID` is true.
 - **TOC extraction (issue #274)**: Add a `TOC` field to `MarkdownOptions` (bool, default true from `cfg.Content.Markdown.TOC`). When true, `RenderMarkdown` walks the goldmark AST after parsing (before HTML rendering) and collects heading nodes (h2-h6, excluding h1) into a nested `[]TOCEntry` structure. `TOCEntry` has `ID`, `Text`, `Level`, `Children`. Returns the TOC alongside the rendered HTML — change return to `([]byte, []TOCEntry, error)` or add a `TOCResult` wrapper. The pipeline stores the result on `page.TOC` so templates can access `page.toc`. The `onContentTransformed` hook receives the page with `TOC` populated — plugins can mutate it.

@@ -2396,7 +2396,7 @@ Published on {{ page.date | date: "%B %d, %Y" }}.
 
 Two custom goldmark extensions handle template tags in markdown:
 
-**Inline TemplateTags extension** — An inline parser that recognizes `{{ }}` and `{% %}` patterns and emits them as `ast.RawHTML` inline nodes. Goldmark passes them through untouched. Works for inline shortcodes (`{% youtube "id" %}`) and output tags (`{{ page.title }}`).
+**Inline TemplateTags extension** — An inline parser that recognizes `{{ }}` and `{% %}` patterns and emits them as custom `TemplateTagInline` AST nodes (not `ast.RawHTML` — template tags must be preserved regardless of the `unsafe` setting). A custom renderer outputs the tag text verbatim, bypassing goldmark's HTML sanitization. Works for inline shortcodes (`{% youtube "id" %}`) and output tags (`{{ page.title }}`).
 
 **Block TemplateBlocks extension** — A block parser that recognizes `{% tagname ... %}` at the start of a line followed by `{% endtagname %}` and treats the entire block as a block-level boundary. The inner content between the tags is processed through markdown normally (bold, lists, etc. work inside the block). The opening and closing tags are emitted as custom AST block nodes (not `ast.RawHTML` — template tags must be preserved regardless of the `unsafe` setting). A custom renderer outputs the tag text verbatim, bypassing goldmark's HTML sanitization. This prevents block shortcodes that produce `<div>`, `<section>`, or other block-level HTML from being invalidly nested inside `<p>` tags.
 
