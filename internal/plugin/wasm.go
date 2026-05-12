@@ -483,6 +483,7 @@ func (r *WASMRuntime) LoadModule(path string) error {
 	// Close any previously loaded module/runtime
 	r.Close()
 	r.exports = make(map[string]bool)
+	r.hookNames = nil
 
 	wasmBytes, err := os.ReadFile(path)
 	if err != nil {
@@ -768,10 +769,13 @@ func (r *WASMRuntime) CallShortcode(name string, args []string, innerContent str
 	return innerContent, nil
 }
 
+// RegisteredHooks returns hook names discovered from the hooks() export.
 func (r *WASMRuntime) RegisteredHooks() []string {
 	return r.hookNames
 }
 
+// RegisteredHookDetails returns hook registrations with default priority 50.
+// The WASM ABI has no mechanism for per-hook priority or scope metadata.
 func (r *WASMRuntime) RegisteredHookDetails() []HookRegistration {
 	details := make([]HookRegistration, 0, len(r.hookNames))
 	for _, name := range r.hookNames {
@@ -783,9 +787,10 @@ func (r *WASMRuntime) RegisteredHookDetails() []HookRegistration {
 	return details
 }
 
+// CallHook marshals a JSON envelope and dispatches to the hook(ptr, len) export.
 func (r *WASMRuntime) CallHook(name string, payload interface{}) (interface{}, error) {
 	if r.mod == nil {
-		return nil, fmt.Errorf("wasm module not loaded")
+		return nil, fmt.Errorf("wasm module not loaded — call LoadModule first")
 	}
 	hookFn := r.mod.ExportedFunction("hook")
 	if hookFn == nil {
@@ -817,6 +822,9 @@ func (r *WASMRuntime) CallHook(name string, payload interface{}) (interface{}, e
 	return parsed, nil
 }
 
+// discoverHooks calls the hooks() export to discover registered hook names.
+// Validates that hook() exists when hooks are declared, filters empty names,
+// and deduplicates.
 func (r *WASMRuntime) discoverHooks(ctx context.Context) error {
 	r.hookNames = nil
 	hooksFn := r.mod.ExportedFunction("hooks")
@@ -829,12 +837,24 @@ func (r *WASMRuntime) discoverHooks(ctx context.Context) error {
 		return fmt.Errorf("calling hooks() export: %w", err)
 	}
 	if len(results) < 2 {
-		return nil
+		return fmt.Errorf("hooks() export returned %d values, expected 2 (ptr, len)", len(results))
 	}
 
 	ptr := uint32(results[0])
 	length := uint32(results[1])
 	if ptr == 0 && length == 0 {
+		if lastErrFn := r.mod.ExportedFunction("last_error"); lastErrFn != nil {
+			if errResults, errErr := lastErrFn.Call(ctx); errErr == nil && len(errResults) >= 2 {
+				errPtr, errLen := uint32(errResults[0]), uint32(errResults[1])
+				if errPtr != 0 && errLen != 0 {
+					if mem := r.mod.Memory(); mem != nil {
+						if errMsg, ok := mem.Read(errPtr, errLen); ok {
+							return fmt.Errorf("hooks() export failed: %s", string(errMsg))
+						}
+					}
+				}
+			}
+		}
 		return nil
 	}
 
@@ -851,7 +871,22 @@ func (r *WASMRuntime) discoverHooks(ctx context.Context) error {
 	if err := json.Unmarshal(data, &names); err != nil {
 		return fmt.Errorf("hooks() export returned invalid JSON (expected array of strings): %w", err)
 	}
-	r.hookNames = names
+
+	seen := make(map[string]bool, len(names))
+	filtered := make([]string, 0, len(names))
+	for _, name := range names {
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		filtered = append(filtered, name)
+	}
+
+	if len(filtered) > 0 && r.mod.ExportedFunction("hook") == nil {
+		return fmt.Errorf("hooks() declares %d hooks but module has no hook() export", len(filtered))
+	}
+
+	r.hookNames = filtered
 	return nil
 }
 
@@ -869,6 +904,7 @@ func (r *WASMRuntime) HasExport(name string) bool {
 // Close releases wazero resources.
 func (r *WASMRuntime) Close() {
 	ctx := context.Background()
+	r.hookNames = nil
 	if r.mod != nil {
 		r.mod.Close(ctx)
 		r.mod = nil
