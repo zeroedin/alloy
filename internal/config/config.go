@@ -350,5 +350,50 @@ func Validate(cfg *Config) error {
 	if cfg.Plugins.Timeout < 0 {
 		return fmt.Errorf("validation error: plugins timeout must not be negative (got %d)", cfg.Plugins.Timeout)
 	}
+
+	structDir := func(configured, fallback string) string {
+		if configured != "" {
+			return configured
+		}
+		return fallback
+	}
+	baseDirs := map[string]bool{
+		structDir(cfg.Structure.Content, "content"): true,
+		structDir(cfg.Structure.Layouts, "layouts"): true,
+		structDir(cfg.Structure.Data, "data"):       true,
+		structDir(cfg.Structure.Assets, "assets"):   true,
+		structDir(cfg.Structure.Static, "static"):   true,
+	}
+	seen := make(map[string]bool)
+	for i := range cfg.Watch {
+		cfg.Watch[i].From = strings.TrimRight(cfg.Watch[i].From, "/\\")
+
+		from := cfg.Watch[i].From
+		if from == "" {
+			return fmt.Errorf("validation error: watch[%d].from must not be empty", i)
+		}
+
+		switch cfg.Watch[i].Type {
+		case "content", "layout", "data":
+		default:
+			return fmt.Errorf("validation error: watch[%d].type must be content, layout, or data", i)
+		}
+
+		if seen[from] {
+			return fmt.Errorf("validation error: duplicate watch from: %q", from)
+		}
+		seen[from] = true
+
+		if baseDirs[from] {
+			return fmt.Errorf("validation error: watch from: %q overlaps a base structure directory", from)
+		}
+
+		if !strings.ContainsAny(from, "*?[{") {
+			if _, err := os.Stat(from); err != nil {
+				return fmt.Errorf("validation error: watch from: %q directory does not exist", from)
+			}
+		}
+	}
+
 	return nil
 }
