@@ -727,6 +727,60 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 							"per-hook priority in the WASM ABI (issue #444)")
 				}
 			})
+
+			It("CallHook returns error when hook export returns (0,0)", func() {
+				rt := plugin.NewWASMRuntime()
+				Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+				var iface interface{} = rt
+				caller, ok := iface.(interface {
+					CallHook(string, interface{}) (interface{}, error)
+				})
+				if !ok {
+					Fail("WASMRuntime must implement CallHook (issue #444)")
+				}
+
+				_, err := caller.CallHook("onUnknownEvent", "<p>test</p>")
+				Expect(err).To(HaveOccurred(),
+					"CallHook must return an error when the hook export returns (0,0) — "+
+						"per the WASM ABI error convention, (0,0) signals a plugin execution "+
+						"error and the host must check last_error() for details (issue #444)")
+			})
+
+			It("LoadModule returns error when hooks() export returns invalid JSON", func() {
+				rt := plugin.NewWASMRuntime()
+				err := rt.LoadModule(filepath.Join(testdataDir(), "single-files", "bad-hooks-export.wasm"))
+				Expect(err).To(HaveOccurred(),
+					"LoadModule must return an error when the hooks() export returns "+
+						"data that is not a valid JSON array of strings — malformed hook "+
+						"discovery must fail loud, not silently treat the module as hook-less (issue #444)")
+				Expect(err.Error()).NotTo(ContainSubstring("not found"),
+					"error must be about invalid hooks() data, not a missing module — "+
+						"bad-hooks-export.wasm must exist in testdata/single-files/ and export "+
+						"hooks() returning invalid JSON (non-array, malformed, or non-string elements)")
+			})
+
+			It("CallHook returns error for malformed WASM JSON response", func() {
+				rt := plugin.NewWASMRuntime()
+				Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "wasm-malformed-hook-response.wasm"))).To(Succeed(),
+					"wasm-malformed-hook-response.wasm fixture must exist — "+
+						"a WASM module whose hook() export returns valid (ptr, len) "+
+						"pointing to bytes that are not valid JSON (issue #444)")
+
+				var iface interface{} = rt
+				caller, ok := iface.(interface {
+					CallHook(string, interface{}) (interface{}, error)
+				})
+				if !ok {
+					Fail("WASMRuntime must implement CallHook (issue #444)")
+				}
+
+				_, err := caller.CallHook("onContentTransformed", "<p>test</p>")
+				Expect(err).To(HaveOccurred(),
+					"CallHook must return an error when the hook export returns bytes "+
+						"that are not valid JSON — do not silently return nil or fall back "+
+						"to the original payload (issue #444)")
+			})
 		})
 
 		It("NodeRuntime implements the Runtime interface", func() {
