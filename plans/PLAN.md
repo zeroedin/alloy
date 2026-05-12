@@ -2372,7 +2372,7 @@ Source File → Front Matter Extract → Format Detect → Markdown Parse → Me
 3. **Markdown parsing** (`.md` files only):
    - goldmark (CommonMark + extensions: tables, footnotes, task lists, typographer, auto heading IDs, heading attributes)
    - `html.WithUnsafe()` enabled — raw HTML blocks pass through untouched
-   - Template tag auto-detection extension — `{{ ... }}` and `{% ... %}` patterns are recognized as raw inline nodes and pass through goldmark untouched. No special delimiters needed.
+   - Template tag extensions — `{{ ... }}` and `{% ... %}` patterns are emitted as custom AST nodes (inline or block) and rendered verbatim regardless of the `unsafe` setting. No special delimiters needed.
    - `.html` → no Markdown processing (already HTML)
    - `.txt` → wrap in `<pre>` or passthrough based on config
 4. **Content template rendering**: The content body (Markdown-rendered or raw HTML) is rendered through the template engine with page data + site data context, producing a rendered HTML string. Variables assigned in content are scoped to this pass.
