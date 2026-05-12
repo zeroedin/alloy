@@ -443,6 +443,16 @@ var _ = Describe("RenderMarkdown", func() {
 			Expect(html).NotTo(ContainSubstring("ELPMT"),
 				"no placeholder artifacts must appear in output (issue #564)")
 		})
+
+		It("template tag in heading contributes to TOC text", func() {
+			source := []byte("## {{ page.section_title }}\n\nBody text.\n")
+			_, toc, err := content.RenderMarkdownWithTOC(source, defaultOpts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(toc).To(HaveLen(1))
+			Expect(toc[0].Text).To(ContainSubstring("{{ page.section_title }}"),
+				"extractText must include TemplateTagInline node text in TOC entries — "+
+					"headings containing template tags must produce usable TOC text (issue #564)")
+		})
 	})
 
 	// ── Goldmark extensions (§6 footnotes, typographer) ──────────────
