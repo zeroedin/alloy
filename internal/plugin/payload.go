@@ -33,7 +33,7 @@ type HookPagesReadyPayload struct {
 	SiteData map[string]interface{} `json:"siteData"`
 }
 
-// HookCascadePayload is the outbound payload for onDataCascadeReady (per-page).
+// HookCascadePayload is one entry in the onDataCascadeReady batch payload.
 type HookCascadePayload struct {
 	Path string                 `json:"path"`
 	Data map[string]interface{} `json:"data"`
