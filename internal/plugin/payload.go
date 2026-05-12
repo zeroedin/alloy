@@ -33,9 +33,7 @@ type HookPagesReadyPayload struct {
 	SiteData map[string]interface{} `json:"siteData"`
 }
 
-// HookCascadePayload is the target outbound payload for onDataCascadeReady (per-page).
-// Not yet wired — the pipeline currently sends []HookPagePayload to this hook.
-// Defined here for spec compliance; will be wired when the cascade hook is refactored.
+// HookCascadePayload is one entry in the onDataCascadeReady batch payload.
 type HookCascadePayload struct {
 	Path string                 `json:"path"`
 	Data map[string]interface{} `json:"data"`

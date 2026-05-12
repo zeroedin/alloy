@@ -537,9 +537,42 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 	if ps.Hooks.HasHooks(plugin.OnDataCascadeReady) {
 		cascadeScope := computeUnionScope(ps.Hooks.ScopeFor(plugin.OnDataCascadeReady))
-		cascadePayload := serializePagesForHook(pages, cascadeScope)
-		if _, err := ps.Hooks.RunWithTimeout(plugin.OnDataCascadeReady, cascadePayload); err != nil {
+		cascadePayload := serializePagesForCascadeHook(pages, cascadeScope)
+		cascadeResult, err := ps.Hooks.RunWithTimeout(plugin.OnDataCascadeReady, cascadePayload)
+		if err != nil {
 			return nil, fmt.Errorf("plugin hook onDataCascadeReady: %w", err)
+		}
+		if returnedPages, ok := cascadeResult.([]interface{}); ok {
+			inputLen := len(cascadePayload)
+			if len(returnedPages) > inputLen {
+				return nil, fmt.Errorf("plugin hook onDataCascadeReady: returned %d pages but input had %d — virtual page injection must use onPagesReady instead", len(returnedPages), inputLen)
+			}
+			if len(returnedPages) < inputLen {
+				return nil, fmt.Errorf("plugin hook onDataCascadeReady: returned %d pages but input had %d — plugins must not remove pages", len(returnedPages), inputLen)
+			}
+			scopedPaths := make(map[string]bool, len(cascadePayload))
+			for _, cp := range cascadePayload {
+				scopedPaths[cp.Path] = true
+			}
+			pathToIdx := make(map[string]int, len(pages))
+			for i, page := range pages {
+				pathToIdx[page.RelPath] = i
+			}
+			for _, rp := range returnedPages {
+				if pageMap, ok := toGoMap(rp); ok {
+					if data, ok := toGoMap(pageMap["data"]); ok {
+						returnedPath, _ := pageMap["path"].(string)
+						if !scopedPaths[returnedPath] {
+							continue
+						}
+						if origIdx, ok := pathToIdx[returnedPath]; ok {
+							for k, v := range data {
+								pages[origIdx].FrontMatter[k] = v
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -2269,6 +2302,25 @@ func serializePagesForHook(pages []*content.Page, scope *plugin.HookScope) []plu
 			p.HTML = string(page.RenderedBody)
 		}
 		result = append(result, p)
+	}
+	return result
+}
+
+func serializePagesForCascadeHook(pages []*content.Page, scope *plugin.HookScope) []plugin.HookCascadePayload {
+	if scope != nil && scope.Pages.Mode == plugin.PagesScopeNone {
+		return nil
+	}
+	result := make([]plugin.HookCascadePayload, 0, len(pages))
+	for _, page := range pages {
+		if scope != nil && scope.Pages.Mode == plugin.PagesScopeGlob {
+			if !matchPageGlob(scope.Pages.Glob, page.URL) {
+				continue
+			}
+		}
+		result = append(result, plugin.HookCascadePayload{
+			Path: page.RelPath,
+			Data: convertOrderedMaps(page.FrontMatter),
+		})
 	}
 	return result
 }
