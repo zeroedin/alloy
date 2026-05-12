@@ -208,6 +208,20 @@ var _ = Describe("File Watcher", func() {
 					"watch dirs must not interfere with existing classification (issue #530)")
 		})
 
+		It("ClassifyChange matches file under glob-pattern watch from", func() {
+			cfg := &config.Config{
+				Title: "Glob Watch Site",
+				Watch: []config.WatchMapping{
+					{From: "elements/**/docs/*.md", Type: "data"},
+				},
+			}
+			changeType := server.ClassifyChange("elements/rh-button/docs/overview.md", cfg)
+			Expect(changeType).To(Equal(server.DataChange),
+				"glob-pattern watch from: must classify files under the glob root — "+
+					"uses type: data to distinguish from the default ContentChange "+
+					"fallback (issue #530)")
+		})
+
 		It("ClassifyChange prefers watch over passthrough for same directory", func() {
 			cfg := &config.Config{
 				Title: "Overlap Site",
