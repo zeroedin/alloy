@@ -1901,6 +1901,8 @@ alloy.hook("onPageRendered", { priority: 100 }, ssrFn);
 
 The `priority` option is available on all lifecycle hooks. Omitting it defaults to 50. The `alloy.on()` alias follows the same signature: `alloy.on(event, options, fn)`.
 
+**Integration test coverage (issue #478)**: The full JS→Go bridge path for hook priority is covered by integration tests in `wasm_test.go`. These exercise `DiscoverPlugins` → `LoadPlugins` → `registerRuntime` → `RegisterWithOptions` (QuickJS always passes scope JSON, so the scoped path is used). Edge cases covered: explicit priority ordering, default priority (omitted → 50), priority 0 as valid, same-priority preserving registration order, negative priority, and non-integer flooring (`priority: 10.9` → 10).
+
 #### Hook scoping options
 
 The options object is required on `alloy.hook()` and `alloy.on()`. It declares what subset of site data and pages the hook needs. The pipeline uses these declarations to serialize only the requested subset — avoiding full-site serialization on every hook dispatch.
