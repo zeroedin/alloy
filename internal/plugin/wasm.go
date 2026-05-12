@@ -18,13 +18,14 @@ import (
 // JavaScript is executed via QuickJS compiled to WASM, running on wazero
 // (pure Go, zero CGo). See PLAN.md §5.
 type QuickJSRuntime struct {
-	initialized bool
-	rt          *qjs.Runtime
-	ctx         *qjs.Context
-	filters     map[string]bool
-	shortcodes  map[string]bool
-	hooks       map[string]int        // hook name → priority
-	hookScopes  map[string]*HookScope // hook name → scope
+	initialized  bool
+	rt           *qjs.Runtime
+	ctx          *qjs.Context
+	filters      map[string]bool
+	shortcodes   map[string]bool
+	hooks        map[string]int        // hook name → priority
+	hookScopes   map[string]*HookScope // hook name → scope
+	evalWarnings []string              // warnings from plugin eval (e.g., duplicate hooks)
 }
 
 // NewQuickJSRuntime creates a new QuickJS runtime instance.
@@ -67,8 +68,15 @@ func (r *QuickJSRuntime) Init() error {
 
 	r.ctx.SetFunc("__registerHook", func(this *qjs.This) (*qjs.Value, error) {
 		args := this.Args()
+		if len(args) < 1 {
+			return this.Context().NewUndefined(), nil
+		}
+		name := args[0].String()
+		if _, exists := r.hooks[name]; exists {
+			r.evalWarnings = append(r.evalWarnings,
+				fmt.Sprintf("duplicate hook registration: %q registered multiple times, last registration wins", name))
+		}
 		if len(args) >= 2 {
-			name := args[0].String()
 			r.hooks[name] = int(args[1].Int32())
 			if len(args) >= 3 {
 				scopeJSON := args[2].String()
@@ -82,8 +90,8 @@ func (r *QuickJSRuntime) Init() error {
 					}
 				}
 			}
-		} else if len(args) >= 1 {
-			r.hooks[args[0].String()] = 50
+		} else {
+			r.hooks[name] = 50
 		}
 		return this.Context().NewUndefined(), nil
 	})
@@ -421,6 +429,11 @@ func (r *QuickJSRuntime) RegisteredHookDetails() []HookRegistration {
 		regs = append(regs, HookRegistration{Name: name, Priority: priority, Scope: r.hookScopes[name]})
 	}
 	return regs
+}
+
+// EvalWarnings returns warnings collected during plugin evaluation.
+func (r *QuickJSRuntime) EvalWarnings() []string {
+	return r.evalWarnings
 }
 
 // Close releases resources held by the QuickJS runtime.
