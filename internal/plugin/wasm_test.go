@@ -1152,4 +1152,45 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 		})
 	})
 
+	// ── Hook priority through EvalFile → registerRuntime (issue #478) ────
+	// Unit tests exercise RegisterWithPriority directly on HookRegistry.
+	// This integration test verifies the full JS→Go bridge path:
+	// alloy.hook({ priority }) → __registerHook → RegisteredHookDetails →
+	// registerRuntime → RegisterWithPriority → execution order.
+
+	Describe("Hook priority through EvalFile → registerRuntime (issue #478)", func() {
+		It("priority option survives full JS→Go bridge path and controls execution order", func() {
+			tmpDir := GinkgoT().TempDir()
+			Expect(os.WriteFile(filepath.Join(tmpDir, "priority-alpha.js"),
+				[]byte(`export default function(alloy) {
+  alloy.hook('onPageRendered', { priority: 100 }, function(html) {
+    return html + '[alpha]';
+  });
+}`), 0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(tmpDir, "priority-beta.js"),
+				[]byte(`export default function(alloy) {
+  alloy.hook('onPageRendered', { priority: 10 }, function(html) {
+    return html + '[beta]';
+  });
+}`), 0644)).To(Succeed())
+
+			registry := plugin.NewRegistry(tmpDir)
+			Expect(registry.DiscoverPlugins()).To(Succeed())
+
+			hooks := plugin.NewHookRegistry()
+			registry.LoadPlugins(hooks)
+			DeferCleanup(registry.Close)
+
+			result, err := hooks.RunWithTimeout(plugin.OnPageRendered, "<p>test</p>")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("<p>test</p>[beta][alpha]"),
+				"priority 10 (beta) must run before priority 100 (alpha) — "+
+					"DiscoverPlugins sorts alphabetically so alpha registers first, "+
+					"but priority must override registration order. If this fails, "+
+					"the JS→Go priority bridge is broken somewhere in the chain: "+
+					"alloy.hook() → __registerHook → RegisteredHookDetails → "+
+					"registerRuntime → RegisterWithPriority (issue #478)")
+		})
+	})
+
 })
