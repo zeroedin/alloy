@@ -224,13 +224,13 @@ var _ = Describe("File Watcher", func() {
 		It("ClassifyChange matches watch dir with trailing slash in from", func() {
 			cfg := &config.Config{
 				Title: "Trailing Slash Site",
-				Watch: []config.WatchMapping{{From: "elements/", Type: "content"}},
+				Watch: []config.WatchMapping{{From: "elements/", Type: "layout"}},
 			}
 			changeType := server.ClassifyChange("elements/rh-button/docs/overview.md", cfg)
-			Expect(changeType).To(Equal(server.ContentChange),
+			Expect(changeType).To(Equal(server.LayoutChange),
 				"trailing slash in from: must not break path matching — "+
-					"the slash should be normalized before ClassifyChange "+
-					"compares prefixes (issue #530)")
+					"uses type: layout to distinguish from the default "+
+					"ContentChange fallback (issue #530)")
 		})
 
 		It("watch type content triggers RebuildPipeline", func() {
