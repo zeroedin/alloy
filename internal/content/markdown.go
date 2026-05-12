@@ -35,11 +35,190 @@ type MarkdownOptions struct {
 // including those containing newlines (e.g., {{ "hello\nworld" | filter }}).
 var templateTagPattern = regexp.MustCompile(`(?s)(\{\{.*?\}\}|\{%.*?%\})`)
 
+// ── Custom AST node types for template tags ───────────────────────────
+
+var KindTemplateTagInline = ast.NewNodeKind("TemplateTagInline")
+
+type TemplateTagInline struct {
+	ast.BaseInline
+	TagText []byte
+}
+
+func (n *TemplateTagInline) Kind() ast.NodeKind { return KindTemplateTagInline }
+func (n *TemplateTagInline) IsRaw() bool        { return true }
+func (n *TemplateTagInline) Dump(source []byte, level int) {
+	ast.DumpHelper(n, source, level, nil, nil)
+}
+
+var KindTemplateTagBlock = ast.NewNodeKind("TemplateTagBlock")
+
+type TemplateTagBlock struct {
+	ast.BaseBlock
+	TagText []byte
+}
+
+func (n *TemplateTagBlock) Kind() ast.NodeKind { return KindTemplateTagBlock }
+func (n *TemplateTagBlock) IsRaw() bool        { return true }
+func (n *TemplateTagBlock) Dump(source []byte, level int) {
+	ast.DumpHelper(n, source, level, nil, nil)
+}
+
+// ── Inline parser ─────────────────────────────────────────────────────
+
+type templateTagInlineParser struct{}
+
+func (p *templateTagInlineParser) Trigger() []byte {
+	return []byte{'{'}
+}
+
+func (p *templateTagInlineParser) Parse(parent ast.Node, block text.Reader, pc parser.Context) ast.Node {
+	_, seg := block.PeekLine()
+	source := block.Source()
+	start := seg.Start
+
+	if start+3 >= len(source) {
+		return nil
+	}
+
+	if source[start] != '{' {
+		return nil
+	}
+
+	isExpression := source[start+1] == '{'
+	isControl := source[start+1] == '%'
+	if !isExpression && !isControl {
+		return nil
+	}
+
+	var closer byte
+	if isExpression {
+		closer = '}'
+	} else {
+		closer = '%'
+	}
+
+	for i := start + 2; i < len(source)-1; i++ {
+		if source[i] == '\n' && i+1 < len(source) && source[i+1] == '\n' {
+			return nil
+		}
+		if !isExpression && source[i] == '-' && i+2 < len(source) && source[i+1] == closer && source[i+2] == '}' {
+			end := i + 3
+			tagText := make([]byte, end-start)
+			copy(tagText, source[start:end])
+			node := &TemplateTagInline{TagText: tagText}
+			block.Advance(end - start)
+			return node
+		}
+		if source[i] == closer && source[i+1] == '}' {
+			end := i + 2
+			tagText := make([]byte, end-start)
+			copy(tagText, source[start:end])
+			node := &TemplateTagInline{TagText: tagText}
+			block.Advance(end - start)
+			return node
+		}
+	}
+
+	return nil
+}
+
+// ── Block parser ──────────────────────────────────────────────────────
+
+type templateTagBlockParser struct{}
+
+func (p *templateTagBlockParser) Trigger() []byte {
+	return []byte{'{'}
+}
+
+func (p *templateTagBlockParser) Open(parent ast.Node, reader text.Reader, pc parser.Context) (ast.Node, parser.State) {
+	line, _ := reader.PeekLine()
+	trimmed := bytes.TrimSpace(line)
+
+	if len(trimmed) < 4 || trimmed[0] != '{' || trimmed[1] != '%' {
+		return nil, parser.NoChildren
+	}
+
+	closeIdx := bytes.Index(trimmed[2:], []byte("%}"))
+	if closeIdx == -1 {
+		return nil, parser.NoChildren
+	}
+
+	tagEnd := 2 + closeIdx + 2
+	remaining := bytes.TrimSpace(trimmed[tagEnd:])
+	if len(remaining) > 0 {
+		return nil, parser.NoChildren
+	}
+
+	tagText := make([]byte, len(trimmed))
+	copy(tagText, trimmed)
+	node := &TemplateTagBlock{TagText: tagText}
+
+	return node, parser.NoChildren
+}
+
+func (p *templateTagBlockParser) Continue(node ast.Node, reader text.Reader, pc parser.Context) parser.State {
+	return parser.Close
+}
+
+func (p *templateTagBlockParser) Close(node ast.Node, reader text.Reader, pc parser.Context) {}
+
+func (p *templateTagBlockParser) CanInterruptParagraph() bool { return true }
+
+func (p *templateTagBlockParser) CanAcceptIndentedLine() bool { return false }
+
+// ── Custom renderer ───────────────────────────────────────────────────
+
+type templateTagRenderer struct{}
+
+func (r *templateTagRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
+	reg.Register(KindTemplateTagInline, r.renderInline)
+	reg.Register(KindTemplateTagBlock, r.renderBlock)
+}
+
+func (r *templateTagRenderer) renderInline(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if entering {
+		n := node.(*TemplateTagInline)
+		_, _ = w.Write(n.TagText)
+	}
+	return ast.WalkContinue, nil
+}
+
+func (r *templateTagRenderer) renderBlock(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if entering {
+		n := node.(*TemplateTagBlock)
+		_, _ = w.Write(n.TagText)
+		_ = w.WriteByte('\n')
+	}
+	return ast.WalkContinue, nil
+}
+
+// ── Extension ─────────────────────────────────────────────────────────
+
+type templateTagsExtension struct{}
+
+func (e *templateTagsExtension) Extend(m goldmark.Markdown) {
+	m.Parser().AddOptions(
+		parser.WithBlockParsers(
+			util.Prioritized(&templateTagBlockParser{}, 50),
+		),
+		parser.WithInlineParsers(
+			util.Prioritized(&templateTagInlineParser{}, 90),
+		),
+	)
+	m.Renderer().AddOptions(
+		renderer.WithNodeRenderers(
+			util.Prioritized(&templateTagRenderer{}, 100),
+		),
+	)
+}
+
+// ── Goldmark configuration ───────────────────────────────────────────
+
 // CreateGoldmark builds a configured goldmark instance from options.
 // It configures extensions (Table, TaskList, Footnote, optionally Typographer),
 // parser options (AutoHeadingID, Attribute), and renderer options (Unsafe).
-// TemplateTags preprocessing is NOT handled here — callers that need it
-// (e.g., RenderMarkdown) must call preprocessSource separately.
+// When TemplateTags is true, the templateTagsExtension is registered to handle
+// {{ }} and {% %} patterns via custom AST nodes.
 func CreateGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) goldmark.Markdown {
 	extensions := []goldmark.Extender{
 		extension.Table,
@@ -48,6 +227,9 @@ func CreateGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) gold
 	}
 	if opts.Typographer {
 		extensions = append(extensions, extension.NewTypographer())
+	}
+	if opts.TemplateTags {
+		extensions = append(extensions, &templateTagsExtension{})
 	}
 
 	rendererOpts := []renderer.Option{}
@@ -76,17 +258,14 @@ func CreateGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) gold
 	)
 }
 
-// preprocessSource handles template tag protection/escaping before goldmark processing.
-func preprocessSource(source []byte, opts MarkdownOptions) ([]byte, []string) {
-	if opts.TemplateTags {
-		return protectTemplateTags(source)
-	}
-	return escapeTemplateTags(source), nil
-}
+// ── Rendering ─────────────────────────────────────────────────────────
 
 // RenderMarkdown converts Markdown source to HTML.
 func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
-	src, placeholders := preprocessSource(source, opts)
+	src := source
+	if !opts.TemplateTags {
+		src = escapeTemplateTags(source)
+	}
 	md := CreateGoldmark(opts)
 
 	var buf bytes.Buffer
@@ -94,71 +273,7 @@ func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
 		return nil, fmt.Errorf("markdown render error: %w", err)
 	}
 
-	result := buf.Bytes()
-	if len(placeholders) > 0 {
-		result = restoreTemplateTags(result, placeholders)
-	}
-
-	return result, nil
-}
-
-// protectTemplateTags replaces template tags with unique placeholders.
-// It handles both inline code and fenced code blocks by processing
-// the entire source — tags inside code spans/blocks get placeholders too,
-// which goldmark will render inside <code> elements, and then we restore them.
-// blockShortcodeLineRe matches a line that contains exactly one {% %} tag
-// (with optional leading/trailing whitespace). Only single-line tags qualify
-// as block shortcodes — multi-tag lines and control-flow lines are left inline.
-var blockShortcodeLineRe = regexp.MustCompile(`(?m)^([ \t]*)(\{%-?[^\n]*?-?%\})[ \t]*$`)
-
-func protectTemplateTags(src []byte) ([]byte, []string) {
-	var placeholders []string
-
-	// First pass: replace block-level {% %} tags with placeholders surrounded
-	// by blank lines so goldmark treats them as separate blocks.
-	// Preserve leading indentation for list/blockquote context.
-	result := blockShortcodeLineRe.ReplaceAllFunc(src, func(match []byte) []byte {
-		trimmed := bytes.TrimSpace(match)
-		// Detect leading indentation
-		indent := match[:bytes.Index(match, []byte("{%"))]
-		idx := len(placeholders)
-		placeholders = append(placeholders, string(trimmed))
-		placeholder := fmt.Sprintf("\n\n%sALLOY_TPL_%d_ELPMT\n\n", string(indent), idx)
-		return []byte(placeholder)
-	})
-
-	// Second pass: replace remaining inline template tags with text placeholders
-	result = templateTagPattern.ReplaceAllFunc(result, func(match []byte) []byte {
-		idx := len(placeholders)
-		placeholders = append(placeholders, string(match))
-		placeholder := fmt.Sprintf("ALLOY_TPL_%d_ELPMT", idx)
-		return []byte(placeholder)
-	})
-	return result, placeholders
-}
-
-
-// restoreTemplateTags replaces placeholders back with the original template tags.
-// Block-level shortcode placeholders ({% %}) end up in their own <p> tags from
-// goldmark — strip the <p> wrapper so the shortcode output isn't wrapped in an
-// unwanted paragraph. Expression tags ({{ }}) keep any surrounding <p> tags
-// since those are either user-authored HTML or goldmark paragraph wrapping that
-// should be preserved.
-func restoreTemplateTags(html []byte, placeholders []string) []byte {
-	result := string(html)
-	for i, original := range placeholders {
-		placeholder := fmt.Sprintf("ALLOY_TPL_%d_ELPMT", i)
-		isBlockTag := strings.HasPrefix(strings.TrimSpace(original), "{%")
-		if isBlockTag {
-			wrapped := "<p>" + placeholder + "</p>"
-			if strings.Contains(result, wrapped) {
-				result = strings.ReplaceAll(result, wrapped, original)
-				continue
-			}
-		}
-		result = strings.ReplaceAll(result, placeholder, original)
-	}
-	return []byte(result)
+	return buf.Bytes(), nil
 }
 
 // escapeTemplateTags inserts zero-width spaces between consecutive braces
@@ -177,6 +292,8 @@ func escapeTemplateTags(src []byte) []byte {
 	return result
 }
 
+// ── Table of contents ─────────────────────────────────────────────────
+
 // TOCEntry represents a heading in the table of contents.
 type TOCEntry struct {
 	ID       string
@@ -190,7 +307,10 @@ type TOCEntry struct {
 // Auto heading IDs are always enabled regardless of opts.AutoHeadingID,
 // since TOC entries require IDs to be useful.
 func RenderMarkdownWithTOC(source []byte, opts MarkdownOptions) ([]byte, []TOCEntry, error) {
-	src, placeholders := preprocessSource(source, opts)
+	src := source
+	if !opts.TemplateTags {
+		src = escapeTemplateTags(source)
+	}
 
 	extraOpts := []parser.Option{}
 	if !opts.AutoHeadingID {
@@ -207,9 +327,6 @@ func RenderMarkdownWithTOC(source []byte, opts MarkdownOptions) ([]byte, []TOCEn
 	}
 
 	result := buf.Bytes()
-	if len(placeholders) > 0 {
-		result = restoreTemplateTags(result, placeholders)
-	}
 
 	var flat []TOCEntry
 	ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
@@ -246,6 +363,8 @@ func extractText(buf *bytes.Buffer, node ast.Node, source []byte) {
 	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
 		if t, ok := child.(*ast.Text); ok {
 			buf.Write(t.Segment.Value(source))
+		} else if t, ok := child.(*TemplateTagInline); ok {
+			buf.Write(t.TagText)
 		} else {
 			extractText(buf, child, source)
 		}
