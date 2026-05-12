@@ -1851,6 +1851,62 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Ordered map type preservation through hook serialization (#571) ─
+	// When *ordered.Map values pass through the plugin serialization
+	// boundary (JSON round-trip), they must be restored as *ordered.Map
+	// so Each() iteration and insertion order are preserved.
+
+	Describe("ordered map type preservation through hook serialization (issue #571)", func() {
+		It("ordered map data survives onDataFetched round-trip with insertion order", func() {
+			cfg := &config.Config{
+				Title:   "Ordered Map Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"data/tokens.json":       `{"red":"#f00","green":"#0f0","blue":"#00f"}`,
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": `<html><body>{{ content }}{% for pair in site.data.tokens %}{{ pair[0] }}:{% endfor %}</body></html>`,
+				"plugins/passthrough.js": "export default function(alloy) {\n  alloy.hook('onDataFetched', { data: [\"*\"] }, (data) => {\n    return data;\n  });\n}",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onDataFetched passthrough hook must not error")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("red:green:blue:"),
+				"ordered map data must survive onDataFetched hook round-trip with insertion "+
+					"order preserved — the JSON serialization boundary currently converts "+
+					"*ordered.Map to map[string]interface{}, losing Each() support and key "+
+					"order. Fix: deserialize hook results through ordered.UnmarshalJSONValue "+
+					"instead of standard json.Unmarshal (issue #571)")
+		})
+
+		It("nested ordered map survives onDataFetched round-trip", func() {
+			cfg := &config.Config{
+				Title:   "Nested Map Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"data/tokens.json":       `{"color":{"red":{"name":"Red","value":"#f00"},"blue":{"name":"Blue","value":"#00f"}}}`,
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": `<html><body>{{ content }}{% for pair in site.data.tokens.color %}{{ pair[0] }}:{% endfor %}</body></html>`,
+				"plugins/passthrough.js": "export default function(alloy) {\n  alloy.hook('onDataFetched', { data: [\"*\"] }, (data) => {\n    return data;\n  });\n}",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("red:blue:"),
+				"nested ordered maps must also survive hook round-trip — "+
+					"site.data.tokens.color is a nested *ordered.Map that must retain "+
+					"Each() after JSON serialization/deserialization (issue #571)")
+		})
+	})
+
 	Describe("onContentLoaded return value applied to pages (issue #494)", func() {
 		It("plugin can modify page front matter via onContentLoaded", func() {
 			cfg := &config.Config{
