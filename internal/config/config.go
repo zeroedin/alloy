@@ -350,5 +350,76 @@ func Validate(cfg *Config) error {
 	if cfg.Plugins.Timeout < 0 {
 		return fmt.Errorf("validation error: plugins timeout must not be negative (got %d)", cfg.Plugins.Timeout)
 	}
+
+	structDir := func(configured, fallback string) string {
+		if configured != "" {
+			return strings.TrimRight(configured, "/\\")
+		}
+		return fallback
+	}
+	baseDirs := map[string]bool{
+		structDir(cfg.Structure.Content, "content"): true,
+		structDir(cfg.Structure.Layouts, "layouts"): true,
+		structDir(cfg.Structure.Data, "data"):       true,
+		structDir(cfg.Structure.Assets, "assets"):   true,
+		structDir(cfg.Structure.Static, "static"):   true,
+	}
+	seen := make(map[string]bool)
+	for i := range cfg.Watch {
+		from := strings.TrimRight(cfg.Watch[i].From, "/\\")
+		if from == "" {
+			return fmt.Errorf("validation error: watch[%d].from must not be empty", i)
+		}
+
+		switch cfg.Watch[i].Type {
+		case "content", "layout", "data":
+		default:
+			return fmt.Errorf("validation error: watch[%d].type must be content, layout, or data", i)
+		}
+
+		if seen[from] {
+			return fmt.Errorf("validation error: duplicate watch from: %q", from)
+		}
+		seen[from] = true
+
+		for baseDir := range baseDirs {
+			if from == baseDir || strings.HasPrefix(from, baseDir+"/") || strings.HasPrefix(from, baseDir+"\\") {
+				return fmt.Errorf("validation error: watch from: %q overlaps base structure directory %q", from, baseDir)
+			}
+		}
+
+		isGlob := strings.ContainsAny(from, "*?[{")
+		statTarget := from
+		if isGlob {
+			if idx := strings.IndexAny(from, "*?[{"); idx > 0 {
+				statTarget = filepath.Dir(from[:idx])
+			} else {
+				return fmt.Errorf("validation error: watch[%d].from %q has no directory prefix before glob — would watch the entire project root", i, from)
+			}
+		}
+		if statTarget != "" && statTarget != "." {
+			statPath := statTarget
+			if cfg.ProjectRoot != "" {
+				statPath = filepath.Join(cfg.ProjectRoot, statTarget)
+			}
+			info, err := os.Stat(statPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					if isGlob {
+						return fmt.Errorf("validation error: watch from: %q glob root %q does not exist", from, statTarget)
+					}
+					return fmt.Errorf("validation error: watch from: %q directory does not exist", from)
+				}
+				return fmt.Errorf("validation error: watch from: %q: %w", from, err)
+			}
+			if !info.IsDir() {
+				if isGlob {
+					return fmt.Errorf("validation error: watch from: %q glob root %q is not a directory", from, statTarget)
+				}
+				return fmt.Errorf("validation error: watch from: %q is not a directory", from)
+			}
+		}
+	}
+
 	return nil
 }

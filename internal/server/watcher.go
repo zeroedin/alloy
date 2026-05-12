@@ -55,7 +55,7 @@ const (
 // structureDir returns a config directory or falls back to the default name.
 func structureDir(configured, fallback string) string {
 	if configured != "" {
-		return configured
+		return strings.TrimRight(configured, "/\\")
 	}
 	return fallback
 }
@@ -79,6 +79,13 @@ func WatchDirs(cfg *config.Config) []string {
 			dirs = append(dirs, static.GlobRoot(pt.From))
 		} else {
 			dirs = append(dirs, pt.From)
+		}
+	}
+	for _, w := range cfg.Watch {
+		if static.ContainsGlobChars(w.From) {
+			dirs = append(dirs, static.GlobRoot(w.From))
+		} else {
+			dirs = append(dirs, w.From)
 		}
 	}
 	return dirs
@@ -107,6 +114,24 @@ func ClassifyChange(path string, cfg *config.Config) ChangeType {
 	case hasPathPrefix(path, "components"):
 		return ComponentChange
 	default:
+		for _, w := range cfg.Watch {
+			dir := strings.TrimRight(w.From, "/\\")
+			if static.ContainsGlobChars(dir) {
+				dir = static.GlobRoot(dir)
+			}
+			if hasPathPrefix(path, dir) {
+				switch w.Type {
+				case "content":
+					return ContentChange
+				case "layout":
+					return LayoutChange
+				case "data":
+					return DataChange
+				default:
+					continue
+				}
+			}
+		}
 		for _, pt := range cfg.Passthrough {
 			dir := pt.From
 			if static.ContainsGlobChars(dir) {
