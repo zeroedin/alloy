@@ -252,9 +252,9 @@ func decodeArray(data []byte) ([]interface{}, error) {
 	return result, nil
 }
 
-// RewrapValue recursively converts map[string]interface{} values to *Map.
-// Inverse of convertOrderedValue — restores Each()/LiquidMethodMissing()
-// after JSON round-trip through the plugin serialization boundary.
+// RewrapValue recursively converts map[string]interface{} values to *Map,
+// restoring Each()/LiquidMethodMissing() after JSON round-trip through
+// the plugin serialization boundary.
 func RewrapValue(v interface{}) interface{} {
 	return v
 }
