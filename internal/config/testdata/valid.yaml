@@ -97,3 +97,9 @@ languages:
     strings:
       read_more: "Lire la suite"
       posted_on: "Publié le"
+
+watch:
+  - from: "elements"
+    type: content
+  - from: "shared-layouts"
+    type: layout
