@@ -620,6 +620,169 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(result).NotTo(BeNil())
 		})
 
+		// ── Issue #444: WASM hook registration and execution ─────────
+		// WASM modules must support hooks via the hooks()/hook() export ABI.
+		// WASMRuntime must implement CallHook so registerRuntime can bridge
+		// WASM hooks to HookRegistry without tier-specific code.
+
+		Context("WASM hook registration and execution (issue #444)", func() {
+			It("WASMRuntime implements CallHook", func() {
+				var rt interface{} = plugin.NewWASMRuntime()
+				_, ok := rt.(interface {
+					CallHook(string, interface{}) (interface{}, error)
+				})
+				Expect(ok).To(BeTrue(),
+					"WASMRuntime must implement CallHook as part of the unified Runtime interface — "+
+						"registerRuntime uses a type assertion for CallHook; without it, "+
+						"WASM hooks are silently skipped (issue #444)")
+			})
+
+			It("WASMRuntime discovers hooks from hooks export", func() {
+				rt := plugin.NewWASMRuntime()
+				Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+				hooks := rt.RegisteredHooks()
+				Expect(hooks).NotTo(BeEmpty(),
+					"WASMRuntime.RegisteredHooks must return hook names discovered from "+
+						"the hooks() export — a WASM module exporting hooks() with a JSON "+
+						"array of hook names must have those names appear here (issue #444)")
+			})
+
+			It("PluginFilterRuntime interface includes CallHook", func() {
+				var rt plugin.PluginFilterRuntime = plugin.NewQuickJSRuntime()
+				_ = rt
+				_, ok := rt.(interface {
+					CallHook(string, interface{}) (interface{}, error)
+				})
+				Expect(ok).To(BeTrue(),
+					"CallHook must be part of PluginFilterRuntime (or at minimum, all "+
+						"runtimes implementing PluginFilterRuntime must also implement "+
+						"CallHook) so registerRuntime does not need a type assertion (issue #444)")
+			})
+
+			It("WASM module without hooks export returns empty RegisteredHooks", func() {
+				rt := plugin.NewWASMRuntime()
+				hooks := rt.RegisteredHooks()
+				Expect(hooks).To(BeEmpty(),
+					"WASMRuntime without a loaded module must return empty hooks — "+
+						"no hooks export means no hooks registered (issue #444)")
+			})
+
+			It("LoadPlugins bridges WASM hooks to HookRegistry when CallHook is available", func() {
+				tmpDir := GinkgoT().TempDir()
+				src, err := os.ReadFile(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(os.WriteFile(filepath.Join(tmpDir, "wasm-hook-plugin.wasm"), src, 0644)).To(Succeed())
+
+				registry := plugin.NewRegistry(tmpDir)
+				Expect(registry.DiscoverPlugins()).To(Succeed())
+
+				hookRegistry := plugin.NewHookRegistry()
+				registry.LoadPlugins(hookRegistry)
+				DeferCleanup(registry.Close)
+
+				Expect(hookRegistry.HasHooks(plugin.OnContentTransformed)).To(BeTrue(),
+					"LoadPlugins must bridge WASM hooks to HookRegistry — "+
+						"a WASM module registering onContentTransformed via hooks() export "+
+						"must result in a registered hook in the HookRegistry (issue #444)")
+			})
+
+			It("WASM CallHook wraps event name in JSON payload", func() {
+				rt := plugin.NewWASMRuntime()
+				Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+				var iface interface{} = rt
+				caller, ok := iface.(interface {
+					CallHook(string, interface{}) (interface{}, error)
+				})
+				if !ok {
+					Fail("WASMRuntime must implement CallHook (issue #444)")
+				}
+
+				result, err := caller.CallHook("onContentTransformed", "<p>test</p>")
+				Expect(err).NotTo(HaveOccurred(),
+					"CallHook must marshal the event name and payload as JSON "+
+						"and call the hook export — the WASM module processes the event (issue #444)")
+				Expect(result).NotTo(BeNil(),
+					"CallHook must return the (possibly modified) payload from the WASM module")
+			})
+
+			It("WASM hooks get default priority 50", func() {
+				rt := plugin.NewWASMRuntime()
+				Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+				var iface interface{} = rt
+				detailer, ok := iface.(plugin.HookDetailer)
+				if !ok {
+					hooks := rt.RegisteredHooks()
+					Expect(hooks).NotTo(BeEmpty(),
+						"WASMRuntime must report hooks for priority to be meaningful (issue #444)")
+					return
+				}
+				details := detailer.RegisteredHookDetails()
+				Expect(details).NotTo(BeEmpty())
+				for _, reg := range details {
+					Expect(reg.Priority).To(Equal(50),
+						"WASM hooks must default to priority 50 — no mechanism for "+
+							"per-hook priority in the WASM ABI (issue #444)")
+				}
+			})
+
+			It("CallHook returns error when hook export returns (0,0)", func() {
+				rt := plugin.NewWASMRuntime()
+				Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+				var iface interface{} = rt
+				caller, ok := iface.(interface {
+					CallHook(string, interface{}) (interface{}, error)
+				})
+				if !ok {
+					Fail("WASMRuntime must implement CallHook (issue #444)")
+				}
+
+				_, err := caller.CallHook("onUnknownEvent", "<p>test</p>")
+				Expect(err).To(HaveOccurred(),
+					"CallHook must return an error when the hook export returns (0,0) — "+
+						"per the WASM ABI error convention, (0,0) signals a plugin execution "+
+						"error and the host must check last_error() for details (issue #444)")
+			})
+
+			It("LoadModule returns error when hooks() export returns invalid JSON", func() {
+				rt := plugin.NewWASMRuntime()
+				err := rt.LoadModule(filepath.Join(testdataDir(), "single-files", "bad-hooks-export.wasm"))
+				Expect(err).To(HaveOccurred(),
+					"LoadModule must return an error when the hooks() export returns "+
+						"data that is not a valid JSON array of strings — malformed hook "+
+						"discovery must fail loud, not silently treat the module as hook-less (issue #444)")
+				Expect(err.Error()).NotTo(ContainSubstring("not found"),
+					"error must be about invalid hooks() data, not a missing module — "+
+						"bad-hooks-export.wasm must exist in testdata/single-files/ and export "+
+						"hooks() returning invalid JSON (non-array, malformed, or non-string elements)")
+			})
+
+			It("CallHook returns error for malformed WASM JSON response", func() {
+				rt := plugin.NewWASMRuntime()
+				Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "wasm-malformed-hook-response.wasm"))).To(Succeed(),
+					"wasm-malformed-hook-response.wasm fixture must exist — "+
+						"a WASM module whose hook() export returns valid (ptr, len) "+
+						"pointing to bytes that are not valid JSON (issue #444)")
+
+				var iface interface{} = rt
+				caller, ok := iface.(interface {
+					CallHook(string, interface{}) (interface{}, error)
+				})
+				if !ok {
+					Fail("WASMRuntime must implement CallHook (issue #444)")
+				}
+
+				_, err := caller.CallHook("onContentTransformed", "<p>test</p>")
+				Expect(err).To(HaveOccurred(),
+					"CallHook must return an error when the hook export returns bytes "+
+						"that are not valid JSON — do not silently return nil or fall back "+
+						"to the original payload (issue #444)")
+			})
+		})
+
 		It("NodeRuntime implements the Runtime interface", func() {
 			// NodeRuntime must exist and implement the same interface as
 			// QuickJSRuntime and WASMRuntime. The pipeline bridging loop
