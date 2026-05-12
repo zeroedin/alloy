@@ -260,9 +260,17 @@ func (r *NodeRuntime) CallShortcode(name string, args []string, innerContent str
 	return fmt.Sprint(resp.Result), nil
 }
 
-// RegisteredHooks returns the names of hooks registered by the Node plugin.
+// RegisteredHooks returns the deduplicated names of hooks registered by the Node plugin.
 func (r *NodeRuntime) RegisteredHooks() []string {
-	return r.hooks
+	seen := make(map[string]bool, len(r.hooks))
+	deduped := make([]string, 0, len(r.hooks))
+	for _, name := range r.hooks {
+		if !seen[name] {
+			seen[name] = true
+			deduped = append(deduped, name)
+		}
+	}
+	return deduped
 }
 
 // RegisteredHookDetails returns hook registrations with priority and scope.
