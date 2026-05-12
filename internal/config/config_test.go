@@ -752,6 +752,23 @@ var _ = Describe("Config", func() {
 					"error must name the conflicting directory (issue #530)")
 			})
 
+			It("rejects watch from: directory that does not exist", func() {
+				cfg := &config.Config{
+					Title:   "Test",
+					BaseURL: "https://example.com",
+					Watch: []config.WatchMapping{
+						{From: "nonexistent-dir", Type: "content"},
+					},
+				}
+				err := config.Validate(cfg)
+				Expect(err).To(HaveOccurred(),
+					"watch from: pointing to a nonexistent directory must fail "+
+						"validation — fail fast with a clear error instead of "+
+						"silently watching nothing (issue #530)")
+				Expect(err.Error()).To(ContainSubstring("nonexistent-dir"),
+					"error must name the missing directory (issue #530)")
+			})
+
 			It("normalizes trailing slash in watch from: path", func() {
 				cfg := &config.Config{
 					Title:   "Test",
