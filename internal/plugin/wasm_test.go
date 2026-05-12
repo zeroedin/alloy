@@ -1156,7 +1156,9 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 	// Unit tests exercise RegisterWithPriority directly on HookRegistry.
 	// This integration test verifies the full JS→Go bridge path:
 	// alloy.hook({ priority }) → __registerHook → RegisteredHookDetails →
-	// registerRuntime → RegisterWithPriority → execution order.
+	// registerRuntime → RegisterWithOptions → execution order.
+	// (QuickJS always passes scope JSON, so registerRuntime takes the
+	// RegisterWithOptions path, not RegisterWithPriority.)
 
 	Describe("Hook priority through EvalFile → registerRuntime (issue #478)", func() {
 		It("priority option survives full JS→Go bridge path and controls execution order", func() {
@@ -1189,7 +1191,155 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 					"but priority must override registration order. If this fails, "+
 					"the JS→Go priority bridge is broken somewhere in the chain: "+
 					"alloy.hook() → __registerHook → RegisteredHookDetails → "+
-					"registerRuntime → RegisterWithPriority (issue #478)")
+					"registerRuntime → RegisterWithOptions (issue #478)")
+		})
+
+		It("omitted priority defaults to 50 through full JS→Go bridge path", func() {
+			tmpDir := GinkgoT().TempDir()
+			Expect(os.WriteFile(filepath.Join(tmpDir, "default-priority.js"),
+				[]byte(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(html) {
+    return html + '[default]';
+  });
+}`), 0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(tmpDir, "explicit-priority.js"),
+				[]byte(`export default function(alloy) {
+  alloy.hook('onPageRendered', { priority: 100 }, function(html) {
+    return html + '[explicit]';
+  });
+}`), 0644)).To(Succeed())
+
+			registry := plugin.NewRegistry(tmpDir)
+			Expect(registry.DiscoverPlugins()).To(Succeed())
+
+			hooks := plugin.NewHookRegistry()
+			registry.LoadPlugins(hooks)
+			DeferCleanup(registry.Close)
+
+			result, err := hooks.RunWithTimeout(plugin.OnPageRendered, "<p>test</p>")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("<p>test</p>[default][explicit]"),
+				"omitted priority must default to 50 and run before explicit priority 100 — "+
+					"verifies Math.floor default in alloy.hook() JS bridge survives "+
+					"the full registration path (issue #478)")
+		})
+
+		It("priority 0 is a valid priority through full JS→Go bridge path", func() {
+			tmpDir := GinkgoT().TempDir()
+			Expect(os.WriteFile(filepath.Join(tmpDir, "priority-first.js"),
+				[]byte(`export default function(alloy) {
+  alloy.hook('onPageRendered', { priority: 50 }, function(html) {
+    return html + '[normal]';
+  });
+}`), 0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(tmpDir, "priority-zero.js"),
+				[]byte(`export default function(alloy) {
+  alloy.hook('onPageRendered', { priority: 0 }, function(html) {
+    return html + '[zero]';
+  });
+}`), 0644)).To(Succeed())
+
+			registry := plugin.NewRegistry(tmpDir)
+			Expect(registry.DiscoverPlugins()).To(Succeed())
+
+			hooks := plugin.NewHookRegistry()
+			registry.LoadPlugins(hooks)
+			DeferCleanup(registry.Close)
+
+			result, err := hooks.RunWithTimeout(plugin.OnPageRendered, "<p>test</p>")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("<p>test</p>[zero][normal]"),
+				"priority 0 must be treated as a valid priority, not ignored — "+
+					"must run before default priority 50 (issue #478)")
+		})
+
+		It("same priority preserves registration order through full JS→Go bridge path", func() {
+			tmpDir := GinkgoT().TempDir()
+			Expect(os.WriteFile(filepath.Join(tmpDir, "same-priority-alpha.js"),
+				[]byte(`export default function(alloy) {
+  alloy.hook('onPageRendered', { priority: 50 }, function(html) {
+    return html + '[alpha]';
+  });
+}`), 0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(tmpDir, "same-priority-beta.js"),
+				[]byte(`export default function(alloy) {
+  alloy.hook('onPageRendered', { priority: 50 }, function(html) {
+    return html + '[beta]';
+  });
+}`), 0644)).To(Succeed())
+
+			registry := plugin.NewRegistry(tmpDir)
+			Expect(registry.DiscoverPlugins()).To(Succeed())
+
+			hooks := plugin.NewHookRegistry()
+			registry.LoadPlugins(hooks)
+			DeferCleanup(registry.Close)
+
+			result, err := hooks.RunWithTimeout(plugin.OnPageRendered, "<p>test</p>")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("<p>test</p>[alpha][beta]"),
+				"equal priority must preserve alphabetical registration order — "+
+					"DiscoverPlugins sorts alphabetically so alpha registers first "+
+					"and must run first when priorities match (issue #478)")
+		})
+
+		It("negative priority runs before positive priorities through full JS→Go bridge path", func() {
+			tmpDir := GinkgoT().TempDir()
+			Expect(os.WriteFile(filepath.Join(tmpDir, "negative-priority.js"),
+				[]byte(`export default function(alloy) {
+  alloy.hook('onPageRendered', { priority: -10 }, function(html) {
+    return html + '[negative]';
+  });
+}`), 0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(tmpDir, "positive-priority.js"),
+				[]byte(`export default function(alloy) {
+  alloy.hook('onPageRendered', { priority: 10 }, function(html) {
+    return html + '[positive]';
+  });
+}`), 0644)).To(Succeed())
+
+			registry := plugin.NewRegistry(tmpDir)
+			Expect(registry.DiscoverPlugins()).To(Succeed())
+
+			hooks := plugin.NewHookRegistry()
+			registry.LoadPlugins(hooks)
+			DeferCleanup(registry.Close)
+
+			result, err := hooks.RunWithTimeout(plugin.OnPageRendered, "<p>test</p>")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("<p>test</p>[negative][positive]"),
+				"negative priority must run before positive priority — "+
+					"verifies signed integer handling through the full JS→Go bridge (issue #478)")
+		})
+
+		It("non-integer priority is floored through full JS→Go bridge path", func() {
+			tmpDir := GinkgoT().TempDir()
+			Expect(os.WriteFile(filepath.Join(tmpDir, "float-priority.js"),
+				[]byte(`export default function(alloy) {
+  alloy.hook('onPageRendered', { priority: 10.9 }, function(html) {
+    return html + '[float]';
+  });
+}`), 0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(tmpDir, "integer-priority.js"),
+				[]byte(`export default function(alloy) {
+  alloy.hook('onPageRendered', { priority: 11 }, function(html) {
+    return html + '[integer]';
+  });
+}`), 0644)).To(Succeed())
+
+			registry := plugin.NewRegistry(tmpDir)
+			Expect(registry.DiscoverPlugins()).To(Succeed())
+
+			hooks := plugin.NewHookRegistry()
+			registry.LoadPlugins(hooks)
+			DeferCleanup(registry.Close)
+
+			result, err := hooks.RunWithTimeout(plugin.OnPageRendered, "<p>test</p>")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("<p>test</p>[float][integer]"),
+				"priority 10.9 must be floored to 10 and run before priority 11 — "+
+					"verifies Math.floor() in alloy.hook() JS bridge survives "+
+					"the full registration path (issue #478)")
 		})
 	})
 
