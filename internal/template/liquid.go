@@ -163,6 +163,7 @@ var knownLiquidFilters = map[string]bool{
 	"intersect": true, "union": true, "complement": true,
 	"absolute_url": true, "markdownify": true,
 	"json": true, "fingerprint": true, "safeHTML": true, "url": true,
+	"cachebust": true, "get_hash": true,
 }
 
 func (e *liquidEngine) AddFilter(name string, fn FilterFunc) error {
@@ -421,6 +422,14 @@ func (f *alloyFilterBridge) Fingerprint(input interface{}, args ...interface{}) 
 
 func (f *alloyFilterBridge) SafeHTML(input interface{}, args ...interface{}) interface{} {
 	return f.call("safeHTML", input, args...)
+}
+
+func (f *alloyFilterBridge) Cachebust(input interface{}, args ...interface{}) interface{} {
+	return f.call("cachebust", input, args...)
+}
+
+func (f *alloyFilterBridge) GetHash(input interface{}, args ...interface{}) interface{} {
+	return f.call("get_hash", input, args...)
 }
 
 // Url is the Go-exported name for the "url" filter.
