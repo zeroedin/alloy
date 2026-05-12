@@ -163,6 +163,7 @@ var knownLiquidFilters = map[string]bool{
 	"intersect": true, "union": true, "complement": true,
 	"absolute_url": true, "markdownify": true,
 	"json": true, "fingerprint": true, "safeHTML": true, "url": true,
+	"cachebust": true, "get_hash": true,
 }
 
 func (e *liquidEngine) AddFilter(name string, fn FilterFunc) error {

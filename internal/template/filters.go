@@ -2,12 +2,16 @@ package template
 
 import (
 	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html"
 	"math"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -48,6 +52,30 @@ func getStrftimePattern(format string) (*strftime.Strftime, error) {
 
 	strftimeCache[format] = p
 	return p, nil
+}
+
+var assetSource struct {
+	root    string
+	subdirs []string
+}
+
+func RegisterAssetFilters(projectRoot string, subdirs ...string) {
+	assetSource.root = projectRoot
+	if len(subdirs) == 0 {
+		assetSource.subdirs = []string{"static", "assets", "content"}
+	} else {
+		assetSource.subdirs = subdirs
+	}
+}
+
+func resolveAssetFile(relPath string) ([]byte, error) {
+	for _, sub := range assetSource.subdirs {
+		data, err := os.ReadFile(filepath.Join(assetSource.root, sub, relPath))
+		if err == nil {
+			return data, nil
+		}
+	}
+	return nil, fmt.Errorf("asset not found: %s", relPath)
 }
 
 // RegisterBuiltinFilters registers all Tier 1 built-in filters on the given engine.
@@ -120,6 +148,8 @@ func RegisterBuiltinFilters(engine TemplateEngine) error {
 		"default":        Default,
 		"fingerprint":    Fingerprint,
 		"safeHTML":       SafeHTML,
+		"cachebust":      CacheBust,
+		"get_hash":       GetHash,
 	}
 	for name, fn := range filters {
 		if err := engine.AddFilter(name, fn); err != nil {
@@ -739,6 +769,55 @@ func SafeHTML(input interface{}, args ...interface{}) interface{} {
 	return toString(input)
 }
 
+// --- Asset fingerprinting filters ---
+
+func CacheBust(input interface{}, args ...interface{}) interface{} {
+	path := toString(input)
+	data, err := resolveAssetFile(path)
+	if err != nil {
+		return "/" + path
+	}
+	h := sha256.Sum256(data)
+	return "/" + path + "?h=" + hex.EncodeToString(h[:])[:12]
+}
+
+func GetHash(input interface{}, args ...interface{}) interface{} {
+	path := toString(input)
+	data, err := resolveAssetFile(path)
+	if err != nil {
+		return ""
+	}
+	shaType := 256
+	useBase64 := true
+	if len(args) >= 1 {
+		shaType = toInt(args[0])
+	}
+	if len(args) >= 2 {
+		switch v := args[1].(type) {
+		case bool:
+			useBase64 = v
+		default:
+			useBase64 = toString(args[1]) != "false"
+		}
+	}
+	var digest []byte
+	switch shaType {
+	case 384:
+		h := sha512.Sum384(data)
+		digest = h[:]
+	case 512:
+		h := sha512.Sum512(data)
+		digest = h[:]
+	default:
+		h := sha256.Sum256(data)
+		digest = h[:]
+	}
+	if useBase64 {
+		return base64.StdEncoding.EncodeToString(digest)
+	}
+	return hex.EncodeToString(digest)
+}
+
 var builtinFilters = map[string]FilterFunc{
 	"slugify":       Slugify,
 	"upcase":        Upcase,
@@ -793,6 +872,8 @@ var builtinFilters = map[string]FilterFunc{
 	"default":       Default,
 	"fingerprint":   Fingerprint,
 	"safeHTML":      SafeHTML,
+	"cachebust":     CacheBust,
+	"get_hash":      GetHash,
 }
 
 // ApplyFilter dispatches a filter by name with the given input and optional arguments.
