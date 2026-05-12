@@ -1942,6 +1942,14 @@ alloy.hook('onPagesReady', { data: ["elements"], pages: false }, function(payloa
 });
 ```
 
+#### Union scope and field visibility
+
+When multiple hooks register for the same event with different `pageFields`, Alloy computes a single broadest-union scope and serializes that union for all hooks on the event. If hook A requests `pageFields: ["html"]` and hook B requests `pageFields: ["toc"]`, both hooks receive pages with `html` AND `toc` populated. The same union logic applies to `data` keys and page filtering modes.
+
+This is a deliberate performance tradeoff: serializing one union payload per event is significantly cheaper than serializing a separate payload per hook. No data is withheld that a hook requested — every hook receives at least what it declared.
+
+**Scoping is not an isolation boundary.** Plugin authors should not rely on `pageFields` or `data` scoping to prevent other plugins from seeing their requested fields. Scoping reduces serialization cost; it does not enforce privacy between plugins. A plugin that requests `pageFields: ["frontMatter"]` may still receive `html`, `toc`, or other fields if another plugin on the same event requested them.
+
 #### Hook availability matrix
 
 Not all page filtering modes are available on all hooks. Two constraints apply:
