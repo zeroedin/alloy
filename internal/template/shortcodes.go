@@ -2,8 +2,6 @@ package template
 
 import (
 	"fmt"
-	"regexp"
-	"strings"
 )
 
 // ShortcodeFunc handles inline shortcodes (no inner content).
@@ -26,65 +24,6 @@ func RegisterShortcode(name string, fn ShortcodeFunc) error {
 func RegisterBlockShortcode(name string, fn BlockShortcodeFunc) error {
 	blockShortcodes[name] = fn
 	return nil
-}
-
-// shortcodeArgPattern matches quoted arguments in a shortcode tag.
-var shortcodeArgPattern = regexp.MustCompile(`"([^"]*)"`)
-
-// RenderShortcodes processes shortcode tags in template source and expands them.
-// Handles both inline {% name "arg" %} and block {% name %}...{% endname %} syntax.
-func RenderShortcodes(source string) (string, error) {
-	result := source
-
-	// Process block shortcodes first ({% name "args" %}content{% endname %})
-	for name, fn := range blockShortcodes {
-		pattern := regexp.MustCompile(
-			`\{%\s*` + regexp.QuoteMeta(name) + `((?:\s+"[^"]*")*)\s*%\}(.*?)\{%\s*end` + regexp.QuoteMeta(name) + `\s*%\}`,
-		)
-		result = pattern.ReplaceAllStringFunc(result, func(match string) string {
-			submatches := pattern.FindStringSubmatch(match)
-			if len(submatches) < 3 {
-				return match
-			}
-			args := parseShortcodeArgs(submatches[1])
-			content := submatches[2]
-			return fn(args, content)
-		})
-	}
-
-	// Process inline shortcodes ({% name "args" %})
-	for name, fn := range inlineShortcodes {
-		pattern := regexp.MustCompile(
-			`\{%\s*` + regexp.QuoteMeta(name) + `((?:\s+"[^"]*")*)\s*%\}`,
-		)
-		// Avoid matching block shortcodes that have already been processed
-		result = pattern.ReplaceAllStringFunc(result, func(match string) string {
-			// Skip if this is part of an end tag
-			if strings.Contains(match, "end"+name) {
-				return match
-			}
-			submatches := pattern.FindStringSubmatch(match)
-			if len(submatches) < 2 {
-				return match
-			}
-			args := parseShortcodeArgs(submatches[1])
-			return fn(args)
-		})
-	}
-
-	return result, nil
-}
-
-// parseShortcodeArgs extracts quoted arguments from a shortcode tag.
-func parseShortcodeArgs(argStr string) []string {
-	matches := shortcodeArgPattern.FindAllStringSubmatch(argStr, -1)
-	args := make([]string, 0, len(matches))
-	for _, m := range matches {
-		if len(m) >= 2 {
-			args = append(args, m[1])
-		}
-	}
-	return args
 }
 
 // ResetShortcodes clears all registered shortcodes (useful for testing).
