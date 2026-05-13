@@ -3,6 +3,7 @@ package content
 import (
 	"bytes"
 	"fmt"
+	htmlstd "html"
 	"regexp"
 	"strings"
 
@@ -403,7 +404,7 @@ func nestTOCEntries(flat []TOCEntry) []TOCEntry {
 func RenderText(source []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	buf.WriteString("<pre>")
-	buf.Write(source)
+	buf.WriteString(htmlstd.EscapeString(string(source)))
 	buf.WriteString("</pre>")
 	return buf.Bytes(), nil
 }
