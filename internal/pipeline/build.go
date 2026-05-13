@@ -1305,6 +1305,39 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
+	outputDir := cfg.Build.Output
+	if outputDir == "" {
+		outputDir = "_site"
+	}
+	for _, page := range pagesToRender {
+		if !output.ShouldWrite(page.URL) {
+			continue
+		}
+		outPath := output.ComputeOutputPath(page.URL)
+		body := page.RenderedBody
+		if ssrHTML, ok := renderedContent[renderedContentKey(page)]; ok {
+			body = []byte(ssrHTML)
+		}
+		if err := output.WriteFile(outputDir, outPath, body); err != nil {
+			return nil, fmt.Errorf("writing output %s: %w", outPath, err)
+		}
+		for format, fmtBody := range page.FormatBodies {
+			fmtPath := formatOutputPath(outPath, format)
+			if err := output.WriteFile(outputDir, fmtPath, fmtBody); err != nil {
+				return nil, fmt.Errorf("writing %s output %s: %w", format, fmtPath, err)
+			}
+		}
+		aliases, aliasErr := permalink.ResolveAliases(page)
+		if aliasErr != nil {
+			return nil, fmt.Errorf("resolving aliases for %s: %w", page.RelPath, aliasErr)
+		}
+		if len(aliases) > 0 {
+			if err := output.WriteAliases(outputDir, aliases, body); err != nil {
+				return nil, fmt.Errorf("writing aliases for %s: %w", page.RelPath, err)
+			}
+		}
+	}
+
 	result := &BuildResult{
 		OutputDir:        cfg.Build.Output,
 		PageCount:        len(pagesToRender),
