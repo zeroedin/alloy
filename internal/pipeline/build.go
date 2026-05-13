@@ -23,6 +23,7 @@ import (
 	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/data"
 	"github.com/zeroedin/alloy/internal/fetch"
+	"github.com/zeroedin/alloy/internal/fileutil"
 	"github.com/zeroedin/alloy/internal/i18n"
 	"github.com/zeroedin/alloy/internal/ordered"
 	"github.com/zeroedin/alloy/internal/output"
@@ -838,16 +839,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		for _, relPath := range contentPassthroughs {
 			src := filepath.Join(contentDir, relPath)
 			dst := filepath.Join(outputDir, relPath)
-			if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-				reportEndStage()
-				return nil, fmt.Errorf("copying content passthrough: %w", err)
-			}
-			srcData, err := os.ReadFile(src)
-			if err != nil {
-				reportEndStage()
-				return nil, fmt.Errorf("copying content passthrough %s: %w", relPath, err)
-			}
-			if err := os.WriteFile(dst, srcData, 0644); err != nil {
+			if err := fileutil.CopyFile(src, dst); err != nil {
 				reportEndStage()
 				return nil, fmt.Errorf("copying content passthrough %s: %w", relPath, err)
 			}
