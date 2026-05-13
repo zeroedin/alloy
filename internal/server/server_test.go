@@ -215,6 +215,38 @@ var _ = Describe("Server", func() {
 				"unknown file extensions must fall back to application/octet-stream")
 		})
 
+		It("serves YAML files with text/yaml content type (issue #612)", func() {
+			Expect(server.MIMEType(".yaml")).To(Equal("text/yaml; charset=utf-8"),
+				".yaml is not in Go's built-in MIME table — without the override, "+
+					"minimal platforms (Alpine, scratch) return application/octet-stream")
+			Expect(server.MIMEType(".yml")).To(Equal("text/yaml; charset=utf-8"),
+				".yml must match .yaml — both are YAML files")
+		})
+
+		It("serves TOML files with application/toml content type (issue #612)", func() {
+			Expect(server.MIMEType(".toml")).To(Equal("application/toml; charset=utf-8"),
+				".toml is not in Go's built-in MIME table — without the override, "+
+					"minimal platforms return application/octet-stream")
+		})
+
+		It("serves XML files with application/xml content type (issue #612)", func() {
+			Expect(server.MIMEType(".xml")).To(Equal("application/xml; charset=utf-8"),
+				"stdlib returns text/xml for .xml — the override ensures "+
+					"application/xml which is the IANA-preferred media type")
+		})
+
+		It("serves plain text files with text/plain content type (issue #612)", func() {
+			Expect(server.MIMEType(".txt")).To(Equal("text/plain; charset=utf-8"),
+				".txt needs an explicit charset=utf-8 — some platforms return "+
+					"text/plain without charset")
+		})
+
+		It("serves OTF font files with font/otf content type (issue #612)", func() {
+			Expect(server.MIMEType(".otf")).To(Equal("font/otf"),
+				".otf is not in Go's built-in MIME table — without the override, "+
+					"minimal platforms return application/octet-stream")
+		})
+
 		It("delegates to stdlib mime package for non-overridden extensions (issue #600)", func() {
 			mime.AddExtensionType(".alloytest600", "application/x-alloy-test")
 			Expect(server.MIMEType(".alloytest600")).To(Equal("application/x-alloy-test"),
