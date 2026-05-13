@@ -18,37 +18,17 @@ import (
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
-var mimeTypes = map[string]string{
-	".css":   "text/css; charset=utf-8",
-	".js":    "application/javascript; charset=utf-8",
-	".json":  "application/json; charset=utf-8",
-	".html":  "text/html; charset=utf-8",
-	".xml":   "application/xml; charset=utf-8",
-	".svg":   "image/svg+xml",
-	".png":   "image/png",
-	".jpg":   "image/jpeg",
-	".jpeg":  "image/jpeg",
-	".gif":   "image/gif",
-	".webp":  "image/webp",
-	".ico":   "image/x-icon",
-	".woff":  "font/woff",
-	".woff2": "font/woff2",
-	".ttf":   "font/ttf",
-	".otf":   "font/otf",
-	".pdf":   "application/pdf",
-	".txt":   "text/plain; charset=utf-8",
-	".yaml":  "text/yaml; charset=utf-8",
-	".yml":   "text/yaml; charset=utf-8",
-	".toml":  "application/toml; charset=utf-8",
-	".wasm":  "application/wasm",
+var mimeOverrides = map[string]string{
+	".js":   "application/javascript; charset=utf-8",
+	".json": "application/json; charset=utf-8",
+	".yaml": "text/yaml; charset=utf-8",
+	".yml":  "text/yaml; charset=utf-8",
+	".toml": "application/toml; charset=utf-8",
 }
 
-// MIMEType returns the Content-Type for a file extension.
-// Uses a built-in map for common web extensions, falls back to
-// Go's mime.TypeByExtension, then application/octet-stream.
 func MIMEType(ext string) string {
 	ext = strings.ToLower(ext)
-	if ct, ok := mimeTypes[ext]; ok {
+	if ct, ok := mimeOverrides[ext]; ok {
 		return ct
 	}
 	if ct := mime.TypeByExtension(ext); ct != "" {
