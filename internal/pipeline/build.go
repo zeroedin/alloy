@@ -1182,6 +1182,28 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		return nil, renderErr
 	}
 
+	// Pass 2: layout resolution + rendering (issue #628)
+	layoutsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts)
+	engineName := cfg.Templates.Engine
+	for _, page := range pagesToRender {
+		layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, engineName, permalinkCfg)
+		if err != nil {
+			if layoutVal, hasLayout := page.FrontMatter["layout"]; hasLayout && layoutVal != nil {
+				log.Printf("warning: layout %v not found for %s: %v", layoutVal, page.RelPath, err)
+			}
+			continue
+		}
+		if layoutPath == "" {
+			continue
+		}
+		if err := renderPageThroughLayouts(page, layoutPath, layoutsDir, engineName, rc); err != nil {
+			return nil, err
+		}
+		if err := renderPageFormats(page, layoutsDir, engineName, rc); err != nil {
+			return nil, err
+		}
+	}
+
 	renderedContent := make(map[string]string, len(pagesToRender))
 	for _, page := range pagesToRender {
 		if len(page.RenderedBody) > 0 {
