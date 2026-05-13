@@ -317,10 +317,24 @@ func (s *Server) ServeHTTP(path string) ([]byte, error) {
 	if strings.HasSuffix(path, "/") {
 		filePath = filepath.Join(filePath, "index.html")
 	}
+	filePath = filepath.Clean(filePath)
+
+	absOutput, err := filepath.Abs(outputDir)
+	if err != nil {
+		return nil, fmt.Errorf("page not found: %s", path)
+	}
+	absFile, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("page not found: %s", path)
+	}
+	rel, err := filepath.Rel(absOutput, absFile)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return nil, fmt.Errorf("page path escapes output directory: %s", path)
+	}
 
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("page not found: %s", path)
+		return nil, fmt.Errorf("page not found: %s: %w", path, err)
 	}
 	return data, nil
 }
@@ -337,9 +351,24 @@ func (s *Server) ServeStaticFile(path string) ([]byte, error) {
 	}
 
 	filePath := filepath.Join(staticDir, filepath.FromSlash(path))
-	data, err := os.ReadFile(filePath)
+	filePath = filepath.Clean(filePath)
+
+	absStatic, err := filepath.Abs(staticDir)
 	if err != nil {
 		return nil, fmt.Errorf("static file not found: %s", path)
+	}
+	absFile, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("static file not found: %s", path)
+	}
+	rel, err := filepath.Rel(absStatic, absFile)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return nil, fmt.Errorf("static file path escapes static directory: %s", path)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("static file not found: %s: %w", path, err)
 	}
 	return data, nil
 }
@@ -382,7 +411,7 @@ func (s *Server) ServeContentFile(urlPath string) ([]byte, error) {
 func (s *Server) ResolvePassthrough(urlPath string) (string, error) {
 	cleanURL := filepath.ToSlash(urlPath)
 	for _, mapping := range s.config.Passthrough {
-		prefix := "/" + mapping.To
+		prefix := "/" + mapping.To + "/"
 		if !strings.HasPrefix(cleanURL, prefix) {
 			continue
 		}
