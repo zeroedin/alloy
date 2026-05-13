@@ -2,7 +2,7 @@ package ordered
 
 import (
 	"bytes"
-	"encoding/json"
+	stdjson "encoding/json"
 	"fmt"
 	"io"
 )
@@ -77,12 +77,12 @@ func (m *Map) Entries() []KVPair {
 }
 
 func (m *Map) UnmarshalJSON(data []byte) error {
-	dec := json.NewDecoder(bytes.NewReader(data))
+	dec := stdjson.NewDecoder(bytes.NewReader(data))
 	t, err := dec.Token()
 	if err != nil {
 		return err
 	}
-	delim, ok := t.(json.Delim)
+	delim, ok := t.(stdjson.Delim)
 	if !ok || delim != '{' {
 		return fmt.Errorf("expected '{', got %v", t)
 	}
@@ -100,7 +100,7 @@ func (m *Map) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("expected string key, got %T", keyTok)
 		}
 
-		var rawVal json.RawMessage
+		var rawVal stdjson.RawMessage
 		if err := dec.Decode(&rawVal); err != nil {
 			return err
 		}
@@ -116,7 +116,7 @@ func (m *Map) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if delim, ok := t.(json.Delim); !ok || delim != '}' {
+	if delim, ok := t.(stdjson.Delim); !ok || delim != '}' {
 		return fmt.Errorf("expected '}', got %v", t)
 	}
 	return nil
@@ -199,7 +199,7 @@ func (m *Map) First() interface{} {
 
 // decodeValue recursively decodes a JSON raw message, producing *Map for
 // objects and []interface{} for arrays, preserving key order throughout.
-func decodeValue(raw json.RawMessage) (interface{}, error) {
+func decodeValue(raw stdjson.RawMessage) (interface{}, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
 		return nil, nil
@@ -223,18 +223,18 @@ func decodeValue(raw json.RawMessage) (interface{}, error) {
 }
 
 func decodeArray(data []byte) ([]interface{}, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
+	dec := stdjson.NewDecoder(bytes.NewReader(data))
 	t, err := dec.Token()
 	if err != nil {
 		return nil, err
 	}
-	if delim, ok := t.(json.Delim); !ok || delim != '[' {
+	if delim, ok := t.(stdjson.Delim); !ok || delim != '[' {
 		return nil, fmt.Errorf("expected '[', got %v", t)
 	}
 
 	result := make([]interface{}, 0)
 	for dec.More() {
-		var raw json.RawMessage
+		var raw stdjson.RawMessage
 		if err := dec.Decode(&raw); err != nil {
 			return nil, err
 		}
@@ -246,7 +246,7 @@ func decodeArray(data []byte) ([]interface{}, error) {
 	}
 	if t, err := dec.Token(); err != nil {
 		return nil, err
-	} else if delim, ok := t.(json.Delim); !ok || delim != ']' {
+	} else if delim, ok := t.(stdjson.Delim); !ok || delim != ']' {
 		return nil, fmt.Errorf("expected ']', got %v", t)
 	}
 	return result, nil
