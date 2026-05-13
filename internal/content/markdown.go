@@ -296,10 +296,10 @@ func escapeTemplateTags(src []byte) []byte {
 
 // TOCEntry represents a heading in the table of contents.
 type TOCEntry struct {
-	ID       string
-	Text     string
-	Level    int
-	Children []TOCEntry
+	ID       string     `json:"id"`
+	Text     string     `json:"text"`
+	Level    int        `json:"level"`
+	Children []TOCEntry `json:"children,omitempty"`
 }
 
 // RenderMarkdownWithTOC renders markdown and extracts a nested table of contents
