@@ -167,6 +167,11 @@ func (s *Server) startOnAddr(addr string) error {
 	s.wsClients = make(map[*websocket.Conn]struct{})
 	mux.HandleFunc("/_alloy/ws", s.handleWebSocket)
 
+	absOutputDir, err := filepath.Abs(outputDir)
+	if err != nil {
+		return fmt.Errorf("resolve output dir: %w", err)
+	}
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		urlPath := r.URL.Path
 		filePath := filepath.Join(outputDir, filepath.FromSlash(urlPath))
@@ -174,6 +179,18 @@ func (s *Server) startOnAddr(addr string) error {
 		// If path ends with /, try index.html
 		if strings.HasSuffix(urlPath, "/") {
 			filePath = filepath.Join(filePath, "index.html")
+		}
+
+		// Defense-in-depth: reject paths that escape the output directory.
+		absFile, err := filepath.Abs(filePath)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		rel, err := filepath.Rel(absOutputDir, absFile)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			http.NotFound(w, r)
+			return
 		}
 
 		if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
