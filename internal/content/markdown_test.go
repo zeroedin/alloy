@@ -519,6 +519,39 @@ var _ = Describe("RenderMarkdown", func() {
 				"double quotes must be escaped — defense-in-depth against "+
 					"attribute-context injection if output is ever reused")
 		})
+
+		It("escapes iframe, img, and event handler XSS vectors (issue #583)", func() {
+			source := []byte(`<iframe src="evil.com"></iframe><img onerror="alert(1)" src=x><a href="javascript:void(0)">click</a>`)
+			out, err := content.RenderText(source)
+			Expect(err).NotTo(HaveOccurred())
+			rendered := string(out)
+			Expect(rendered).NotTo(ContainSubstring("<iframe"),
+				"iframe tags must be escaped — embedding arbitrary frames "+
+					"is stored XSS (issue #583)")
+			Expect(rendered).NotTo(ContainSubstring("<img"),
+				"img tags with event handlers must be escaped — "+
+					"onerror/onload execute arbitrary JS (issue #583)")
+			Expect(rendered).NotTo(ContainSubstring("<a "),
+				"anchor tags with javascript: hrefs must be escaped (issue #583)")
+			Expect(rendered).To(ContainSubstring("&lt;iframe"),
+				"iframe must appear as escaped entity")
+			Expect(rendered).To(ContainSubstring("&lt;img"),
+				"img must appear as escaped entity")
+		})
+
+		It("preserves pre wrapping after escaping (issue #583)", func() {
+			source := []byte("<b>bold</b> & <i>italic</i>")
+			out, err := content.RenderText(source)
+			Expect(err).NotTo(HaveOccurred())
+			rendered := string(out)
+			Expect(rendered).To(HavePrefix("<pre>"),
+				"escaped content must still be wrapped in <pre> — "+
+					"escaping must not break the wrapper element")
+			Expect(rendered).To(HaveSuffix("</pre>"),
+				"closing </pre> tag must be present after escaped content")
+			Expect(rendered).To(ContainSubstring("&lt;b&gt;"),
+				"HTML tags inside text content must be escaped, not rendered")
+		})
 	})
 
 	// ── Auto heading IDs (issue #274) ─────────────────────────────
