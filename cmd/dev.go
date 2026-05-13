@@ -112,18 +112,14 @@ func newDevCommand() *cobra.Command {
 				fmt.Fprintf(cmd.OutOrStdout(), "Serving at http://localhost:%d\n", actualPort)
 			}
 
-			// Set up plugin hooks for dev server
-			hooks := plugin.NewHookRegistry()
-			hooks.SetTimeout(cfg.Plugins.Timeout)
-			pluginsDir := "plugins"
-			if cfg.ProjectRoot != "" {
-				pluginsDir = filepath.Join(cfg.ProjectRoot, "plugins")
+			// Set up plugin hooks for dev server — uses the same init path as Build()
+			// so WASM cache, conflict detection, and path resolution are consistent.
+			registry, hooks, pluginWarnings := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			for _, w := range pluginWarnings {
+				log.Printf("warning: %s", w)
 			}
-			registry := plugin.NewRegistry(pluginsDir)
-			if err := registry.DiscoverPlugins(); err != nil {
-				log.Printf("warning: plugin discovery: %v", err)
-			}
-			for _, w := range registry.LoadPlugins(hooks) {
+			for _, w := range registry.ConflictWarnings() {
 				log.Printf("warning: %s", w)
 			}
 			if _, err := hooks.RunWithTimeout(plugin.OnDevServerStart, cfg); err != nil {
