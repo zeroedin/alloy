@@ -590,9 +590,9 @@ var _ = Describe("Build Pipeline", func() {
 					"wrapping entirely (issue #628)")
 			Expect(incrHTML).To(ContainSubstring("<head>"),
 				"incremental rebuild must include <head> from layout")
-			Expect(strings.Contains(fullHTML, "<!DOCTYPE html>")).To(BeTrue(),
+			Expect(fullHTML).To(ContainSubstring("<!DOCTYPE html>"),
 				"sanity: full build must include DOCTYPE (test is invalid otherwise)")
-			Expect(strings.Contains(fullHTML, "<head>")).To(BeTrue(),
+			Expect(fullHTML).To(ContainSubstring("<head>"),
 				"sanity: full build must include <head> (test is invalid otherwise)")
 		})
 	})
