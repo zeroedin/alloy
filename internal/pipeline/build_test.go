@@ -467,6 +467,134 @@ var _ = Describe("Build Pipeline", func() {
 					"if this shows 'Original content', BuildIncremental rendered correctly "+
 					"but did not write the result to disk (issue #581)")
 		})
+
+		It("wraps content in layout after incremental rebuild (issue #628)", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("<html><head><title>Site</title></head><body>{{ content }}</body></html>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home\nlayout: default\n---\n# Welcome"),
+				0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Layout Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: filepath.Join(tmpDir, "_site")},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+				},
+			}
+
+			result, err := pipeline.BuildIncremental(cfg, nil, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("<html>"),
+				"incremental rebuild must apply layout wrapping — "+
+					"BuildIncremental currently calls renderPages (Pass 1) but "+
+					"skips layout resolution and renderPageThroughLayouts (Pass 2), "+
+					"producing raw content without any layout (issue #628)")
+			Expect(html).To(ContainSubstring("<head>"),
+				"layout <head> section must be present after incremental rebuild")
+			Expect(html).To(ContainSubstring("Welcome"),
+				"page content must be preserved inside the layout wrapper")
+		})
+
+		It("applies layout chain in incremental rebuild (issue #628)", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(layoutDir, "base.liquid"),
+				[]byte("<html><body>{{ content }}</body></html>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(layoutDir, "has-toc.liquid"),
+				[]byte("---\nlayout: \"base\"\n---\n<div class=\"toc\">{{ content }}</div>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "guide.md"),
+				[]byte("---\ntitle: Guide\nlayout: has-toc\n---\n# Getting Started"),
+				0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Chain Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: filepath.Join(tmpDir, "_site")},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+				},
+			}
+
+			result, err := pipeline.BuildIncremental(cfg, nil, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			html := result.RenderedContent["guide.md"]
+			Expect(html).To(ContainSubstring("<html>"),
+				"root layout (base) must be applied in incremental rebuild — "+
+					"layout chain resolution requires Pass 2 which BuildIncremental "+
+					"currently skips entirely (issue #628)")
+			Expect(html).To(ContainSubstring("<div class=\"toc\">"),
+				"intermediate layout (has-toc) must be applied — "+
+					"the full chain has-toc → base must resolve the same as Build()")
+			Expect(html).To(ContainSubstring("Getting Started"),
+				"page content must be preserved through the layout chain")
+		})
+
+		It("produces same layout structure as full build (issue #628)", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("<!DOCTYPE html><html><head><title>{{ page.title }}</title></head><body>{{ content }}</body></html>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "about.md"),
+				[]byte("---\ntitle: About\nlayout: default\n---\n# About Us"),
+				0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Parity Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: filepath.Join(tmpDir, "_site")},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+				},
+			}
+
+			fullResult, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			fullHTML := fullResult.RenderedContent["about.md"]
+
+			incrResult, err := pipeline.BuildIncremental(cfg, nil, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+			incrHTML := incrResult.RenderedContent["about.md"]
+
+			Expect(incrHTML).To(ContainSubstring("<!DOCTYPE html>"),
+				"incremental rebuild must preserve DOCTYPE from layout — "+
+					"full build produces DOCTYPE but incremental skips layout "+
+					"wrapping entirely (issue #628)")
+			Expect(incrHTML).To(ContainSubstring("<head>"),
+				"incremental rebuild must include <head> from layout")
+			Expect(strings.Contains(fullHTML, "<!DOCTYPE html>")).To(BeTrue(),
+				"sanity: full build must include DOCTYPE (test is invalid otherwise)")
+			Expect(strings.Contains(fullHTML, "<head>")).To(BeTrue(),
+				"sanity: full build must include <head> (test is invalid otherwise)")
+		})
 	})
 
 	// ── Incremental rebuild with SSR (issue #231) ──────────────────
