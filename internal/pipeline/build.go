@@ -1305,18 +1305,17 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
-	outputDir := cfg.Build.Output
-	if outputDir == "" {
-		outputDir = "_site"
-	}
+	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
 	for _, page := range pagesToRender {
 		if !output.ShouldWrite(page.URL) {
 			continue
 		}
 		outPath := output.ComputeOutputPath(page.URL)
 		body := page.RenderedBody
-		if ssrHTML, ok := renderedContent[renderedContentKey(page)]; ok {
-			body = []byte(ssrHTML)
+		if ssrPagesRendered > 0 {
+			if ssrHTML, ok := renderedContent[renderedContentKey(page)]; ok {
+				body = []byte(ssrHTML)
+			}
 		}
 		if err := output.WriteFile(outputDir, outPath, body); err != nil {
 			return nil, fmt.Errorf("writing output %s: %w", outPath, err)
