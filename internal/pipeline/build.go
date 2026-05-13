@@ -1297,10 +1297,44 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 			if err != nil {
 				log.Printf("warning: incremental SSR failed: %v", err)
 			} else {
+				for _, page := range pagesToRender {
+					if transformed, ok := ssrResult[renderedContentKey(page)]; ok {
+						page.RenderedBody = []byte(transformed)
+					}
+				}
 				for relPath, html := range ssrResult {
 					renderedContent[relPath] = html
 				}
 				ssrPagesRendered = len(ssrResult)
+			}
+		}
+	}
+
+	if err := validateOutputDir(cfg); err != nil {
+		return nil, err
+	}
+	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
+	for _, page := range pagesToRender {
+		if !output.ShouldWrite(page.URL) {
+			continue
+		}
+		outPath := output.ComputeOutputPath(page.URL)
+		if err := output.WriteFile(outputDir, outPath, page.RenderedBody); err != nil {
+			return nil, fmt.Errorf("writing output %s: %w", outPath, err)
+		}
+		for format, fmtBody := range page.FormatBodies {
+			fmtPath := formatOutputPath(outPath, format)
+			if err := output.WriteFile(outputDir, fmtPath, fmtBody); err != nil {
+				return nil, fmt.Errorf("writing %s output %s: %w", format, fmtPath, err)
+			}
+		}
+		aliases, aliasErr := permalink.ResolveAliases(page)
+		if aliasErr != nil {
+			return nil, fmt.Errorf("resolving aliases for %s: %w", page.RelPath, aliasErr)
+		}
+		if len(aliases) > 0 {
+			if err := output.WriteAliases(outputDir, aliases, page.RenderedBody); err != nil {
+				return nil, fmt.Errorf("writing aliases for %s: %w", page.RelPath, err)
 			}
 		}
 	}
