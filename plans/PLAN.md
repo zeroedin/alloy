@@ -1258,7 +1258,7 @@ Errors are treated differently depending on the mode. The core principle: **`all
 
 Incremental builds are exclusive to `alloy dev` (dev mode). `alloy build` and `alloy serve` always do a **full clean rebuild** — every page is rendered, every file is written. This ensures CI/CD and production preview produce deterministic, complete output.
 
-In dev mode, after the initial full build, the file watcher triggers incremental rebuilds on changes. Alloy tracks **actual data reads** to determine the minimum set of pages to rebuild. The pipeline function `BuildIncremental(cfg, contentMap, previousCache, changedFiles)` accepts a previous build cache and only rebuilds affected pages.
+In dev mode, after the initial full build, the file watcher triggers incremental rebuilds on changes. Alloy tracks **actual data reads** to determine the minimum set of pages to rebuild. The pipeline function `BuildIncremental(cfg, contentMap, previousCache, changedFiles)` accepts a previous build cache and only rebuilds affected pages. **Disk output (issue #581)**: `BuildIncremental` must write rendered pages to the output directory using the same page-writing logic as `Build()`. Only changed pages are written — asset/passthrough copying is handled by existing watches. Integration test coverage in `internal/pipeline/build_test.go`.
 
 **Content-hash change detection** (SHA-256, stored in `.alloy/cache.json`):
 - On incremental rebuild, skip unchanged files entirely (no re-parse, no re-render)
