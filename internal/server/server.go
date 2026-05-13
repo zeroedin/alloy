@@ -18,14 +18,30 @@ import (
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
+// mimeOverrides provides stable MIME types for extensions where Go's
+// mime.TypeByExtension either returns a different value than we need
+// (.js, .json, .xml) or has no built-in mapping and relies on a system
+// MIME database that doesn't exist on minimal platforms like Alpine,
+// scratch, and distroless containers (.ico, .woff, .woff2, .ttf, .otf,
+// .txt, .yaml, .yml, .toml).
 var mimeOverrides = map[string]string{
-	".js":   "application/javascript; charset=utf-8",
-	".json": "application/json; charset=utf-8",
-	".yaml": "text/yaml; charset=utf-8",
-	".yml":  "text/yaml; charset=utf-8",
-	".toml": "application/toml; charset=utf-8",
+	".js":    "application/javascript; charset=utf-8",
+	".json":  "application/json; charset=utf-8",
+	".xml":   "application/xml; charset=utf-8",
+	".ico":   "image/x-icon",
+	".woff":  "font/woff",
+	".woff2": "font/woff2",
+	".ttf":   "font/ttf",
+	".otf":   "font/otf",
+	".txt":   "text/plain; charset=utf-8",
+	".yaml":  "text/yaml; charset=utf-8",
+	".yml":   "text/yaml; charset=utf-8",
+	".toml":  "application/toml; charset=utf-8",
 }
 
+// MIMEType returns the Content-Type for a file extension.
+// Checks overrides first, then falls back to mime.TypeByExtension,
+// then application/octet-stream.
 func MIMEType(ext string) string {
 	ext = strings.ToLower(ext)
 	if ct, ok := mimeOverrides[ext]; ok {
