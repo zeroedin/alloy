@@ -649,9 +649,10 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("omits children when empty", func() {
 			toc := content.TOCEntry{
-				ID:    "leaf",
-				Text:  "Leaf",
-				Level: 3,
+				ID:       "leaf",
+				Text:     "Leaf",
+				Level:    3,
+				Children: []content.TOCEntry{},
 			}
 
 			data, err := json.Marshal(toc)
