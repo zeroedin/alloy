@@ -634,6 +634,69 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(html).NotTo(ContainSubstring("<head>"),
 				"no layout markup should appear when layout: false is set")
 		})
+
+		It("detects content reversion across sequential incremental builds (issue #639)", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("{{ content }}"), 0644)).To(Succeed())
+
+			originalContent := "---\ntitle: Home\n---\n# Original"
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte(originalContent), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Cache Revert Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: filepath.Join(tmpDir, "_site")},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+				},
+			}
+
+			// Step 1: Full build — saves cache to .alloy/cache.json with hash of "Original"
+			_, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Step 2: Change content and do incremental rebuild
+			updatedContent := "---\ntitle: Home\n---\n# Updated"
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte(updatedContent), 0644)).To(Succeed())
+
+			cacheDir := filepath.Join(tmpDir, ".alloy")
+			prevCache, err := cache.LoadFrom(cacheDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			result2, err := pipeline.BuildIncremental(cfg, nil, prevCache,
+				[]string{"content/index.md"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result2.PageCount).To(Equal(1),
+				"sanity: changed content must be rebuilt (hash mismatch with cache)")
+
+			// Step 3: Revert content to original and do incremental rebuild
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte(originalContent), 0644)).To(Succeed())
+
+			prevCache2, err := cache.LoadFrom(cacheDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			result3, err := pipeline.BuildIncremental(cfg, nil, prevCache2,
+				[]string{"content/index.md"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result3.PageCount).To(Equal(1),
+				"reverted content must be rebuilt — BuildIncremental must persist "+
+					"the updated cache after rendering so that subsequent builds "+
+					"see the hash from the last incremental build, not the stale "+
+					"hash from the initial full build; without cache persistence, "+
+					"reverting a file to its original state causes a false skip "+
+					"because the stale cache hash matches (issue #639)")
+		})
 	})
 
 	// ── Incremental rebuild with SSR (issue #231) ──────────────────
