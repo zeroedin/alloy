@@ -413,6 +413,37 @@ var _ = Describe("Server", func() {
 					"the HTTP handler must serve them like any other output file (issue #625)")
 		})
 
+		It("rejects path traversal via HTTP request (issue #616)", func() {
+			projectRoot := GinkgoT().TempDir()
+			outputDir := filepath.Join(projectRoot, "_site")
+			Expect(os.MkdirAll(outputDir, 0755)).To(Succeed())
+
+			secretFile := filepath.Join(projectRoot, "secret.env")
+			Expect(os.WriteFile(secretFile, []byte("API_KEY=hunter2"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+			}
+			srv := server.New(cfg)
+			Expect(srv.Start(0)).To(Succeed())
+			defer srv.Stop()
+
+			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/../secret.env", srv.Port()))
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).NotTo(ContainSubstring("API_KEY"),
+				"path traversal via /../ in HTTP request must not leak files "+
+					"outside the output directory — without containment, an attacker "+
+					"can read arbitrary files from the host (issue #616)")
+			Expect(resp.StatusCode).To(Equal(http.StatusNotFound),
+				"traversal requests must return 404, not 200 with file contents")
+		})
+
 		It("does not inject error overlay when no errors exist (issue #630)", func() {
 			projectRoot := GinkgoT().TempDir()
 			outputDir := filepath.Join(projectRoot, "_site")
@@ -644,6 +675,29 @@ var _ = Describe("Server", func() {
 			_, err = srv.ServeContentFile("/about/nonexistent.svg")
 			Expect(err).To(HaveOccurred(),
 				"requesting a non-existent content file must return an error, not empty content")
+		})
+
+		It("rejects path traversal that escapes content directory (issue #616)", func() {
+			projectRoot := GinkgoT().TempDir()
+
+			contentDir := filepath.Join(projectRoot, "content")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+			secretFile := filepath.Join(projectRoot, "secret.env")
+			Expect(os.WriteFile(secretFile, []byte("API_KEY=hunter2"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Dev Site",
+				ProjectRoot: projectRoot,
+			}
+			srv := server.New(cfg)
+			_, err := srv.ServeContentFile("/../secret.env")
+			Expect(err).To(HaveOccurred(),
+				"path traversal with /../ must be rejected — without "+
+					"containment checks, an attacker can read any file on "+
+					"the host by escaping the content directory (issue #616)")
+			Expect(err.Error()).To(ContainSubstring("escapes"),
+				"error message must indicate the path escaped the content directory")
 		})
 	})
 
