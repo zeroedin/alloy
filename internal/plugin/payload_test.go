@@ -6,6 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/plugin"
 )
 
@@ -94,7 +95,7 @@ var _ = Describe("Typed outbound payload structs (issue #529)", func() {
 				URL:         "/docs/guide/",
 				FrontMatter: map[string]interface{}{"title": "Guide"},
 				HTML:        "<h2 id=\"intro\">Intro</h2><p>Text</p>",
-				TOC: []plugin.TOCEntry{
+				TOC: []content.TOCEntry{
 					{ID: "intro", Text: "Intro", Level: 2},
 				},
 			}
@@ -148,11 +149,11 @@ var _ = Describe("Typed outbound payload structs (issue #529)", func() {
 
 	Describe("TOCEntry struct", func() {
 		It("serializes nested children recursively", func() {
-			toc := plugin.TOCEntry{
+			toc := content.TOCEntry{
 				ID:    "section",
 				Text:  "Section",
 				Level: 2,
-				Children: []plugin.TOCEntry{
+				Children: []content.TOCEntry{
 					{ID: "subsection", Text: "Subsection", Level: 3},
 				},
 			}
@@ -178,7 +179,7 @@ var _ = Describe("Typed outbound payload structs (issue #529)", func() {
 		})
 
 		It("omits children when empty", func() {
-			toc := plugin.TOCEntry{
+			toc := content.TOCEntry{
 				ID:    "leaf",
 				Text:  "Leaf",
 				Level: 3,

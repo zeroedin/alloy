@@ -2407,7 +2407,7 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 			payload.HTML = string(page.RenderedBody)
 		}
 		if scope == nil || scope.WantsField("toc") {
-			payload.TOC = contentTOCToPlugin(page.TOC)
+			payload.TOC = page.TOC
 		}
 
 		result, err := hooks.RunWithTimeout(plugin.OnContentTransformed, payload)
@@ -2438,22 +2438,6 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 		}
 	}
 	return nil
-}
-
-func contentTOCToPlugin(entries []content.TOCEntry) []plugin.TOCEntry {
-	if len(entries) == 0 {
-		return nil
-	}
-	result := make([]plugin.TOCEntry, len(entries))
-	for i, e := range entries {
-		result[i] = plugin.TOCEntry{
-			ID:       e.ID,
-			Text:     e.Text,
-			Level:    e.Level,
-			Children: contentTOCToPlugin(e.Children),
-		}
-	}
-	return result
 }
 
 func deserializeTOC(items []interface{}) []content.TOCEntry {

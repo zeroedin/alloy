@@ -1,5 +1,7 @@
 package plugin
 
+import "github.com/zeroedin/alloy/internal/content"
+
 // HookPagePayload is the outbound representation of a page sent to plugins.
 // Separate from the template data path (which uses map[string]interface{} for liquidgo).
 type HookPagePayload struct {
@@ -16,15 +18,7 @@ type HookTransformPayload struct {
 	URL         string                 `json:"url"`
 	FrontMatter map[string]interface{} `json:"frontMatter"`
 	HTML        string                 `json:"html"`
-	TOC         []TOCEntry             `json:"toc,omitempty"`
-}
-
-// TOCEntry replaces the dynamic map serialization in serializeTOC/deserializeTOC.
-type TOCEntry struct {
-	ID       string     `json:"id"`
-	Text     string     `json:"text"`
-	Level    int        `json:"level"`
-	Children []TOCEntry `json:"children,omitempty"`
+	TOC         []content.TOCEntry     `json:"toc,omitempty"`
 }
 
 // HookPagesReadyPayload is the outbound payload for onPagesReady (per-batch).
