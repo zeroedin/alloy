@@ -11,7 +11,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/pipeline"
 )
@@ -346,8 +345,8 @@ var _ = Describe("Full build pipeline", func() {
 	// cache.InvalidatedPages. Without tracking, layout changes rebuild
 	// nothing in incremental mode.
 
-	Describe("Template usage tracking in build cache", func() {
-		It("Build persists template usage so layout changes invalidate pages", func() {
+	Describe("Template usage tracking in build cache (issue #639)", func() {
+		It("Build returns cache with template tracking data", func() {
 			cfgPath := filepath.Join(fixtureDir("minimal"), "alloy.config.yaml")
 			cfg, err := config.Load(cfgPath)
 			Expect(err).NotTo(HaveOccurred())
@@ -357,24 +356,18 @@ var _ = Describe("Full build pipeline", func() {
 			Expect(result).NotTo(BeNil())
 			Expect(result.PageCount).To(BeNumerically(">", 0))
 
-			// Verify cache file was actually written to disk
-			cacheDir := filepath.Join(cfg.ProjectRoot, ".alloy")
-			cacheFile := filepath.Join(cacheDir, "cache.json")
-			Expect(cacheFile).To(BeAnExistingFile(),
-				"Build must write cache to .alloy/cache.json")
-
-			// Load the cache that Build() wrote
-			savedCache, err := cache.LoadFrom(cacheDir)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(savedCache).NotTo(BeNil())
+			// Build must return an in-memory cache on the result
+			Expect(result.Cache).NotTo(BeNil(),
+				"Build must return an in-memory cache on result.Cache — "+
+					"disk persistence is removed, the caller (dev.go) "+
+					"needs the cache for subsequent incremental rebuilds (issue #639)")
 
 			// The cache must have template tracking data so that
 			// InvalidatedPages returns pages using a given layout.
-			// Use slash-normalized relative path as the template key.
 			templateKey := filepath.ToSlash(filepath.Join("layouts", "default.liquid"))
-			invalidated := savedCache.InvalidatedPages(templateKey)
+			invalidated := result.Cache.InvalidatedPages(templateKey)
 			Expect(invalidated).NotTo(BeEmpty(),
-				fmt.Sprintf("cache must track which pages use each layout — "+
+				fmt.Sprintf("result.Cache must track which pages use each layout — "+
 					"InvalidatedPages(%q) must return pages "+
 					"that were resolved to default.liquid during Build(). "+
 					"Without TrackTemplateUsage during layout resolution, "+
