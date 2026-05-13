@@ -1,7 +1,6 @@
 package ssr
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 )

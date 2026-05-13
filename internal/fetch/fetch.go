@@ -3,7 +3,6 @@ package fetch
 import (
 	"bytes"
 	"encoding/csv"
-	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
