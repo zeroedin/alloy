@@ -515,6 +515,9 @@ var _ = Describe("RenderMarkdown", func() {
 				"ampersands must be escaped to HTML entities")
 			Expect(rendered).To(ContainSubstring("&lt;/script&gt;"),
 				"closing tags must also be escaped")
+			Expect(rendered).To(ContainSubstring("&quot;"),
+				"double quotes must be escaped — defense-in-depth against "+
+					"attribute-context injection if output is ever reused")
 		})
 	})
 
