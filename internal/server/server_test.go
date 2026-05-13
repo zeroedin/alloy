@@ -341,6 +341,9 @@ var _ = Describe("Server", func() {
 
 			body, err := io.ReadAll(resp.Body)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK),
+				"CSS file must return 200 — a non-200 would make the body "+
+					"assertions meaningless (issue #625)")
 			Expect(string(body)).NotTo(ContainSubstring("alloy-overlay"),
 				"error overlay must not be injected into non-HTML responses — "+
 					"injecting HTML into CSS corrupts the stylesheet (issue #625)")
@@ -348,15 +351,13 @@ var _ = Describe("Server", func() {
 				"CSS content must be served verbatim even when overlay is active")
 		})
 
-		It("prefers direct file match over index.html fallback (issue #625)", func() {
+		It("serves extensionless direct files without index.html fallback (issue #625)", func() {
 			projectRoot := GinkgoT().TempDir()
 			outputDir := filepath.Join(projectRoot, "_site")
-			Expect(os.MkdirAll(filepath.Join(outputDir, "feed"), 0755)).To(Succeed())
+			Expect(os.MkdirAll(outputDir, 0755)).To(Succeed())
 
-			Expect(os.WriteFile(filepath.Join(outputDir, "feed.xml"),
-				[]byte("<rss>direct file</rss>"), 0644)).To(Succeed())
-			Expect(os.WriteFile(filepath.Join(outputDir, "feed", "index.html"),
-				[]byte("<html><body>index fallback</body></html>"), 0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(outputDir, "CNAME"),
+				[]byte("example.com"), 0644)).To(Succeed())
 
 			cfg := &config.Config{
 				Title:       "Test Site",
@@ -367,15 +368,19 @@ var _ = Describe("Server", func() {
 			Expect(srv.Start(0)).To(Succeed())
 			defer srv.Stop()
 
-			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/feed.xml", srv.Port()))
+			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/CNAME", srv.Port()))
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
 			body, err := io.ReadAll(resp.Body)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(body)).To(ContainSubstring("direct file"),
-				"when a direct file match exists, the handler must serve it "+
-					"rather than falling through to index.html resolution (issue #625)")
+			Expect(resp.StatusCode).To(Equal(http.StatusOK),
+				"extensionless file must return 200 — the handler checks "+
+					"direct file existence before trying index.html fallback")
+			Expect(string(body)).To(ContainSubstring("example.com"),
+				"extensionless files (CNAME, LICENSE, etc.) must be served "+
+					"by direct match — the handler must not skip them and fall "+
+					"through to index.html resolution (issue #625)")
 		})
 
 		It("serves passthrough files copied to the output directory (issue #625)", func() {
