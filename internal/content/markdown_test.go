@@ -515,9 +515,10 @@ var _ = Describe("RenderMarkdown", func() {
 				"ampersands must be escaped to HTML entities")
 			Expect(rendered).To(ContainSubstring("&lt;/script&gt;"),
 				"closing tags must also be escaped")
-			Expect(rendered).To(ContainSubstring("&quot;"),
+			Expect(rendered).To(ContainSubstring("&#34;"),
 				"double quotes must be escaped — defense-in-depth against "+
-					"attribute-context injection if output is ever reused")
+					"attribute-context injection if output is ever reused; "+
+					"html.EscapeString uses numeric entity &#34; not named &quot;")
 		})
 
 		It("escapes iframe, img, and event handler XSS vectors (issue #583)", func() {
