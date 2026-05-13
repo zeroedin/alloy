@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -16,6 +17,8 @@ import (
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/server"
 )
+
+var httpClient = &http.Client{Timeout: 5 * time.Second}
 
 var _ = Describe("Server", func() {
 
@@ -158,7 +161,7 @@ var _ = Describe("Server", func() {
 			Expect(srv.Start(0)).To(Succeed())
 			defer srv.Stop()
 
-			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/about/", srv.Port()))
+			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/about/", srv.Port()))
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
@@ -187,7 +190,7 @@ var _ = Describe("Server", func() {
 			Expect(srv.Start(0)).To(Succeed())
 			defer srv.Stop()
 
-			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/docs", srv.Port()))
+			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/docs", srv.Port()))
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
@@ -211,7 +214,7 @@ var _ = Describe("Server", func() {
 			Expect(srv.Start(0)).To(Succeed())
 			defer srv.Stop()
 
-			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/nonexistent", srv.Port()))
+			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/nonexistent", srv.Port()))
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
@@ -236,7 +239,7 @@ var _ = Describe("Server", func() {
 			Expect(srv.Start(0)).To(Succeed())
 			defer srv.Stop()
 
-			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/", srv.Port()))
+			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/", srv.Port()))
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
@@ -266,7 +269,7 @@ var _ = Describe("Server", func() {
 			Expect(srv.Start(0)).To(Succeed())
 			defer srv.Stop()
 
-			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/style.css", srv.Port()))
+			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/style.css", srv.Port()))
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
@@ -277,6 +280,137 @@ var _ = Describe("Server", func() {
 					"injecting JavaScript into CSS/JS/images would corrupt them (issue #623)")
 			Expect(string(body)).To(ContainSubstring("body { color: red; }"),
 				"CSS file content must be served verbatim")
+		})
+
+		It("continues serving after a missing file request (issue #625)", func() {
+			projectRoot := GinkgoT().TempDir()
+			outputDir := filepath.Join(projectRoot, "_site")
+			Expect(os.MkdirAll(outputDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(outputDir, "index.html"),
+				[]byte("<html><body>Home</body></html>"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+			}
+			srv := server.New(cfg)
+			Expect(srv.Start(0)).To(Succeed())
+			defer srv.Stop()
+
+			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/missing", srv.Port()))
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+			Expect(resp.StatusCode).To(Equal(http.StatusNotFound))
+
+			resp, err = httpClient.Get(fmt.Sprintf("http://localhost:%d/", srv.Port()))
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			Expect(string(body)).To(ContainSubstring("Home"),
+				"server must continue serving valid pages after a 404 — "+
+					"a missing file request must not break subsequent requests (issue #625)")
+		})
+
+		It("does not inject error overlay into non-HTML responses (issue #625)", func() {
+			projectRoot := GinkgoT().TempDir()
+			outputDir := filepath.Join(projectRoot, "_site")
+			Expect(os.MkdirAll(outputDir, 0755)).To(Succeed())
+
+			cssContent := []byte("body { font-size: 16px; }")
+			Expect(os.WriteFile(filepath.Join(outputDir, "app.css"), cssContent, 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+			}
+			srv := server.New(cfg)
+			srv.Overlay().SetErrors([]server.BuildError{
+				{FilePath: "content/broken.md", Message: "parse error", Stage: "markdown"},
+			})
+			Expect(srv.Start(0)).To(Succeed())
+			defer srv.Stop()
+
+			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/app.css", srv.Port()))
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK),
+				"CSS file must return 200 — a non-200 would make the body "+
+					"assertions meaningless (issue #625)")
+			Expect(string(body)).NotTo(ContainSubstring("alloy-overlay"),
+				"error overlay must not be injected into non-HTML responses — "+
+					"injecting HTML into CSS corrupts the stylesheet (issue #625)")
+			Expect(string(body)).To(ContainSubstring("font-size: 16px"),
+				"CSS content must be served verbatim even when overlay is active")
+		})
+
+		It("serves extensionless direct files without index.html fallback (issue #625)", func() {
+			projectRoot := GinkgoT().TempDir()
+			outputDir := filepath.Join(projectRoot, "_site")
+			Expect(os.MkdirAll(outputDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(outputDir, "CNAME"),
+				[]byte("example.com"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+			}
+			srv := server.New(cfg)
+			Expect(srv.Start(0)).To(Succeed())
+			defer srv.Stop()
+
+			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/CNAME", srv.Port()))
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK),
+				"extensionless file must return 200 — the handler checks "+
+					"direct file existence before trying index.html fallback")
+			Expect(string(body)).To(ContainSubstring("example.com"),
+				"extensionless files (CNAME, LICENSE, etc.) must be served "+
+					"by direct match — the handler must not skip them and fall "+
+					"through to index.html resolution (issue #625)")
+		})
+
+		It("serves passthrough files copied to the output directory (issue #625)", func() {
+			projectRoot := GinkgoT().TempDir()
+			outputDir := filepath.Join(projectRoot, "_site")
+			fontsDir := filepath.Join(outputDir, "assets", "fonts")
+			Expect(os.MkdirAll(fontsDir, 0755)).To(Succeed())
+
+			fontData := []byte("fake-woff2-font-data")
+			Expect(os.WriteFile(filepath.Join(fontsDir, "body.woff2"), fontData, 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+			}
+			srv := server.New(cfg)
+			Expect(srv.Start(0)).To(Succeed())
+			defer srv.Stop()
+
+			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/assets/fonts/body.woff2", srv.Port()))
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			Expect(body).To(Equal(fontData),
+				"passthrough files are copied to _site/ by the build pipeline — "+
+					"the HTTP handler must serve them like any other output file (issue #625)")
 		})
 	})
 
