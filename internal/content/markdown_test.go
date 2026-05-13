@@ -1,6 +1,8 @@
 package content_test
 
 import (
+	"encoding/json"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -602,6 +604,67 @@ var _ = Describe("RenderMarkdown", func() {
 			Expect(toc[0].Children[0].Children).To(HaveLen(1),
 				"h4 must nest under h3 which nests under h2")
 			Expect(toc[0].Children[0].Children[0].Text).To(Equal("Deep"))
+		})
+	})
+
+	// ── TOCEntry JSON serialization (issue #592) ─────────────────
+	// content.TOCEntry must serialize to JSON with lowercase keys
+	// matching the plugin hook payload contract. Without JSON tags,
+	// encoding/json uses uppercase field names (ID, Text, Level,
+	// Children), which breaks plugin hook payloads.
+
+	Describe("TOCEntry JSON serialization (issue #592)", func() {
+		It("serializes with lowercase JSON keys", func() {
+			toc := content.TOCEntry{
+				ID:    "section",
+				Text:  "Section",
+				Level: 2,
+				Children: []content.TOCEntry{
+					{ID: "subsection", Text: "Subsection", Level: 3},
+				},
+			}
+
+			data, err := json.Marshal(toc)
+			Expect(err).NotTo(HaveOccurred())
+
+			var parsed map[string]interface{}
+			Expect(json.Unmarshal(data, &parsed)).To(Succeed())
+
+			Expect(parsed).To(HaveKeyWithValue("id", "section"),
+				"content.TOCEntry must serialize ID as lowercase 'id' — "+
+					"without JSON tags, encoding/json uses uppercase 'ID' which "+
+					"breaks plugin hook payloads (issue #592)")
+			Expect(parsed).To(HaveKeyWithValue("text", "Section"))
+			Expect(parsed).To(HaveKeyWithValue("level", float64(2)))
+			Expect(parsed).To(HaveKey("children"))
+
+			children, ok := parsed["children"].([]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(children).To(HaveLen(1))
+
+			child, ok := children[0].(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(child).To(HaveKeyWithValue("id", "subsection"))
+		})
+
+		It("omits children when empty", func() {
+			toc := content.TOCEntry{
+				ID:       "leaf",
+				Text:     "Leaf",
+				Level:    3,
+				Children: []content.TOCEntry{},
+			}
+
+			data, err := json.Marshal(toc)
+			Expect(err).NotTo(HaveOccurred())
+
+			var parsed map[string]interface{}
+			Expect(json.Unmarshal(data, &parsed)).To(Succeed())
+
+			Expect(parsed).NotTo(HaveKey("children"),
+				"content.TOCEntry must use omitempty on children — "+
+					"leaf entries should not include an empty children array "+
+					"in plugin hook payloads (issue #592)")
 		})
 	})
 
