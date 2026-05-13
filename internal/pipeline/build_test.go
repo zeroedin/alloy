@@ -595,6 +595,45 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(fullHTML).To(ContainSubstring("<head>"),
 				"sanity: full build must include <head> (test is invalid otherwise)")
 		})
+
+		It("skips layout wrapping when page has layout: false (issue #633)", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("<html><head><title>Site</title></head><body>{{ content }}</body></html>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "embed.md"),
+				[]byte("---\ntitle: Widget\nlayout: false\n---\n<div class=\"widget\">Embeddable</div>"),
+				0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Layout False Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: filepath.Join(tmpDir, "_site")},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+				},
+			}
+
+			result, err := pipeline.BuildIncremental(cfg, nil, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			html := result.RenderedContent["embed.md"]
+			Expect(html).To(ContainSubstring("Embeddable"),
+				"page content must still be rendered even with layout: false")
+			Expect(html).NotTo(ContainSubstring("<html>"),
+				"page with layout: false must NOT be wrapped in a layout — "+
+					"BuildIncremental must respect the layout: false opt-out "+
+					"the same way Build does (issue #633)")
+			Expect(html).NotTo(ContainSubstring("<head>"),
+				"no layout markup should appear when layout: false is set")
+		})
 	})
 
 	// ── Incremental rebuild with SSR (issue #231) ──────────────────
