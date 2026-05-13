@@ -499,6 +499,23 @@ var _ = Describe("RenderMarkdown", func() {
 			Expect(html).To(ContainSubstring("This is plain text."))
 			Expect(html).To(ContainSubstring("</pre>"))
 		})
+
+		It("escapes HTML entities in plain text content (issue #583)", func() {
+			source := []byte("<script>alert('xss')</script> & \"quotes\"")
+			out, err := content.RenderText(source)
+			Expect(err).NotTo(HaveOccurred())
+			rendered := string(out)
+			Expect(rendered).NotTo(ContainSubstring("<script>"),
+				"RenderText must escape HTML in .txt content — without escaping, "+
+					"a content file containing <script> tags produces stored XSS "+
+					"in the generated output (issue #583)")
+			Expect(rendered).To(ContainSubstring("&lt;script&gt;"),
+				"angle brackets must be escaped to HTML entities")
+			Expect(rendered).To(ContainSubstring("&amp;"),
+				"ampersands must be escaped to HTML entities")
+			Expect(rendered).To(ContainSubstring("&lt;/script&gt;"),
+				"closing tags must also be escaped")
+		})
 	})
 
 	// ── Auto heading IDs (issue #274) ─────────────────────────────
