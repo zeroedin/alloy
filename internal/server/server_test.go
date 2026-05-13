@@ -142,6 +142,29 @@ var _ = Describe("Server", func() {
 			Expect(body).NotTo(BeEmpty(),
 				"must serve rendered page content")
 		})
+
+		It("reads rendered page from output directory (issue #594)", func() {
+			projectRoot := GinkgoT().TempDir()
+			outputDir := filepath.Join(projectRoot, "_site", "about")
+			Expect(os.MkdirAll(outputDir, 0755)).To(Succeed())
+
+			pageHTML := []byte("<html><body>About Us</body></html>")
+			Expect(os.WriteFile(filepath.Join(outputDir, "index.html"), pageHTML, 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+			}
+			srv := server.New(cfg)
+
+			body, err := srv.ServeHTTP("/about/")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(body).To(Equal(pageHTML),
+				"ServeHTTP must read rendered pages from the output directory — "+
+					"returning hard-coded placeholder HTML means any code path "+
+					"calling this method gets wrong content (issue #594)")
+		})
 	})
 
 	// ── Static file serving ───────────────────────────────────────────
@@ -154,6 +177,28 @@ var _ = Describe("Server", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(body).NotTo(BeEmpty(),
 				"dev mode must serve static files from source directory")
+		})
+
+		It("reads file from static source directory (issue #594)", func() {
+			projectRoot := GinkgoT().TempDir()
+			staticDir := filepath.Join(projectRoot, "static")
+			Expect(os.MkdirAll(staticDir, 0755)).To(Succeed())
+
+			robotsTxt := []byte("User-agent: *\nDisallow: /admin/\n")
+			Expect(os.WriteFile(filepath.Join(staticDir, "robots.txt"), robotsTxt, 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: projectRoot,
+			}
+			srv := server.New(cfg)
+
+			body, err := srv.ServeStaticFile("/robots.txt")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(body).To(Equal(robotsTxt),
+				"ServeStaticFile must read files from the static source directory — "+
+					"returning hard-coded placeholder content means static files "+
+					"are never actually served (issue #594)")
 		})
 	})
 
@@ -267,6 +312,29 @@ var _ = Describe("Server", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(source).NotTo(BeEmpty(),
 				"passthrough URL must resolve to source file path")
+		})
+
+		It("maps URL path to passthrough source file path (issue #594)", func() {
+			projectRoot := GinkgoT().TempDir()
+			fontsDir := filepath.Join(projectRoot, "vendor", "fonts")
+			Expect(os.MkdirAll(fontsDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(fontsDir, "body.woff2"), []byte("fakefont"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: projectRoot,
+				Passthrough: []config.PassthroughMapping{
+					{From: "vendor/fonts", To: "assets/fonts"},
+				},
+			}
+			srv := server.New(cfg)
+
+			source, err := srv.ResolvePassthrough("/assets/fonts/body.woff2")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(source).To(Equal(filepath.Join(projectRoot, "vendor", "fonts", "body.woff2")),
+				"ResolvePassthrough must map the URL output path back to the "+
+					"passthrough source path — returning the URL unchanged means "+
+					"passthrough files can never be located on disk (issue #594)")
 		})
 	})
 
