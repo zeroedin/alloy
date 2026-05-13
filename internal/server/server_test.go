@@ -412,6 +412,93 @@ var _ = Describe("Server", func() {
 				"passthrough files are copied to _site/ by the build pipeline — "+
 					"the HTTP handler must serve them like any other output file (issue #625)")
 		})
+
+		It("does not inject error overlay when no errors exist (issue #630)", func() {
+			projectRoot := GinkgoT().TempDir()
+			outputDir := filepath.Join(projectRoot, "_site")
+			Expect(os.MkdirAll(outputDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(outputDir, "index.html"),
+				[]byte("<html><body>Clean page</body></html>"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+			}
+			srv := server.New(cfg)
+			Expect(srv.Start(0)).To(Succeed())
+			defer srv.Stop()
+
+			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/", srv.Port()))
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).NotTo(ContainSubstring("alloy-error-overlay"),
+				"when no build errors exist, HTML responses must not contain "+
+					"error overlay markup — overlay injection must be gated on "+
+					"HasErrors(), not run unconditionally (issue #630)")
+			Expect(string(body)).To(ContainSubstring("Clean page"),
+				"page content must be served unmodified when no errors exist")
+		})
+
+		It("sets Content-Type header matching MIMEType for served files (issue #630)", func() {
+			projectRoot := GinkgoT().TempDir()
+			outputDir := filepath.Join(projectRoot, "_site")
+			Expect(os.MkdirAll(outputDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(outputDir, "app.js"),
+				[]byte("console.log('hello')"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+			}
+			srv := server.New(cfg)
+			Expect(srv.Start(0)).To(Succeed())
+			defer srv.Stop()
+
+			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/app.js", srv.Port()))
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			Expect(resp.Header.Get("Content-Type")).To(Equal(server.MIMEType(".js")),
+				"HTTP response Content-Type header must match MIMEType() for "+
+					"the file extension — the handler sets this explicitly via "+
+					"MIMEType(), not by relying on Go's default sniffing (issue #630)")
+		})
+
+		It("returns 500 when HTML file becomes unreadable in dev mode (issue #630)", func() {
+			projectRoot := GinkgoT().TempDir()
+			outputDir := filepath.Join(projectRoot, "_site")
+			Expect(os.MkdirAll(outputDir, 0755)).To(Succeed())
+
+			brokenFile := filepath.Join(outputDir, "index.html")
+			Expect(os.WriteFile(brokenFile,
+				[]byte("<html><body>Will break</body></html>"), 0644)).To(Succeed())
+			Expect(os.Chmod(brokenFile, 0000)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+			}
+			srv := server.New(cfg)
+			Expect(srv.Start(0)).To(Succeed())
+			defer srv.Stop()
+
+			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/", srv.Port()))
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			Expect(resp.StatusCode).To(Equal(http.StatusInternalServerError),
+				"when an HTML file exists but cannot be read (permission denied, "+
+					"race with deletion), the dev mode handler must return 500 — "+
+					"serveFileWithReload reads HTML via os.ReadFile for script "+
+					"injection, and a read failure must not panic or serve empty "+
+					"content (issue #630)")
+		})
 	})
 
 	// ── MIME type serving (issue #252) ───────────────────────────────
