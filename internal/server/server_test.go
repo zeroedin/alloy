@@ -2,8 +2,11 @@ package server_test
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"mime"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 
@@ -131,25 +134,20 @@ var _ = Describe("Server", func() {
 		})
 	})
 
-	// ── HTTP request handling ─────────────────────────────────────────
+	// ── HTTP handler integration (issue #623) ────────────────────────
+	// The real HTTP serving happens in startOnAddr + serveFileWithReload.
+	// These tests start a real server and make HTTP requests to verify
+	// the handler serves files, resolves clean URLs, returns 404s, and
+	// injects the live-reload script correctly.
 
-	Describe("HTTP request handling", func() {
-		It("serves rendered page content for a valid path", func() {
-			cfg := &config.Config{Title: "Test Site"}
-			srv := server.New(cfg)
-			body, err := srv.ServeHTTP("/about/")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(body).NotTo(BeEmpty(),
-				"must serve rendered page content")
-		})
-
-		It("reads rendered page from output directory (issue #594)", func() {
+	Describe("HTTP handler", func() {
+		It("serves files from the output directory (issue #623)", func() {
 			projectRoot := GinkgoT().TempDir()
-			outputDir := filepath.Join(projectRoot, "_site", "about")
-			Expect(os.MkdirAll(outputDir, 0755)).To(Succeed())
+			outputDir := filepath.Join(projectRoot, "_site")
+			Expect(os.MkdirAll(filepath.Join(outputDir, "about"), 0755)).To(Succeed())
 
 			pageHTML := []byte("<html><body>About Us</body></html>")
-			Expect(os.WriteFile(filepath.Join(outputDir, "index.html"), pageHTML, 0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(outputDir, "about", "index.html"), pageHTML, 0644)).To(Succeed())
 
 			cfg := &config.Config{
 				Title:       "Test Site",
@@ -157,48 +155,128 @@ var _ = Describe("Server", func() {
 				Build:       config.BuildConfig{Output: "_site"},
 			}
 			srv := server.New(cfg)
+			Expect(srv.Start(0)).To(Succeed())
+			defer srv.Stop()
 
-			body, err := srv.ServeHTTP("/about/")
+			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/about/", srv.Port()))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(body).To(Equal(pageHTML),
-				"ServeHTTP must read rendered pages from the output directory — "+
-					"returning hard-coded placeholder HTML means any code path "+
-					"calling this method gets wrong content (issue #594)")
-		})
-	})
+			defer resp.Body.Close()
 
-	// ── Static file serving ───────────────────────────────────────────
-
-	Describe("Static file serving", func() {
-		It("serves static files directly from source in dev mode", func() {
-			cfg := &config.Config{Title: "Test Site"}
-			srv := server.New(cfg)
-			body, err := srv.ServeStaticFile("/robots.txt")
+			body, err := io.ReadAll(resp.Body)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(body).NotTo(BeEmpty(),
-				"dev mode must serve static files from source directory")
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			Expect(string(body)).To(ContainSubstring("About Us"),
+				"HTTP handler must serve files from the output directory — "+
+					"the handler reads from _site/ directly, not through "+
+					"intermediate methods (issue #623)")
 		})
 
-		It("reads file from static source directory (issue #594)", func() {
+		It("resolves clean URLs by trying path/index.html (issue #623)", func() {
 			projectRoot := GinkgoT().TempDir()
-			staticDir := filepath.Join(projectRoot, "static")
-			Expect(os.MkdirAll(staticDir, 0755)).To(Succeed())
-
-			robotsTxt := []byte("User-agent: *\nDisallow: /admin/\n")
-			Expect(os.WriteFile(filepath.Join(staticDir, "robots.txt"), robotsTxt, 0644)).To(Succeed())
+			outputDir := filepath.Join(projectRoot, "_site")
+			Expect(os.MkdirAll(filepath.Join(outputDir, "docs"), 0755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(outputDir, "docs", "index.html"),
+				[]byte("<html><body>Docs</body></html>"), 0644)).To(Succeed())
 
 			cfg := &config.Config{
 				Title:       "Test Site",
 				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
 			}
 			srv := server.New(cfg)
+			Expect(srv.Start(0)).To(Succeed())
+			defer srv.Stop()
 
-			body, err := srv.ServeStaticFile("/robots.txt")
+			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/docs", srv.Port()))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(body).To(Equal(robotsTxt),
-				"ServeStaticFile must read files from the static source directory — "+
-					"returning hard-coded placeholder content means static files "+
-					"are never actually served (issue #594)")
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).To(ContainSubstring("Docs"),
+				"requesting /docs without trailing slash must resolve to "+
+					"/docs/index.html for clean URL support (issue #623)")
+		})
+
+		It("returns 404 for non-existent paths (issue #623)", func() {
+			projectRoot := GinkgoT().TempDir()
+			Expect(os.MkdirAll(filepath.Join(projectRoot, "_site"), 0755)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+			}
+			srv := server.New(cfg)
+			Expect(srv.Start(0)).To(Succeed())
+			defer srv.Stop()
+
+			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/nonexistent", srv.Port()))
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			Expect(resp.StatusCode).To(Equal(http.StatusNotFound),
+				"requesting a path with no matching file must return 404 — "+
+					"the handler must not return 200 with empty or default content (issue #623)")
+		})
+
+		It("injects live-reload script into HTML responses in dev mode (issue #623)", func() {
+			projectRoot := GinkgoT().TempDir()
+			outputDir := filepath.Join(projectRoot, "_site")
+			Expect(os.MkdirAll(outputDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(outputDir, "index.html"),
+				[]byte("<html><body>Home</body></html>"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+			}
+			srv := server.New(cfg)
+			Expect(srv.Start(0)).To(Succeed())
+			defer srv.Stop()
+
+			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/", srv.Port()))
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).To(ContainSubstring("WebSocket"),
+				"dev mode must inject live-reload WebSocket script into "+
+					"HTML responses before </body> (issue #623)")
+			Expect(string(body)).To(ContainSubstring("Home"),
+				"page content must be preserved after script injection")
+		})
+
+		It("serves non-HTML files without live-reload injection (issue #623)", func() {
+			projectRoot := GinkgoT().TempDir()
+			outputDir := filepath.Join(projectRoot, "_site")
+			Expect(os.MkdirAll(outputDir, 0755)).To(Succeed())
+
+			cssContent := []byte("body { color: red; }")
+			Expect(os.WriteFile(filepath.Join(outputDir, "style.css"), cssContent, 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+			}
+			srv := server.New(cfg)
+			Expect(srv.Start(0)).To(Succeed())
+			defer srv.Stop()
+
+			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/style.css", srv.Port()))
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).NotTo(ContainSubstring("WebSocket"),
+				"non-HTML files must not have live-reload script injected — "+
+					"injecting JavaScript into CSS/JS/images would corrupt them (issue #623)")
+			Expect(string(body)).To(ContainSubstring("body { color: red; }"),
+				"CSS file content must be served verbatim")
 		})
 	})
 
@@ -299,42 +377,6 @@ var _ = Describe("Server", func() {
 					"not in the override map — registering a custom type via "+
 					"mime.AddExtensionType proves delegation without depending "+
 					"on platform-specific MIME databases (issue #600)")
-		})
-	})
-
-	// ── Passthrough path mapping ──────────────────────────────────────
-
-	Describe("Passthrough path mapping", func() {
-		It("maps URL path to passthrough source directory", func() {
-			cfg := &config.Config{Title: "Test Site"}
-			srv := server.New(cfg)
-			source, err := srv.ResolvePassthrough("/assets/fonts/body.woff2")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(source).NotTo(BeEmpty(),
-				"passthrough URL must resolve to source file path")
-		})
-
-		It("maps URL path to passthrough source file path (issue #594)", func() {
-			projectRoot := GinkgoT().TempDir()
-			fontsDir := filepath.Join(projectRoot, "vendor", "fonts")
-			Expect(os.MkdirAll(fontsDir, 0755)).To(Succeed())
-			Expect(os.WriteFile(filepath.Join(fontsDir, "body.woff2"), []byte("fakefont"), 0644)).To(Succeed())
-
-			cfg := &config.Config{
-				Title:       "Test Site",
-				ProjectRoot: projectRoot,
-				Passthrough: []config.PassthroughMapping{
-					{From: "vendor/fonts", To: "assets/fonts"},
-				},
-			}
-			srv := server.New(cfg)
-
-			source, err := srv.ResolvePassthrough("/assets/fonts/body.woff2")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(source).To(Equal(filepath.Join(projectRoot, "vendor", "fonts", "body.woff2")),
-				"ResolvePassthrough must map the URL output path back to the "+
-					"passthrough source path — returning the URL unchanged means "+
-					"passthrough files can never be located on disk (issue #594)")
 		})
 	})
 
@@ -483,21 +525,6 @@ var _ = Describe("Server", func() {
 			// In dev mode, the error should be captured for the overlay, not propagated
 			Expect(err).NotTo(HaveOccurred(),
 				"dev mode must not propagate render errors — they go to the overlay")
-		})
-
-		It("dev mode: other pages continue to serve after one fails", func() {
-			cfg := &config.Config{Title: "Dev Site", Build: config.BuildConfig{Output: "_site"}}
-			srv := server.NewWithMode(cfg, server.ModeDev)
-
-			// First page fails
-			_, _ = srv.RenderPage("content/bad.md", []byte("{{ broken }}"))
-
-			// Second page should still work
-			result, err := srv.ServeHTTP("/about/")
-			Expect(err).NotTo(HaveOccurred(),
-				"other pages must continue serving after a render failure")
-			Expect(result).NotTo(BeEmpty(),
-				"served page must have content")
 		})
 
 		It("dev mode: unreachable source shows warning, continues with stale cache", func() {
