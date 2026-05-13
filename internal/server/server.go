@@ -305,13 +305,43 @@ func (s *Server) Wait() {
 
 // ServeHTTP handles an HTTP request and returns the response body for a given path.
 func (s *Server) ServeHTTP(path string) ([]byte, error) {
-	return []byte("<html><body>page</body></html>"), nil
+	outputDir := s.config.Build.Output
+	if outputDir == "" {
+		outputDir = "_site"
+	}
+	if s.config.ProjectRoot != "" {
+		outputDir = filepath.Join(s.config.ProjectRoot, outputDir)
+	}
+
+	filePath := filepath.Join(outputDir, filepath.FromSlash(path))
+	if strings.HasSuffix(path, "/") {
+		filePath = filepath.Join(filePath, "index.html")
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("page not found: %s", path)
+	}
+	return data, nil
 }
 
 // ServeStaticFile serves a static file from the source directory (dev mode).
 // In dev mode, static files are served directly without copying to output.
 func (s *Server) ServeStaticFile(path string) ([]byte, error) {
-	return []byte("static file content"), nil
+	staticDir := s.config.Structure.Static
+	if staticDir == "" {
+		staticDir = "static"
+	}
+	if s.config.ProjectRoot != "" {
+		staticDir = filepath.Join(s.config.ProjectRoot, staticDir)
+	}
+
+	filePath := filepath.Join(staticDir, filepath.FromSlash(path))
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("static file not found: %s", path)
+	}
+	return data, nil
 }
 
 // ServeContentFile reads a non-content file from the content directory.
@@ -350,6 +380,19 @@ func (s *Server) ServeContentFile(urlPath string) ([]byte, error) {
 
 // ResolvePassthrough maps a URL path to a passthrough source directory file.
 func (s *Server) ResolvePassthrough(urlPath string) (string, error) {
+	cleanURL := filepath.ToSlash(urlPath)
+	for _, mapping := range s.config.Passthrough {
+		prefix := "/" + mapping.To
+		if !strings.HasPrefix(cleanURL, prefix) {
+			continue
+		}
+		rel := strings.TrimPrefix(cleanURL, prefix)
+		sourcePath := filepath.Join(mapping.From, filepath.FromSlash(rel))
+		if s.config.ProjectRoot != "" {
+			sourcePath = filepath.Join(s.config.ProjectRoot, sourcePath)
+		}
+		return sourcePath, nil
+	}
 	return urlPath, nil
 }
 
