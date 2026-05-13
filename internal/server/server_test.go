@@ -213,6 +213,17 @@ var _ = Describe("Server", func() {
 			Expect(contentType).To(Equal("application/octet-stream"),
 				"unknown file extensions must fall back to application/octet-stream")
 		})
+
+		It("delegates to stdlib mime package for non-overridden extensions (issue #600)", func() {
+			Expect(server.MIMEType(".mp4")).To(Equal("video/mp4"),
+				"MIMEType must delegate to mime.TypeByExtension for extensions "+
+					"not in the override map — .mp4 is in stdlib but was never in "+
+					"the custom mimeTypes map (issue #600)")
+			Expect(server.MIMEType(".zip")).To(Equal("application/zip"),
+				"MIMEType must delegate to mime.TypeByExtension for extensions "+
+					"not in the override map — .zip is in stdlib but was never in "+
+					"the custom mimeTypes map (issue #600)")
+		})
 	})
 
 	// ── Passthrough path mapping ──────────────────────────────────────
