@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"errors"
+	"mime"
 	"net"
 	"os"
 	"path/filepath"
@@ -215,14 +216,12 @@ var _ = Describe("Server", func() {
 		})
 
 		It("delegates to stdlib mime package for non-overridden extensions (issue #600)", func() {
-			Expect(server.MIMEType(".mp4")).To(Equal("video/mp4"),
+			mime.AddExtensionType(".alloytest600", "application/x-alloy-test")
+			Expect(server.MIMEType(".alloytest600")).To(Equal("application/x-alloy-test"),
 				"MIMEType must delegate to mime.TypeByExtension for extensions "+
-					"not in the override map — .mp4 is in stdlib but was never in "+
-					"the custom mimeTypes map (issue #600)")
-			Expect(server.MIMEType(".zip")).To(Equal("application/zip"),
-				"MIMEType must delegate to mime.TypeByExtension for extensions "+
-					"not in the override map — .zip is in stdlib but was never in "+
-					"the custom mimeTypes map (issue #600)")
+					"not in the override map — registering a custom type via "+
+					"mime.AddExtensionType proves delegation without depending "+
+					"on platform-specific MIME databases (issue #600)")
 		})
 	})
 
