@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -413,7 +414,7 @@ var _ = Describe("Server", func() {
 					"the HTTP handler must serve them like any other output file (issue #625)")
 		})
 
-		It("rejects path traversal via HTTP request (issue #616)", func() {
+		It("rejects path traversal via raw HTTP request (issue #632)", func() {
 			projectRoot := GinkgoT().TempDir()
 			outputDir := filepath.Join(projectRoot, "_site")
 			Expect(os.MkdirAll(outputDir, 0755)).To(Succeed())
@@ -430,18 +431,105 @@ var _ = Describe("Server", func() {
 			Expect(srv.Start(0)).To(Succeed())
 			defer srv.Stop()
 
-			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/../secret.env", srv.Port()))
+			conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", srv.Port()), 5*time.Second)
+			Expect(err).NotTo(HaveOccurred())
+			defer conn.Close()
+			conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+			_, err = fmt.Fprintf(conn, "GET /../secret.env HTTP/1.0\r\nHost: localhost\r\n\r\n")
+			Expect(err).NotTo(HaveOccurred())
+
+			resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
 			body, err := io.ReadAll(resp.Body)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(SatisfyAny(Equal(http.StatusMovedPermanently), Equal(http.StatusNotFound)),
+				"traversal request must be rejected with 301 (ServeMux redirect) or 404, not 200")
 			Expect(string(body)).NotTo(ContainSubstring("API_KEY"),
-				"path traversal via /../ in HTTP request must not leak files "+
-					"outside the output directory — without containment, an attacker "+
-					"can read arbitrary files from the host (issue #616)")
-			Expect(resp.StatusCode).To(Equal(http.StatusNotFound),
-				"traversal requests must return 404, not 200 with file contents")
+				"path traversal via raw /../ must not leak files outside "+
+					"the output directory — raw TCP bypasses client-side URL "+
+					"normalization that http.Get applies (issue #632)")
+		})
+
+		It("rejects deeper path traversal via raw HTTP request (issue #632)", func() {
+			projectRoot := GinkgoT().TempDir()
+			outputDir := filepath.Join(projectRoot, "_site")
+			Expect(os.MkdirAll(filepath.Join(outputDir, "sub"), 0755)).To(Succeed())
+
+			secretFile := filepath.Join(projectRoot, "secret.env")
+			Expect(os.WriteFile(secretFile, []byte("API_KEY=hunter2"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+			}
+			srv := server.New(cfg)
+			Expect(srv.Start(0)).To(Succeed())
+			defer srv.Stop()
+
+			conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", srv.Port()), 5*time.Second)
+			Expect(err).NotTo(HaveOccurred())
+			defer conn.Close()
+			conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+			_, err = fmt.Fprintf(conn, "GET /sub/../../secret.env HTTP/1.0\r\nHost: localhost\r\n\r\n")
+			Expect(err).NotTo(HaveOccurred())
+
+			resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(SatisfyAny(Equal(http.StatusMovedPermanently), Equal(http.StatusNotFound)),
+				"traversal request must be rejected with 301 (ServeMux redirect) or 404, not 200")
+			Expect(string(body)).NotTo(ContainSubstring("API_KEY"),
+				"deeper traversal /sub/../../secret.env must not leak files — "+
+					"filepath.Join neutralizes ../ but the handler must not "+
+					"expose files above the output root (issue #632)")
+		})
+
+		It("rejects percent-encoded path traversal (issue #632)", func() {
+			projectRoot := GinkgoT().TempDir()
+			outputDir := filepath.Join(projectRoot, "_site")
+			Expect(os.MkdirAll(outputDir, 0755)).To(Succeed())
+
+			secretFile := filepath.Join(projectRoot, "secret.env")
+			Expect(os.WriteFile(secretFile, []byte("API_KEY=hunter2"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+			}
+			srv := server.New(cfg)
+			Expect(srv.Start(0)).To(Succeed())
+			defer srv.Stop()
+
+			conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", srv.Port()), 5*time.Second)
+			Expect(err).NotTo(HaveOccurred())
+			defer conn.Close()
+			conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+			_, err = fmt.Fprintf(conn, "GET /%%2e%%2e/secret.env HTTP/1.0\r\nHost: localhost\r\n\r\n")
+			Expect(err).NotTo(HaveOccurred())
+
+			resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(SatisfyAny(
+				Equal(http.StatusMovedPermanently), Equal(http.StatusBadRequest), Equal(http.StatusNotFound)),
+				"traversal request must be rejected with 301, 400, or 404, not 200")
+			Expect(string(body)).NotTo(ContainSubstring("API_KEY"),
+				"percent-encoded traversal %%2e%%2e must not leak files — "+
+					"ServeMux decodes percent-encoding before routing, so the "+
+					"handler must still reject the decoded ../ path (issue #632)")
 		})
 
 		It("does not inject error overlay when no errors exist (issue #630)", func() {
