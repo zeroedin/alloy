@@ -1,11 +1,19 @@
 package cascade_test
 
 import (
+	"path/filepath"
+	"runtime"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/zeroedin/alloy/internal/cascade"
 )
+
+func fixtureContentDir() string {
+	_, file, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(file), "..", "..", "test", "fixtures", "cascade", "content")
+}
 
 var _ = Describe("DeepMerge", func() {
 
@@ -223,7 +231,7 @@ var _ = Describe("DeepMerge", func() {
 		})
 
 		It("works with LoadDirectoryCascade output for directories without _data.yaml", func() {
-			result, err := cascade.LoadDirectoryCascade("test/fixtures/cascade/content")
+			result, err := cascade.LoadDirectoryCascade(fixtureContentDir())
 			Expect(err).NotTo(HaveOccurred())
 
 			// content/blog/deep/nested/ has no _data.yaml
@@ -241,7 +249,7 @@ var _ = Describe("DeepMerge", func() {
 
 	Describe("Directory data cascade chain", func() {
 		It("content/_data.yaml applies to all content", func() {
-			result, err := cascade.LoadDirectoryCascade("test/fixtures/cascade/content")
+			result, err := cascade.LoadDirectoryCascade(fixtureContentDir())
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 
@@ -251,7 +259,7 @@ var _ = Describe("DeepMerge", func() {
 		})
 
 		It("content/blog/_data.yaml merges over parent and applies to blog/ and children", func() {
-			result, err := cascade.LoadDirectoryCascade("test/fixtures/cascade/content")
+			result, err := cascade.LoadDirectoryCascade(fixtureContentDir())
 			Expect(err).NotTo(HaveOccurred())
 
 			blogData, ok := result["content/blog/"]
@@ -277,7 +285,7 @@ var _ = Describe("DeepMerge", func() {
 		})
 
 		It("content/blog/deep/_data.yaml merges over parent chain (root + blog)", func() {
-			result, err := cascade.LoadDirectoryCascade("test/fixtures/cascade/content")
+			result, err := cascade.LoadDirectoryCascade(fixtureContentDir())
 			Expect(err).NotTo(HaveOccurred())
 
 			deepData, ok := result["content/blog/deep/"]
@@ -307,7 +315,7 @@ var _ = Describe("DeepMerge", func() {
 		})
 
 		It("three-level cascade produces correct merged result at each level", func() {
-			result, err := cascade.LoadDirectoryCascade("test/fixtures/cascade/content")
+			result, err := cascade.LoadDirectoryCascade(fixtureContentDir())
 			Expect(err).NotTo(HaveOccurred())
 
 			// Must have entries for all three levels with _data.yaml
