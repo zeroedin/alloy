@@ -10,6 +10,8 @@ import (
 	"github.com/zeroedin/alloy/internal/config"
 )
 
+func boolPtr(b bool) *bool { return &b }
+
 var _ = Describe("Config", func() {
 
 	Describe("Load", func() {
@@ -54,7 +56,7 @@ var _ = Describe("Config", func() {
 
 			It("parses build.clean", func() {
 				Expect(err).NotTo(HaveOccurred())
-				Expect(cfg.Build.Clean).To(BeTrue())
+				Expect(cfg.Build.CleanValue()).To(BeTrue())
 			})
 
 			It("parses content.formats", func() {
@@ -335,7 +337,7 @@ var _ = Describe("Config", func() {
 
 		It("defaults build.clean to true", func() {
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cfg.Build.Clean).To(BeTrue(),
+			Expect(cfg.Build.CleanValue()).To(BeTrue(),
 				"build.clean must default to true per spec")
 		})
 
@@ -452,7 +454,7 @@ var _ = Describe("Config", func() {
 		It("flags not set leave config values unchanged", func() {
 			cfg := &config.Config{
 				Title: "Test Site",
-				Build: config.BuildConfig{Output: "_site", Clean: true},
+				Build: config.BuildConfig{Output: "_site", Clean: boolPtr(true)},
 			}
 
 			// Guard: setting a flag must actually change the value
@@ -467,7 +469,7 @@ var _ = Describe("Config", func() {
 			config.MergeFlags(cfg, map[string]interface{}{})
 			Expect(cfg.Build.Output).To(Equal("_site"),
 				"unset flags must not change config values")
-			Expect(cfg.Build.Clean).To(BeTrue(),
+			Expect(cfg.Build.CleanValue()).To(BeTrue(),
 				"unset flags must not change config values")
 		})
 
@@ -820,6 +822,33 @@ var _ = Describe("Config", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cfg.Content.Markdown.Goldmark.AutoHeadingID).NotTo(BeNil(),
 				"AutoHeadingID must be non-nil when explicitly set in config — "+
+					"the *bool field must parse the YAML value, not remain nil")
+		})
+	})
+
+	// ── BuildConfig explicit clean: false (issue #593) ──────────────
+	// When build.clean is explicitly set to false in config,
+	// the *bool tri-state must preserve false — not override to true.
+
+	Describe("BuildConfig explicit clean: false (issue #593)", func() {
+		var cfg *config.Config
+		var err error
+
+		BeforeEach(func() {
+			cfg, err = config.LoadWithDefaults("testdata/clean_false.yaml")
+		})
+
+		It("explicit clean: false is preserved after LoadWithDefaults", func() {
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Build.CleanValue()).To(BeFalse(),
+				"CleanValue() must return false when clean is explicitly set to false — "+
+					"ApplyDefaults must not overwrite explicit false with default true")
+		})
+
+		It("Clean field is non-nil when explicitly set", func() {
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Build.Clean).NotTo(BeNil(),
+				"Clean must be non-nil when explicitly set in config — "+
 					"the *bool field must parse the YAML value, not remain nil")
 		})
 	})

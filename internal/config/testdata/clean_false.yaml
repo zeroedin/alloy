@@ -1,0 +1,5 @@
+title: "Clean False Test"
+baseURL: "https://example.com"
+
+build:
+  clean: false
