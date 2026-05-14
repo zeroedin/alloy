@@ -58,6 +58,28 @@ var _ = Describe("Registry", func() {
 			Expect(info.Runtime).To(Equal(plugin.RuntimeNode))
 		})
 
+		It(".js file with runtime = node only in a comment classifies as Tier 2 QuickJS (issue #597)", func() {
+			path := filepath.Join(testdataDir(), "single-files", "commented-runtime.js")
+			info, err := plugin.ClassifyPlugin(path)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(info).NotTo(BeNil())
+			Expect(info.Tier).To(Equal(plugin.TierInProcess),
+				"runtime declaration in a comment must not trigger Tier 3 Node classification (issue #597)")
+			Expect(info.Runtime).To(Equal(plugin.RuntimeQuickJS),
+				"plugin without a real runtime export must default to QuickJS")
+		})
+
+		It(".js file with runtime = node only in a string literal classifies as Tier 2 QuickJS (issue #597)", func() {
+			path := filepath.Join(testdataDir(), "single-files", "string-literal-runtime.js")
+			info, err := plugin.ClassifyPlugin(path)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(info).NotTo(BeNil())
+			Expect(info.Tier).To(Equal(plugin.TierInProcess),
+				"runtime declaration in a string literal must not trigger Tier 3 Node classification (issue #597)")
+			Expect(info.Runtime).To(Equal(plugin.RuntimeQuickJS),
+				"plugin without a real runtime export must default to QuickJS")
+		})
+
 		It("unknown extension returns error", func() {
 			path := filepath.Join(testdataDir(), "single-files", "unknown.py")
 			_, err := plugin.ClassifyPlugin(path)
