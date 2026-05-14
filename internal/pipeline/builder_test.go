@@ -49,6 +49,7 @@ var _ = Describe("Builder interface", func() {
 		Expect(result).NotTo(BeNil())
 		Expect(result.Cache).NotTo(BeNil(),
 			"DefaultBuilder.BuildIncremental must return an in-memory cache "+
-				"on result.Cache — same contract as the free function (issue #601)")
+				"on result.Cache — the implementation must populate result.Cache "+
+				"with content hashes for incremental rebuild (issues #601, #639)")
 	})
 })
