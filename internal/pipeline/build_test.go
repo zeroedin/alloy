@@ -635,67 +635,71 @@ var _ = Describe("Build Pipeline", func() {
 				"no layout markup should appear when layout: false is set")
 		})
 
-		It("detects content reversion across sequential incremental builds (issue #639)", func() {
-			tmpDir := GinkgoT().TempDir()
-			contentDir := filepath.Join(tmpDir, "content")
-			layoutDir := filepath.Join(tmpDir, "layouts")
-			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
-			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
-
-			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
-				[]byte("{{ content }}"), 0644)).To(Succeed())
-
-			originalContent := "---\ntitle: Home\n---\n# Original"
-			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
-				[]byte(originalContent), 0644)).To(Succeed())
-
+		It("returns updated cache with rendered page hashes (issue #639)", func() {
 			cfg := &config.Config{
-				Title:       "Cache Revert Test",
-				BaseURL:     "https://example.com",
-				ProjectRoot: tmpDir,
-				Build:       config.BuildConfig{Output: filepath.Join(tmpDir, "_site")},
-				Structure: config.StructureConfig{
-					Content: "content",
-					Layouts: "layouts",
-				},
+				Title:   "Cache Return Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+				"content/about.md": "---\ntitle: About\n---\n# About",
 			}
 
-			// Step 1: Full build — saves cache to .alloy/cache.json with hash of "Original"
-			_, err := pipeline.Build(cfg)
+			result, err := pipeline.BuildIncremental(cfg, contentMap, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
 
-			// Step 2: Change content and do incremental rebuild
-			updatedContent := "---\ntitle: Home\n---\n# Updated"
-			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
-				[]byte(updatedContent), 0644)).To(Succeed())
+			Expect(result.Cache).NotTo(BeNil(),
+				"BuildIncremental must return an in-memory cache on result.Cache — "+
+					"without this, dev.go cannot maintain cache state across "+
+					"incremental rebuilds and falls back to stale disk reads (issue #639)")
 
-			cacheDir := filepath.Join(tmpDir, ".alloy")
-			prevCache, err := cache.LoadFrom(cacheDir)
+			Expect(result.Cache.ShouldSkipFile("index.md", []byte("---\ntitle: Home\n---\n# Home"))).To(BeTrue(),
+				"returned cache must contain hashes for rendered pages — "+
+					"ShouldSkipFile must return true for content matching what was just built")
+		})
+
+		It("returned cache prevents stale skips on content revert (issue #639)", func() {
+			cfg := &config.Config{
+				Title:   "Revert Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+
+			contentA := "---\ntitle: Home\n---\n# Original"
+			contentB := "---\ntitle: Home\n---\n# Modified"
+
+			// Step 1: initial build with content A
+			contentMap := map[string]string{
+				"content/index.md": contentA,
+			}
+			result1, err := pipeline.BuildIncremental(cfg, contentMap, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(result1.Cache).NotTo(BeNil(),
+				"first build must return a cache (issue #639)")
 
-			result2, err := pipeline.BuildIncremental(cfg, nil, prevCache,
-				[]string{"content/index.md"})
+			// Step 2: content changes to B — rebuild with cache from step 1
+			contentMap["content/index.md"] = contentB
+			result2, err := pipeline.BuildIncremental(cfg, contentMap, result1.Cache, []string{"content/index.md"})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result2.PageCount).To(Equal(1),
-				"sanity: changed content must be rebuilt (hash mismatch with cache)")
+				"changed content must trigger a rebuild")
+			Expect(result2.Cache).NotTo(BeNil(),
+				"second build must return an updated cache (issue #639)")
 
-			// Step 3: Revert content to original and do incremental rebuild
-			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
-				[]byte(originalContent), 0644)).To(Succeed())
-
-			prevCache2, err := cache.LoadFrom(cacheDir)
-			Expect(err).NotTo(HaveOccurred())
-
-			result3, err := pipeline.BuildIncremental(cfg, nil, prevCache2,
-				[]string{"content/index.md"})
+			// Step 3: content reverts to A — rebuild with cache from step 2
+			// This is the bug: with stale disk cache, hash A matches the
+			// initial cache and the page is incorrectly skipped
+			contentMap["content/index.md"] = contentA
+			result3, err := pipeline.BuildIncremental(cfg, contentMap, result2.Cache, []string{"content/index.md"})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result3.PageCount).To(Equal(1),
-				"reverted content must be rebuilt — BuildIncremental must persist "+
-					"the updated cache after rendering so that subsequent builds "+
-					"see the hash from the last incremental build, not the stale "+
-					"hash from the initial full build; without cache persistence, "+
-					"reverting a file to its original state causes a false skip "+
-					"because the stale cache hash matches (issue #639)")
+				"reverting content must trigger a rebuild — the cache from step 2 "+
+					"has hash B, not hash A, so the page must not be skipped. "+
+					"Without in-memory cache propagation, dev.go reloads the stale "+
+					"initial cache from disk where hash A matches, causing an "+
+					"incorrect skip that leaves output stale (issue #639)")
 		})
 	})
 

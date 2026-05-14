@@ -1,9 +1,6 @@
 package cache_test
 
 import (
-	"os"
-	"path/filepath"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -53,77 +50,6 @@ var _ = Describe("Build Cache (§10 Performance Architecture)", func() {
 			// Actual assertion: matching hash means unchanged
 			Expect(c.HasChanged("content/about.md", "samehash")).To(BeFalse(),
 				"matching hash means content is unchanged")
-		})
-	})
-
-	// ── Persistence (save/load to .alloy/) ───────────────────────────
-
-	Describe("Persistence", func() {
-		It("SaveTo writes cache.json to the target directory", func() {
-			tmpDir := GinkgoT().TempDir()
-			cacheDir := filepath.Join(tmpDir, ".alloy")
-
-			c := cache.New()
-			c.SetHash("content/index.md", "hash1")
-			c.SetHash("content/about.md", "hash2")
-
-			err := c.SaveTo(cacheDir)
-			Expect(err).NotTo(HaveOccurred(),
-				"SaveTo must write cache.json without error")
-
-			// cache.json must exist on disk
-			_, err = os.Stat(filepath.Join(cacheDir, "cache.json"))
-			Expect(err).NotTo(HaveOccurred(),
-				"cache.json must be created in the target directory")
-		})
-
-		It("LoadFrom restores all entries from cache.json", func() {
-			tmpDir := GinkgoT().TempDir()
-			cacheDir := filepath.Join(tmpDir, ".alloy")
-
-			// Save a cache with entries
-			original := cache.New()
-			original.SetHash("content/index.md", "aaa")
-			original.SetHash("content/about.md", "bbb")
-			err := original.SaveTo(cacheDir)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Load it back
-			restored, err := cache.LoadFrom(cacheDir)
-			Expect(err).NotTo(HaveOccurred(),
-				"LoadFrom must read cache.json without error")
-			Expect(restored).NotTo(BeNil())
-			Expect(restored.GetHash("content/index.md")).To(Equal("aaa"),
-				"restored cache must contain original entries")
-			Expect(restored.GetHash("content/about.md")).To(Equal("bbb"))
-		})
-
-		It("LoadFrom returns empty cache when cache.json does not exist", func() {
-			tmpDir := GinkgoT().TempDir()
-			emptyDir := filepath.Join(tmpDir, ".alloy-missing")
-
-			c, err := cache.LoadFrom(emptyDir)
-			Expect(err).NotTo(HaveOccurred(),
-				"missing cache.json is a fresh build, not an error")
-			Expect(c).NotTo(BeNil())
-			Expect(c.Entries()).To(Equal(0),
-				"fresh cache must have zero entries")
-		})
-
-		It("SaveTo creates the .alloy directory if it does not exist", func() {
-			tmpDir := GinkgoT().TempDir()
-			cacheDir := filepath.Join(tmpDir, ".alloy", "nested")
-
-			c := cache.New()
-			c.SetHash("content/index.md", "hash1")
-			err := c.SaveTo(cacheDir)
-			Expect(err).NotTo(HaveOccurred(),
-				"SaveTo must create missing directories")
-
-			info, err := os.Stat(cacheDir)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(info.IsDir()).To(BeTrue(),
-				"target directory must be created")
 		})
 	})
 

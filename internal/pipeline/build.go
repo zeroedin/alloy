@@ -94,6 +94,7 @@ type BuildResult struct {
 	RenderedContent     map[string]string // page key → final rendered HTML (RelPath for regular pages, URL for generated pages)
 	ContentPassthroughs []string          // relative paths of non-content files copied from content/ to output
 	StageTimings        []StageTiming     // per-stage durations (populated when BuildOptions.Profile is true)
+	Cache               *cache.Cache      // in-memory cache with content hashes for incremental rebuild (issue #639)
 }
 
 // RenderContext bundles shared rendering state passed through the render call

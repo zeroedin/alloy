@@ -595,23 +595,29 @@ var _ = Describe("File Watcher", func() {
 				"all pages using the changed layout must be invalidated")
 		})
 
-		It("cache persists across server rebuilds", func() {
-			tmpDir := GinkgoT().TempDir()
-
-			// Build 1: populate and save cache
+		It("in-memory cache detects unchanged and changed pages across rebuilds (issue #639)", func() {
+			// Simulate the in-memory cache lifecycle: initial build populates
+			// the cache, subsequent rebuilds reuse the same instance to detect
+			// which pages changed. No disk I/O — the cache lives in memory.
 			buildCache := cache.New()
 			buildCache.SetHash("index.md", cache.HashContent([]byte("home")))
 			buildCache.SetHash("about.md", cache.HashContent([]byte("about")))
-			err := buildCache.SaveTo(tmpDir)
-			Expect(err).NotTo(HaveOccurred())
 
-			// Build 2: load cache and check
-			restored, err := cache.LoadFrom(tmpDir)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(restored.ShouldSkipFile("index.md", []byte("home"))).To(BeTrue(),
-				"restored cache must correctly identify unchanged pages")
-			Expect(restored.ShouldSkipFile("about.md", []byte("about updated"))).To(BeFalse(),
-				"restored cache must detect changed pages")
+			// Rebuild 1: same content → skip
+			Expect(buildCache.ShouldSkipFile("index.md", []byte("home"))).To(BeTrue(),
+				"unchanged page must be skipped on next rebuild")
+
+			// Rebuild 1: changed content → rebuild
+			Expect(buildCache.ShouldSkipFile("about.md", []byte("about updated"))).To(BeFalse(),
+				"changed page must not be skipped")
+
+			// After rebuild, update the cache with new hash (simulates
+			// BuildIncremental returning an updated cache)
+			buildCache.SetHash("about.md", cache.HashContent([]byte("about updated")))
+
+			// Rebuild 2: previously changed content is now current → skip
+			Expect(buildCache.ShouldSkipFile("about.md", []byte("about updated"))).To(BeTrue(),
+				"page must be skippable after cache is updated with its new hash")
 		})
 	})
 })
