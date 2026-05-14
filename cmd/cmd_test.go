@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 
@@ -576,6 +577,56 @@ taxonomies:
 		It("Version variable is set to a non-empty build string", func() {
 			Expect(cmd.Version).NotTo(BeEmpty(),
 				"Version must be set (typically via ldflags at build time)")
+		})
+	})
+
+	// ── CLI banner ──────────────────────────────────────────────────
+	// The alloy logo displays as a Unicode block-character banner on
+	// dev and serve startup. TTY mode adds two-tone ANSI coloring;
+	// non-TTY mode uses plain Unicode only. Suppressed by --quiet.
+
+	Describe("CLI banner", func() {
+		It("PrintBanner writes the alloy logo to the writer", func() {
+			var buf bytes.Buffer
+			cmd.PrintBanner(&buf, false)
+			output := buf.String()
+			Expect(output).To(ContainSubstring("█▀▀█"),
+				"banner must contain Unicode block characters forming the alloy logo")
+			Expect(output).To(ContainSubstring("▀▄▄█"),
+				"banner must contain the y character with descender")
+		})
+
+		It("PrintBanner includes ANSI color codes in TTY mode", func() {
+			var buf bytes.Buffer
+			cmd.PrintBanner(&buf, true)
+			output := buf.String()
+			Expect(output).To(ContainSubstring("\033["),
+				"TTY mode banner must include ANSI escape sequences for two-tone coloring — "+
+					"use bold/dim attributes (not hardcoded color values) so the banner "+
+					"adapts to both light and dark terminal backgrounds")
+		})
+
+		It("PrintBanner omits ANSI codes in non-TTY mode", func() {
+			var buf bytes.Buffer
+			cmd.PrintBanner(&buf, false)
+			output := buf.String()
+			Expect(output).NotTo(ContainSubstring("\033["),
+				"non-TTY banner must not include ANSI escape sequences — "+
+					"raw block characters only for piped/redirected output")
+		})
+
+		It("dev command calls PrintBanner", func() {
+			devSource, err := os.ReadFile("dev.go")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(devSource)).To(ContainSubstring("PrintBanner"),
+				"dev.go must call PrintBanner — the alloy logo must display on startup")
+		})
+
+		It("serve command calls PrintBanner", func() {
+			serveSource, err := os.ReadFile("serve.go")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(serveSource)).To(ContainSubstring("PrintBanner"),
+				"serve.go must call PrintBanner — the alloy logo must display on startup")
 		})
 	})
 })
