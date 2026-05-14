@@ -2,4 +2,4 @@ package content
 
 import "github.com/zeroedin/alloy/internal/jsonutil"
 
-var json = jsonutil.JSON
+var jsonCodec = jsonutil.JSON

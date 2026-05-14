@@ -129,13 +129,13 @@ func (m *Map) MarshalJSON() ([]byte, error) {
 		if i > 0 {
 			buf.WriteByte(',')
 		}
-		keyBytes, err := json.Marshal(key)
+		keyBytes, err := jsonCodec.Marshal(key)
 		if err != nil {
 			return nil, err
 		}
 		buf.Write(keyBytes)
 		buf.WriteByte(':')
-		valBytes, err := json.Marshal(m.values[key])
+		valBytes, err := jsonCodec.Marshal(m.values[key])
 		if err != nil {
 			return nil, err
 		}
@@ -215,7 +215,7 @@ func decodeValue(raw stdjson.RawMessage) (interface{}, error) {
 		return decodeArray(trimmed)
 	default:
 		var v interface{}
-		if err := json.Unmarshal(raw, &v); err != nil {
+		if err := jsonCodec.Unmarshal(raw, &v); err != nil {
 			return nil, err
 		}
 		return v, nil
@@ -294,7 +294,7 @@ func UnmarshalJSONValue(data []byte) (interface{}, error) {
 		return decodeArray(trimmed)
 	default:
 		var v interface{}
-		if err := json.Unmarshal(trimmed, &v); err != nil {
+		if err := jsonCodec.Unmarshal(trimmed, &v); err != nil {
 			return nil, err
 		}
 		return v, nil

@@ -39,7 +39,7 @@ func FetchREST(url string) (interface{}, error) {
 	}
 
 	var result interface{}
-	if err := json.Unmarshal(body, &result); err != nil {
+	if err := jsonCodec.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("fetch JSON parse error for %s: %w", url, err)
 	}
 
@@ -51,7 +51,7 @@ var graphQLClient = &http.Client{Timeout: 30 * time.Second}
 
 // FetchGraphQL sends a GraphQL query and returns the unwrapped data.
 func FetchGraphQL(endpoint, query string) (interface{}, error) {
-	reqBody, err := json.Marshal(map[string]string{"query": query})
+	reqBody, err := jsonCodec.Marshal(map[string]string{"query": query})
 	if err != nil {
 		return nil, fmt.Errorf("graphql request encoding error: %w", err)
 	}
@@ -72,7 +72,7 @@ func FetchGraphQL(endpoint, query string) (interface{}, error) {
 	}
 
 	var raw map[string]interface{}
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if err := jsonCodec.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("graphql JSON parse error for %s: %w", endpoint, err)
 	}
 
@@ -102,7 +102,7 @@ func SaveCache(name, cacheDir string, data interface{}) error {
 		CachedAt: time.Now(),
 	}
 
-	b, err := json.Marshal(entry)
+	b, err := jsonCodec.Marshal(entry)
 	if err != nil {
 		return fmt.Errorf("cache serialization error: %w", err)
 	}
@@ -195,7 +195,7 @@ func GetCachedWithTTL(name, cacheDir string, ttlSeconds int) (interface{}, bool,
 	}
 
 	var entry cacheEntry
-	if err := json.Unmarshal(b, &entry); err != nil {
+	if err := jsonCodec.Unmarshal(b, &entry); err != nil {
 		return nil, false, nil
 	}
 

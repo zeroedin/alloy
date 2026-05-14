@@ -55,7 +55,7 @@ type Message struct {
 // EncodeMessage serializes a Message into an LSP-style framed byte sequence:
 // Content-Length: <N>\r\n\r\n<JSON body>
 func EncodeMessage(msg *Message) ([]byte, error) {
-	body, err := json.Marshal(msg)
+	body, err := jsonCodec.Marshal(msg)
 	if err != nil {
 		return nil, fmt.Errorf("message encoding error: %w", err)
 	}
@@ -79,7 +79,7 @@ func DecodeMessage(data []byte) (*Message, error) {
 	}
 
 	var msg Message
-	if err := json.Unmarshal([]byte(parts[1]), &msg); err != nil {
+	if err := jsonCodec.Unmarshal([]byte(parts[1]), &msg); err != nil {
 		return nil, fmt.Errorf("message decode error: %w", err)
 	}
 
@@ -605,7 +605,7 @@ func (b *NodeBridge) Send(msg *Message) (*Message, error) {
 	}
 
 	var resp Message
-	if err := json.Unmarshal(body, &resp); err != nil {
+	if err := jsonCodec.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("decoding response: %w", err)
 	}
 

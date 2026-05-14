@@ -201,7 +201,7 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("parsing config TOML: %w", err)
 		}
 	case ".json":
-		if err := json.Unmarshal(b, cfg); err != nil {
+		if err := jsonCodec.Unmarshal(b, cfg); err != nil {
 			return nil, fmt.Errorf("parsing config JSON: %w", err)
 		}
 	default:
