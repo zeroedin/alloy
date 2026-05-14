@@ -152,7 +152,7 @@ func (r *QuickJSRuntime) SetSiteData(data map[string]interface{}) error {
 		data = make(map[string]interface{})
 	}
 
-	jsonBytes, err := json.Marshal(data)
+	jsonBytes, err := jsonCodec.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("serializing site data: %w", err)
 	}
@@ -247,7 +247,7 @@ func (r *QuickJSRuntime) CallFilter(name string, input interface{}, args ...inte
 
 	// Serialize args as a JS array so the filter function receives them
 	if len(args) > 0 {
-		argsJSON, err := json.Marshal(args)
+		argsJSON, err := jsonCodec.Marshal(args)
 		if err != nil {
 			return nil, fmt.Errorf("filter %q: marshaling args: %w", name, err)
 		}
@@ -355,7 +355,7 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 	case bool:
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewBool(v))
 	default:
-		jsonBytes, err := json.Marshal(v)
+		jsonBytes, err := jsonCodec.Marshal(v)
 		if err != nil {
 			return nil, fmt.Errorf("hook %q: marshaling payload: %w", name, err)
 		}
@@ -602,7 +602,7 @@ func (r *WASMRuntime) CallExport(name string, args ...interface{}) (interface{},
 					return nil, fmt.Errorf("wasm CallExport %q: argument %d is %T, expected string-like type", name, i, args[i])
 				}
 			}
-			jsonBytes, err := json.Marshal(strArgs)
+			jsonBytes, err := jsonCodec.Marshal(strArgs)
 			if err != nil {
 				return nil, fmt.Errorf("wasm CallExport %q: marshaling args: %w", name, err)
 			}
@@ -801,7 +801,7 @@ func (r *WASMRuntime) CallHook(name string, payload interface{}) (interface{}, e
 		"event":   name,
 		"payload": payload,
 	}
-	inputJSON, err := json.Marshal(envelope)
+	inputJSON, err := jsonCodec.Marshal(envelope)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling hook payload: %w", err)
 	}
@@ -868,7 +868,7 @@ func (r *WASMRuntime) discoverHooks(ctx context.Context) error {
 	}
 
 	var names []string
-	if err := json.Unmarshal(data, &names); err != nil {
+	if err := jsonCodec.Unmarshal(data, &names); err != nil {
 		return fmt.Errorf("hooks() export returned invalid JSON (expected array of strings): %w", err)
 	}
 

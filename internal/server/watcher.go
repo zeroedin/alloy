@@ -220,7 +220,7 @@ func RecopyPassthroughFile(path string, cfg *config.Config) (string, error) {
 // ReloadMessage returns the JSON message sent to the browser via WebSocket
 // to trigger a full page reload.
 func ReloadMessage() []byte {
-	msg, _ := json.Marshal(map[string]string{"type": "reload"})
+	msg, _ := jsonCodec.Marshal(map[string]string{"type": "reload"})
 	return msg
 }
 

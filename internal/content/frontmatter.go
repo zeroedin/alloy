@@ -167,7 +167,7 @@ func parseJSONFrontMatter(s string) (map[string]interface{}, []byte, error) {
 	}
 
 	fm := make(map[string]interface{})
-	if err := json.Unmarshal([]byte(jsonContent), &fm); err != nil {
+	if err := jsonCodec.Unmarshal([]byte(jsonContent), &fm); err != nil {
 		return nil, nil, fmt.Errorf("json parse error: %w", err)
 	}
 

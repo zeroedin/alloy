@@ -301,7 +301,7 @@ func parseScopeMap(m map[string]interface{}) (*HookScope, error) {
 // Retained for the WASM plugin path which receives scope as a JSON string.
 func parseScopeJSON(raw string) (*HookScope, error) {
 	var m map[string]interface{}
-	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+	if err := jsonCodec.Unmarshal([]byte(raw), &m); err != nil {
 		return nil, err
 	}
 	return parseScopeMap(m)

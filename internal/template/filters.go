@@ -731,7 +731,7 @@ func ReplaceRE(input interface{}, args ...interface{}) interface{} {
 // --- Data filters ---
 
 func JSONFilter(input interface{}, args ...interface{}) interface{} {
-	b, err := json.Marshal(input)
+	b, err := jsonCodec.Marshal(input)
 	if err != nil {
 		return "{}"
 	}

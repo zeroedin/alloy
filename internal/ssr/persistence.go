@@ -29,7 +29,7 @@ func NewComponentMap() *ComponentMap {
 
 // SaveTo writes the component map to components.json in the given directory.
 func (cm *ComponentMap) SaveTo(dir string) error {
-	b, err := json.MarshalIndent(cm, "", "  ")
+	b, err := jsonCodec.MarshalIndent(cm, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -49,7 +49,7 @@ func LoadComponentMap(dir string) (*ComponentMap, error) {
 	}
 
 	cm := NewComponentMap()
-	if err := json.Unmarshal(b, cm); err != nil {
+	if err := jsonCodec.Unmarshal(b, cm); err != nil {
 		return nil, err
 	}
 	return cm, nil
