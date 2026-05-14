@@ -249,12 +249,25 @@ func ClassifyPlugin(path string) (*PluginInfo, error) {
 }
 
 // hasNodeRuntimeExport checks if JS/TS source declares runtime = "node".
+// Scans line-by-line so that matches inside comments or string literals
+// do not trigger a false positive.
 func hasNodeRuntimeExport(src string) bool {
-	// Match patterns like: export const runtime = "node"
-	return strings.Contains(src, `runtime = "node"`) ||
-		strings.Contains(src, `runtime = 'node'`) ||
-		strings.Contains(src, "runtime: \"node\"") ||
-		strings.Contains(src, "runtime: 'node'")
+	for _, line := range strings.Split(src, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "export") {
+			continue
+		}
+		if strings.Contains(trimmed, `runtime = "node"`) ||
+			strings.Contains(trimmed, `runtime = 'node'`) ||
+			strings.Contains(trimmed, `runtime: "node"`) ||
+			strings.Contains(trimmed, `runtime: 'node'`) {
+			return true
+		}
+	}
+	return false
 }
 
 // registerRuntime registers a loaded runtime's filters and hooks, and appends
