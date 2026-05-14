@@ -1164,6 +1164,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
+	templateUsage := make(map[string][]string)
 	rc := &RenderContext{
 		Cfg:            cfg,
 		SiteData:       ps.SiteData,
@@ -1171,6 +1172,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		TaxonomiesCtx:  bc.TaxonomiesCtx,
 		Pages:          allPages,
 		Engine:         ps.Engine,
+		TemplateUsage:  templateUsage,
 	}
 	rendered, renderErr := renderPages(pagesToRender, rc)
 	if renderErr != nil {
@@ -1348,10 +1350,21 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
-	// Build in-memory cache with hashes for all pages (rendered + skipped)
-	buildCache := cache.New()
-	for _, page := range allPages {
+	// Build in-memory cache: clone previous (preserves skipped page hashes),
+	// then update only rendered pages + carry forward template tracking.
+	var buildCache *cache.Cache
+	if previousCache != nil {
+		buildCache = previousCache.Clone()
+	} else {
+		buildCache = cache.New()
+	}
+	for _, page := range pagesToRender {
 		buildCache.SetHash(page.RelPath, cache.HashContent(page.Content))
+	}
+	for pagePath, layoutPaths := range templateUsage {
+		for _, layoutPath := range layoutPaths {
+			buildCache.TrackTemplateUsage(pagePath, layoutPath)
+		}
 	}
 
 	result := &BuildResult{

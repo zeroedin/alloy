@@ -56,6 +56,26 @@ func (c *Cache) Clear() {
 	c.directoryData = make(map[string][]string)
 }
 
+// Clone returns a deep copy of the cache. Used by BuildIncremental to
+// carry forward hashes for unchanged pages without re-hashing them.
+func (c *Cache) Clone() *Cache {
+	cloned := New()
+	for k, v := range c.hashes {
+		cloned.hashes[k] = v
+	}
+	for k, v := range c.templates {
+		cp := make([]string, len(v))
+		copy(cp, v)
+		cloned.templates[k] = cp
+	}
+	for k, v := range c.directoryData {
+		cp := make([]string, len(v))
+		copy(cp, v)
+		cloned.directoryData[k] = cp
+	}
+	return cloned
+}
+
 // HashContent computes a SHA-256 hex digest of the given content bytes.
 func HashContent(content []byte) string {
 	h := sha256.Sum256(content)
