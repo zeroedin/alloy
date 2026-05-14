@@ -73,7 +73,7 @@ var _ = Describe("Build Pipeline", func() {
 			cfg := &config.Config{
 				Title:   "Test Site",
 				BaseURL: "https://example.com",
-				Build:   config.BuildConfig{Output: "_site", Clean: true},
+				Build:   config.BuildConfig{Output: "_site"},
 			}
 			result, err := pipeline.Build(cfg)
 			Expect(err).NotTo(HaveOccurred())
