@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"syscall"
 
@@ -83,9 +82,13 @@ func newDevCommand() *cobra.Command {
 			}
 			defer pipeline.SetReporter(nil)
 
-			_, initialBuildErr := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})
+			initialResult, initialBuildErr := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})
 			if initialBuildErr != nil {
 				log.Printf("warning: initial build failed: %v", initialBuildErr)
+			}
+			var previousCache *cache.Cache
+			if initialResult != nil {
+				previousCache = initialResult.Cache
 			}
 
 			srv := server.NewWithMode(cfg, server.ModeDev)
@@ -165,33 +168,34 @@ func newDevCommand() *cobra.Command {
 				}
 
 				if hasComponentChange || rebuildScope == server.RebuildFull {
-					if _, err := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true}); err != nil {
+					if fullResult, err := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true}); err != nil {
 						log.Printf("rebuild failed: %v", err)
 						srv.Overlay().SetErrors([]server.BuildError{
 							{Message: err.Error(), Stage: "rebuild"},
 						})
 					} else {
+						if fullResult != nil && fullResult.Cache != nil {
+							previousCache = fullResult.Cache
+						}
 						srv.Overlay().ClearErrors()
 						if !cfg.Quiet {
 							log.Printf("rebuild complete")
 						}
 					}
 				} else {
-					cacheDir := ".alloy"
-					if cfg.ProjectRoot != "" {
-						cacheDir = filepath.Join(cfg.ProjectRoot, ".alloy")
-					}
-					previousCache, _ := cache.LoadFrom(cacheDir)
 					var changedFiles []string
 					for _, ev := range events {
 						changedFiles = append(changedFiles, ev.Path)
 					}
-					if _, err := pipeline.BuildIncremental(cfg, nil, previousCache, changedFiles, pipeline.BuildOptions{SkipSSR: true, PipelineState: ps}); err != nil {
+					if incrResult, err := pipeline.BuildIncremental(cfg, nil, previousCache, changedFiles, pipeline.BuildOptions{SkipSSR: true, PipelineState: ps}); err != nil {
 						log.Printf("rebuild failed: %v", err)
 						srv.Overlay().SetErrors([]server.BuildError{
 							{Message: err.Error(), Stage: "rebuild"},
 						})
 					} else {
+						if incrResult != nil && incrResult.Cache != nil {
+							previousCache = incrResult.Cache
+						}
 						srv.Overlay().ClearErrors()
 						if !cfg.Quiet {
 							log.Printf("rebuild complete (incremental)")

@@ -864,22 +864,15 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
-	// Stage 9: Cache persistence (non-fatal, only with a real project root)
-	timer.Start("Cache persistence")
-	if cfg.ProjectRoot != "" {
-		buildCache := cache.New()
-		for _, page := range pages {
-			buildCache.SetHash(page.RelPath, cache.HashContent(page.Content))
-		}
-		// Track template usage for incremental rebuild invalidation
-		for pagePath, layoutPaths := range templateUsage {
-			for _, layoutPath := range layoutPaths {
-				buildCache.TrackTemplateUsage(pagePath, layoutPath)
-			}
-		}
-		cacheDir := resolveDir(cfg.ProjectRoot, ".alloy")
-		if err := buildCache.SaveTo(cacheDir); err != nil {
-			log.Printf("warning: failed to save build cache: %v", err)
+	// Stage 9: Build in-memory cache for incremental rebuilds
+	timer.Start("Cache")
+	buildCache := cache.New()
+	for _, page := range pages {
+		buildCache.SetHash(page.RelPath, cache.HashContent(page.Content))
+	}
+	for pagePath, layoutPaths := range templateUsage {
+		for _, layoutPath := range layoutPaths {
+			buildCache.TrackTemplateUsage(pagePath, layoutPath)
 		}
 	}
 
@@ -902,6 +895,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		RenderedContent:     renderedContent,
 		ContentPassthroughs: contentPassthroughs,
 		StageTimings:        timer.Timings(),
+		Cache:               buildCache,
 	}
 
 	reportSummary(result.PageCount, result.Duration, 0)
@@ -1170,6 +1164,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
+	templateUsage := make(map[string][]string)
 	rc := &RenderContext{
 		Cfg:            cfg,
 		SiteData:       ps.SiteData,
@@ -1177,6 +1172,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		TaxonomiesCtx:  bc.TaxonomiesCtx,
 		Pages:          allPages,
 		Engine:         ps.Engine,
+		TemplateUsage:  templateUsage,
 	}
 	rendered, renderErr := renderPages(pagesToRender, rc)
 	if renderErr != nil {
@@ -1354,6 +1350,23 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
+	// Build in-memory cache: clone previous (preserves skipped page hashes),
+	// then update only rendered pages + carry forward template tracking.
+	var buildCache *cache.Cache
+	if previousCache != nil {
+		buildCache = previousCache.Clone()
+	} else {
+		buildCache = cache.New()
+	}
+	for _, page := range pagesToRender {
+		buildCache.SetHash(page.RelPath, cache.HashContent(page.Content))
+	}
+	for pagePath, layoutPaths := range templateUsage {
+		for _, layoutPath := range layoutPaths {
+			buildCache.TrackTemplateUsage(pagePath, layoutPath)
+		}
+	}
+
 	result := &BuildResult{
 		OutputDir:        cfg.Build.Output,
 		PageCount:        len(pagesToRender),
@@ -1363,6 +1376,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		SSRSkipped:       ssrSkipped,
 		PagesRendered:    rendered,
 		RenderedContent:  renderedContent,
+		Cache:            buildCache,
 	}
 
 	if savedReporter != nil {

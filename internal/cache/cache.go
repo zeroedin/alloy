@@ -3,23 +3,14 @@ package cache
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"os"
-	"path/filepath"
 )
 
 // Cache manages content hashes and template usage tracking for
-// incremental build detection. Stored on disk as .alloy/cache.json.
+// incremental build detection. Passed in-memory between builds.
 type Cache struct {
 	hashes        map[string]string
 	templates     map[string][]string // template path → list of page paths
 	directoryData map[string][]string // directory path → list of page paths
-}
-
-// cacheJSON is the serialization format for cache persistence.
-type cacheJSON struct {
-	Hashes        map[string]string   `json:"hashes"`
-	Templates     map[string][]string `json:"templates"`
-	DirectoryData map[string][]string `json:"directoryData"`
 }
 
 // New creates an empty cache with no entries.
@@ -65,50 +56,24 @@ func (c *Cache) Clear() {
 	c.directoryData = make(map[string][]string)
 }
 
-// SaveTo writes cache.json to the given directory (typically .alloy/).
-// Creates the directory if it does not exist.
-func (c *Cache) SaveTo(dir string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+// Clone returns a deep copy of the cache. Used by BuildIncremental to
+// carry forward hashes for unchanged pages without re-hashing them.
+func (c *Cache) Clone() *Cache {
+	cloned := New()
+	for k, v := range c.hashes {
+		cloned.hashes[k] = v
 	}
-	data := cacheJSON{
-		Hashes:        c.hashes,
-		Templates:     c.templates,
-		DirectoryData: c.directoryData,
+	for k, v := range c.templates {
+		cp := make([]string, len(v))
+		copy(cp, v)
+		cloned.templates[k] = cp
 	}
-	b, err := json.Marshal(data)
-	if err != nil {
-		return err
+	for k, v := range c.directoryData {
+		cp := make([]string, len(v))
+		copy(cp, v)
+		cloned.directoryData[k] = cp
 	}
-	return os.WriteFile(filepath.Join(dir, "cache.json"), b, 0o644)
-}
-
-// LoadFrom reads cache.json from the given directory and restores
-// all entries. Returns an empty cache if the file does not exist
-// (fresh build).
-func LoadFrom(dir string) (*Cache, error) {
-	b, err := os.ReadFile(filepath.Join(dir, "cache.json"))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return New(), nil
-		}
-		return nil, err
-	}
-	var data cacheJSON
-	if err := json.Unmarshal(b, &data); err != nil {
-		return nil, err
-	}
-	c := New()
-	if data.Hashes != nil {
-		c.hashes = data.Hashes
-	}
-	if data.Templates != nil {
-		c.templates = data.Templates
-	}
-	if data.DirectoryData != nil {
-		c.directoryData = data.DirectoryData
-	}
-	return c, nil
+	return cloned
 }
 
 // HashContent computes a SHA-256 hex digest of the given content bytes.
