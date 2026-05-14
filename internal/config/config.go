@@ -41,7 +41,13 @@ type Config struct {
 // BuildConfig holds output directory and clean settings.
 type BuildConfig struct {
 	Output string `yaml:"output" toml:"output" json:"output"`
-	Clean  bool   `yaml:"clean" toml:"clean" json:"clean"`
+	Clean  *bool  `yaml:"clean" toml:"clean" json:"clean"`
+}
+
+// CleanValue returns the effective Clean setting.
+// nil (omitted) defaults to true; only explicit false disables.
+func (b *BuildConfig) CleanValue() bool {
+	return b.Clean == nil || *b.Clean
 }
 
 // DataConfig holds external data file mappings.
@@ -253,8 +259,7 @@ func ApplyDefaults(cfg *Config) {
 	if cfg.Language == "" {
 		cfg.Language = "en"
 	}
-	// Build.Clean defaults to true
-	cfg.Build.Clean = true
+	// Build.Clean defaults to true via *bool (nil = true)
 	if cfg.Structure.Content == "" {
 		cfg.Structure.Content = "content"
 	}

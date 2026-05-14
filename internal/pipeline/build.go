@@ -221,7 +221,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Starts after all validation hooks so plugin-mutated paths are respected
 	// and validation failures don't leave partial copies as debris.
 	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
-	if cfg.Build.Clean {
+	if cfg.Build.CleanValue() {
 		if _, statErr := os.Stat(outputDir); statErr == nil {
 			if err := output.CleanOutputDir(outputDir); err != nil {
 				return nil, fmt.Errorf("cleaning output directory: %w", err)
