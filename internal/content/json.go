@@ -1,6 +1,5 @@
 package content
 
-import "github.com/bytedance/sonic"
+import "github.com/zeroedin/alloy/internal/jsonutil"
 
-// json aliases sonic.ConfigStd for stdlib-compatible JSON behavior with JIT acceleration.
-var json = sonic.ConfigStd
+var json = jsonutil.JSON
