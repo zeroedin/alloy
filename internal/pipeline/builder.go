@@ -15,6 +15,8 @@ type Builder interface {
 // DefaultBuilder delegates to the package-level Build and BuildIncremental functions.
 type DefaultBuilder struct{}
 
+var _ Builder = (*DefaultBuilder)(nil)
+
 func (b *DefaultBuilder) Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	return Build(cfg, opts...)
 }
