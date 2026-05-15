@@ -46,25 +46,20 @@ func discoverInternal(contentDir string, formats []string, collectPassthrough bo
 		formatSet["."+f] = true
 	}
 
-	// First pass: find all index.md/index.html files to identify bundles
-	bundleDirs := make(map[string]bool)
-	_ = filepath.WalkDir(contentDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		if d.Name() == "index.md" || d.Name() == "index.html" {
-			dir := filepath.Dir(path)
-			rel, _ := filepath.Rel(contentDir, dir)
-			if rel != "." {
-				bundleDirs[dir] = true
-			}
-		}
-		return nil
-	})
+	type fileEntry struct {
+		path string
+		rel  string
+		name string
+		ext  string
+	}
 
-	var pages []*Page
+	bundleDirs := make(map[string]bool)
+	var entries []fileEntry
 	var passthroughs []string
 
+	// Single walk: collect metadata and identify bundles simultaneously.
+	// File contents are read in the page-building loop to avoid buffering
+	// all raw bytes in memory at once.
 	err = filepath.WalkDir(contentDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -75,9 +70,17 @@ func discoverInternal(contentDir string, formats []string, collectPassthrough bo
 
 		name := d.Name()
 
-		// Ignore _data.yaml and _data.yml
 		if name == "_data.yaml" || name == "_data.yml" {
 			return nil
+		}
+
+		// Track bundle dirs as we discover index files
+		if name == "index.md" || name == "index.html" {
+			dir := filepath.Dir(path)
+			rel, _ := filepath.Rel(contentDir, dir)
+			if rel != "." {
+				bundleDirs[dir] = true
+			}
 		}
 
 		ext := filepath.Ext(name)
@@ -99,43 +102,56 @@ func discoverInternal(contentDir string, formats []string, collectPassthrough bo
 		if err != nil {
 			return err
 		}
-		rel = filepath.ToSlash(rel)
 
-		// Read file and build page
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
+		entries = append(entries, fileEntry{
+			path: path,
+			rel:  filepath.ToSlash(rel),
+			name: name,
+			ext:  ext,
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("content discovery error: %s: %w", contentDir, err)
+	}
+
+	// Build pages using fully populated bundleDirs
+	var pages []*Page
+	for _, e := range entries {
+		raw, readErr := os.ReadFile(e.path)
+		if readErr != nil {
+			return nil, nil, fmt.Errorf("content discovery error: %s: %w", contentDir, readErr)
 		}
 
-		if !hasFrontMatter(raw) && ext != ".md" {
-			if ext == ".html" && isFullHTMLDocument(raw) {
+		if !hasFrontMatter(raw) && e.ext != ".md" {
+			if e.ext == ".html" && isFullHTMLDocument(raw) {
 				if collectPassthrough {
-					passthroughs = append(passthroughs, rel)
+					passthroughs = append(passthroughs, e.rel)
 				}
-				return nil
+				continue
 			}
 			page := &Page{
-				RelPath:     rel,
+				RelPath:     e.rel,
 				FrontMatter: map[string]interface{}{},
 				Body:        raw,
 				Content:     raw,
 			}
-			page.SourcePath = path
-			parts := strings.SplitN(rel, "/", 2)
+			page.SourcePath = e.path
+			parts := strings.SplitN(e.rel, "/", 2)
 			if len(parts) > 1 {
 				page.Section = parts[0]
 			}
-			dir := filepath.Dir(path)
-			if bundleDirs[dir] && (name == "index.md" || name == "index.html") {
+			dir := filepath.Dir(e.path)
+			if bundleDirs[dir] && (e.name == "index.md" || e.name == "index.html") {
 				page.Bundle = true
-				entries, err := os.ReadDir(dir)
+				dirEntries, err := os.ReadDir(dir)
 				if err == nil {
-					for _, entry := range entries {
-						if entry.IsDir() {
+					for _, de := range dirEntries {
+						if de.IsDir() {
 							continue
 						}
-						entryName := entry.Name()
-						if entryName == name || entryName == "_data.yaml" || entryName == "_data.yml" {
+						entryName := de.Name()
+						if entryName == e.name || entryName == "_data.yaml" || entryName == "_data.yml" {
 							continue
 						}
 						page.BundleAssets = append(page.BundleAssets, entryName)
@@ -143,38 +159,32 @@ func discoverInternal(contentDir string, formats []string, collectPassthrough bo
 				}
 			}
 			pages = append(pages, page)
-			return nil
+			continue
 		}
 
-		page, err := BuildPage(rel, raw)
+		page, err := BuildPage(e.rel, raw)
 		if err != nil {
-			return err
+			return nil, nil, fmt.Errorf("content discovery error: %s: %w", contentDir, err)
 		}
 
-		page.SourcePath = path
+		page.SourcePath = e.path
 
-		// Set section from first directory segment
-		parts := strings.SplitN(rel, "/", 2)
+		parts := strings.SplitN(e.rel, "/", 2)
 		if len(parts) > 1 {
 			page.Section = parts[0]
 		}
 
-		// Check if this is a bundle index file
-		dir := filepath.Dir(path)
-		if bundleDirs[dir] && (name == "index.md" || name == "index.html") {
+		dir := filepath.Dir(e.path)
+		if bundleDirs[dir] && (e.name == "index.md" || e.name == "index.html") {
 			page.Bundle = true
-			// Collect co-located assets
-			entries, err := os.ReadDir(dir)
+			dirEntries, err := os.ReadDir(dir)
 			if err == nil {
-				for _, entry := range entries {
-					if entry.IsDir() {
+				for _, de := range dirEntries {
+					if de.IsDir() {
 						continue
 					}
-					entryName := entry.Name()
-					if entryName == name {
-						continue
-					}
-					if entryName == "_data.yaml" || entryName == "_data.yml" {
+					entryName := de.Name()
+					if entryName == e.name || entryName == "_data.yaml" || entryName == "_data.yml" {
 						continue
 					}
 					page.BundleAssets = append(page.BundleAssets, entryName)
@@ -183,11 +193,6 @@ func discoverInternal(contentDir string, formats []string, collectPassthrough bo
 		}
 
 		pages = append(pages, page)
-		return nil
-	})
-
-	if err != nil {
-		return nil, nil, fmt.Errorf("content discovery error: %s: %w", contentDir, err)
 	}
 
 	return pages, passthroughs, nil

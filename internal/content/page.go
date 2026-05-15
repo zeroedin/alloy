@@ -31,6 +31,16 @@ type Page struct {
 	Bundle       bool
 	BundleAssets []string
 	TOC          []TOCEntry
+	renderedStr  string
+}
+
+// HTML returns the string conversion of RenderedBody, caching the result
+// so subsequent calls avoid redundant []byte→string allocations.
+func (p *Page) HTML() string {
+	if p.renderedStr == "" && len(p.RenderedBody) > 0 {
+		p.renderedStr = string(p.RenderedBody)
+	}
+	return p.renderedStr
 }
 
 // ToTemplateMap converts a Page to a map with lowercase keys for reliable
