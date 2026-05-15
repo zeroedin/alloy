@@ -17,7 +17,6 @@ type liquidEngine struct {
 	env            *liquid.Environment
 	filters        *alloyFilterBridge
 	includesDir    string                       // layouts directory for resolving {% include %} / {% render %}
-	dynamicFilters map[string]bool              // novel filter names needing template pre-processing
 	filterPatterns map[string]*regexp.Regexp    // compiled regexes for dynamic filters, keyed by filter name
 	deferredTags   []deferredTagEntry           // tags registered via AddTag, applied per-Parse
 }
@@ -42,7 +41,6 @@ func NewLiquidEngine() TemplateEngine {
 	return &liquidEngine{
 		env:            env,
 		filters:        bridge,
-		dynamicFilters: make(map[string]bool),
 		filterPatterns: make(map[string]*regexp.Regexp),
 	}
 }
@@ -57,7 +55,6 @@ type liquidTemplate struct {
 	tpl            *liquid.Template
 	name           string
 	includesDir    string
-	dynamicFilters map[string]bool
 	filterPatterns map[string]*regexp.Regexp
 }
 
@@ -67,7 +64,9 @@ func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
 	// Pre-process: rewrite novel/plugin filter references to use the
 	// plugin_filter bridge, which liquidgo can dispatch via PluginFilter().
 	for filterName, pattern := range e.filterPatterns {
-		src = rewriteFilterToPlugin(src, filterName, pattern)
+		if strings.Contains(src, filterName) {
+			src = rewriteFilterToPlugin(src, filterName, pattern)
+		}
 	}
 
 	// Register deferred tags — detect inline vs block by scanning the
@@ -114,11 +113,11 @@ func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
 		return nil, fmt.Errorf("liquid parse error in %s: %s", name, errMsg)
 	}
 	tpl.SetName(name)
-	filterSnapshot := make(map[string]bool, len(e.dynamicFilters))
-	for k, v := range e.dynamicFilters {
-		filterSnapshot[k] = v
+	patternSnapshot := make(map[string]*regexp.Regexp, len(e.filterPatterns))
+	for k, v := range e.filterPatterns {
+		patternSnapshot[k] = v
 	}
-	return &liquidTemplate{tpl: tpl, name: name, includesDir: e.includesDir, dynamicFilters: filterSnapshot, filterPatterns: e.filterPatterns}, nil
+	return &liquidTemplate{tpl: tpl, name: name, includesDir: e.includesDir, filterPatterns: patternSnapshot}, nil
 }
 
 func compileFilterPattern(filterName string) *regexp.Regexp {
@@ -174,15 +173,8 @@ var knownLiquidFilters = map[string]bool{
 }
 
 func (e *liquidEngine) AddFilter(name string, fn FilterFunc) error {
-	// If this filter was already registered (e.g., by RegisterBuiltinFilters),
-	// mark it as dynamic so the override routes through plugin_filter bridge
-	// instead of liquidgo's built-in reflection dispatch. This ensures
-	// "last loaded wins" per spec §4.
-	if _, exists := e.filters.funcs[name]; exists {
-		e.dynamicFilters[name] = true
-		e.filterPatterns[name] = compileFilterPattern(name)
-	} else if !knownLiquidFilters[name] {
-		e.dynamicFilters[name] = true
+	_, alreadyRegistered := e.filters.funcs[name]
+	if alreadyRegistered || !knownLiquidFilters[name] {
 		e.filterPatterns[name] = compileFilterPattern(name)
 	}
 	e.filters.funcs[name] = fn
@@ -204,7 +196,7 @@ func (t *liquidTemplate) Render(ctx map[string]interface{}) ([]byte, error) {
 	}
 	if t.includesDir != "" {
 		opts.Registers = map[string]interface{}{
-			"file_system": &alloyFileSystem{root: t.includesDir, dynamicFilters: t.dynamicFilters, filterPatterns: t.filterPatterns},
+			"file_system": &alloyFileSystem{root: t.includesDir, filterPatterns: t.filterPatterns},
 		}
 	}
 	result := t.tpl.Render(ctx, opts)
@@ -267,7 +259,6 @@ func RenderTemplate(source string, sourcePath string, ctx map[string]interface{}
 
 type alloyFileSystem struct {
 	root           string
-	dynamicFilters map[string]bool
 	filterPatterns map[string]*regexp.Regexp
 }
 
