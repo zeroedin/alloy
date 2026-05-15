@@ -132,4 +132,45 @@ var _ = Describe("Output Writer", func() {
 			Expect(entries).To(BeEmpty())
 		})
 	})
+
+	// ── Directory cache (issue #365) ─────────────────────────────────
+	// WriteFile calls os.MkdirAll per file. DirectoryCache tracks which
+	// directories have been created so subsequent calls are a map lookup.
+
+	Describe("DirectoryCache", func() {
+		It("EnsureDir creates a directory that does not exist (issue #365)", func() {
+			tmp := GinkgoT().TempDir()
+			dc := output.NewDirectoryCache()
+			dir := filepath.Join(tmp, "blog", "2024", "posts")
+			err := dc.EnsureDir(dir)
+			Expect(err).NotTo(HaveOccurred())
+			info, statErr := os.Stat(dir)
+			Expect(statErr).NotTo(HaveOccurred(),
+				"EnsureDir must create the full directory tree including "+
+					"intermediate directories (issue #365)")
+			Expect(info.IsDir()).To(BeTrue())
+		})
+
+		It("EnsureDir skips already-created directories on subsequent calls (issue #365)", func() {
+			tmp := GinkgoT().TempDir()
+			dc := output.NewDirectoryCache()
+			dir := filepath.Join(tmp, "about")
+			Expect(dc.EnsureDir(dir)).To(Succeed())
+			Expect(dc.EnsureDir(dir)).To(Succeed(),
+				"EnsureDir must be idempotent — the second call for the same "+
+					"directory must succeed without issuing a redundant os.MkdirAll "+
+					"(issue #365: eliminate ~950 redundant stat-then-mkdir sequences)")
+		})
+
+		It("EnsureDir creates deeply nested directory trees (issue #365)", func() {
+			tmp := GinkgoT().TempDir()
+			dc := output.NewDirectoryCache()
+			dir := filepath.Join(tmp, "docs", "api", "v2", "endpoints", "users")
+			Expect(dc.EnsureDir(dir)).To(Succeed())
+			_, statErr := os.Stat(dir)
+			Expect(statErr).NotTo(HaveOccurred(),
+				"EnsureDir must handle deeply nested paths — os.MkdirAll "+
+					"creates all intermediate components in one call")
+		})
+	})
 })
