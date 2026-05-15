@@ -280,7 +280,7 @@ func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, ho
 		CallHook(string, interface{}) (interface{}, error)
 	}); ok {
 		batcher, hasBatch := rt.(interface {
-			BatchCallHook(string, []interface{}) ([]interface{}, error)
+			BatchCallHook(string, []interface{}, func(int)) ([]interface{}, error)
 		})
 
 		if hd, ok := rt.(HookDetailer); ok {
@@ -294,8 +294,12 @@ func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, ho
 						hooks.warnings = append(hooks.warnings, fmt.Sprintf("plugin %s: hook %s: %v", pluginName, name, err))
 					}
 					if hasBatch {
-						batchFn := func(ctx context.Context, payloads []interface{}) ([]interface{}, error) {
-							return batcher.BatchCallHook(name, payloads)
+						batchFn := func(ctx context.Context, payloads []interface{}, onProgress BatchProgressFunc) ([]interface{}, error) {
+							var itemCb func(int)
+							if onProgress != nil {
+								itemCb = func(completed int) { onProgress(completed, len(payloads)) }
+							}
+							return batcher.BatchCallHook(name, payloads, itemCb)
 						}
 						hooks.RegisterBatchWithOptions(HookName(name), singleFn, batchFn, *reg.Scope, reg.Priority)
 					} else {
@@ -303,8 +307,12 @@ func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, ho
 					}
 				} else {
 					if hasBatch {
-						batchFn := func(ctx context.Context, payloads []interface{}) ([]interface{}, error) {
-							return batcher.BatchCallHook(name, payloads)
+						batchFn := func(ctx context.Context, payloads []interface{}, onProgress BatchProgressFunc) ([]interface{}, error) {
+							var itemCb func(int)
+							if onProgress != nil {
+								itemCb = func(completed int) { onProgress(completed, len(payloads)) }
+							}
+							return batcher.BatchCallHook(name, payloads, itemCb)
 						}
 						hooks.RegisterBatchWithPriority(HookName(name), singleFn, batchFn, reg.Priority)
 					} else {
@@ -319,8 +327,12 @@ func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, ho
 					return caller.CallHook(name, payload)
 				}
 				if hasBatch {
-					batchFn := func(ctx context.Context, payloads []interface{}) ([]interface{}, error) {
-						return batcher.BatchCallHook(name, payloads)
+					batchFn := func(ctx context.Context, payloads []interface{}, onProgress BatchProgressFunc) ([]interface{}, error) {
+						var itemCb func(int)
+						if onProgress != nil {
+							itemCb = func(completed int) { onProgress(completed, len(payloads)) }
+						}
+						return batcher.BatchCallHook(name, payloads, itemCb)
 					}
 					hooks.RegisterBatchWithPriority(HookName(name), singleFn, batchFn, 50)
 				} else {

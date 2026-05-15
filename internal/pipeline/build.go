@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zeroedin/alloy/internal/assets"
@@ -668,23 +669,29 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		for i, page := range pages {
 			payloads[i] = page.HTML()
 		}
-		results, err := ps.Hooks.RunBatchWithTimeout(plugin.OnPageRendered, payloads)
+		var progressFn plugin.BatchProgressFunc
+		if reporter != nil {
+			var mu sync.Mutex
+			var highWater int
+			progressFn = func(completed, total int) {
+				mu.Lock()
+				if completed > highWater {
+					highWater = completed
+					reportUpdate(reporter, completed, "", 0)
+				}
+				mu.Unlock()
+			}
+		}
+		results, err := ps.Hooks.RunBatchWithProgress(plugin.OnPageRendered, payloads, progressFn)
 		if err != nil {
 			return nil, fmt.Errorf("plugin hook onPageRendered: %w", err)
 		}
 		for i, result := range results {
-			var applyStart time.Time
-			if reporter != nil {
-				applyStart = time.Now()
-			}
 			switch modified := result.(type) {
 			case string:
 				pages[i].SetRenderedBody([]byte(modified))
 			case []byte:
 				pages[i].SetRenderedBody(modified)
-			}
-			if reporter != nil {
-				reportUpdate(reporter, i+1, pages[i].RelPath, time.Since(applyStart))
 			}
 		}
 		reportEndStage(reporter)
