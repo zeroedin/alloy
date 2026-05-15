@@ -3248,11 +3248,11 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			result, err := pipeline.BuildWithContent(cfg, content)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RenderedContent["page-1.html"]).To(ContainSubstring("First"),
+			Expect(result.RenderedContent["page-1.md"]).To(ContainSubstring("First"),
 				"page-1 must render through shared layout")
-			Expect(result.RenderedContent["page-2.html"]).To(ContainSubstring("Second"),
+			Expect(result.RenderedContent["page-2.md"]).To(ContainSubstring("Second"),
 				"page-2 must render through shared layout")
-			Expect(result.RenderedContent["page-3.html"]).To(ContainSubstring("Third"),
+			Expect(result.RenderedContent["page-3.md"]).To(ContainSubstring("Third"),
 				"page-3 must render through shared layout")
 		})
 	})
