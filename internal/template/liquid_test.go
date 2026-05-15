@@ -733,6 +733,106 @@ var _ = Describe("LiquidEngine", func() {
 		})
 	})
 
+	// ── Plugin filter rewriting correctness (issue #362) ────────────
+	// Verifies that rewriteFilterToPlugin produces correct template source
+	// regardless of whether regex patterns are compiled per-call or cached.
+	// These tests establish the behavioral contract that must hold after
+	// the developer caches compiled patterns on the liquidEngine struct.
+
+	Describe("Plugin filter rewriting correctness (issue #362)", func() {
+		It("novel filter without args is rewritten to plugin_filter bridge", func() {
+			engine := tmpl.NewLiquidEngine()
+			err := engine.AddFilter("shout", func(input interface{}, args ...interface{}) interface{} {
+				return fmt.Sprintf("!%v!", input)
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			tpl, err := engine.Parse("test", []byte(`{{ name | shout }}`))
+			Expect(err).NotTo(HaveOccurred())
+			out, err := tpl.Render(map[string]interface{}{"name": "hello"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(out)).To(Equal("!hello!"),
+				"novel filter without args must route through plugin_filter bridge")
+		})
+
+		It("novel filter with args is rewritten preserving arguments", func() {
+			engine := tmpl.NewLiquidEngine()
+			err := engine.AddFilter("wrap", func(input interface{}, args ...interface{}) interface{} {
+				if len(args) > 0 {
+					return fmt.Sprintf("%v%v%v", args[0], input, args[0])
+				}
+				return input
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			tpl, err := engine.Parse("test", []byte(`{{ name | wrap: "*" }}`))
+			Expect(err).NotTo(HaveOccurred())
+			out, err := tpl.Render(map[string]interface{}{"name": "bold"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(out)).To(Equal("*bold*"),
+				"novel filter with args must route through plugin_filter bridge with args intact")
+		})
+
+		It("multiple novel filters in the same template are all rewritten correctly", func() {
+			engine := tmpl.NewLiquidEngine()
+			err := engine.AddFilter("exclaim", func(input interface{}, args ...interface{}) interface{} {
+				return fmt.Sprintf("%v!", input)
+			})
+			Expect(err).NotTo(HaveOccurred())
+			err = engine.AddFilter("question", func(input interface{}, args ...interface{}) interface{} {
+				return fmt.Sprintf("%v?", input)
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			tpl, err := engine.Parse("test", []byte(`{{ a | exclaim }} {{ b | question }}`))
+			Expect(err).NotTo(HaveOccurred())
+			out, err := tpl.Render(map[string]interface{}{"a": "yes", "b": "really"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(out)).To(Equal("yes! really?"),
+				"multiple novel filters in one template must all be rewritten correctly")
+		})
+
+		It("filter registration order does not affect rewriting correctness", func() {
+			// Register filters in two different orders, parse the same template,
+			// and verify identical output.
+			for _, order := range [][]string{{"alpha", "beta", "gamma"}, {"gamma", "alpha", "beta"}} {
+				engine := tmpl.NewLiquidEngine()
+				for _, name := range order {
+					n := name
+					err := engine.AddFilter(n, func(input interface{}, args ...interface{}) interface{} {
+						return fmt.Sprintf("[%s:%v]", n, input)
+					})
+					Expect(err).NotTo(HaveOccurred())
+				}
+
+				tpl, err := engine.Parse("test", []byte(`{{ x | alpha }}{{ x | beta }}{{ x | gamma }}`))
+				Expect(err).NotTo(HaveOccurred())
+				out, err := tpl.Render(map[string]interface{}{"x": "v"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(string(out)).To(Equal("[alpha:v][beta:v][gamma:v]"),
+					"filter registration order must not affect rewriting — "+
+						"cached patterns keyed by name must produce identical output regardless of order")
+			}
+		})
+
+		It("parsing the same filter across multiple templates produces consistent results", func() {
+			engine := tmpl.NewLiquidEngine()
+			err := engine.AddFilter("tag", func(input interface{}, args ...interface{}) interface{} {
+				return fmt.Sprintf("<%v>", input)
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			for i := 0; i < 10; i++ {
+				tpl, err := engine.Parse(fmt.Sprintf("page-%d", i), []byte(`{{ name | tag }}`))
+				Expect(err).NotTo(HaveOccurred())
+				out, err := tpl.Render(map[string]interface{}{"name": fmt.Sprintf("p%d", i)})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(string(out)).To(Equal(fmt.Sprintf("<p%d>", i)),
+					"cached pattern must produce correct output on every Parse call, not just the first")
+			}
+		})
+	})
+
 	// ── Render hook discovery (issues #310, #311) ─────────────────
 	// DiscoverRenderHooks scans layouts/_markup/ for render hook
 	// template files and returns a map of hook name → template source.
