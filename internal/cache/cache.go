@@ -9,16 +9,16 @@ import (
 // incremental build detection. Passed in-memory between builds.
 type Cache struct {
 	hashes        map[string]string
-	templates     map[string][]string // template path → list of page paths
-	directoryData map[string][]string // directory path → list of page paths
+	templates     map[string]map[string]bool // template path → set of page paths
+	directoryData map[string]map[string]bool // directory path → set of page paths
 }
 
 // New creates an empty cache with no entries.
 func New() *Cache {
 	return &Cache{
 		hashes:        make(map[string]string),
-		templates:     make(map[string][]string),
-		directoryData: make(map[string][]string),
+		templates:     make(map[string]map[string]bool),
+		directoryData: make(map[string]map[string]bool),
 	}
 }
 
@@ -52,8 +52,8 @@ func (c *Cache) Entries() int {
 // Clear removes all stored hashes and template tracking data.
 func (c *Cache) Clear() {
 	c.hashes = make(map[string]string)
-	c.templates = make(map[string][]string)
-	c.directoryData = make(map[string][]string)
+	c.templates = make(map[string]map[string]bool)
+	c.directoryData = make(map[string]map[string]bool)
 }
 
 // Clone returns a deep copy of the cache. Used by BuildIncremental to
@@ -64,13 +64,17 @@ func (c *Cache) Clone() *Cache {
 		cloned.hashes[k] = v
 	}
 	for k, v := range c.templates {
-		cp := make([]string, len(v))
-		copy(cp, v)
+		cp := make(map[string]bool, len(v))
+		for p, val := range v {
+			cp[p] = val
+		}
 		cloned.templates[k] = cp
 	}
 	for k, v := range c.directoryData {
-		cp := make([]string, len(v))
-		copy(cp, v)
+		cp := make(map[string]bool, len(v))
+		for p, val := range v {
+			cp[p] = val
+		}
 		cloned.directoryData[k] = cp
 	}
 	return cloned
@@ -86,12 +90,11 @@ func HashContent(content []byte) string {
 // Called during layout resolution to build the invalidation map.
 func (c *Cache) TrackTemplateUsage(pagePath, templatePath string) {
 	pages := c.templates[templatePath]
-	for _, p := range pages {
-		if p == pagePath {
-			return
-		}
+	if pages == nil {
+		pages = make(map[string]bool)
+		c.templates[templatePath] = pages
 	}
-	c.templates[templatePath] = append(c.templates[templatePath], pagePath)
+	pages[pagePath] = true
 }
 
 // InvalidatedPages returns the list of page paths that need rebuilding
@@ -102,7 +105,11 @@ func (c *Cache) InvalidatedPages(changedTemplate string) []string {
 	if !ok {
 		return nil
 	}
-	return pages
+	result := make([]string, 0, len(pages))
+	for p := range pages {
+		result = append(result, p)
+	}
+	return result
 }
 
 // ShouldSkipFile returns true if the file content hash matches the stored hash,
@@ -135,16 +142,19 @@ func (c *Cache) InvalidatedByDirectoryData(dirPath string) []string {
 	if !ok {
 		return nil
 	}
-	return pages
+	result := make([]string, 0, len(pages))
+	for p := range pages {
+		result = append(result, p)
+	}
+	return result
 }
 
 // TrackDirectoryData records that pages in a directory depend on that directory's _data.yaml.
 func (c *Cache) TrackDirectoryData(pagePath, dirPath string) {
 	pages := c.directoryData[dirPath]
-	for _, p := range pages {
-		if p == pagePath {
-			return
-		}
+	if pages == nil {
+		pages = make(map[string]bool)
+		c.directoryData[dirPath] = pages
 	}
-	c.directoryData[dirPath] = append(c.directoryData[dirPath], pagePath)
+	pages[pagePath] = true
 }
