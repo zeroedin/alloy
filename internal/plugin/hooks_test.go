@@ -470,4 +470,121 @@ var _ = Describe("Hooks", func() {
 				"timeout must revert to pre-hook state (after fast hook), not original input")
 		})
 	})
+
+	// ── Batch progress callback (issue #686) ─────────────────────────
+	// RunBatchWithProgress threads a per-item progress callback through
+	// to the batch function so the build pipeline can report progress
+	// during long-running hook execution (e.g., Node worker pool IPC).
+
+	Describe("Batch progress callback (issue #686)", func() {
+		It("progress callback fires once per completed item with correct total", func() {
+			registry := plugin.NewHookRegistry()
+
+			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+			batchFn := func(_ context.Context, ps []interface{}, onProgress plugin.BatchProgressFunc) ([]interface{}, error) {
+				out := make([]interface{}, len(ps))
+				for i, p := range ps {
+					out[i] = p.(string) + "-done"
+					onProgress(i+1, len(ps))
+				}
+				return out, nil
+			}
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchFn, 50)
+
+			var updates [][]int
+			progress := func(completed, total int) {
+				updates = append(updates, []int{completed, total})
+			}
+
+			results, err := registry.RunBatchWithProgress(plugin.OnPageRendered, []interface{}{"a", "b", "c"}, progress)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(Equal([]interface{}{"a-done", "b-done", "c-done"}),
+				"batch results must be correct regardless of progress callback")
+			Expect(updates).To(HaveLen(3),
+				"progress callback must fire once per completed item")
+			Expect(updates[0]).To(Equal([]int{1, 3}))
+			Expect(updates[1]).To(Equal([]int{2, 3}))
+			Expect(updates[2]).To(Equal([]int{3, 3}))
+		})
+
+		It("nil progress callback does not panic", func() {
+			registry := plugin.NewHookRegistry()
+
+			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+			batchFn := func(_ context.Context, ps []interface{}, onProgress plugin.BatchProgressFunc) ([]interface{}, error) {
+				out := make([]interface{}, len(ps))
+				for i, p := range ps {
+					out[i] = p
+					onProgress(i+1, len(ps))
+				}
+				return out, nil
+			}
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchFn, 50)
+
+			Expect(func() {
+				_, _ = registry.RunBatchWithProgress(plugin.OnPageRendered, []interface{}{"a"}, nil)
+			}).NotTo(Panic(),
+				"nil progress callback must be safe — RunBatchWithProgress must "+
+					"supply a no-op when caller passes nil")
+		})
+
+		It("progress completed count is monotonically increasing", func() {
+			registry := plugin.NewHookRegistry()
+
+			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+			batchFn := func(_ context.Context, ps []interface{}, onProgress plugin.BatchProgressFunc) ([]interface{}, error) {
+				out := make([]interface{}, len(ps))
+				for i, p := range ps {
+					out[i] = p
+					onProgress(i+1, len(ps))
+				}
+				return out, nil
+			}
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchFn, 50)
+
+			var counts []int
+			progress := func(completed, total int) {
+				counts = append(counts, completed)
+			}
+
+			_, err := registry.RunBatchWithProgress(plugin.OnPageRendered,
+				[]interface{}{"a", "b", "c", "d", "e"}, progress)
+			Expect(err).NotTo(HaveOccurred())
+
+			for i := 1; i < len(counts); i++ {
+				Expect(counts[i]).To(BeNumerically(">=", counts[i-1]),
+					"completed count must be monotonically increasing — "+
+						"concurrent workers may report out of order but the "+
+						"atomic counter must never decrease")
+			}
+		})
+
+		It("per-item fallback also fires progress callback", func() {
+			registry := plugin.NewHookRegistry()
+
+			registry.Register(plugin.OnPageRendered, func(_ context.Context, p interface{}) (interface{}, error) {
+				return p.(string) + "-ok", nil
+			})
+
+			var updates [][]int
+			progress := func(completed, total int) {
+				updates = append(updates, []int{completed, total})
+			}
+
+			results, err := registry.RunBatchWithProgress(plugin.OnPageRendered,
+				[]interface{}{"x", "y"}, progress)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(Equal([]interface{}{"x-ok", "y-ok"}))
+			Expect(updates).To(HaveLen(2),
+				"per-item fallback must also fire progress callback after each item")
+			Expect(updates[0][0]).To(Equal(1))
+			Expect(updates[1][0]).To(Equal(2))
+		})
+	})
 })
