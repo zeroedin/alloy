@@ -172,4 +172,66 @@ var _ = Describe("Output Writer", func() {
 					"creates all intermediate components in one call")
 		})
 	})
+
+	// ── Cached file writing (issue #678) ─────────────────────────────
+	// WriteFileCached and WriteAliasesCached compose DirectoryCache with
+	// os.WriteFile to skip redundant MkdirAll calls during output.
+
+	Describe("WriteFileCached", func() {
+		It("creates intermediate directories and writes file content (issue #678)", func() {
+			tmp := GinkgoT().TempDir()
+			dc := output.NewDirectoryCache()
+			body := []byte("<html><body>Cached Write</body></html>")
+
+			err := output.WriteFileCached(tmp, "blog/2024/post/index.html", body, dc)
+			Expect(err).NotTo(HaveOccurred())
+
+			written, readErr := os.ReadFile(filepath.Join(tmp, "blog", "2024", "post", "index.html"))
+			Expect(readErr).NotTo(HaveOccurred())
+			Expect(written).To(Equal(body),
+				"WriteFileCached must create directories and write content "+
+					"identically to WriteFile (issue #678)")
+		})
+
+		It("reuses DirectoryCache across multiple writes to the same directory (issue #678)", func() {
+			tmp := GinkgoT().TempDir()
+			dc := output.NewDirectoryCache()
+
+			Expect(output.WriteFileCached(tmp, "docs/page-1.html", []byte("one"), dc)).To(Succeed())
+			Expect(output.WriteFileCached(tmp, "docs/page-2.html", []byte("two"), dc)).To(Succeed())
+			Expect(output.WriteFileCached(tmp, "docs/page-3.html", []byte("three"), dc)).To(Succeed())
+
+			written1, _ := os.ReadFile(filepath.Join(tmp, "docs", "page-1.html"))
+			written2, _ := os.ReadFile(filepath.Join(tmp, "docs", "page-2.html"))
+			written3, _ := os.ReadFile(filepath.Join(tmp, "docs", "page-3.html"))
+			Expect(string(written1)).To(Equal("one"))
+			Expect(string(written2)).To(Equal("two"))
+			Expect(string(written3)).To(Equal("three"),
+				"WriteFileCached must write all files correctly when sharing "+
+					"a DirectoryCache — the second and third writes skip MkdirAll "+
+					"via the cache (issue #678)")
+		})
+	})
+
+	Describe("WriteAliasesCached", func() {
+		It("writes content to all alias output paths using the cache (issue #678)", func() {
+			tmp := GinkgoT().TempDir()
+			dc := output.NewDirectoryCache()
+			body := []byte("<html><body>Alias Content</body></html>")
+			aliases := []string{"/old-url/", "/legacy/path/"}
+
+			err := output.WriteAliasesCached(tmp, aliases, body, dc)
+			Expect(err).NotTo(HaveOccurred())
+
+			oldURL, readErr := os.ReadFile(filepath.Join(tmp, "old-url", "index.html"))
+			Expect(readErr).NotTo(HaveOccurred())
+			Expect(oldURL).To(Equal(body))
+
+			legacy, readErr := os.ReadFile(filepath.Join(tmp, "legacy", "path", "index.html"))
+			Expect(readErr).NotTo(HaveOccurred())
+			Expect(legacy).To(Equal(body),
+				"WriteAliasesCached must write identical content to all alias "+
+					"paths, using DirectoryCache to skip redundant MkdirAll (issue #678)")
+		})
+	})
 })
