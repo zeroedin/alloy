@@ -158,8 +158,7 @@ var _ = Describe("Output Writer", func() {
 			Expect(dc.EnsureDir(dir)).To(Succeed())
 			Expect(dc.EnsureDir(dir)).To(Succeed(),
 				"EnsureDir must be idempotent — the second call for the same "+
-					"directory must succeed without issuing a redundant os.MkdirAll "+
-					"(issue #365: eliminate ~950 redundant stat-then-mkdir sequences)")
+					"directory must succeed without error (issue #365)")
 		})
 
 		It("EnsureDir creates deeply nested directory trees (issue #365)", func() {
