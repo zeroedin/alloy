@@ -36,49 +36,38 @@ import (
 	"github.com/zeroedin/alloy/internal/validation"
 )
 
-// activeReporter is the current progress reporter, set via SetReporter.
-// Nil means no progress output. Safe for concurrent use since Build is
-// single-threaded.
-var activeReporter ProgressReporter
-
-// SetReporter sets the progress reporter for subsequent Build/BuildIncremental calls.
-// Pass nil to suppress progress output.
-func SetReporter(r ProgressReporter) {
-	activeReporter = r
-}
-
-// report calls a ProgressReporter method if a reporter is active.
-func reportStartStage(name string, total int) {
-	if activeReporter != nil {
-		activeReporter.StartStage(name, total)
+func reportStartStage(r ProgressReporter, name string, total int) {
+	if r != nil {
+		r.StartStage(name, total)
 	}
 }
-func reportMessage(text string) {
-	if activeReporter != nil {
-		activeReporter.Message(text)
+func reportMessage(r ProgressReporter, text string) {
+	if r != nil {
+		r.Message(text)
 	}
 }
-func reportUpdate(current int, filePath string, elapsed time.Duration) {
-	if activeReporter != nil {
-		activeReporter.Update(current, filePath, elapsed)
+func reportUpdate(r ProgressReporter, current int, filePath string, elapsed time.Duration) {
+	if r != nil {
+		r.Update(current, filePath, elapsed)
 	}
 }
-func reportEndStage() {
-	if activeReporter != nil {
-		activeReporter.EndStage()
+func reportEndStage(r ProgressReporter) {
+	if r != nil {
+		r.EndStage()
 	}
 }
-func reportSummary(pageCount int, duration time.Duration, pagesSkipped int) {
-	if activeReporter != nil {
-		activeReporter.Summary(pageCount, duration, pagesSkipped)
+func reportSummary(r ProgressReporter, pageCount int, duration time.Duration, pagesSkipped int) {
+	if r != nil {
+		r.Summary(pageCount, duration, pagesSkipped)
 	}
 }
 
 // BuildOptions controls optional pipeline behavior.
 type BuildOptions struct {
-	SkipSSR       bool           // true = skip Phase 2 entirely, regardless of cfg.SSR
-	PipelineState *PipelineState // pre-built state to reuse (BuildIncremental only)
-	Profile       bool           // true = record per-stage timing in BuildResult.StageTimings
+	SkipSSR       bool               // true = skip Phase 2 entirely, regardless of cfg.SSR
+	PipelineState *PipelineState     // pre-built state to reuse (BuildIncremental only)
+	Profile       bool               // true = record per-stage timing in BuildResult.StageTimings
+	Reporter      ProgressReporter   // progress output; nil = silent
 }
 
 // BuildResult holds the outcome of a build.
@@ -123,6 +112,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	if len(opts) == 1 {
 		options = opts[0]
 	}
+	reporter := options.Reporter
 
 	config.ApplyDefaults(cfg)
 
@@ -351,7 +341,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// ── Pass 1a: discover + prepare per batch (steps 3-9) ──
 	timer.Start("Pass 1a: discovery+collections")
-	reportStartStage("Discovering", -1)
+	reportStartStage(reporter, "Discovering", -1)
 	for _, lc := range langContexts {
 		// Content directory: content/<lang>/ for multi-language, content/ for single
 		batchContentDir := contentDir
@@ -428,7 +418,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			taxonomiesCtx: bc.TaxonomiesCtx,
 		})
 	}
-	reportEndStage()
+	reportEndStage(reporter)
 
 	// For single-language builds, don't pass langContexts to rendering helpers
 	// so combinedSiteDataForPage doesn't inject site.language or override site.title.
@@ -439,8 +429,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// ── Pass 1b: content rendering per batch (steps 10-11) ──
 	timer.Start("Pass 1b: content render")
-	reportMessage(fmt.Sprintf("%d pages found", len(pages)))
-	reportStartStage("Rendering", len(pages))
+	reportMessage(reporter, fmt.Sprintf("%d pages found", len(pages)))
+	reportStartStage(reporter, "Rendering", len(pages))
 	for i := range batches {
 		rc := &RenderContext{
 			Cfg:            cfg,
@@ -452,13 +442,13 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			Engine:         engine,
 			TemplateUsage:  templateUsage,
 		}
-		batchRendered, renderErr := renderPages(batches[i].pages, rc)
+		batchRendered, renderErr := renderPages(batches[i].pages, rc, reporter)
 		if renderErr != nil {
 			return nil, renderErr
 		}
 		rendered = append(rendered, batchRendered...)
 	}
-	reportEndStage()
+	reportEndStage(reporter)
 
 	// Early return: no content found → zero pages
 	// Still copy static/asset files so static-only sites produce output.
@@ -591,7 +581,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// ── Pass 2: layout resolution + rendering per batch (steps 12-15) ──
 	timer.Start("Pass 2: layout render")
-	reportStartStage("Layouts", len(pages))
+	reportStartStage(reporter, "Layouts", len(pages))
 	layoutPageIdx := 0
 	for _, batch := range batches {
 		rc := &RenderContext{
@@ -606,7 +596,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 		for _, page := range batch.pages {
 			var pageStart time.Time
-			if activeReporter != nil {
+			if reporter != nil {
 				pageStart = time.Now()
 			}
 			layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, engineName, permalinkCfg)
@@ -615,15 +605,15 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 					log.Printf("warning: layout %v not found for %s: %v", layoutVal, page.RelPath, err)
 				}
 				layoutPageIdx++
-				if activeReporter != nil {
-					reportUpdate(layoutPageIdx, page.RelPath, time.Since(pageStart))
+				if reporter != nil {
+					reportUpdate(reporter, layoutPageIdx, page.RelPath, time.Since(pageStart))
 				}
 				continue
 			}
 			if layoutPath == "" {
 				layoutPageIdx++
-				if activeReporter != nil {
-					reportUpdate(layoutPageIdx, page.RelPath, time.Since(pageStart))
+				if reporter != nil {
+					reportUpdate(reporter, layoutPageIdx, page.RelPath, time.Since(pageStart))
 				}
 				continue
 			}
@@ -636,8 +626,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				return nil, err
 			}
 			layoutPageIdx++
-			if activeReporter != nil {
-				reportUpdate(layoutPageIdx, page.RelPath, time.Since(pageStart))
+			if reporter != nil {
+				reportUpdate(reporter, layoutPageIdx, page.RelPath, time.Since(pageStart))
 			}
 		}
 
@@ -653,7 +643,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			pages = append(pages, taxPages...)
 		}
 	}
-	reportEndStage()
+	reportEndStage(reporter)
 
 	// Wait for worker pool before dispatching hooks.
 	if workerPoolReady != nil {
@@ -664,7 +654,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Worker pool distributes pages across multiple subprocesses.
 	if ps.Hooks.HasHooks(plugin.OnPageRendered) {
 		timer.Start("Post-render hooks")
-		reportStartStage("Transforms", len(pages))
+		reportStartStage(reporter, "Transforms", len(pages))
 		payloads := make([]interface{}, len(pages))
 		for i, page := range pages {
 			payloads[i] = string(page.RenderedBody)
@@ -675,7 +665,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 		for i, result := range results {
 			var applyStart time.Time
-			if activeReporter != nil {
+			if reporter != nil {
 				applyStart = time.Now()
 			}
 			switch modified := result.(type) {
@@ -684,11 +674,11 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			case []byte:
 				pages[i].RenderedBody = modified
 			}
-			if activeReporter != nil {
-				reportUpdate(i+1, pages[i].RelPath, time.Since(applyStart))
+			if reporter != nil {
+				reportUpdate(reporter, i+1, pages[i].RelPath, time.Since(applyStart))
 			}
 		}
-		reportEndStage()
+		reportEndStage(reporter)
 	}
 
 	// Pre-build validation: permalink/alias conflicts
@@ -754,17 +744,17 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// Stage 6: Output writing
 	timer.Start("Output writing")
-	reportStartStage("Writing", len(pages))
+	reportStartStage(reporter, "Writing", len(pages))
 	writeIdx := 0
 	for _, page := range pages {
 		var pageStart time.Time
-		if activeReporter != nil {
+		if reporter != nil {
 			pageStart = time.Now()
 		}
 		if !output.ShouldWrite(page.URL) {
 			writeIdx++
-			if activeReporter != nil {
-				reportUpdate(writeIdx, page.RelPath, time.Since(pageStart))
+			if reporter != nil {
+				reportUpdate(reporter, writeIdx, page.RelPath, time.Since(pageStart))
 			}
 			continue
 		}
@@ -790,23 +780,23 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			}
 		}
 		writeIdx++
-		if activeReporter != nil {
-			reportUpdate(writeIdx, page.RelPath, time.Since(pageStart))
+		if reporter != nil {
+			reportUpdate(reporter, writeIdx, page.RelPath, time.Since(pageStart))
 		}
 	}
-	reportEndStage()
+	reportEndStage(reporter)
 
 	// Steps 16-18b: Synchronous static/asset/passthrough copy (issue #507).
 	// Runs as its own stage after rendering and hooks — no cross-stage overlap.
 	timer.Start("Static+asset copy")
-	reportStartStage("Copying", -1)
-	reportMessage("Copying static files…")
+	reportStartStage(reporter, "Copying", -1)
+	reportMessage(reporter, "Copying static files…")
 	if err := static.CopyStatic(staticDir, outputDir); err != nil {
-		reportEndStage()
+		reportEndStage(reporter)
 		return nil, fmt.Errorf("copying static files: %w", err)
 	}
 	if err := assets.CopyAssets(assetsDir, outputDir); err != nil {
-		reportEndStage()
+		reportEndStage(reporter)
 		return nil, fmt.Errorf("copying asset files: %w", err)
 	}
 	if len(cfg.Passthrough) > 0 {
@@ -820,7 +810,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			".alloy",
 		}
 		if err := static.CopyPassthroughWithValidation(cfg.Passthrough, cfg.ProjectRoot, outputDir, managedDirs); err != nil {
-			reportEndStage()
+			reportEndStage(reporter)
 			return nil, fmt.Errorf("copying passthrough files: %w", err)
 		}
 	}
@@ -831,7 +821,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		"outputDir": outputDir,
 	}
 	if _, err := ps.Hooks.RunWithTimeout(plugin.OnAssetProcess, assetInfo); err != nil {
-		reportEndStage()
+		reportEndStage(reporter)
 		return nil, fmt.Errorf("plugin hook onAssetProcess: %w", err)
 	}
 
@@ -841,25 +831,25 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			src := filepath.Join(contentDir, relPath)
 			dst := filepath.Join(outputDir, relPath)
 			if err := fileutil.CopyFile(src, dst); err != nil {
-				reportEndStage()
+				reportEndStage(reporter)
 				return nil, fmt.Errorf("copying content passthrough %s: %w", relPath, err)
 			}
 		}
 	}
-	reportEndStage()
+	reportEndStage(reporter)
 
 	// Stage 8: Sitemap generation
 	timer.Start("Sitemap")
-	reportStartStage("Finalizing", -1)
-	reportMessage("Generating sitemap…")
+	reportStartStage(reporter, "Finalizing", -1)
+	reportMessage(reporter, "Generating sitemap…")
 	if len(pages) > 0 {
 		sitemapXML, err := output.GenerateSitemap(pages, cfg.Sitemap, cfg.BaseURL)
 		if err != nil {
-			reportEndStage()
+			reportEndStage(reporter)
 			return nil, fmt.Errorf("generating sitemap: %w", err)
 		}
 		if err := output.WriteFile(outputDir, "sitemap.xml", sitemapXML); err != nil {
-			reportEndStage()
+			reportEndStage(reporter)
 			return nil, fmt.Errorf("writing sitemap: %w", err)
 		}
 	}
@@ -882,7 +872,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			renderedContent[renderedContentKey(page)] = string(page.RenderedBody)
 		}
 	}
-	reportEndStage()
+	reportEndStage(reporter)
 
 	timer.Stop()
 
@@ -898,7 +888,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		Cache:               buildCache,
 	}
 
-	reportSummary(result.PageCount, result.Duration, 0)
+	reportSummary(reporter, result.PageCount, result.Duration, 0)
 
 	// Fire onBuildComplete hook — build is finished, plugins can run post-build tasks
 	if _, err := ps.Hooks.RunWithTimeout(plugin.OnBuildComplete, result); err != nil {
@@ -972,6 +962,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	if len(opts) == 1 {
 		options = opts[0]
 	}
+	reporter := options.Reporter
 
 	config.ApplyDefaults(cfg)
 
@@ -1084,14 +1075,6 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
-	// Suppress per-page reporter calls for the remainder of this function.
-	// Incremental rebuilds are fast and only emit a compact Summary line
-	// (spec §259). Restore via defer so all renderPages calls (including
-	// on-demand SSR rendering below) are covered.
-	savedReporter := activeReporter
-	activeReporter = nil
-	defer func() { activeReporter = savedReporter }()
-
 	// Reuse caller-provided pipeline state, or initialize from scratch
 	ps := options.PipelineState
 	if ps == nil {
@@ -1174,7 +1157,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		Engine:         ps.Engine,
 		TemplateUsage:  templateUsage,
 	}
-	rendered, renderErr := renderPages(pagesToRender, rc)
+	rendered, renderErr := renderPages(pagesToRender, rc, nil)
 	if renderErr != nil {
 		return nil, renderErr
 	}
@@ -1256,7 +1239,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 									if html := renderedContent[pKey]; html != "" {
 										ssrHTML[pKey] = html
 									} else {
-										onDemand, renderErr := renderPages([]*content.Page{p}, rc)
+										onDemand, renderErr := renderPages([]*content.Page{p}, rc, nil)
 										if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
 											ssrHTML[pKey] = string(p.RenderedBody)
 										}
@@ -1288,7 +1271,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 										if html := renderedContent[pKey]; html != "" {
 											ssrHTML[pKey] = html
 										} else {
-											onDemand, renderErr := renderPages([]*content.Page{p}, rc)
+											onDemand, renderErr := renderPages([]*content.Page{p}, rc, nil)
 											if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
 												ssrHTML[pKey] = string(p.RenderedBody)
 											}
@@ -1379,9 +1362,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		Cache:            buildCache,
 	}
 
-	if savedReporter != nil {
-		savedReporter.Summary(result.PageCount, result.Duration, result.PagesSkipped)
-	}
+	reportSummary(reporter, result.PageCount, result.Duration, result.PagesSkipped)
 
 	return result, nil
 }
@@ -1536,7 +1517,7 @@ func buildPhase2Stream(intermediateHTML map[string]string, ssrCfg *config.SSRCon
 // When engine is non-nil, it is used for template rendering (with custom filters).
 // When engine is nil (incremental/SSR-on-demand paths), the standalone
 // RenderTemplate is used with strict filters.
-func renderPages(pages []*content.Page, rc *RenderContext) ([]string, error) {
+func renderPages(pages []*content.Page, rc *RenderContext, reporter ProgressReporter) ([]string, error) {
 	cfg := rc.Cfg
 	mdOpts := content.MarkdownOptions{
 		Unsafe:        cfg.Content.Markdown.Goldmark.UnsafeValue(),
@@ -1571,7 +1552,7 @@ func renderPages(pages []*content.Page, rc *RenderContext) ([]string, error) {
 
 	for i, page := range pages {
 		var pageStart time.Time
-		if activeReporter != nil {
+		if reporter != nil {
 			pageStart = time.Now()
 		}
 		body := page.Body
@@ -1629,8 +1610,8 @@ func renderPages(pages []*content.Page, rc *RenderContext) ([]string, error) {
 
 		page.RenderedBody = html
 		rendered = append(rendered, page.RelPath)
-		if activeReporter != nil {
-			reportUpdate(i+1, page.RelPath, time.Since(pageStart))
+		if reporter != nil {
+			reportUpdate(reporter, i+1, page.RelPath, time.Since(pageStart))
 		}
 	}
 

@@ -8,8 +8,7 @@ import (
 )
 
 // ProgressReporter receives pipeline stage updates for build progress output.
-// Set via SetReporter(). Nil means no progress output. Currently wired into
-// Build() only; BuildIncremental() does not yet call the reporter.
+// Passed via BuildOptions.Reporter. Nil means no progress output.
 type ProgressReporter interface {
 	StartStage(name string, total int)
 	Message(text string)

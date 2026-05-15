@@ -73,17 +73,17 @@ func newDevCommand() *cobra.Command {
 			cfg.IncludeDrafts = !noDrafts
 
 			// Set up progress reporter for all builds (initial + watcher rebuilds)
+			var reporter pipeline.ProgressReporter
 			if !cfg.Quiet {
 				PrintBanner(cmd.OutOrStdout(), isTTY())
 				if cfg.Verbose {
-					pipeline.SetReporter(pipeline.NewVerboseProgress(cmd.OutOrStdout()))
+					reporter = pipeline.NewVerboseProgress(cmd.OutOrStdout())
 				} else if isTTY() {
-					pipeline.SetReporter(pipeline.NewTTYProgress(cmd.OutOrStdout(), termWidth()))
+					reporter = pipeline.NewTTYProgress(cmd.OutOrStdout(), termWidth())
 				}
 			}
-			defer pipeline.SetReporter(nil)
 
-			initialResult, initialBuildErr := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})
+			initialResult, initialBuildErr := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true, Reporter: reporter})
 			if initialBuildErr != nil {
 				log.Printf("warning: initial build failed: %v", initialBuildErr)
 			}
@@ -169,7 +169,7 @@ func newDevCommand() *cobra.Command {
 				}
 
 				if hasComponentChange || rebuildScope == server.RebuildFull {
-					if fullResult, err := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true}); err != nil {
+					if fullResult, err := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true, Reporter: reporter}); err != nil {
 						log.Printf("rebuild failed: %v", err)
 						srv.Overlay().SetErrors([]server.BuildError{
 							{Message: err.Error(), Stage: "rebuild"},
@@ -188,7 +188,7 @@ func newDevCommand() *cobra.Command {
 					for _, ev := range events {
 						changedFiles = append(changedFiles, ev.Path)
 					}
-					if incrResult, err := pipeline.BuildIncremental(cfg, nil, previousCache, changedFiles, pipeline.BuildOptions{SkipSSR: true, PipelineState: ps}); err != nil {
+					if incrResult, err := pipeline.BuildIncremental(cfg, nil, previousCache, changedFiles, pipeline.BuildOptions{SkipSSR: true, PipelineState: ps, Reporter: reporter}); err != nil {
 						log.Printf("rebuild failed: %v", err)
 						srv.Overlay().SetErrors([]server.BuildError{
 							{Message: err.Error(), Stage: "rebuild"},
