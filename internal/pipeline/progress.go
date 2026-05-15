@@ -56,6 +56,9 @@ func (p *TTYProgress) Update(current int, filePath string, elapsed time.Duration
 	// Build progress bar
 	barWidth := 25
 	filled := barWidth * current / p.total
+	if filled > barWidth {
+		filled = barWidth
+	}
 	bar := strings.Repeat("▰", filled) + strings.Repeat("▱", barWidth-filled)
 
 	// Truncate file path if needed.
