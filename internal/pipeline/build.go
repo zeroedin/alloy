@@ -661,7 +661,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		reportStartStage(reporter, "Transforms", len(pages))
 		payloads := make([]interface{}, len(pages))
 		for i, page := range pages {
-			payloads[i] = string(page.RenderedBody)
+			payloads[i] = page.HTML()
 		}
 		results, err := ps.Hooks.RunBatchWithTimeout(plugin.OnPageRendered, payloads)
 		if err != nil {
@@ -729,7 +729,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		intermediateHTML := make(map[string]string, len(pages))
 		for _, page := range pages {
 			if len(page.RenderedBody) > 0 {
-				intermediateHTML[renderedContentKey(page)] = string(page.RenderedBody)
+				intermediateHTML[renderedContentKey(page)] = page.HTML()
 			}
 		}
 
@@ -873,7 +873,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	renderedContent := make(map[string]string, len(pages))
 	for _, page := range pages {
 		if len(page.RenderedBody) > 0 {
-			renderedContent[renderedContentKey(page)] = string(page.RenderedBody)
+			renderedContent[renderedContentKey(page)] = page.HTML()
 		}
 	}
 	reportEndStage(reporter)
@@ -1192,7 +1192,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	renderedContent := make(map[string]string, len(pagesToRender))
 	for _, page := range pagesToRender {
 		if len(page.RenderedBody) > 0 {
-			renderedContent[renderedContentKey(page)] = string(page.RenderedBody)
+			renderedContent[renderedContentKey(page)] = page.HTML()
 		}
 	}
 
@@ -1246,7 +1246,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 									} else {
 										onDemand, renderErr := renderPages([]*content.Page{p}, rc, nil)
 										if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
-											ssrHTML[pKey] = string(p.RenderedBody)
+											ssrHTML[pKey] = p.HTML()
 										}
 									}
 									break
@@ -1278,7 +1278,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 										} else {
 											onDemand, renderErr := renderPages([]*content.Page{p}, rc, nil)
 											if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
-												ssrHTML[pKey] = string(p.RenderedBody)
+												ssrHTML[pKey] = p.HTML()
 											}
 										}
 									}
@@ -1885,7 +1885,7 @@ func renderPageFormats(page *content.Page, layoutsDir, engineName string, rc *Re
 			return fmt.Errorf("format layout: %w", err)
 		}
 		fmtCtx := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "").ToMap()
-		fmtCtx["content"] = string(page.RenderedBody)
+		fmtCtx["content"] = page.HTML()
 		fmtResult, err := fmtTpl.Render(fmtCtx)
 		if err != nil {
 			return fmt.Errorf("rendering format layout %s: %w", fmtLayoutPath, err)
@@ -1922,7 +1922,7 @@ func renderPageThroughLayouts(page *content.Page, layoutPath, layoutsDir, engine
 
 		tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "")
 		ctx := tc.ToMap()
-		ctx["content"] = string(page.RenderedBody)
+		ctx["content"] = page.HTML()
 		layoutResult, err := tpl.Render(ctx)
 		if err != nil {
 			return fmt.Errorf("rendering layout %s: %w", lp, err)
@@ -2347,7 +2347,7 @@ func serializePagesForHook(pages []*content.Page, scope *plugin.HookScope) []plu
 			p.Content = string(page.Content)
 		}
 		if scope == nil || scope.WantsField("html") {
-			p.HTML = string(page.RenderedBody)
+			p.HTML = page.HTML()
 		}
 		result = append(result, p)
 	}
@@ -2426,7 +2426,7 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 			payload.FrontMatter = convertOrderedMaps(page.FrontMatter)
 		}
 		if scope == nil || scope.WantsField("html") {
-			payload.HTML = string(page.RenderedBody)
+			payload.HTML = page.HTML()
 		}
 		if scope == nil || scope.WantsField("toc") {
 			payload.TOC = page.TOC
