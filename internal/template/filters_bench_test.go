@@ -190,3 +190,31 @@ func Benchmark_FilterChainRepeated(b *testing.B) {
 		sink = out
 	}
 }
+
+// BenchmarkParseWithDynamicFilters measures the cost of Parse() when
+// multiple dynamic/plugin filters require template pre-processing.
+// With per-call regex compilation, this compiles N regexes per Parse call.
+// With cached patterns (issue #362), compilation happens once per filter.
+func BenchmarkParseWithDynamicFilters(b *testing.B) {
+	filterNames := []string{"alpha", "beta", "gamma", "delta", "epsilon"}
+	engine := tmpl.NewLiquidEngine()
+	for _, name := range filterNames {
+		n := name
+		if err := engine.AddFilter(n, func(input interface{}, args ...interface{}) interface{} {
+			return fmt.Sprintf("[%s:%v]", n, input)
+		}); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	src := []byte(`{{ x | alpha }} {{ x | beta: "a" }} {{ x | gamma }} {{ x | delta: "b", "c" }} {{ x | epsilon }}`)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tpl, err := engine.Parse(fmt.Sprintf("page-%d", i), src)
+		if err != nil {
+			b.Fatal(err)
+		}
+		sink = tpl
+	}
+}
