@@ -423,6 +423,42 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 	reportEndStage(reporter)
 
+	// Pre-build validation: permalink/alias conflicts.
+	// Runs after onPagesReady (permalinks, aliases, and output formats are final)
+	// but before content rendering so conflicts fail fast without wasted work.
+	timer.Start("Validation")
+	if aliasErrs := validation.ValidatePermalinkAliases(pages); len(aliasErrs) > 0 {
+		return nil, aliasErrs[0]
+	}
+	var outputEntries []validation.OutputPathEntry
+	for _, page := range pages {
+		if !output.ShouldWrite(page.URL) {
+			continue
+		}
+		outPath := output.ComputeOutputPath(page.URL)
+		outputEntries = append(outputEntries, validation.OutputPathEntry{
+			Path: outPath, Source: page.RelPath,
+		})
+		for format := range page.FormatBodies {
+			fmtPath := formatOutputPath(outPath, format)
+			outputEntries = append(outputEntries, validation.OutputPathEntry{
+				Path: fmtPath, Source: page.RelPath + " (" + format + ")",
+			})
+		}
+		aliases, _ := permalink.ResolveAliases(page)
+		for _, alias := range aliases {
+			aliasPath := output.ComputeOutputPath(alias)
+			outputEntries = append(outputEntries, validation.OutputPathEntry{
+				Path: aliasPath, Source: page.RelPath + " (alias)",
+			})
+		}
+	}
+	if conflicts, _ := validation.DetectConflicts(outputEntries); len(conflicts) > 0 {
+		c := conflicts[0]
+		return nil, fmt.Errorf("output path conflict: %q claimed by %s and %s",
+			c.Path, c.Sources[0], c.Sources[1])
+	}
+
 	// For single-language builds, don't pass langContexts to rendering helpers
 	// so combinedSiteDataForPage doesn't inject site.language or override site.title.
 	var renderLangContexts []i18n.LanguageContext
@@ -695,41 +731,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			}
 		}
 		reportEndStage(reporter)
-	}
-
-	// Pre-build validation: permalink/alias conflicts
-	timer.Start("Validation")
-	if aliasErrs := validation.ValidatePermalinkAliases(pages); len(aliasErrs) > 0 {
-		return nil, aliasErrs[0]
-	}
-	var outputEntries []validation.OutputPathEntry
-	for _, page := range pages {
-		if !output.ShouldWrite(page.URL) {
-			continue
-		}
-		outPath := output.ComputeOutputPath(page.URL)
-		outputEntries = append(outputEntries, validation.OutputPathEntry{
-			Path: outPath, Source: page.RelPath,
-		})
-		// Add validation entries for additional output formats
-		for format := range page.FormatBodies {
-			fmtPath := formatOutputPath(outPath, format)
-			outputEntries = append(outputEntries, validation.OutputPathEntry{
-				Path: fmtPath, Source: page.RelPath + " (" + format + ")",
-			})
-		}
-		aliases, _ := permalink.ResolveAliases(page)
-		for _, alias := range aliases {
-			aliasPath := output.ComputeOutputPath(alias)
-			outputEntries = append(outputEntries, validation.OutputPathEntry{
-				Path: aliasPath, Source: page.RelPath + " (alias)",
-			})
-		}
-	}
-	if conflicts, _ := validation.DetectConflicts(outputEntries); len(conflicts) > 0 {
-		c := conflicts[0]
-		return nil, fmt.Errorf("output path conflict: %q claimed by %s and %s",
-			c.Path, c.Sources[0], c.Sources[1])
 	}
 
 	// Phase 2: SSR runs when configured and BuildOptions.SkipSSR is false.
