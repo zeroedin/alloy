@@ -6,6 +6,29 @@ import (
 	"strings"
 )
 
+// DirectoryCache tracks which directories have been created so that repeated
+// calls for the same directory skip the os.MkdirAll syscall.
+type DirectoryCache struct {
+	created map[string]bool
+}
+
+// NewDirectoryCache returns a ready-to-use DirectoryCache.
+func NewDirectoryCache() *DirectoryCache {
+	return &DirectoryCache{created: make(map[string]bool)}
+}
+
+// EnsureDir creates dir (and parents) if it hasn't been created yet.
+func (dc *DirectoryCache) EnsureDir(dir string) error {
+	if dc.created[dir] {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	dc.created[dir] = true
+	return nil
+}
+
 // WriteFile writes content to the output directory at the given relative path.
 func WriteFile(outputDir, relPath string, content []byte) error {
 	fullPath := filepath.Join(outputDir, relPath)
