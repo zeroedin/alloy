@@ -3074,26 +3074,21 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
-	// ── Progress reporter wiring (issue #255) ─────────────────────
-	// The ProgressReporter must be called by both Build() and
-	// BuildIncremental(). This is critical for alloy serve where
-	// users watch the terminal waiting for the server to start.
+	// ── Progress reporter via BuildOptions (issue #255, #591) ───────
+	// The ProgressReporter must be passed via BuildOptions.Reporter,
+	// not via global SetReporter(). This eliminates the package-level
+	// mutable variable that races under concurrent builds (issue #591).
 
 	Describe("Progress reporter", func() {
-		AfterEach(func() {
-			pipeline.SetReporter(nil)
-		})
-
 		It("Build calls StartStage, Update, EndStage, and Summary", func() {
 			spy := &spyReporter{}
-			pipeline.SetReporter(spy)
 
 			cfg := &config.Config{
 				Title:   "Progress Test",
 				BaseURL: "https://example.com",
 				Build:   config.BuildConfig{Output: "_site"},
 			}
-			result, err := pipeline.Build(cfg)
+			result, err := pipeline.Build(cfg, pipeline.BuildOptions{Reporter: spy})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 
@@ -3110,7 +3105,6 @@ var _ = Describe("Build Pipeline", func() {
 
 		It("Build with content calls Update for each page in every stage", func() {
 			spy := &spyReporter{}
-			pipeline.SetReporter(spy)
 
 			cfg := &config.Config{
 				Title:   "Progress Test",
@@ -3121,7 +3115,7 @@ var _ = Describe("Build Pipeline", func() {
 				"content/index.md": "---\ntitle: Home\n---\n# Home",
 				"content/about.md": "---\ntitle: About\n---\n# About",
 			}
-			result, err := pipeline.BuildWithContent(cfg, content)
+			result, err := pipeline.BuildWithContent(cfg, content, pipeline.BuildOptions{Reporter: spy})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 
@@ -3136,7 +3130,6 @@ var _ = Describe("Build Pipeline", func() {
 
 		It("Build reports progress for all pipeline stages (issue #493)", func() {
 			spy := &spyReporter{}
-			pipeline.SetReporter(spy)
 
 			cfg := &config.Config{
 				Title:   "All Stages Test",
@@ -3148,7 +3141,7 @@ var _ = Describe("Build Pipeline", func() {
 				"content/about.md":       "---\ntitle: About\nlayout: default\n---\n# About",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 			}
-			_, err := pipeline.BuildWithContent(cfg, content)
+			_, err := pipeline.BuildWithContent(cfg, content, pipeline.BuildOptions{Reporter: spy})
 			Expect(err).NotTo(HaveOccurred())
 
 			// All pipeline stages must report progress — not just content rendering.
@@ -3163,9 +3156,8 @@ var _ = Describe("Build Pipeline", func() {
 				"output writing must report progress")
 		})
 
-		It("BuildIncremental calls only Summary on the reporter", func() {
+		It("BuildIncremental calls only Summary on the reporter (issue #591)", func() {
 			spy := &spyReporter{}
-			pipeline.SetReporter(spy)
 
 			cfg := &config.Config{
 				Title:   "Incremental Progress",
@@ -3188,7 +3180,8 @@ var _ = Describe("Build Pipeline", func() {
 			contentMap["content/about.md"] = "---\ntitle: About\n---\n# About Updated"
 			changedFiles := []string{"content/about.md"}
 
-			result, err := pipeline.BuildIncremental(cfg, contentMap, previousCache, changedFiles)
+			result, err := pipeline.BuildIncremental(cfg, contentMap, previousCache, changedFiles,
+				pipeline.BuildOptions{Reporter: spy})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 
@@ -3211,8 +3204,6 @@ var _ = Describe("Build Pipeline", func() {
 		})
 
 		It("no reporter does not panic", func() {
-			pipeline.SetReporter(nil)
-
 			cfg := &config.Config{
 				Title:   "No Reporter",
 				BaseURL: "https://example.com",
