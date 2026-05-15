@@ -426,7 +426,7 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
  9. collection.BuildTaxonomies(pages, taxonomies)         ✅ done
  9a. validation.ValidatePermalinkAliases(pages)            ✅ done — **must run before rendering (issue #690)**
  9b. validation.DetectConflicts(outputEntries)              ✅ done — **must run before rendering (issue #690)**
-     Build output entries from page.URL, page.FormatBodies, page.Aliases.
+     Build output entries from page.URL, page.Outputs, page.Aliases.
      All inputs are finalized after onPagesReady (step 9 in §2).
      If conflicts detected, return error immediately — no rendering occurs.
      Catches authoring errors (duplicate permalinks, alias collisions) in
