@@ -74,18 +74,18 @@ func newServeCommand() *cobra.Command {
 			cfg.IncludeDrafts = false
 
 			// Set up progress reporter for build
+			var reporter pipeline.ProgressReporter
 			if !cfg.Quiet {
 				PrintBanner(cmd.OutOrStdout(), isTTY())
 				if cfg.Verbose {
-					pipeline.SetReporter(pipeline.NewVerboseProgress(cmd.OutOrStdout()))
+					reporter = pipeline.NewVerboseProgress(cmd.OutOrStdout())
 				} else if isTTY() {
-					pipeline.SetReporter(pipeline.NewTTYProgress(cmd.OutOrStdout(), termWidth()))
+					reporter = pipeline.NewTTYProgress(cmd.OutOrStdout(), termWidth())
 				}
 			}
-			defer pipeline.SetReporter(nil)
 
 			// Run the full build pipeline (same as alloy build)
-			if _, err := pipeline.Build(cfg); err != nil {
+			if _, err := pipeline.Build(cfg, pipeline.BuildOptions{Reporter: reporter}); err != nil {
 				return fmt.Errorf("build failed: %w", err)
 			}
 
@@ -133,7 +133,7 @@ func newServeCommand() *cobra.Command {
 				}
 
 				if needsRebuild {
-					if _, err := pipeline.Build(cfg); err != nil {
+					if _, err := pipeline.Build(cfg, pipeline.BuildOptions{Reporter: reporter}); err != nil {
 						log.Printf("rebuild failed: %v", err)
 						srv.Overlay().SetErrors([]server.BuildError{
 							{Message: err.Error(), Stage: "rebuild"},

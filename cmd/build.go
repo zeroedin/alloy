@@ -84,15 +84,14 @@ func newBuildCommand() *cobra.Command {
 			profile, _ := cmd.Flags().GetBool("profile")
 
 			// Set up progress reporter based on flags + TTY detection
+			var reporter pipeline.ProgressReporter
 			if !cfg.Quiet {
 				if cfg.Verbose {
-					pipeline.SetReporter(pipeline.NewVerboseProgress(cmd.OutOrStdout()))
+					reporter = pipeline.NewVerboseProgress(cmd.OutOrStdout())
 				} else if isTTY() {
-					pipeline.SetReporter(pipeline.NewTTYProgress(cmd.OutOrStdout(), termWidth()))
+					reporter = pipeline.NewTTYProgress(cmd.OutOrStdout(), termWidth())
 				}
-				// Non-TTY without --verbose: no reporter (summary only via Build output)
 			}
-			defer pipeline.SetReporter(nil)
 
 			var profiler *pipeline.Profiler
 			if profile {
@@ -107,7 +106,7 @@ func newBuildCommand() *cobra.Command {
 				}
 			}
 
-			buildOpts := pipeline.BuildOptions{Profile: profile}
+			buildOpts := pipeline.BuildOptions{Profile: profile, Reporter: reporter}
 			result, err := pipeline.Build(cfg, buildOpts)
 			if err != nil {
 				if profiler != nil {
