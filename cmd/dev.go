@@ -74,6 +74,7 @@ func newDevCommand() *cobra.Command {
 
 			// Set up progress reporter for all builds (initial + watcher rebuilds)
 			if !cfg.Quiet {
+				PrintBanner(cmd.OutOrStdout(), isTTY())
 				if cfg.Verbose {
 					pipeline.SetReporter(pipeline.NewVerboseProgress(cmd.OutOrStdout()))
 				} else if isTTY() {
@@ -112,7 +113,6 @@ func newDevCommand() *cobra.Command {
 			}
 
 			if !cfg.Quiet {
-				PrintBanner(cmd.OutOrStdout(), isTTY())
 				fmt.Fprintf(cmd.OutOrStdout(), "Serving at http://localhost:%d\n", actualPort)
 			}
 
