@@ -388,10 +388,8 @@ func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface
 			timeout := time.Duration(effectiveTimeout) * time.Millisecond
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 
-			var itemProgress BatchProgressFunc
-			if onProgress != nil {
-				itemProgress = func(completed, total int) { onProgress(completed, total) }
-			} else {
+			itemProgress := onProgress
+			if itemProgress == nil {
 				itemProgress = func(int, int) {}
 			}
 
@@ -453,6 +451,9 @@ func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface
 					current[j] = preItem
 					r.warnings = append(r.warnings, fmt.Sprintf("hook timeout: %s item %d exceeded %dms",
 						string(event), j, r.timeout))
+					if onProgress != nil {
+						onProgress(j+1, len(current))
+					}
 				}
 			}
 		}

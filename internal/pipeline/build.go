@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"sync"
 	"strings"
 	"time"
 
@@ -670,10 +671,11 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 		var progressFn plugin.BatchProgressFunc
 		if reporter != nil {
+			var mu sync.Mutex
 			progressFn = func(completed, total int) {
-				if completed > 0 && completed <= len(pages) {
-					reportUpdate(reporter, completed, pages[completed-1].RelPath, 0)
-				}
+				mu.Lock()
+				reportUpdate(reporter, completed, "", 0)
+				mu.Unlock()
 			}
 		}
 		results, err := ps.Hooks.RunBatchWithProgress(plugin.OnPageRendered, payloads, progressFn)
