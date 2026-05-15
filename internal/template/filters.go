@@ -160,15 +160,15 @@ func RegisterBuiltinFilters(engine TemplateEngine) error {
 
 // --- String filters ---
 
+var slugifyPattern = regexp.MustCompile(`[^a-z0-9]+`)
+
 func Slugify(input interface{}, args ...interface{}) interface{} {
 	s := toString(input)
 	if s == "" {
 		return ""
 	}
 	s = strings.ToLower(s)
-	// Replace non-alphanumeric characters with hyphens
-	reg := regexp.MustCompile(`[^a-z0-9]+`)
-	s = reg.ReplaceAllString(s, "-")
+	s = slugifyPattern.ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
 	return s
 }
@@ -221,10 +221,11 @@ func TruncateWords(input interface{}, args ...interface{}) interface{} {
 	return strings.Join(words[:count], " ") + "..."
 }
 
+var stripHTMLPattern = regexp.MustCompile(`<[^>]*>`)
+
 func StripHTML(input interface{}, args ...interface{}) interface{} {
 	s := toString(input)
-	reg := regexp.MustCompile(`<[^>]*>`)
-	return reg.ReplaceAllString(s, "")
+	return stripHTMLPattern.ReplaceAllString(s, "")
 }
 
 func Escape(input interface{}, args ...interface{}) interface{} {
@@ -701,13 +702,27 @@ func Markdownify(input interface{}, args ...interface{}) interface{} {
 
 // --- Regex filters ---
 
+var regexCache sync.Map
+
+func cachedCompile(pattern string) (*regexp.Regexp, error) {
+	if cached, ok := regexCache.Load(pattern); ok {
+		return cached.(*regexp.Regexp), nil
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, err
+	}
+	regexCache.Store(pattern, re)
+	return re, nil
+}
+
 func FindRE(input interface{}, args ...interface{}) interface{} {
 	pattern := toString(input)
 	if len(args) == 0 {
 		return []string{}
 	}
 	text := toString(args[0])
-	re, err := regexp.Compile(pattern)
+	re, err := cachedCompile(pattern)
 	if err != nil {
 		return []string{}
 	}
@@ -721,7 +736,7 @@ func ReplaceRE(input interface{}, args ...interface{}) interface{} {
 	}
 	text := toString(args[0])
 	replacement := toString(args[1])
-	re, err := regexp.Compile(pattern)
+	re, err := cachedCompile(pattern)
 	if err != nil {
 		return text
 	}
