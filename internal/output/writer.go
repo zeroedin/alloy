@@ -42,6 +42,17 @@ func WriteFile(outputDir, relPath string, content []byte) error {
 	return os.WriteFile(fullPath, content, 0o644)
 }
 
+// WriteFileCached is like WriteFile but uses a DirectoryCache to skip
+// redundant os.MkdirAll calls when many files share the same directory.
+func WriteFileCached(outputDir, relPath string, content []byte, dc *DirectoryCache) error {
+	fullPath := filepath.Join(outputDir, relPath)
+	dir := filepath.Dir(fullPath)
+	if err := dc.EnsureDir(dir); err != nil {
+		return err
+	}
+	return os.WriteFile(fullPath, content, 0o644)
+}
+
 // CleanOutputDir removes all files from the output directory.
 func CleanOutputDir(dir string) error {
 	entries, err := os.ReadDir(dir)
@@ -110,6 +121,17 @@ func WriteAliases(outputDir string, aliases []string, content []byte) error {
 	for _, alias := range aliases {
 		outputPath := ComputeOutputPath(alias)
 		if err := WriteFile(outputDir, outputPath, content); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// WriteAliasesCached is like WriteAliases but uses a DirectoryCache.
+func WriteAliasesCached(outputDir string, aliases []string, content []byte, dc *DirectoryCache) error {
+	for _, alias := range aliases {
+		outputPath := ComputeOutputPath(alias)
+		if err := WriteFileCached(outputDir, outputPath, content, dc); err != nil {
 			return err
 		}
 	}
