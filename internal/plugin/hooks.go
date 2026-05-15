@@ -31,10 +31,15 @@ const (
 // The context carries the per-hook timeout deadline for cooperative cancellation.
 type HookFunc func(ctx context.Context, payload interface{}) (interface{}, error)
 
+// BatchProgressFunc is called after each item completes during batch hook
+// execution, reporting the running completed count and total item count.
+type BatchProgressFunc func(completed, total int)
+
 // BatchHookFunc processes multiple payloads in a single call, returning one
 // result per input. Used by subprocess plugins to distribute work across
-// multiple worker processes.
-type BatchHookFunc func(ctx context.Context, payloads []interface{}) ([]interface{}, error)
+// multiple worker processes. The onProgress callback, when non-nil, is called
+// after each item completes.
+type BatchHookFunc func(ctx context.Context, payloads []interface{}, onProgress BatchProgressFunc) ([]interface{}, error)
 
 // PagesScopeMode determines how pages are filtered for a hook.
 type PagesScopeMode int
@@ -364,6 +369,12 @@ func (r *HookRegistry) RunWithTimeout(event HookName, payload interface{}) (inte
 // Hooks without batchFn fall back to per-item dispatch with timeout enforcement.
 // Batch timeout scales linearly with payload count (timeout × itemCount).
 func (r *HookRegistry) RunBatchWithTimeout(event HookName, payloads []interface{}) ([]interface{}, error) {
+	return r.RunBatchWithProgress(event, payloads, nil)
+}
+
+// RunBatchWithProgress is like RunBatchWithTimeout but accepts a progress
+// callback that fires after each item completes during batch hook execution.
+func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface{}, onProgress BatchProgressFunc) ([]interface{}, error) {
 	hooks := r.hooks[event]
 	current := make([]interface{}, len(payloads))
 	copy(current, payloads)
@@ -377,13 +388,20 @@ func (r *HookRegistry) RunBatchWithTimeout(event HookName, payloads []interface{
 			timeout := time.Duration(effectiveTimeout) * time.Millisecond
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 
+			var itemProgress BatchProgressFunc
+			if onProgress != nil {
+				itemProgress = func(completed, total int) { onProgress(completed, total) }
+			} else {
+				itemProgress = func(int, int) {}
+			}
+
 			type batchResult struct {
 				val []interface{}
 				err error
 			}
 			ch := make(chan batchResult, 1)
 			go func() {
-				result, err := h.batchFn(ctx, current)
+				result, err := h.batchFn(ctx, current, itemProgress)
 				ch <- batchResult{result, err}
 			}()
 
@@ -427,6 +445,9 @@ func (r *HookRegistry) RunBatchWithTimeout(event HookName, payloads []interface{
 						return nil, fmt.Errorf("%s item %d: %w", string(event), j, res.err)
 					}
 					current[j] = res.val
+					if onProgress != nil {
+						onProgress(j+1, len(current))
+					}
 				case <-ctx.Done():
 					cancel()
 					current[j] = preItem

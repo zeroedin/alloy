@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zeroedin/alloy/internal/ordered"
@@ -382,7 +383,7 @@ func (r *NodeRuntime) CloseWorkers() {
 
 // BatchCallHook distributes payloads across the worker pool for parallel processing.
 // Uses per-page IPC dispatch which outperforms large batch JSON serialization.
-func (r *NodeRuntime) BatchCallHook(name string, payloads []interface{}) ([]interface{}, error) {
+func (r *NodeRuntime) BatchCallHook(name string, payloads []interface{}, onProgress func(int)) ([]interface{}, error) {
 	if r.bridge == nil {
 		return payloads, nil
 	}
@@ -396,6 +397,7 @@ func (r *NodeRuntime) BatchCallHook(name string, payloads []interface{}) ([]inte
 	numBridges := len(bridges)
 
 	results := make([]interface{}, len(payloads))
+	var completed atomic.Int64
 	var firstErr error
 	var errOnce sync.Once
 	var wg sync.WaitGroup
@@ -426,6 +428,9 @@ func (r *NodeRuntime) BatchCallHook(name string, payloads []interface{}) ([]inte
 					return
 				}
 				results[i] = ordered.RewrapValue(resp.Result)
+				if onProgress != nil {
+					onProgress(int(completed.Add(1)))
+				}
 			}
 		}(bridges[w], start, end)
 	}
