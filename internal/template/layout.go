@@ -3,6 +3,7 @@ package template
 import (
 	"bufio"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,8 +131,8 @@ func DetectCircularLayouts(layoutsDir string) error {
 	// Scan all layout files for "layout:" or "extends:" directives
 	layouts := make(map[string]string) // file -> parent layout
 
-	err := filepath.Walk(layoutsDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	err := filepath.WalkDir(layoutsDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
 			return nil
 		}
 		parent := ExtractLayoutParent(path)

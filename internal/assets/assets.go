@@ -1,6 +1,7 @@
 package assets
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +28,7 @@ func CopyAssets(assetsDir, outputDir string) error {
 		return err
 	}
 
-	return filepath.Walk(assetsDir, func(path string, info os.FileInfo, err error) error {
+	return filepath.WalkDir(assetsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -39,7 +40,7 @@ func CopyAssets(assetsDir, outputDir string) error {
 
 		dest := filepath.Join(outputDir, rel)
 
-		if info.IsDir() {
+		if d.IsDir() {
 			return os.MkdirAll(dest, 0o755)
 		}
 
@@ -59,11 +60,11 @@ func ProcessAssets(assetsDir, outputDir string, hookFn func(AssetFile) (AssetFil
 		return err
 	}
 
-	return filepath.Walk(assetsDir, func(path string, info os.FileInfo, err error) error {
+	return filepath.WalkDir(assetsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
+		if d.IsDir() {
 			return nil
 		}
 

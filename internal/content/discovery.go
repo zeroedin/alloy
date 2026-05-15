@@ -2,6 +2,7 @@ package content
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,11 +48,11 @@ func discoverInternal(contentDir string, formats []string, collectPassthrough bo
 
 	// First pass: find all index.md/index.html files to identify bundles
 	bundleDirs := make(map[string]bool)
-	_ = filepath.Walk(contentDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	_ = filepath.WalkDir(contentDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
 			return nil
 		}
-		if info.Name() == "index.md" || info.Name() == "index.html" {
+		if d.Name() == "index.md" || d.Name() == "index.html" {
 			dir := filepath.Dir(path)
 			rel, _ := filepath.Rel(contentDir, dir)
 			if rel != "." {
@@ -64,15 +65,15 @@ func discoverInternal(contentDir string, formats []string, collectPassthrough bo
 	var pages []*Page
 	var passthroughs []string
 
-	err = filepath.Walk(contentDir, func(path string, info os.FileInfo, walkErr error) error {
+	err = filepath.WalkDir(contentDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if info.IsDir() {
+		if d.IsDir() {
 			return nil
 		}
 
-		name := info.Name()
+		name := d.Name()
 
 		// Ignore _data.yaml and _data.yml
 		if name == "_data.yaml" || name == "_data.yml" {

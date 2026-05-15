@@ -2,6 +2,7 @@ package static
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -224,7 +225,7 @@ func copyDirConcurrent(src, dst string, excludes []string) error {
 	normalized := NormalizeExcludePatterns(excludes)
 	var jobs []copyJob
 
-	if err := filepath.Walk(src, func(path string, fi os.FileInfo, err error) error {
+	if err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -238,14 +239,14 @@ func copyDirConcurrent(src, dst string, excludes []string) error {
 				return matchErr
 			}
 			if excluded {
-				if fi.IsDir() {
+				if d.IsDir() {
 					return filepath.SkipDir
 				}
 				return nil
 			}
 		}
 		target := filepath.Join(dst, rel)
-		if fi.IsDir() {
+		if d.IsDir() {
 			return os.MkdirAll(target, 0755)
 		}
 		jobs = append(jobs, copyJob{src: path, dst: target})
