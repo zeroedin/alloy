@@ -102,6 +102,7 @@ func newServeCommand() *cobra.Command {
 			}
 
 			if !cfg.Quiet {
+				PrintBanner(cmd.OutOrStdout(), isTTY())
 				fmt.Fprintf(cmd.OutOrStdout(), "Serving at http://localhost:%d\n", actualPort)
 			}
 
