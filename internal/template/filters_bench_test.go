@@ -211,7 +211,7 @@ func BenchmarkParseWithDynamicFilters(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tpl, err := engine.Parse(fmt.Sprintf("page-%d", i), src)
+		tpl, err := engine.Parse("bench-page", src)
 		if err != nil {
 			b.Fatal(err)
 		}

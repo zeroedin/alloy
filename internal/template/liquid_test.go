@@ -733,10 +733,6 @@ var _ = Describe("LiquidEngine", func() {
 		})
 	})
 
-	// ── Render hook discovery (issues #310, #311) ─────────────────
-	// DiscoverRenderHooks scans layouts/_markup/ for render hook
-	// template files and returns a map of hook name → template source.
-
 	// ── Plugin filter rewriting correctness (issue #362) ────────────
 	// Verifies that rewriteFilterToPlugin produces correct template source
 	// regardless of whether regex patterns are compiled per-call or cached.
@@ -836,6 +832,10 @@ var _ = Describe("LiquidEngine", func() {
 			}
 		})
 	})
+
+	// ── Render hook discovery (issues #310, #311) ─────────────────
+	// DiscoverRenderHooks scans layouts/_markup/ for render hook
+	// template files and returns a map of hook name → template source.
 
 	Describe("Render hook discovery", func() {
 		It("discovers render hook templates from layouts/_markup/", func() {
