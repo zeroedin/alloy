@@ -279,6 +279,53 @@ var _ = Describe("ParseFrontMatter", func() {
 		})
 	})
 
+	// ── HTML() cached string accessor (issue #360) ──────────────────
+	// Page.HTML() returns a cached string conversion of RenderedBody.
+	// The conversion happens once on first access; subsequent calls
+	// return the cached value. This eliminates redundant string([]byte)
+	// allocations across plugin hooks, SSR, template context, and
+	// result map construction.
+
+	Describe("HTML() cached string accessor (issue #360)", func() {
+		It("returns empty string when RenderedBody is nil", func() {
+			p := &content.Page{}
+			Expect(p.HTML()).To(BeEmpty(),
+				"HTML() must return empty string when RenderedBody is nil")
+		})
+
+		It("returns empty string when RenderedBody is empty slice", func() {
+			p := &content.Page{RenderedBody: []byte{}}
+			Expect(p.HTML()).To(BeEmpty(),
+				"HTML() must return empty string when RenderedBody is an empty byte slice")
+		})
+
+		It("returns the string value of RenderedBody", func() {
+			p := &content.Page{RenderedBody: []byte("<h1>Hello</h1>")}
+			Expect(p.HTML()).To(Equal("<h1>Hello</h1>"),
+				"HTML() must return the string conversion of RenderedBody")
+		})
+
+		It("returns consistent value across multiple calls (cached)", func() {
+			p := &content.Page{RenderedBody: []byte("<p>Cached</p>")}
+			first := p.HTML()
+			second := p.HTML()
+			third := p.HTML()
+			Expect(first).To(Equal("<p>Cached</p>"))
+			Expect(second).To(Equal(first),
+				"second call must return the same value as first — cache must be stable")
+			Expect(third).To(Equal(first),
+				"third call must return the same value as first — cache must be stable")
+		})
+
+		It("reflects the final RenderedBody value set before first HTML() call", func() {
+			p := &content.Page{RenderedBody: []byte("<p>Draft</p>")}
+			p.RenderedBody = []byte("<p>Final</p>")
+			Expect(p.HTML()).To(Equal("<p>Final</p>"),
+				"HTML() must reflect the last RenderedBody assignment — "+
+					"the cache is populated on first access, after all mutations")
+		})
+	})
+
 	// ── Error format contracts ────────────────────────────────────────
 
 	Describe("Error format contracts", func() {
