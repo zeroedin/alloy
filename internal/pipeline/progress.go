@@ -23,6 +23,7 @@ type TTYProgress struct {
 	width     int
 	stageName string
 	total     int
+	usedBar   bool // true if Update was called (progress bar stage)
 }
 
 // NewTTYProgress creates a progress reporter for interactive terminals.
@@ -37,9 +38,7 @@ func NewTTYProgress(w io.Writer, width int) *TTYProgress {
 func (p *TTYProgress) StartStage(name string, total int) {
 	p.stageName = name
 	p.total = total
-	if total < 0 {
-		fmt.Fprintf(p.w, "\r[alloy] %s...", name)
-	}
+	p.usedBar = false
 }
 
 func (p *TTYProgress) Message(text string) {
@@ -50,6 +49,7 @@ func (p *TTYProgress) Update(current int, filePath string, elapsed time.Duration
 	if p.total <= 0 {
 		return
 	}
+	p.usedBar = true
 	pct := current * 100 / p.total
 
 	// Build progress bar
@@ -88,7 +88,7 @@ func (p *TTYProgress) Update(current int, filePath string, elapsed time.Duration
 }
 
 func (p *TTYProgress) EndStage() {
-	if p.total != 0 {
+	if p.usedBar {
 		fmt.Fprintln(p.w)
 	}
 }
