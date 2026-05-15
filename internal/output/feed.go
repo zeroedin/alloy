@@ -1,6 +1,7 @@
 package output
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,12 +15,12 @@ import (
 func ResolveFeedTemplates(layoutsDir string) ([]FeedTemplate, error) {
 	var templates []FeedTemplate
 
-	err := filepath.Walk(layoutsDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	err := filepath.WalkDir(layoutsDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
 			return nil
 		}
 
-		if info.Name() != "feed.xml" {
+		if d.Name() != "feed.xml" {
 			return nil
 		}
 

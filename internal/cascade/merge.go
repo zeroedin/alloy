@@ -1,6 +1,7 @@
 package cascade
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,14 +65,14 @@ func LoadDirectoryCascade(contentDir string) (map[string]map[string]interface{},
 	contentDir = filepath.Clean(contentDir)
 	baseName := filepath.Base(contentDir)
 
-	err := filepath.Walk(contentDir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.WalkDir(contentDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
+		if d.IsDir() {
 			return nil
 		}
-		name := info.Name()
+		name := d.Name()
 		if name != "_data.yaml" && name != "_data.yml" {
 			return nil
 		}
