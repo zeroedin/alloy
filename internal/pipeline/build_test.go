@@ -3305,4 +3305,115 @@ var _ = Describe("Build Pipeline", func() {
 				"page-3 must render correctly with the same goldmark instance")
 		})
 	})
+
+	// ── Early validation: conflict detection before rendering (issue #690) ──
+	// Validation (permalink/alias conflicts) must run after onPagesReady but
+	// before content rendering. If a conflict is detected, the build fails
+	// immediately with no rendering work performed.
+
+	Describe("Early validation before rendering (issue #690)", func() {
+		It("permalink conflict errors before any rendering occurs (issue #690)", func() {
+			cfg := &config.Config{
+				Title:   "Conflict Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			files := map[string]string{
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"content/page-a.md":     "---\ntitle: Page A\nlayout: default\npermalink: /about/\n---\n# Page A content",
+				"content/page-b.md":     "---\ntitle: Page B\nlayout: default\npermalink: /about/\n---\n# Page B content",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).To(HaveOccurred(),
+				"two pages claiming the same permalink must produce a build error — "+
+					"validation detects this from page.URL alone, no rendering needed")
+			Expect(err.Error()).To(ContainSubstring("output path conflict"),
+				"error message must identify the conflict type")
+			Expect(result).To(BeNil(),
+				"BuildResult must be nil when a permalink conflict is detected — "+
+					"validation runs before content rendering so no rendering work "+
+					"is performed and no result is produced (issue #690)")
+		})
+
+		It("alias conflict with another page's permalink errors before rendering (issue #690)", func() {
+			cfg := &config.Config{
+				Title:   "Alias Conflict Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			files := map[string]string{
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"content/page-a.md":     "---\ntitle: Page A\nlayout: default\npermalink: /guide/\n---\n# Page A",
+				"content/page-b.md":     "---\ntitle: Page B\nlayout: default\npermalink: /tutorial/\naliases:\n  - /guide/\n---\n# Page B",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).To(HaveOccurred(),
+				"an alias that collides with another page's permalink must produce "+
+					"a build error — aliases are known after permalink resolution, "+
+					"before rendering begins")
+			Expect(result).To(BeNil(),
+				"BuildResult must be nil when an alias conflict is detected — "+
+					"no rendering work is performed (issue #690)")
+		})
+
+		It("non-conflicting pages build successfully (issue #690)", func() {
+			cfg := &config.Config{
+				Title:   "No Conflict Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			files := map[string]string{
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"content/page-a.md":     "---\ntitle: Page A\nlayout: default\npermalink: /about/\n---\n# About",
+				"content/page-b.md":     "---\ntitle: Page B\nlayout: default\npermalink: /contact/\n---\n# Contact",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).NotTo(HaveOccurred(),
+				"pages with distinct permalinks must not trigger a conflict error — "+
+					"early validation must pass and rendering must proceed normally")
+			Expect(result).NotTo(BeNil())
+			Expect(result.RenderedContent).To(HaveLen(2),
+				"both pages must be rendered when no conflicts exist — "+
+					"early validation (issue #690) must not block valid builds")
+		})
+
+		It("validation timing is recorded before rendering timing with profiling (issue #690)", func() {
+			cfg := &config.Config{
+				Title:   "Profile Timing Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			files := map[string]string{
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"content/index.md":      "---\ntitle: Home\nlayout: default\n---\n# Home",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files, pipeline.BuildOptions{Profile: true})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.StageTimings).NotTo(BeEmpty(),
+				"profiling must produce stage timings")
+
+			var validationIdx, renderIdx int
+			validationFound, renderFound := false, false
+			for i, t := range result.StageTimings {
+				if strings.Contains(t.Name, "Validation") {
+					validationIdx = i
+					validationFound = true
+				}
+				if strings.Contains(t.Name, "content render") || strings.Contains(t.Name, "Rendering") {
+					if !renderFound {
+						renderIdx = i
+						renderFound = true
+					}
+				}
+			}
+			Expect(validationFound).To(BeTrue(),
+				"stage timings must include a Validation entry")
+			Expect(renderFound).To(BeTrue(),
+				"stage timings must include a content render entry")
+			Expect(validationIdx).To(BeNumerically("<", renderIdx),
+				"Validation stage must appear before content rendering in stage timings — "+
+					"conflict detection runs after permalink resolution but before any "+
+					"markdown or template rendering begins (issue #690)")
+		})
+	})
 })

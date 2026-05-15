@@ -424,6 +424,13 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
     _data.yaml cascade instead of cfg.Permalinks map.
     `isDateBasedSection` in layout.go also needs cascade data.
  9. collection.BuildTaxonomies(pages, taxonomies)         ✅ done
+ 9a. validation.ValidatePermalinkAliases(pages)            ✅ done — **must run before rendering (issue #690)**
+ 9b. validation.DetectConflicts(outputEntries)              ✅ done — **must run before rendering (issue #690)**
+     Build output entries from page.URL, page.FormatBodies, page.Aliases.
+     All inputs are finalized after onPagesReady (step 9 in §2).
+     If conflicts detected, return error immediately — no rendering occurs.
+     Catches authoring errors (duplicate permalinks, alias collisions) in
+     milliseconds instead of after 10+ seconds of wasted rendering.
 10. template.RegisterBuiltinFilters(engine)               ✅ done
 11. renderPages (markdown → template tags)                ✅ done
 12. template.ResolveLayout(page, layoutsDir, engine)      ✅ done
@@ -461,6 +468,7 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
 
 **Key implementation notes:**
 - Steps 5-9 happen before rendering (step 11) so templates can access `page.url`, `collections.*`, filters, etc.
+- **Early validation (issue #690)**: Steps 9a-9b (permalink/alias validation, conflict detection) run after all permalink data is finalized (step 6) and after `onPagesReady` injects virtual pages, but before any rendering work. This ensures authoring errors fail fast without wasting render time. The validation code is the same — only its position in the pipeline changes.
 - **Multi-format output (issue #71)**: Steps 12-15 (layout resolution → render → compute path → write) must loop over `page.Outputs` when present. Content rendering (step 11) happens once; layout rendering happens per format. See Phase 3D wiring guidance.
 - Step 12-13 happen after step 11: content is rendered first, then injected into the layout via `{{ content }}`.
 - **Layout chaining (issue #276)**: After rendering content through the initial layout, check the layout file for front matter with a `layout:` directive using `extractLayoutParent()`. If a parent is found, resolve it via `ResolveLayout` (using the parent name), render the current result as `{{ content }}` into the parent, and repeat. Loop until a root layout (no `layout:` in front matter) is reached, or max depth (10) is exceeded. Strip front matter from layout content before parsing/rendering. Call `DetectCircularLayouts(layoutsDir)` once after layout discovery (Phase 0) to fail fast on cycles. Track all layouts in the chain for cache invalidation (`cache.TrackTemplateUsage` for each level).
