@@ -16,9 +16,10 @@ import (
 type liquidEngine struct {
 	env            *liquid.Environment
 	filters        *alloyFilterBridge
-	includesDir    string              // layouts directory for resolving {% include %} / {% render %}
-	dynamicFilters map[string]bool     // novel filter names needing template pre-processing
-	deferredTags   []deferredTagEntry  // tags registered via AddTag, applied per-Parse
+	includesDir    string                       // layouts directory for resolving {% include %} / {% render %}
+	dynamicFilters map[string]bool              // novel filter names needing template pre-processing
+	filterPatterns map[string]*regexp.Regexp    // compiled regexes for dynamic filters, keyed by filter name
+	deferredTags   []deferredTagEntry           // tags registered via AddTag, applied per-Parse
 }
 
 // deferredTagEntry stores a tag registration for deferred liquidgo registration.
@@ -38,7 +39,12 @@ func NewLiquidEngine() TemplateEngine {
 	}
 	env.RegisterFilter(bridge)
 
-	return &liquidEngine{env: env, filters: bridge, dynamicFilters: make(map[string]bool)}
+	return &liquidEngine{
+		env:            env,
+		filters:        bridge,
+		dynamicFilters: make(map[string]bool),
+		filterPatterns: make(map[string]*regexp.Regexp),
+	}
 }
 
 // SetIncludesDir sets the directory used to resolve {% include %} and {% render %} tags.
@@ -52,6 +58,7 @@ type liquidTemplate struct {
 	name           string
 	includesDir    string
 	dynamicFilters map[string]bool
+	filterPatterns map[string]*regexp.Regexp
 }
 
 func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
@@ -59,8 +66,8 @@ func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
 
 	// Pre-process: rewrite novel/plugin filter references to use the
 	// plugin_filter bridge, which liquidgo can dispatch via PluginFilter().
-	for filterName := range e.dynamicFilters {
-		src = rewriteFilterToPlugin(src, filterName)
+	for filterName, pattern := range e.filterPatterns {
+		src = rewriteFilterToPlugin(src, filterName, pattern)
 	}
 
 	// Register deferred tags — detect inline vs block by scanning the
@@ -111,7 +118,11 @@ func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
 	for k, v := range e.dynamicFilters {
 		filterSnapshot[k] = v
 	}
-	return &liquidTemplate{tpl: tpl, name: name, includesDir: e.includesDir, dynamicFilters: filterSnapshot}, nil
+	return &liquidTemplate{tpl: tpl, name: name, includesDir: e.includesDir, dynamicFilters: filterSnapshot, filterPatterns: e.filterPatterns}, nil
+}
+
+func compileFilterPattern(filterName string) *regexp.Regexp {
+	return regexp.MustCompile(`\|\s*` + regexp.QuoteMeta(filterName) + `\b(\s*:\s*)?`)
 }
 
 // rewriteFilterToPlugin replaces occurrences of a novel filter name in Liquid
@@ -119,15 +130,11 @@ func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
 //
 //	{{ x | myFilter }}           → {{ x | plugin_filter: "myFilter" }}
 //	{{ x | myFilter: arg1 }}    → {{ x | plugin_filter: "myFilter", arg1 }}
-func rewriteFilterToPlugin(src, filterName string) string {
-	// Match: | filterName optionally followed by : (with args)
-	pattern := regexp.MustCompile(`\|\s*` + regexp.QuoteMeta(filterName) + `\b(\s*:\s*)?`)
+func rewriteFilterToPlugin(src, filterName string, pattern *regexp.Regexp) string {
 	return pattern.ReplaceAllStringFunc(src, func(match string) string {
 		if strings.Contains(match, ":") {
-			// Has args: append filter name and comma before existing args
 			return `| plugin_filter: "` + filterName + `", `
 		}
-		// No args
 		return `| plugin_filter: "` + filterName + `"`
 	})
 }
@@ -173,9 +180,10 @@ func (e *liquidEngine) AddFilter(name string, fn FilterFunc) error {
 	// "last loaded wins" per spec §4.
 	if _, exists := e.filters.funcs[name]; exists {
 		e.dynamicFilters[name] = true
+		e.filterPatterns[name] = compileFilterPattern(name)
 	} else if !knownLiquidFilters[name] {
-		// Novel filters always need the bridge
 		e.dynamicFilters[name] = true
+		e.filterPatterns[name] = compileFilterPattern(name)
 	}
 	e.filters.funcs[name] = fn
 	return nil
@@ -196,7 +204,7 @@ func (t *liquidTemplate) Render(ctx map[string]interface{}) ([]byte, error) {
 	}
 	if t.includesDir != "" {
 		opts.Registers = map[string]interface{}{
-			"file_system": &alloyFileSystem{root: t.includesDir, dynamicFilters: t.dynamicFilters},
+			"file_system": &alloyFileSystem{root: t.includesDir, dynamicFilters: t.dynamicFilters, filterPatterns: t.filterPatterns},
 		}
 	}
 	result := t.tpl.Render(ctx, opts)
@@ -260,6 +268,7 @@ func RenderTemplate(source string, sourcePath string, ctx map[string]interface{}
 type alloyFileSystem struct {
 	root           string
 	dynamicFilters map[string]bool
+	filterPatterns map[string]*regexp.Regexp
 }
 
 func (fs *alloyFileSystem) ReadTemplateFile(templatePath string) (string, error) {
@@ -284,9 +293,9 @@ func (fs *alloyFileSystem) ReadTemplateFile(templatePath string) (string, error)
 		data, err := os.ReadFile(path)
 		if err == nil {
 			src := string(data)
-			for filterName := range fs.dynamicFilters {
+			for filterName, pattern := range fs.filterPatterns {
 				if strings.Contains(src, filterName) {
-					src = rewriteFilterToPlugin(src, filterName)
+					src = rewriteFilterToPlugin(src, filterName, pattern)
 				}
 			}
 			return src, nil
