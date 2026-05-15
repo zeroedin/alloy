@@ -381,11 +381,11 @@ var _ = Describe("Hooks", func() {
 			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
 				return p, nil
 			}
-			batchA := func(_ context.Context, ps []interface{}) ([]interface{}, error) {
+			batchA := func(_ context.Context, ps []interface{}, _ plugin.BatchProgressFunc) ([]interface{}, error) {
 				order = append(order, "A")
 				return ps, nil
 			}
-			batchB := func(_ context.Context, ps []interface{}) ([]interface{}, error) {
+			batchB := func(_ context.Context, ps []interface{}, _ plugin.BatchProgressFunc) ([]interface{}, error) {
 				order = append(order, "B")
 				return ps, nil
 			}
@@ -404,7 +404,7 @@ var _ = Describe("Hooks", func() {
 			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
 				return p, nil
 			}
-			batchFn := func(_ context.Context, ps []interface{}) ([]interface{}, error) {
+			batchFn := func(_ context.Context, ps []interface{}, _ plugin.BatchProgressFunc) ([]interface{}, error) {
 				return ps[:1], nil // return fewer results
 			}
 			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchFn, 50)
@@ -442,14 +442,14 @@ var _ = Describe("Hooks", func() {
 			// slowBatch sleeps 100ms, exceeds the 20ms budget
 			registry.SetTimeout(10)
 
-			fastBatch := func(_ context.Context, ps []interface{}) ([]interface{}, error) {
+			fastBatch := func(_ context.Context, ps []interface{}, _ plugin.BatchProgressFunc) ([]interface{}, error) {
 				out := make([]interface{}, len(ps))
 				for i, p := range ps {
 					out[i] = p.(string) + "-fast"
 				}
 				return out, nil
 			}
-			slowBatch := func(_ context.Context, ps []interface{}) ([]interface{}, error) {
+			slowBatch := func(_ context.Context, ps []interface{}, _ plugin.BatchProgressFunc) ([]interface{}, error) {
 				time.Sleep(100 * time.Millisecond)
 				out := make([]interface{}, len(ps))
 				for i, p := range ps {

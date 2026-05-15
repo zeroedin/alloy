@@ -150,7 +150,7 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 				return p, nil
 			}
 			batchCalled := false
-			batchFn := func(_ context.Context, ps []interface{}) ([]interface{}, error) {
+			batchFn := func(_ context.Context, ps []interface{}, _ plugin.BatchProgressFunc) ([]interface{}, error) {
 				batchCalled = true
 				return ps, nil
 			}
