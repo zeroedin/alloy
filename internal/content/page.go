@@ -34,6 +34,12 @@ type Page struct {
 	renderedStr  string
 }
 
+// SetRenderedBody updates RenderedBody and clears the cached HTML string.
+func (p *Page) SetRenderedBody(b []byte) {
+	p.RenderedBody = b
+	p.renderedStr = ""
+}
+
 // HTML returns the string conversion of RenderedBody, caching the result
 // so subsequent calls avoid redundant []byte→string allocations.
 func (p *Page) HTML() string {

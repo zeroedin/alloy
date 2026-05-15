@@ -101,7 +101,7 @@ func BuildTemplateContext(page *content.Page, siteData map[string]interface{}, a
 
 	// Set content from rendered body
 	if len(page.RenderedBody) > 0 {
-		ctx.Content = string(page.RenderedBody)
+		ctx.Content = page.HTML()
 	}
 
 	// Inject pagination context and "as" alias for paginated pages
