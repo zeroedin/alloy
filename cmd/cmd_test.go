@@ -618,15 +618,15 @@ taxonomies:
 		It("dev command calls PrintBanner", func() {
 			devSource, err := os.ReadFile("dev.go")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(devSource)).To(ContainSubstring("PrintBanner"),
-				"dev.go must call PrintBanner — the alloy logo must display on startup")
+			Expect(string(devSource)).To(ContainSubstring("PrintBanner("),
+				"dev.go must call PrintBanner() — the alloy logo must display on startup")
 		})
 
 		It("serve command calls PrintBanner", func() {
 			serveSource, err := os.ReadFile("serve.go")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(serveSource)).To(ContainSubstring("PrintBanner"),
-				"serve.go must call PrintBanner — the alloy logo must display on startup")
+			Expect(string(serveSource)).To(ContainSubstring("PrintBanner("),
+				"serve.go must call PrintBanner() — the alloy logo must display on startup")
 		})
 	})
 })
