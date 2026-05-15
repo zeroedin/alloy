@@ -749,6 +749,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Stage 6: Output writing
 	timer.Start("Output writing")
 	reportStartStage(reporter, "Writing", len(pages))
+	dirCache := output.NewDirectoryCache()
 	writeIdx := 0
 	for _, page := range pages {
 		var pageStart time.Time
@@ -763,13 +764,13 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			continue
 		}
 		outPath := output.ComputeOutputPath(page.URL)
-		if err := output.WriteFile(outputDir, outPath, page.RenderedBody); err != nil {
+		if err := output.WriteFileCached(outputDir, outPath, page.RenderedBody, dirCache); err != nil {
 			return nil, fmt.Errorf("writing output %s: %w", outPath, err)
 		}
 		// Write additional output formats (spec §1e)
 		for format, body := range page.FormatBodies {
 			fmtPath := formatOutputPath(outPath, format)
-			if err := output.WriteFile(outputDir, fmtPath, body); err != nil {
+			if err := output.WriteFileCached(outputDir, fmtPath, body, dirCache); err != nil {
 				return nil, fmt.Errorf("writing %s output %s: %w", format, fmtPath, err)
 			}
 		}
@@ -779,7 +780,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			return nil, fmt.Errorf("resolving aliases for %s: %w", page.RelPath, err)
 		}
 		if len(aliases) > 0 {
-			if err := output.WriteAliases(outputDir, aliases, page.RenderedBody); err != nil {
+			if err := output.WriteAliasesCached(outputDir, aliases, page.RenderedBody, dirCache); err != nil {
 				return nil, fmt.Errorf("writing aliases for %s: %w", page.RelPath, err)
 			}
 		}
@@ -1313,17 +1314,18 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		return nil, err
 	}
 	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
+	dirCache := output.NewDirectoryCache()
 	for _, page := range pagesToRender {
 		if !output.ShouldWrite(page.URL) {
 			continue
 		}
 		outPath := output.ComputeOutputPath(page.URL)
-		if err := output.WriteFile(outputDir, outPath, page.RenderedBody); err != nil {
+		if err := output.WriteFileCached(outputDir, outPath, page.RenderedBody, dirCache); err != nil {
 			return nil, fmt.Errorf("writing output %s: %w", outPath, err)
 		}
 		for format, fmtBody := range page.FormatBodies {
 			fmtPath := formatOutputPath(outPath, format)
-			if err := output.WriteFile(outputDir, fmtPath, fmtBody); err != nil {
+			if err := output.WriteFileCached(outputDir, fmtPath, fmtBody, dirCache); err != nil {
 				return nil, fmt.Errorf("writing %s output %s: %w", format, fmtPath, err)
 			}
 		}
@@ -1332,7 +1334,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 			return nil, fmt.Errorf("resolving aliases for %s: %w", page.RelPath, aliasErr)
 		}
 		if len(aliases) > 0 {
-			if err := output.WriteAliases(outputDir, aliases, page.RenderedBody); err != nil {
+			if err := output.WriteAliasesCached(outputDir, aliases, page.RenderedBody, dirCache); err != nil {
 				return nil, fmt.Errorf("writing aliases for %s: %w", page.RelPath, err)
 			}
 		}
