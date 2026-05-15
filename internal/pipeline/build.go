@@ -674,9 +674,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			}
 			switch modified := result.(type) {
 			case string:
-				pages[i].RenderedBody = []byte(modified)
+				pages[i].SetRenderedBody([]byte(modified))
 			case []byte:
-				pages[i].RenderedBody = modified
+				pages[i].SetRenderedBody(modified)
 			}
 			if reporter != nil {
 				reportUpdate(reporter, i+1, pages[i].RelPath, time.Since(applyStart))
@@ -740,7 +740,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 		for _, page := range pages {
 			if transformed, ok := finalHTML[renderedContentKey(page)]; ok {
-				page.RenderedBody = []byte(transformed)
+				page.SetRenderedBody([]byte(transformed))
 			}
 		}
 		ssrSkipped = false
@@ -1298,7 +1298,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 			} else {
 				for _, page := range pagesToRender {
 					if transformed, ok := ssrResult[renderedContentKey(page)]; ok {
-						page.RenderedBody = []byte(transformed)
+						page.SetRenderedBody([]byte(transformed))
 					}
 				}
 				for relPath, html := range ssrResult {
@@ -1613,7 +1613,7 @@ func renderPages(pages []*content.Page, rc *RenderContext, reporter ProgressRepo
 			}
 		}
 
-		page.RenderedBody = html
+		page.SetRenderedBody(html)
 		rendered = append(rendered, page.RelPath)
 		if reporter != nil {
 			reportUpdate(reporter, i+1, page.RelPath, time.Since(pageStart))
@@ -1927,7 +1927,7 @@ func renderPageThroughLayouts(page *content.Page, layoutPath, layoutsDir, engine
 		if err != nil {
 			return fmt.Errorf("rendering layout %s: %w", lp, err)
 		}
-		page.RenderedBody = layoutResult
+		page.SetRenderedBody(layoutResult)
 	}
 
 	return nil
@@ -1988,7 +1988,7 @@ func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection,
 			if err != nil {
 				return nil, fmt.Errorf("rendering taxonomy page %s: %w", taxPage.URL, err)
 			}
-			taxPage.RenderedBody = out
+			taxPage.SetRenderedBody(out)
 			if err := renderPageFormats(taxPage, layoutsDir, engineName, rc); err != nil {
 				return nil, err
 			}
@@ -2440,7 +2440,7 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 		if modified, ok := toGoMap(result); ok {
 			if scope == nil || scope.WantsField("html") {
 				if html, ok := modified["html"].(string); ok {
-					page.RenderedBody = []byte(html)
+					page.SetRenderedBody([]byte(html))
 				}
 			}
 			if scope == nil || scope.WantsField("toc") {
@@ -2454,9 +2454,9 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 				}
 			}
 		} else if s, ok := result.(string); ok {
-			page.RenderedBody = []byte(s)
+			page.SetRenderedBody([]byte(s))
 		} else if b, ok := result.([]byte); ok {
-			page.RenderedBody = b
+			page.SetRenderedBody(b)
 		}
 	}
 	return nil
