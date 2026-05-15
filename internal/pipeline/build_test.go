@@ -8,9 +8,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/yuin/goldmark"
 
 	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/config"
+	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/pipeline"
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
@@ -3254,6 +3256,53 @@ var _ = Describe("Build Pipeline", func() {
 				"page-2 must render through shared layout")
 			Expect(result.RenderedContent["page-3.md"]).To(ContainSubstring("Third"),
 				"page-3 must render through shared layout")
+		})
+	})
+
+	// ── Shared goldmark on RenderContext (issue #353) ────────────────
+	// One pipeline goldmark instance per build, stored on RenderContext.
+	// Created in Build() after createEngine and hook discovery.
+
+	Describe("Shared goldmark on RenderContext", func() {
+		It("RenderContext includes a Goldmark field for shared instance reuse (issue #353)", func() {
+			md := content.CreateGoldmark(content.MarkdownOptions{
+				Unsafe:        true,
+				Typographer:   true,
+				TemplateTags:  true,
+				AutoHeadingID: true,
+			})
+			rc := pipeline.RenderContext{
+				Goldmark: md,
+			}
+			Expect(rc.Goldmark).NotTo(BeNil(),
+				"RenderContext must have a Goldmark field (goldmark.Markdown) — "+
+					"one pipeline goldmark instance is created per build in Build() "+
+					"after createEngine and hook discovery, then stored on "+
+					"RenderContext for reuse across all page renders (issue #353)")
+			_ = goldmark.New
+		})
+
+		It("multiple pages rendered with shared goldmark produce correct output (issue #353)", func() {
+			cfg := &config.Config{
+				Title:   "Shared Goldmark Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			files := map[string]string{
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"content/page-1.md":     "---\ntitle: Page 1\nlayout: default\n---\n## Introduction\n\nFirst page.",
+				"content/page-2.md":     "---\ntitle: Page 2\nlayout: default\n---\n## Getting Started\n\nSecond page.",
+				"content/page-3.md":     "---\ntitle: Page 3\nlayout: default\n---\n## API Reference\n\nThird page.",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RenderedContent["page-1.md"]).To(ContainSubstring("Introduction"),
+				"page-1 must render correctly — the shared goldmark instance "+
+					"on RenderContext must not leak state between pages (issue #353)")
+			Expect(result.RenderedContent["page-2.md"]).To(ContainSubstring("Getting Started"),
+				"page-2 must render correctly with the same goldmark instance")
+			Expect(result.RenderedContent["page-3.md"]).To(ContainSubstring("API Reference"),
+				"page-3 must render correctly with the same goldmark instance")
 		})
 	})
 })

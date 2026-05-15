@@ -104,7 +104,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
 - **Set**: Intersect, Union, Complement
 - **URL**: URLEncode, URLDecode, AbsoluteURL
 - **Math**: Plus, Minus, Times, DividedBy (guard div-by-zero), Modulo, Ceil, Floor, Round, Abs
-- **Content**: Markdownify (issue #366) — must use the same config-driven goldmark extensions and parser options as the main content renderer. `createEngine(cfg)` should initialize the shared goldmark instance from `cfg.Content.Markdown` (same `Unsafe`, `Typographer`, `AutoHeadingID` settings). Use a shared instance, not per-call allocation. Does NOT run template tag protection or code escape — processes already-rendered values. If the site sets `autoHeadingID: false`, `markdownify` also skips heading IDs.
+- **Content**: Markdownify (issues #366, #353) — must use the same config-driven goldmark extensions and parser options as the main content renderer. `createEngine(cfg)` initializes the shared goldmark instance from `cfg.Content.Markdown` (same `Unsafe`, `Typographer`, `AutoHeadingID` settings). Uses its own separate `goldmark.Markdown` instance (not the pipeline's `RenderContext.Goldmark`) because markdownify forces `TemplateTags: false` and has no hooks — it processes already-rendered values. Both instances read base config from `cfg.Content.Markdown`. If the site sets `autoHeadingID: false`, `markdownify` also skips heading IDs.
 - **Regex**: FindRE, ReplaceRE
 - **Data**: JSONFilter, Default
 - **Assets**: Fingerprint, SafeHTML
@@ -160,7 +160,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
   Default `content.formats`: `["md", "html"]`. `.liquid` is a valid content format only when engine is `liquid` — when engine is `gotemplate`, `.liquid` files are always passthrough even if in formats list.
 
 **markdown.go**:
-- `RenderMarkdown`: Configure goldmark with extensions (tables, task lists, typographer, footnotes). Handle `Unsafe` (raw HTML passthrough). Handle `TemplateTags` via a custom goldmark extension (issue #564) — see **Template tag goldmark extension** below. Handle `TemplateBlocks` (issue #202) via the same extension's block parser. NO placeholder substitution — the `protectTemplateTags`/`restoreTemplateTags` functions, `blockShortcodeLineRe` regex, and all placeholder logic must be removed and replaced by proper goldmark parser extensions.
+- `RenderMarkdown` (issue #353): Consolidated from `RenderMarkdown` + `RenderMarkdownWithTOC` into a single function. New signature: `RenderMarkdown(source []byte, md goldmark.Markdown) ([]byte, []TOCEntry, error)`. Accepts a pre-built `goldmark.Markdown` instance instead of `MarkdownOptions` — the caller creates the instance via `CreateGoldmark(opts)` once and reuses it. Always returns TOC (AST heading walk is negligible cost). `BuildPhase1` discards TOC with `_`. `renderPages` uses it for `page.TOC`. Handles `escapeTemplateTags` internally when TemplateTags is disabled. `RenderMarkdownWithTOC` is removed — all callers use the consolidated `RenderMarkdown`. Configure goldmark with extensions (tables, task lists, typographer, footnotes). Handle `Unsafe` (raw HTML passthrough). Handle `TemplateTags` via a custom goldmark extension (issue #564) — see **Template tag goldmark extension** below. Handle `TemplateBlocks` (issue #202) via the same extension's block parser. NO placeholder substitution — the `protectTemplateTags`/`restoreTemplateTags` functions, `blockShortcodeLineRe` regex, and all placeholder logic must be removed and replaced by proper goldmark parser extensions.
 
   **Template tag goldmark extension** (issue #564):
 
@@ -198,25 +198,25 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
   - `restoreTemplateTags()` function
   - `blockShortcodeLineRe` regex
   - `preprocessSource()` reduced to only the escape path (or removed, with escape logic inlined)
-  - All placeholder logic in `RenderMarkdown()` and `RenderMarkdownWithTOC()`
+  - All placeholder logic in `RenderMarkdown()` (formerly split across `RenderMarkdown` and `RenderMarkdownWithTOC`, consolidated per issue #353)
 
   **What remains unchanged**:
   - `escapeTemplateTags()` and `templateTagPattern` (used for `templateTags: false` path)
-  - `CreateGoldmark()` signature and `MarkdownOptions` struct
+  - `CreateGoldmark()` signature and `MarkdownOptions` struct (used by callers to build the goldmark instance before passing to `RenderMarkdown`)
   - All render hook logic in `render_hooks.go`
   - `escapeTemplateTagsInCode()` in `build.go` (runs after markdown rendering, independent)
 
   **TOC integration**: `extractText()` in `markdown.go` only collects `ast.Text` nodes for TOC entries. With the new extension, `TemplateTagInline` inside headings (e.g., `## {{ page.section_title }}`) must also contribute to TOC text. Update `extractText` to write `node.TagText` for `TemplateTagInline` nodes.
 - `RenderText`: Wrap in `<pre>` tags.
 - **Auto heading IDs + heading attributes (issue #274, #306)**: Add `AutoHeadingID bool` to `MarkdownOptions` (default true from `cfg.Content.Markdown.AutoHeadingID`). When true, enable `parser.WithAutoHeadingID()` and `parser.WithAttribute()` in goldmark parser options. When false, skip both — headings render without `id` attributes. These are goldmark core options, not extensions. Heading attributes (`{#custom-id .class}`) only work when `AutoHeadingID` is true.
-- **TOC extraction (issue #274)**: Add a `TOC` field to `MarkdownOptions` (bool, default true from `cfg.Content.Markdown.TOC`). When true, `RenderMarkdown` walks the goldmark AST after parsing (before HTML rendering) and collects heading nodes (h2-h6, excluding h1) into a nested `[]TOCEntry` structure. `TOCEntry` has `ID`, `Text`, `Level`, `Children`. Returns the TOC alongside the rendered HTML — change return to `([]byte, []TOCEntry, error)` or add a `TOCResult` wrapper. The pipeline stores the result on `page.TOC` so templates can access `page.toc`. The `onContentTransformed` hook receives the page with `TOC` populated — plugins can mutate it.
+- **TOC extraction (issue #274)**: `RenderMarkdown` always walks the goldmark AST after parsing (before HTML rendering) and collects heading nodes (h2-h6, excluding h1) into a nested `[]TOCEntry` structure. `TOCEntry` has `ID`, `Text`, `Level`, `Children`. Returns the TOC alongside the rendered HTML as `([]byte, []TOCEntry, error)` (consolidated signature per issue #353). The pipeline stores the result on `page.TOC` so templates can access `page.toc`. The `onContentTransformed` hook receives the page with `TOC` populated — plugins can mutate it.
 - **Render hooks (issues #273, #310, #311)**:
   
   **MarkdownOptions changes**: Add `Hooks map[string]string` (hook name → template source) and `HookRenderer func(templateSrc string, ctx map[string]interface{}) (string, error)` callback. The `content` package cannot import `template` (circular dependency), so the pipeline provides the renderer callback. When `HookRenderer` is nil, hooks in the `Hooks` map are ignored (no fallback to a bare Liquid environment).
   
   **Discovery (`internal/template/hooks.go`, issue #311)**: `DiscoverRenderHooks(layoutsDir string, engine string) (map[string]string, error)` scans `layouts/_markup/` for `render-{type}.{ext}` files. Extension matches the configured engine (`.liquid` for liquid, `.html` for gotemplate). Returns a map: `"codeblock" → templateSource`, `"codeblock-mermaid" → templateSource`, `"link" → templateSource`, etc. Missing `_markup/` directory is not an error (returns empty map). Unrecognized filenames are silently ignored. Valid hook names: `blockquote`, `codeblock`, `codeblock-{language}`, `heading`, `image`, `link`, `table`.
   
-  **Pipeline wiring (issue #311)**: In `renderPages()` and the standalone `mdOpts` construction in `Build()`, call `tmpl.DiscoverRenderHooks(layoutsDir, engineName)` once at the start. Set `mdOpts.Hooks` to the returned map. Set `mdOpts.HookRenderer` to a closure that wraps `engine.Parse()` + `tpl.Render()`. Parsed templates should be cached (parse once, render per node).
+  **Pipeline wiring (issues #311, #353)**: In `Build()`, after `createEngine` returns, call `tmpl.DiscoverRenderHooks(layoutsDir, engineName)` once. Build `mdOpts` with hooks and `HookRenderer` closure (wraps `engine.Parse()` + `tpl.Render()`), then call `content.CreateGoldmark(mdOpts)` to create the pipeline goldmark instance. Store it on `RenderContext.Goldmark` (`goldmark.Markdown`). `renderPages` uses `rc.Goldmark` directly — no longer constructs `mdOpts` or discovers hooks internally. Hook discovery moves from `renderPages` to `Build()` so the goldmark instance is fully configured before rendering starts. Parsed templates should be cached (parse once, render per node).
   
   **Goldmark integration**: For each hook type in `opts.Hooks`, register a custom `renderer.NodeRenderer` that builds the `markup.*` context from the AST node and calls `opts.HookRenderer(templateSrc, ctx)`. Context: `inner` from rendered children, `language` from fenced code block, `level` from heading, `id` from slugified heading text, `src`/`alt`/`title` from image, `destination`/`text`/`title`/`is_external` from link.
 
