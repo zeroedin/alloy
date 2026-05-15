@@ -56,16 +56,17 @@ func (p *TTYProgress) Update(current int, filePath string, elapsed time.Duration
 	// Build progress bar
 	barWidth := 25
 	filled := barWidth * current / p.total
-	bar := strings.Repeat("=", filled)
-	if filled < barWidth {
-		bar += ">"
-		bar += strings.Repeat(" ", barWidth-filled-1)
-	}
+	bar := strings.Repeat("▰", filled) + strings.Repeat("▱", barWidth-filled)
 
-	// Truncate file path if needed
-	prefix := fmt.Sprintf("[alloy] %-12s [%s] %3d%% (%d/%d) ",
+	// Truncate file path if needed.
+	// The bar uses multi-byte Unicode runes that each occupy one terminal
+	// column, so visual width differs from byte length.
+	meta := fmt.Sprintf("[alloy] %-12s  %3d%% (%d/%d) ",
+		p.stageName, pct, current, p.total)
+	visualWidth := len(meta) + barWidth
+	prefix := fmt.Sprintf("[alloy] %-12s %s %3d%% (%d/%d) ",
 		p.stageName, bar, pct, current, p.total)
-	maxPath := p.width - len(prefix)
+	maxPath := p.width - visualWidth
 	display := filePath
 	if maxPath <= 0 {
 		display = ""
@@ -79,7 +80,7 @@ func (p *TTYProgress) Update(current int, filePath string, elapsed time.Duration
 
 	fmt.Fprintf(p.w, "\r%s%s", prefix, display)
 	// Clear any trailing characters from previous longer lines
-	if remaining := p.width - len(prefix) - len(display); remaining > 0 {
+	if remaining := p.width - visualWidth - len(display); remaining > 0 {
 		fmt.Fprintf(p.w, "%s", strings.Repeat(" ", remaining))
 	}
 }
