@@ -141,6 +141,77 @@ var _ = Describe("Discovery", func() {
 				Expect(bundlePage).NotTo(BeNil())
 				Expect(bundlePage.BundleAssets).To(ContainElement("hero.jpg"))
 			})
+
+			It("discovers nested bundles independently (issue #361)", func() {
+				tmp, err := os.MkdirTemp("", "alloy-nested-bundle-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmp) })
+
+				Expect(os.MkdirAll(filepath.Join(tmp, "blog", "post", "gallery"), 0o755)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(tmp, "blog", "post", "index.md"),
+					[]byte("---\ntitle: Post\n---\n# Post"), 0o644)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(tmp, "blog", "post", "hero.jpg"),
+					[]byte("fake-jpg"), 0o644)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(tmp, "blog", "post", "gallery", "index.md"),
+					[]byte("---\ntitle: Gallery\n---\n# Gallery"), 0o644)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(tmp, "blog", "post", "gallery", "photo.png"),
+					[]byte("fake-png"), 0o644)).To(Succeed())
+
+				pages, err := content.DiscoverWithFormats(tmp, []string{"md"})
+				Expect(err).NotTo(HaveOccurred())
+
+				var postPage, galleryPage *content.Page
+				for _, p := range pages {
+					switch {
+					case p.RelPath == "blog/post/index.md":
+						postPage = p
+					case p.RelPath == "blog/post/gallery/index.md":
+						galleryPage = p
+					}
+				}
+				Expect(postPage).NotTo(BeNil(), "outer bundle must be discovered")
+				Expect(postPage.Bundle).To(BeTrue(),
+					"outer bundle index must be marked as a bundle — "+
+						"nested bundles must not interfere with parent bundle detection "+
+						"(issue #361: single-pass walk must handle nested bundles)")
+				Expect(galleryPage).NotTo(BeNil(), "inner bundle must be discovered")
+				Expect(galleryPage.Bundle).To(BeTrue(),
+					"inner nested bundle must also be marked as a bundle — "+
+						"both parent and child bundles must be identified correctly "+
+						"in a single filesystem walk (issue #361)")
+			})
+
+			It("collects bundle assets regardless of filesystem walk order (issue #361)", func() {
+				tmp, err := os.MkdirTemp("", "alloy-bundle-order-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmp) })
+
+				Expect(os.MkdirAll(filepath.Join(tmp, "docs", "guide"), 0o755)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(tmp, "docs", "guide", "index.md"),
+					[]byte("---\ntitle: Guide\n---\n# Guide"), 0o644)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(tmp, "docs", "guide", "appendix.pdf"),
+					[]byte("fake-pdf"), 0o644)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(tmp, "docs", "guide", "diagram.svg"),
+					[]byte("<svg/>"), 0o644)).To(Succeed())
+
+				pages, err := content.DiscoverWithFormats(tmp, []string{"md"})
+				Expect(err).NotTo(HaveOccurred())
+
+				var guidePage *content.Page
+				for _, p := range pages {
+					if p.RelPath == "docs/guide/index.md" {
+						guidePage = p
+						break
+					}
+				}
+				Expect(guidePage).NotTo(BeNil())
+				Expect(guidePage.Bundle).To(BeTrue())
+				Expect(guidePage.BundleAssets).To(ConsistOf("appendix.pdf", "diagram.svg"),
+					"bundle assets must include all co-located non-content files — "+
+						"files sorted before index.md (like appendix.pdf) must not be "+
+						"missed when discovery uses a single-pass walk with deferred "+
+						"page building (issue #361)")
+			})
 		})
 
 		Context("index files", func() {
