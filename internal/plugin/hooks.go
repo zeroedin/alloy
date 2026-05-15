@@ -31,8 +31,8 @@ const (
 // The context carries the per-hook timeout deadline for cooperative cancellation.
 type HookFunc func(ctx context.Context, payload interface{}) (interface{}, error)
 
-// BatchProgressFunc is called after each item completes during batch hook
-// execution, reporting the running completed count and total item count.
+// BatchProgressFunc is called after each item is dispatched during batch hook
+// execution (including timed-out items), reporting the running count and total.
 type BatchProgressFunc func(completed, total int)
 
 // BatchHookFunc processes multiple payloads in a single call, returning one

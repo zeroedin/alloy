@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"sync"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zeroedin/alloy/internal/assets"
@@ -672,9 +672,13 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		var progressFn plugin.BatchProgressFunc
 		if reporter != nil {
 			var mu sync.Mutex
+			var highWater int
 			progressFn = func(completed, total int) {
 				mu.Lock()
-				reportUpdate(reporter, completed, "", 0)
+				if completed > highWater {
+					highWater = completed
+					reportUpdate(reporter, completed, "", 0)
+				}
 				mu.Unlock()
 			}
 		}
