@@ -65,15 +65,15 @@ func (c *Cache) Clone() *Cache {
 	}
 	for k, v := range c.templates {
 		cp := make(map[string]bool, len(v))
-		for p := range v {
-			cp[p] = true
+		for p, val := range v {
+			cp[p] = val
 		}
 		cloned.templates[k] = cp
 	}
 	for k, v := range c.directoryData {
 		cp := make(map[string]bool, len(v))
-		for p := range v {
-			cp[p] = true
+		for p, val := range v {
+			cp[p] = val
 		}
 		cloned.directoryData[k] = cp
 	}
