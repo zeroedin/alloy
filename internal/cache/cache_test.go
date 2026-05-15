@@ -107,6 +107,19 @@ var _ = Describe("Build Cache (§10 Performance Architecture)", func() {
 				"untracked template should return nil")
 		})
 
+		It("TrackTemplateUsage deduplicates repeated page-template pairs (issue #589)", func() {
+			c := cache.New()
+			c.TrackTemplateUsage("content/blog/post-1.md", "layouts/post.liquid")
+			c.TrackTemplateUsage("content/blog/post-1.md", "layouts/post.liquid")
+			c.TrackTemplateUsage("content/blog/post-1.md", "layouts/post.liquid")
+
+			pages := c.InvalidatedPages("layouts/post.liquid")
+			Expect(pages).To(HaveLen(1),
+				"TrackTemplateUsage must deduplicate — calling it three times with "+
+					"the same page-template pair must produce exactly one entry, "+
+					"not three (issue #589: replace O(n) slice scan with map lookup)")
+		})
+
 	})
 
 	// ── Cache lifecycle ──────────────────────────────────────────────
@@ -221,6 +234,19 @@ var _ = Describe("Build Cache (§10 Performance Architecture)", func() {
 			c.SetHash("__component:ds-card__", "old_definition_hash")
 			Expect(c.HasChanged("__component:ds-card__", "new_definition_hash")).To(BeTrue(),
 				"component definition change must trigger Phase 2 re-SSR")
+		})
+
+		It("TrackDirectoryData deduplicates repeated page-directory pairs (issue #589)", func() {
+			c := cache.New()
+			c.TrackDirectoryData("content/blog/post-1.md", "content/blog/")
+			c.TrackDirectoryData("content/blog/post-1.md", "content/blog/")
+			c.TrackDirectoryData("content/blog/post-1.md", "content/blog/")
+
+			affected := c.InvalidatedByDirectoryData("content/blog/")
+			Expect(affected).To(HaveLen(1),
+				"TrackDirectoryData must deduplicate — calling it three times with "+
+					"the same page-directory pair must produce exactly one entry, "+
+					"not three (issue #589: replace O(n) slice scan with map lookup)")
 		})
 	})
 })
