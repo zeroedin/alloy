@@ -49,7 +49,6 @@ func discoverInternal(contentDir string, formats []string, collectPassthrough bo
 	type fileEntry struct {
 		path string
 		rel  string
-		raw  []byte
 		name string
 		ext  string
 	}
@@ -58,7 +57,9 @@ func discoverInternal(contentDir string, formats []string, collectPassthrough bo
 	var entries []fileEntry
 	var passthroughs []string
 
-	// Single walk: collect all files and identify bundles simultaneously
+	// Single walk: collect metadata and identify bundles simultaneously.
+	// File contents are read in the page-building loop to avoid buffering
+	// all raw bytes in memory at once.
 	err = filepath.WalkDir(contentDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -102,15 +103,9 @@ func discoverInternal(contentDir string, formats []string, collectPassthrough bo
 			return err
 		}
 
-		raw, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return readErr
-		}
-
 		entries = append(entries, fileEntry{
 			path: path,
 			rel:  filepath.ToSlash(rel),
-			raw:  raw,
 			name: name,
 			ext:  ext,
 		})
@@ -123,8 +118,13 @@ func discoverInternal(contentDir string, formats []string, collectPassthrough bo
 	// Build pages using fully populated bundleDirs
 	var pages []*Page
 	for _, e := range entries {
-		if !hasFrontMatter(e.raw) && e.ext != ".md" {
-			if e.ext == ".html" && isFullHTMLDocument(e.raw) {
+		raw, readErr := os.ReadFile(e.path)
+		if readErr != nil {
+			return nil, nil, fmt.Errorf("content discovery error: %s: %w", contentDir, readErr)
+		}
+
+		if !hasFrontMatter(raw) && e.ext != ".md" {
+			if e.ext == ".html" && isFullHTMLDocument(raw) {
 				if collectPassthrough {
 					passthroughs = append(passthroughs, e.rel)
 				}
@@ -133,8 +133,8 @@ func discoverInternal(contentDir string, formats []string, collectPassthrough bo
 			page := &Page{
 				RelPath:     e.rel,
 				FrontMatter: map[string]interface{}{},
-				Body:        e.raw,
-				Content:     e.raw,
+				Body:        raw,
+				Content:     raw,
 			}
 			page.SourcePath = e.path
 			parts := strings.SplitN(e.rel, "/", 2)
@@ -162,7 +162,7 @@ func discoverInternal(contentDir string, formats []string, collectPassthrough bo
 			continue
 		}
 
-		page, err := BuildPage(e.rel, e.raw)
+		page, err := BuildPage(e.rel, raw)
 		if err != nil {
 			return nil, nil, fmt.Errorf("content discovery error: %s: %w", contentDir, err)
 		}
