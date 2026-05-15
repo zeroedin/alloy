@@ -109,6 +109,7 @@ type RenderContext struct {
 	Pages          []*content.Page
 	Engine         tmpl.TemplateEngine
 	TemplateUsage  map[string][]string
+	LayoutCache    map[string]tmpl.Template
 }
 
 // Build runs the complete build pipeline (Phase 0 through Phase 3).
@@ -594,6 +595,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	timer.Start("Pass 2: layout render")
 	reportStartStage("Layouts", len(pages))
 	layoutPageIdx := 0
+	layoutCache := make(map[string]tmpl.Template)
 	for _, batch := range batches {
 		rc := &RenderContext{
 			Cfg:            cfg,
@@ -604,6 +606,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			Pages:          pages,
 			Engine:         engine,
 			TemplateUsage:  templateUsage,
+			LayoutCache:    layoutCache,
 		}
 		for _, page := range batch.pages {
 			var pageStart time.Time
@@ -1174,6 +1177,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		Pages:          allPages,
 		Engine:         ps.Engine,
 		TemplateUsage:  templateUsage,
+		LayoutCache:    make(map[string]tmpl.Template),
 	}
 	rendered, renderErr := renderPages(pagesToRender, rc)
 	if renderErr != nil {
@@ -1895,7 +1899,7 @@ func renderPageFormats(page *content.Page, layoutsDir, engineName string, rc *Re
 		if err != nil {
 			return fmt.Errorf("no %s layout found for %s: %w", format, page.RelPath, err)
 		}
-		fmtTpl, err := parseLayout(fmtLayoutPath, rc.Engine)
+		fmtTpl, err := parseLayout(fmtLayoutPath, rc.Engine, rc.LayoutCache)
 		if err != nil {
 			return fmt.Errorf("format layout: %w", err)
 		}
@@ -1930,7 +1934,7 @@ func renderPageThroughLayouts(page *content.Page, layoutPath, layoutsDir, engine
 	}
 
 	for _, lp := range chain {
-		tpl, err := parseLayout(lp, rc.Engine)
+		tpl, err := parseLayout(lp, rc.Engine, rc.LayoutCache)
 		if err != nil {
 			return err
 		}
@@ -1978,7 +1982,7 @@ func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection,
 		if err != nil {
 			return nil, fmt.Errorf("taxonomy %q layout: %w", taxName, err)
 		}
-		tpl, err := parseLayout(layoutPath, rc.Engine)
+		tpl, err := parseLayout(layoutPath, rc.Engine, rc.LayoutCache)
 		if err != nil {
 			return nil, fmt.Errorf("taxonomy %q layout: %w", taxName, err)
 		}
@@ -2733,7 +2737,12 @@ func buildPermalinkCfg(ps *PipelineState, fallback map[string]string) map[string
 	return result
 }
 
-func parseLayout(path string, engine tmpl.TemplateEngine) (tmpl.Template, error) {
+func parseLayout(path string, engine tmpl.TemplateEngine, layoutCache map[string]tmpl.Template) (tmpl.Template, error) {
+	if layoutCache != nil {
+		if cached, ok := layoutCache[path]; ok {
+			return cached, nil
+		}
+	}
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading layout %s: %w", path, err)
@@ -2742,6 +2751,9 @@ func parseLayout(path string, engine tmpl.TemplateEngine) (tmpl.Template, error)
 	tpl, err := engine.Parse(path, []byte(stripped))
 	if err != nil {
 		return nil, fmt.Errorf("parsing layout %s: %w", path, err)
+	}
+	if layoutCache != nil {
+		layoutCache[path] = tpl
 	}
 	return tpl, nil
 }
