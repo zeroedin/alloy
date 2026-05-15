@@ -651,7 +651,12 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// Wait for worker pool before dispatching hooks.
 	if workerPoolReady != nil {
-		<-workerPoolReady
+		select {
+		case <-workerPoolReady:
+		default:
+			reportMessage(reporter, "Waiting for plugin workers...")
+			<-workerPoolReady
+		}
 	}
 
 	// Fire onPageRendered hooks with batch dispatch for subprocess plugins.
