@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -1834,8 +1835,7 @@ func escapeTemplateTagsInCode(html []byte) []byte {
 
 // hasTemplateSyntax checks if content contains Liquid template tags.
 func hasTemplateSyntax(body []byte) bool {
-	s := string(body)
-	return strings.Contains(s, "{{") || strings.Contains(s, "{%")
+	return bytes.Contains(body, []byte("{{")) || bytes.Contains(body, []byte("{%"))
 }
 
 // combinedSiteData builds the site data map expected by BuildTemplateContext,
