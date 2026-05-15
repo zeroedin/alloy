@@ -12,6 +12,7 @@ import (
 	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/pipeline"
+	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
 // spyReporter records all ProgressReporter calls for test assertions.
@@ -3214,6 +3215,45 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(result).NotTo(BeNil(),
 				"Build with nil reporter must succeed without panicking — "+
 					"this is the --quiet and piped non-TTY path")
+		})
+	})
+
+	// ── Layout template caching (issue #585) ────────────────────────
+	// parseLayout reads + strips + parses a layout file on every call.
+	// RenderContext must cache parsed templates so pages sharing a
+	// layout avoid redundant file I/O and template parsing.
+
+	Describe("Layout template caching", func() {
+		It("RenderContext includes a LayoutCache for parsed template reuse (issue #585)", func() {
+			rc := pipeline.RenderContext{
+				LayoutCache: make(map[string]tmpl.Template),
+			}
+			Expect(rc.LayoutCache).NotTo(BeNil(),
+				"RenderContext must have a LayoutCache field (map[string]tmpl.Template) "+
+					"to avoid redundant file I/O and template parsing when multiple "+
+					"pages share the same layout (issue #585)")
+		})
+
+		It("multiple pages sharing a layout all render correctly (issue #585)", func() {
+			cfg := &config.Config{
+				Title:   "Cache Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			content := map[string]string{
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"content/page-1.md":     "---\ntitle: Page 1\nlayout: default\n---\n# First",
+				"content/page-2.md":     "---\ntitle: Page 2\nlayout: default\n---\n# Second",
+				"content/page-3.md":     "---\ntitle: Page 3\nlayout: default\n---\n# Third",
+			}
+			result, err := pipeline.BuildWithContent(cfg, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RenderedContent["page-1.html"]).To(ContainSubstring("First"),
+				"page-1 must render through shared layout")
+			Expect(result.RenderedContent["page-2.html"]).To(ContainSubstring("Second"),
+				"page-2 must render through shared layout")
+			Expect(result.RenderedContent["page-3.html"]).To(ContainSubstring("Third"),
+				"page-3 must render through shared layout")
 		})
 	})
 })
