@@ -431,6 +431,8 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
      from batches[i].taxonomies (built in step 9) and cfg.Taxonomies config:
      - Index page: `/<taxonomy-name>/` (e.g., `/tags/`)
      - Term pages: permalink pattern with `:slug` replaced (e.g., `/tags/golang/`)
+     - Only include taxonomies where ShouldRender() is true (render: false
+       taxonomies build collection data but do not generate output pages)
      No rendering needed — just URL computation from already-available data.
      All inputs are finalized after onPagesReady (step 9 in §2).
      If conflicts detected, return error immediately — no rendering occurs.
