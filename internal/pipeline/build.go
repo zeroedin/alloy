@@ -1454,11 +1454,7 @@ func BuildPhase1(cfg *config.Config) (map[string]string, error) {
 	md := content.CreateGoldmark(mdOpts)
 
 	for _, page := range pages {
-		body := page.Body
-		if !mdOpts.TemplateTags {
-			body = content.EscapeTemplateTags(body)
-		}
-		html, _, err := content.RenderMarkdownWith(body, md)
+		html, _, err := content.RenderMarkdown(page.Body, md)
 		if err != nil {
 			return nil, fmt.Errorf("template rendering: %s: %w", page.RelPath, err)
 		}
@@ -1636,12 +1632,8 @@ func renderPages(pages []*content.Page, rc *RenderContext, reporter ProgressRepo
 		var err error
 		switch ext {
 		case ".md":
-			mdBody := body
-			if !mdOpts.TemplateTags {
-				mdBody = content.EscapeTemplateTags(mdBody)
-			}
 			var toc []content.TOCEntry
-			html, toc, err = content.RenderMarkdownWith(mdBody, md)
+			html, toc, err = content.RenderMarkdown(body, md)
 			if err == nil {
 				page.TOC = toc
 			}
