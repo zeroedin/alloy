@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -58,10 +59,14 @@ func copyMap(m map[string]interface{}) map[string]interface{} {
 // LoadDirectoryCascade loads and merges _data.yaml files from root through
 // nested directories, producing the cumulative data at each level.
 // Returns a map of directory path -> merged data at that level.
+//
+// Uses a two-pass approach: first collects raw _data.yaml contents, then
+// accumulates in depth order so that (a) parent data is always available
+// before children regardless of WalkDir ordering, and (b) gaps in the
+// _data.yaml chain are bridged by walking up to the nearest ancestor.
 func LoadDirectoryCascade(contentDir string) (map[string]map[string]interface{}, error) {
-	result := make(map[string]map[string]interface{})
+	raw := make(map[string]map[string]interface{})
 
-	// Normalize the contentDir to get its base name for prefix keys
 	contentDir = filepath.Clean(contentDir)
 	baseName := filepath.Base(contentDir)
 
@@ -86,29 +91,47 @@ func LoadDirectoryCascade(contentDir string) (map[string]map[string]interface{},
 			return err
 		}
 
-		// Compute the relative directory key
 		dir := filepath.Dir(path)
 		rel, err := filepath.Rel(filepath.Dir(contentDir), dir)
 		if err != nil {
 			return err
 		}
-		// Normalize to forward slashes with trailing slash
 		key := strings.ReplaceAll(rel, string(filepath.Separator), "/")
 		if !strings.HasSuffix(key, "/") {
 			key += "/"
 		}
 
-		// Find the parent directory's accumulated data
-		parentKey := findParentKey(key, baseName)
-		if parentData, ok := result[parentKey]; ok {
-			data = DeepMerge(parentData, data)
-		}
-
-		result[key] = data
+		raw[key] = data
 		return nil
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	keys := make([]string, 0, len(raw))
+	for k := range raw {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return strings.Count(keys[i], "/") < strings.Count(keys[j], "/")
+	})
+
+	result := make(map[string]map[string]interface{}, len(raw))
+	for _, key := range keys {
+		data := raw[key]
+		parentKey := key
+		for {
+			next := findParentKey(parentKey, baseName)
+			if next == parentKey {
+				break
+			}
+			parentKey = next
+			if parentData, ok := result[parentKey]; ok {
+				data = DeepMerge(parentData, data)
+				break
+			}
+		}
+		result[key] = data
 	}
 
 	return result, nil
