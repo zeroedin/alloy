@@ -15,6 +15,16 @@ func fixtureContentDir() string {
 	return filepath.Join(filepath.Dir(file), "..", "..", "test", "fixtures", "cascade", "content")
 }
 
+func fixtureGapContentDir() string {
+	_, file, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(file), "..", "..", "test", "fixtures", "cascade-gap", "content")
+}
+
+func fixtureOrderingContentDir() string {
+	_, file, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(file), "..", "..", "test", "fixtures", "cascade-ordering", "content")
+}
+
 var _ = Describe("DeepMerge", func() {
 
 	// ── Deep merge rules ───────────────────────────────────────────────
@@ -397,6 +407,122 @@ var _ = Describe("DeepMerge", func() {
 				"FindCascadeData for blog/deep/nested/leaf.md must return the "+
 					"content/blog/deep/ entry — the nearest ancestor with data, "+
 					"already containing the full accumulated chain (issue #219)")
+		})
+	})
+
+	// ── Non-contiguous _data.yaml chains and WalkDir ordering (issue #708) ──
+	// Tests exercise two edge cases in LoadDirectoryCascade:
+	// 1. Gap scenario: intermediate directory has no _data.yaml but parent
+	//    and grandchild do — accumulation must bridge the gap.
+	// 2. WalkDir ordering: directories like "1-posts/" sort before "_data.yaml"
+	//    in lexical order, so WalkDir visits child _data.yaml before parent.
+	//    Two-pass accumulation handles this correctly.
+
+	Describe("Non-contiguous _data.yaml chains (issue #708)", func() {
+		It("LoadDirectoryCascade bridges gap in _data.yaml chain", func() {
+			result, err := cascade.LoadDirectoryCascade(fixtureGapContentDir())
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result).To(HaveKey("content/"),
+				"root _data.yaml must be loaded")
+			Expect(result).To(HaveKey("content/docs/advanced/"),
+				"grandchild _data.yaml must be loaded despite missing intermediate")
+			Expect(result).NotTo(HaveKey("content/docs/"),
+				"intermediate directory without _data.yaml must not have an entry")
+		})
+
+		It("grandchild entry inherits root data across gap", func() {
+			result, err := cascade.LoadDirectoryCascade(fixtureGapContentDir())
+			Expect(err).NotTo(HaveOccurred())
+
+			advanced := result["content/docs/advanced/"]
+			Expect(advanced).NotTo(BeNil())
+
+			Expect(advanced["layout"]).To(Equal("default"),
+				"grandchild must inherit layout from root across the gap — "+
+					"LoadDirectoryCascade must walk up past content/docs/ (no entry) "+
+					"to content/ (issue #708)")
+			Expect(advanced["theme"]).To(Equal("light"),
+				"grandchild must inherit theme from root across the gap")
+			Expect(advanced["category"]).To(Equal("advanced"),
+				"grandchild must retain its own category key")
+		})
+
+		It("FindCascadeData returns root data for pages in gap directory", func() {
+			result, err := cascade.LoadDirectoryCascade(fixtureGapContentDir())
+			Expect(err).NotTo(HaveOccurred())
+
+			data := cascade.FindCascadeData(result, "content", "docs/some-page.md")
+			Expect(data).NotTo(BeNil(),
+				"page in directory without _data.yaml must inherit from nearest "+
+					"ancestor — FindCascadeData must walk up past docs/ to content/")
+
+			rootEntry := result["content/"]
+			Expect(data).To(Equal(rootEntry),
+				"FindCascadeData for docs/some-page.md must return content/ entry — "+
+					"the nearest ancestor with data (issue #708)")
+		})
+
+		It("FindCascadeData returns accumulated grandchild data across gap", func() {
+			result, err := cascade.LoadDirectoryCascade(fixtureGapContentDir())
+			Expect(err).NotTo(HaveOccurred())
+
+			data := cascade.FindCascadeData(result, "content", "docs/advanced/guide.md")
+			Expect(data).NotTo(BeNil())
+
+			Expect(data["layout"]).To(Equal("default"),
+				"page in grandchild must see layout inherited from root across gap")
+			Expect(data["category"]).To(Equal("advanced"),
+				"page in grandchild must see its own category")
+
+			advancedEntry := result["content/docs/advanced/"]
+			Expect(data).To(Equal(advancedEntry),
+				"FindCascadeData must return the accumulated grandchild entry — "+
+					"it already contains root data bridged across the gap (issue #708)")
+		})
+	})
+
+	Describe("WalkDir ordering with lexically-early directory names (issue #708)", func() {
+		It("LoadDirectoryCascade accumulates correctly when child sorts before parent _data.yaml", func() {
+			result, err := cascade.LoadDirectoryCascade(fixtureOrderingContentDir())
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result).To(HaveKey("content/"),
+				"root _data.yaml must be loaded")
+			Expect(result).To(HaveKey("content/1-posts/"),
+				"1-posts/ _data.yaml must be loaded")
+		})
+
+		It("child entry inherits parent data despite WalkDir processing child first", func() {
+			result, err := cascade.LoadDirectoryCascade(fixtureOrderingContentDir())
+			Expect(err).NotTo(HaveOccurred())
+
+			posts := result["content/1-posts/"]
+			Expect(posts).NotTo(BeNil())
+
+			Expect(posts["layout"]).To(Equal("default"),
+				"1-posts/ must inherit layout from root — WalkDir visits "+
+					"1-posts/_data.yaml before content/_data.yaml because '1' < '_', "+
+					"but two-pass accumulation ensures parent data is available (issue #708)")
+			Expect(posts["section"]).To(Equal("posts"),
+				"1-posts/ must retain its own section key")
+		})
+
+		It("FindCascadeData returns accumulated data for pages in ordering-sensitive directory", func() {
+			result, err := cascade.LoadDirectoryCascade(fixtureOrderingContentDir())
+			Expect(err).NotTo(HaveOccurred())
+
+			data := cascade.FindCascadeData(result, "content", "1-posts/article.md")
+			Expect(data).NotTo(BeNil())
+
+			Expect(data["layout"]).To(Equal("default"),
+				"page in 1-posts/ must see inherited layout from root")
+			Expect(data["section"]).To(Equal("posts"),
+				"page in 1-posts/ must see its own section")
+
+			postsEntry := result["content/1-posts/"]
+			Expect(data).To(Equal(postsEntry),
+				"FindCascadeData must return the accumulated 1-posts/ entry (issue #708)")
 		})
 	})
 })
