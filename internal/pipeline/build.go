@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yuin/goldmark"
+
 	"github.com/zeroedin/alloy/internal/assets"
 	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/cascade"
@@ -100,6 +102,7 @@ type RenderContext struct {
 	Engine         tmpl.TemplateEngine
 	TemplateUsage  map[string][]string
 	LayoutCache    map[string]tmpl.Template
+	Goldmark       goldmark.Markdown
 }
 
 // Build runs the complete build pipeline (Phase 0 through Phase 3).
@@ -473,6 +476,11 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	timer.Start("Pass 1b: content render")
 	reportMessage(reporter, fmt.Sprintf("%d pages found", len(pages)))
 	reportStartStage(reporter, "Rendering", len(pages))
+
+	// Create the goldmark instance once for all batches. Hook discovery
+	// and options are identical across batches since they come from the
+	// same config and engine.
+	var sharedGoldmark goldmark.Markdown
 	for i := range batches {
 		rc := &RenderContext{
 			Cfg:            cfg,
@@ -483,12 +491,16 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			Pages:          pages,
 			Engine:         engine,
 			TemplateUsage:  templateUsage,
+			Goldmark:       sharedGoldmark,
 		}
 		batchRendered, renderErr := renderPages(batches[i].pages, rc, reporter)
 		if renderErr != nil {
 			return nil, renderErr
 		}
 		rendered = append(rendered, batchRendered...)
+		if sharedGoldmark == nil {
+			sharedGoldmark = rc.Goldmark
+		}
 	}
 	reportEndStage(reporter)
 
@@ -1412,9 +1424,10 @@ func BuildPhase1(cfg *config.Config) (map[string]string, error) {
 		TemplateTags:  cfg.Content.Markdown.Goldmark.TemplateTagsValue(),
 		AutoHeadingID: cfg.Content.Markdown.Goldmark.AutoHeadingIDValue(),
 	}
+	md := content.CreateGoldmark(mdOpts)
 
 	for _, page := range pages {
-		html, err := content.RenderMarkdown(page.Body, mdOpts)
+		html, _, err := content.RenderMarkdownWith(page.Body, md)
 		if err != nil {
 			return nil, fmt.Errorf("template rendering: %s: %w", page.RelPath, err)
 		}
@@ -1571,6 +1584,13 @@ func renderPages(pages []*content.Page, rc *RenderContext, reporter ProgressRepo
 		}
 	}
 
+	if rc.Goldmark == nil {
+		mdOptsForGoldmark := mdOpts
+		mdOptsForGoldmark.AutoHeadingID = true
+		rc.Goldmark = content.CreateGoldmark(mdOptsForGoldmark)
+	}
+	md := rc.Goldmark
+
 	var rendered []string
 
 	for i, page := range pages {
@@ -1586,7 +1606,7 @@ func renderPages(pages []*content.Page, rc *RenderContext, reporter ProgressRepo
 		switch ext {
 		case ".md":
 			var toc []content.TOCEntry
-			html, toc, err = content.RenderMarkdownWithTOC(body, mdOpts)
+			html, toc, err = content.RenderMarkdownWith(body, md)
 			if err == nil {
 				page.TOC = toc
 			}
