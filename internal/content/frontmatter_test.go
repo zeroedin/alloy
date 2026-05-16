@@ -324,6 +324,15 @@ var _ = Describe("ParseFrontMatter", func() {
 				"HTML() must reflect the last RenderedBody assignment — "+
 					"the cache is populated on first access, after all mutations")
 		})
+
+		It("returns cached value even if RenderedBody is mutated after first call (issue #675)", func() {
+			p := &content.Page{RenderedBody: []byte("<p>Original</p>")}
+			first := p.HTML()
+			p.RenderedBody = []byte("<p>Mutated</p>")
+			Expect(p.HTML()).To(Equal(first),
+				"HTML() must return cached value — mutations after first "+
+					"access must not affect cache (issue #675)")
+		})
 	})
 
 	// ── Error format contracts ────────────────────────────────────────
