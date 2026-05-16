@@ -3306,6 +3306,166 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Taxonomy page URLs in conflict detection (issue #695) ──────
+	// Taxonomy pages (index + term pages) must be included in pre-render
+	// conflict detection. Their URLs are deterministic from taxonomy config
+	// and discovered terms — no rendering needed.
+
+	Describe("Taxonomy page URLs in conflict detection (issue #695)", func() {
+		It("authored page conflicting with taxonomy index URL errors before rendering (issue #695)", func() {
+			cfg := &config.Config{
+				Title:   "Tax Conflict Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags": {},
+				},
+			}
+			files := map[string]string{
+				"layouts/default.liquid":          "<html><body>{{ content }}</body></html>",
+				"layouts/taxonomies/tags.liquid":   "<html><body>taxonomy index</body></html>",
+				"content/page-a.md":               "---\ntitle: Page A\nlayout: default\ntags: [\"go\"]\n---\n# Page A",
+				"content/tags.md":                 "---\ntitle: Tags Override\nlayout: default\npermalink: /tags/\n---\n# My Tags",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).To(HaveOccurred(),
+				"an authored page with permalink /tags/ must conflict with the "+
+					"auto-generated taxonomy index page at /tags/ — taxonomy page "+
+					"URLs must be included in pre-render conflict detection (issue #695)")
+			Expect(err.Error()).To(ContainSubstring("output path conflict"),
+				"error message must identify the conflict type")
+			Expect(result).To(BeNil(),
+				"BuildResult must be nil when a taxonomy conflict is detected — "+
+					"validation catches this before any rendering occurs (issue #695)")
+		})
+
+		It("authored page conflicting with taxonomy term URL errors before rendering (issue #695)", func() {
+			cfg := &config.Config{
+				Title:   "Term Conflict Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags": {},
+				},
+			}
+			files := map[string]string{
+				"layouts/default.liquid":          "<html><body>{{ content }}</body></html>",
+				"layouts/taxonomies/tags.liquid":   "<html><body>taxonomy term</body></html>",
+				"content/page-a.md":               "---\ntitle: Page A\nlayout: default\ntags: [\"golang\"]\n---\n# Page A",
+				"content/golang-guide.md":         "---\ntitle: Golang Guide\nlayout: default\npermalink: /tags/golang/\n---\n# Golang Guide",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).To(HaveOccurred(),
+				"an authored page with permalink /tags/golang/ must conflict with "+
+					"the auto-generated taxonomy term page — term URLs are "+
+					"deterministic from the taxonomy config permalink pattern and "+
+					"discovered terms (issue #695)")
+			Expect(err.Error()).To(ContainSubstring("output path conflict"),
+				"error message must identify the conflict type")
+			Expect(result).To(BeNil(),
+				"BuildResult must be nil when a taxonomy term conflict is detected "+
+					"(issue #695)")
+		})
+
+		It("non-conflicting taxonomy pages build successfully (issue #695)", func() {
+			cfg := &config.Config{
+				Title:   "Tax No Conflict Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags": {},
+				},
+			}
+			files := map[string]string{
+				"layouts/default.liquid":          "<html><body>{{ content }}</body></html>",
+				"layouts/taxonomies/tags.liquid":   "<html><body>{{ content }}</body></html>",
+				"content/page-a.md":               "---\ntitle: Page A\nlayout: default\ntags: [\"go\", \"web\"]\n---\n# Page A",
+				"content/page-b.md":               "---\ntitle: Page B\nlayout: default\ntags: [\"go\"]\npermalink: /guides/\n---\n# Page B",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).NotTo(HaveOccurred(),
+				"pages with distinct permalinks that don't collide with taxonomy "+
+					"URLs must build successfully — taxonomy conflict detection "+
+					"must not produce false positives (issue #695)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(BeNumerically(">=", 2),
+				"authored pages must be counted in the result")
+		})
+
+		It("render: false taxonomy does not reserve paths in conflict detection (issue #695)", func() {
+			renderFalse := false
+			cfg := &config.Config{
+				Title:   "Render False Tax Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags": {Render: &renderFalse},
+				},
+			}
+			files := map[string]string{
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"content/page-a.md":      "---\ntitle: Page A\nlayout: default\ntags: [\"go\"]\n---\n# Page A",
+				"content/tags.md":        "---\ntitle: My Tags\nlayout: default\npermalink: /tags/\n---\n# Tags",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).NotTo(HaveOccurred(),
+				"a taxonomy with render: false does not generate output pages — "+
+					"its index/term URLs must not be included in conflict detection, "+
+					"so an authored /tags/ page must build successfully (issue #695)")
+			Expect(result).NotTo(BeNil())
+		})
+
+		It("custom taxonomy permalink pattern conflicts with authored page (issue #695)", func() {
+			cfg := &config.Config{
+				Title:   "Custom Pattern Conflict Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags": {Permalink: "/topics/:slug/"},
+				},
+			}
+			files := map[string]string{
+				"layouts/default.liquid":          "<html><body>{{ content }}</body></html>",
+				"layouts/taxonomies/tags.liquid":   "<html><body>taxonomy</body></html>",
+				"content/page-a.md":               "---\ntitle: Page A\nlayout: default\ntags: [\"golang\"]\n---\n# Page A",
+				"content/topics-golang.md":        "---\ntitle: Topics Golang\nlayout: default\npermalink: /topics/golang/\n---\n# Topics",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).To(HaveOccurred(),
+				"a custom taxonomy permalink pattern /topics/:slug/ must generate "+
+					"term page at /topics/golang/ — an authored page at that path "+
+					"must be detected as a conflict (issue #695)")
+			Expect(err.Error()).To(ContainSubstring("output path conflict"),
+				"error message must identify the conflict type")
+			Expect(result).To(BeNil())
+		})
+
+		It("alias colliding with taxonomy index URL is detected (issue #695)", func() {
+			cfg := &config.Config{
+				Title:   "Alias Tax Conflict Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags": {},
+				},
+			}
+			files := map[string]string{
+				"layouts/default.liquid":          "<html><body>{{ content }}</body></html>",
+				"layouts/taxonomies/tags.liquid":   "<html><body>taxonomy</body></html>",
+				"content/page-a.md":               "---\ntitle: Page A\nlayout: default\ntags: [\"go\"]\n---\n# Page A",
+				"content/about.md":                "---\ntitle: About\nlayout: default\npermalink: /about/\naliases:\n  - /tags/\n---\n# About",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).To(HaveOccurred(),
+				"an alias pointing to /tags/ must conflict with the auto-generated "+
+					"taxonomy index page — aliases are part of the output manifest "+
+					"and must be checked against taxonomy URLs (issue #695)")
+			Expect(err.Error()).To(ContainSubstring("output path conflict"),
+				"error message must identify the conflict type")
+			Expect(result).To(BeNil())
+		})
+	})
+
 	// ── Early validation: conflict detection before rendering (issue #690) ──
 	// Validation (permalink/alias conflicts) must run after onPagesReady but
 	// before content rendering. If a conflict is detected, the build fails
