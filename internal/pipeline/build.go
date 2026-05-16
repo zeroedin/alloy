@@ -439,7 +439,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		outputEntries = append(outputEntries, validation.OutputPathEntry{
 			Path: outPath, Source: page.RelPath,
 		})
-		for format := range page.FormatBodies {
+		for _, format := range page.Outputs {
+			if format == "html" {
+				continue
+			}
 			fmtPath := formatOutputPath(outPath, format)
 			outputEntries = append(outputEntries, validation.OutputPathEntry{
 				Path: fmtPath, Source: page.RelPath + " (" + format + ")",
