@@ -180,6 +180,89 @@ var _ = Describe("Template Context Shape (§3)", func() {
 
 	// ── Taxonomy context defaults (issue #380) ──────────────────────
 
+	// ── site.pages front matter exposure (issue #712) ──────────────
+	// site.pages items must be template maps (like collections), not
+	// raw *content.Page structs. Front matter fields must be accessible
+	// as top-level properties so Liquid filters (where, sort, map,
+	// group_by) work correctly.
+
+	It("site.pages items in ToMap are template maps, not raw structs (issue #712)", func() {
+		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, nil, "")
+		m := ctx.ToMap()
+		site, ok := m["site"].(map[string]interface{})
+		Expect(ok).To(BeTrue())
+		pages, ok := site["pages"].([]interface{})
+		Expect(ok).To(BeTrue(),
+			"site.pages must be []interface{} of template maps — "+
+				"raw []*content.Page structs are not accessible to Liquid "+
+				"filters like where, sort, map, group_by (issue #712)")
+		Expect(pages).To(HaveLen(1))
+
+		p, ok := pages[0].(map[string]interface{})
+		Expect(ok).To(BeTrue(),
+			"each site.pages item must be map[string]interface{} — "+
+				"ToTemplateMap() converts struct fields and front matter "+
+				"to a flat map that Liquid can access (issue #712)")
+		Expect(p).To(HaveKeyWithValue("title", "My Post"),
+			"front matter fields must be accessible as top-level keys "+
+				"on site.pages items (issue #712)")
+	})
+
+	It("site.pages items expose struct fields alongside front matter (issue #712)", func() {
+		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, nil, "")
+		m := ctx.ToMap()
+		site := m["site"].(map[string]interface{})
+		pages := site["pages"].([]interface{})
+		p := pages[0].(map[string]interface{})
+
+		Expect(p).To(HaveKeyWithValue("url", "/blog/my-post/"),
+			"url must be accessible on site.pages items")
+		Expect(p).To(HaveKeyWithValue("slug", "my-post"),
+			"slug must be accessible on site.pages items")
+		Expect(p).To(HaveKeyWithValue("collection", "blog"),
+			"collection must be accessible on site.pages items")
+		Expect(p).To(HaveKeyWithValue("summary", "A test post"),
+			"summary must be accessible on site.pages items")
+	})
+
+	It("site.pages with multiple pages exposes all front matter (issue #712)", func() {
+		docPage := &content.Page{
+			RelPath: "docs/quickstart.md",
+			Slug:    "quickstart",
+			Section: "docs",
+			URL:     "/docs/quickstart/",
+			Layout:  "doc",
+			FrontMatter: map[string]interface{}{
+				"title":      "Quickstart",
+				"nav_weight": 10,
+				"layout":     "doc",
+			},
+		}
+		multiPages := []*content.Page{page, docPage}
+		ctx := template.BuildTemplateContext(page, siteData, multiPages, collections, nil, nil, "")
+		m := ctx.ToMap()
+		site := m["site"].(map[string]interface{})
+		pages := site["pages"].([]interface{})
+		Expect(pages).To(HaveLen(2))
+
+		var found bool
+		for _, item := range pages {
+			p, ok := item.(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			if p["title"] == "Quickstart" {
+				found = true
+				Expect(p).To(HaveKeyWithValue("nav_weight", 10),
+					"custom front matter fields like nav_weight must be "+
+						"accessible on site.pages items — this enables "+
+						"site.pages | where: 'layout', 'doc' | sort: 'nav_weight' "+
+						"(issue #712)")
+				Expect(p).To(HaveKeyWithValue("url", "/docs/quickstart/"))
+			}
+		}
+		Expect(found).To(BeTrue(),
+			"docPage must appear in site.pages")
+	})
+
 	It("taxonomies key is present in ToMap even when nil", func() {
 		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, nil, "")
 		m := ctx.ToMap()
