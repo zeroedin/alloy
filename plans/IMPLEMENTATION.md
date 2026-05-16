@@ -426,11 +426,17 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
  9. collection.BuildTaxonomies(pages, taxonomies)         ✅ done
  9a. validation.ValidatePermalinkAliases(pages)            ✅ done — **must run before rendering (issue #690)**
  9b. validation.DetectConflicts(outputEntries)              ✅ done — **must run before rendering (issue #690)**
-     Build output entries from page.URL, page.Outputs, page.Aliases.
+     Build output entries from page.URL, page.Outputs, page.Aliases,
+     AND taxonomy page URLs (issue #695). Taxonomy URLs are deterministic
+     from batches[i].taxonomies (built in step 9) and cfg.Taxonomies config:
+     - Index page: `/<taxonomy-name>/` (e.g., `/tags/`)
+     - Term pages: permalink pattern with `:slug` replaced (e.g., `/tags/golang/`)
+     No rendering needed — just URL computation from already-available data.
      All inputs are finalized after onPagesReady (step 9 in §2).
      If conflicts detected, return error immediately — no rendering occurs.
-     Catches authoring errors (duplicate permalinks, alias collisions) in
-     milliseconds instead of after 10+ seconds of wasted rendering.
+     Catches authoring errors (duplicate permalinks, alias collisions,
+     authored pages overwriting taxonomy pages) in milliseconds instead
+     of after 10+ seconds of wasted rendering.
 10. template.RegisterBuiltinFilters(engine)               ✅ done
 11. renderPages (markdown → template tags)                ✅ done
 12. template.ResolveLayout(page, layoutsDir, engine)      ✅ done
