@@ -3466,6 +3466,135 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Multi-language taxonomy URL prefix conflicts (issue #705) ──
+	// Non-root languages get URL-prefixed taxonomy pages (e.g., /fr/tags/).
+	// Conflict detection must include these prefixed URLs. The urlPrefix != ""
+	// branch in the taxonomy conflict loop must be exercised.
+
+	Describe("Multi-language taxonomy URL prefix conflicts (issue #705)", func() {
+		It("non-root language taxonomy index URL conflicts with authored page (issue #705)", func() {
+			cfg := &config.Config{
+				Title:   "Multi-Lang Tax Index Conflict",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Languages: map[string]*config.LanguageConfig{
+					"en": {Weight: 1, Root: true},
+					"fr": {Weight: 2},
+				},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags": {},
+				},
+			}
+			files := map[string]string{
+				"layouts/default.liquid":         "<html><body>{{ content }}</body></html>",
+				"layouts/taxonomies/tags.liquid":  "<html><body>taxonomy</body></html>",
+				"content/en/page-a.md":           "---\ntitle: Page A\nlayout: default\ntags: [\"go\"]\n---\n# Page A",
+				"content/fr/page-a.md":           "---\ntitle: Page A FR\nlayout: default\ntags: [\"go\"]\n---\n# Page A FR",
+				"content/fr/tags-override.md":    "---\ntitle: Tags Override FR\nlayout: default\npermalink: /tags/\n---\n# Tags FR",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).To(HaveOccurred(),
+				"an authored page with permalink /tags/ in the fr batch gets "+
+					"prefixed to /fr/tags/ by the pipeline — this must conflict "+
+					"with the auto-generated taxonomy index at /fr/tags/ (issue #705)")
+			Expect(err.Error()).To(ContainSubstring("output path conflict"),
+				"error message must identify the conflict type")
+			Expect(result).To(BeNil(),
+				"BuildResult must be nil when a prefixed taxonomy conflict is detected")
+		})
+
+		It("non-root language taxonomy term URL conflicts with authored page (issue #705)", func() {
+			cfg := &config.Config{
+				Title:   "Multi-Lang Tax Term Conflict",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Languages: map[string]*config.LanguageConfig{
+					"en": {Weight: 1, Root: true},
+					"fr": {Weight: 2},
+				},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags": {},
+				},
+			}
+			files := map[string]string{
+				"layouts/default.liquid":         "<html><body>{{ content }}</body></html>",
+				"layouts/taxonomies/tags.liquid":  "<html><body>taxonomy</body></html>",
+				"content/en/page-a.md":           "---\ntitle: Page A\nlayout: default\ntags: [\"golang\"]\n---\n# Page A",
+				"content/fr/page-a.md":           "---\ntitle: Page A FR\nlayout: default\ntags: [\"golang\"]\n---\n# Page A FR",
+				"content/fr/golang-guide.md":     "---\ntitle: Golang Guide FR\nlayout: default\npermalink: /tags/golang/\n---\n# Golang FR",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).To(HaveOccurred(),
+				"an authored page with permalink /tags/golang/ in the fr batch gets "+
+					"prefixed to /fr/tags/golang/ by the pipeline — this must conflict "+
+					"with the auto-generated taxonomy term page at /fr/tags/golang/ "+
+					"(issue #705)")
+			Expect(err.Error()).To(ContainSubstring("output path conflict"),
+				"error message must identify the conflict type")
+			Expect(result).To(BeNil(),
+				"BuildResult must be nil when a prefixed taxonomy term conflict is detected")
+		})
+
+		It("root language taxonomy URLs remain unprefixed in multi-lang build (issue #705)", func() {
+			cfg := &config.Config{
+				Title:   "Multi-Lang Root Tax Conflict",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Languages: map[string]*config.LanguageConfig{
+					"en": {Weight: 1, Root: true},
+					"fr": {Weight: 2},
+				},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags": {},
+				},
+			}
+			files := map[string]string{
+				"layouts/default.liquid":         "<html><body>{{ content }}</body></html>",
+				"layouts/taxonomies/tags.liquid":  "<html><body>taxonomy</body></html>",
+				"content/en/page-a.md":           "---\ntitle: Page A\nlayout: default\ntags: [\"go\"]\n---\n# Page A",
+				"content/fr/page-a.md":           "---\ntitle: Page A FR\nlayout: default\ntags: [\"go\"]\n---\n# Page A FR",
+				"content/en/tags-override.md":    "---\ntitle: Tags Override\nlayout: default\npermalink: /tags/\n---\n# Tags EN",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).To(HaveOccurred(),
+				"root language taxonomy at /tags/ must conflict with authored page "+
+					"at /tags/ — root language URLs are unprefixed, so the conflict "+
+					"detection must match them without a language prefix (issue #705)")
+			Expect(err.Error()).To(ContainSubstring("output path conflict"),
+				"error message must identify the conflict type")
+			Expect(result).To(BeNil())
+		})
+
+		It("taxonomy URLs across different languages do not conflict (issue #705)", func() {
+			cfg := &config.Config{
+				Title:   "Multi-Lang No Conflict",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Languages: map[string]*config.LanguageConfig{
+					"en": {Weight: 1, Root: true},
+					"fr": {Weight: 2},
+				},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags": {},
+				},
+			}
+			files := map[string]string{
+				"layouts/default.liquid":         "<html><body>{{ content }}</body></html>",
+				"layouts/taxonomies/tags.liquid":  "<html><body>taxonomy</body></html>",
+				"content/en/page-a.md":           "---\ntitle: Page A\nlayout: default\ntags: [\"go\", \"web\"]\n---\n# Page A",
+				"content/fr/page-a.md":           "---\ntitle: Page A FR\nlayout: default\ntags: [\"go\", \"web\"]\n---\n# Page A FR",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).NotTo(HaveOccurred(),
+				"taxonomy pages at /tags/ (en, root) and /fr/tags/ (fr, non-root) "+
+					"occupy distinct output paths — multi-language taxonomy URLs "+
+					"must not produce false-positive conflicts (issue #705)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(BeNumerically(">=", 2),
+				"both language batches must produce pages")
+		})
+	})
+
 	// ── Early validation: conflict detection before rendering (issue #690) ──
 	// Validation (permalink/alias conflicts) must run after onPagesReady but
 	// before content rendering. If a conflict is detected, the build fails
