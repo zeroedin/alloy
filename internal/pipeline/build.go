@@ -460,6 +460,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 	for _, batch := range batches {
+		urlPrefix := i18n.OutputPrefix(batch.ctx.Code, batch.ctx.Root)
 		for taxName, tc := range batch.taxonomies {
 			taxCfg := cfg.Taxonomies[taxName]
 			if taxCfg == nil {
@@ -467,10 +468,20 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			}
 			taxPages := collection.GenerateTaxonomyPages(tc, taxCfg)
 			for _, tp := range taxPages {
-				outPath := output.ComputeOutputPath(tp.URL)
+				taxURL := tp.URL
+				if urlPrefix != "" {
+					taxURL = "/" + urlPrefix + strings.TrimPrefix(taxURL, "/")
+				}
+				outPath := output.ComputeOutputPath(taxURL)
+				source := "taxonomy:" + taxName
+				if tp.Kind == "taxonomy_term" {
+					if t, ok := tp.FrontMatter["title"].(string); ok {
+						source += "/" + t
+					}
+				}
 				outputEntries = append(outputEntries, validation.OutputPathEntry{
 					Path:   outPath,
-					Source: "taxonomy:" + taxName,
+					Source: source,
 				})
 			}
 		}
