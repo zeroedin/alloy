@@ -51,7 +51,8 @@ func BenchmarkStringConversion_Direct(b *testing.B) {
 // BenchmarkStringConversion_HTMLCache measures the cost of calling
 // page.HTML() three times per page. After the developer implements
 // the lazy cache, the first call converts and subsequent calls return
-// the cached string — total cost should be ~1/3 of direct conversion.
+// the cached string — amortized cost approaches zero as b.N grows,
+// since pages are built once and every call after the first is a cache hit.
 func BenchmarkStringConversion_HTMLCache(b *testing.B) {
 	pages := buildPages(500, 20_000)
 

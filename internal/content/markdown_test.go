@@ -912,13 +912,15 @@ var _ = Describe("RenderMarkdown", func() {
 		})
 	})
 
-	// ── Shared goldmark instance (issue #353) ───────────────────────
-	// RenderMarkdown accepts a pre-built goldmark.Markdown instance and
-	// returns ([]byte, []TOCEntry, error). The caller creates the instance
-	// once via CreateGoldmark and reuses it across all page renders.
+	// ── Shared goldmark instance (issue #353, #693) ────────────────
+	// RenderMarkdownWith accepts a pre-built goldmark.Markdown instance
+	// and returns ([]byte, []TOCEntry, error). The caller creates the
+	// instance once via CreateGoldmark and reuses it across all page
+	// renders. RenderMarkdown and RenderMarkdownWithTOC are preserved
+	// as convenience wrappers with unchanged signatures.
 
 	Describe("Shared goldmark instance (issue #353)", func() {
-		It("RenderMarkdown accepts a pre-built goldmark.Markdown instance (issue #353)", func() {
+		It("RenderMarkdownWith accepts a pre-built goldmark.Markdown instance (issue #353, #693)", func() {
 			opts := content.MarkdownOptions{
 				Unsafe:        true,
 				Typographer:   true,
@@ -928,22 +930,22 @@ var _ = Describe("RenderMarkdown", func() {
 			md := content.CreateGoldmark(opts)
 
 			source := []byte("## Hello World\n\nA paragraph.\n")
-			html, toc, err := content.RenderMarkdown(source, md)
+			html, toc, err := content.RenderMarkdownWith(source, md)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(html)).To(ContainSubstring("<h2"),
-				"RenderMarkdown must accept a pre-built goldmark.Markdown "+
-					"instance instead of MarkdownOptions — the signature changes "+
-					"from ([]byte, MarkdownOptions) to ([]byte, goldmark.Markdown) "+
-					"(issue #353)")
+				"RenderMarkdownWith must accept a pre-built goldmark.Markdown "+
+					"instance — the pipeline creates one instance per build via "+
+					"CreateGoldmark and passes it to RenderMarkdownWith for all "+
+					"page renders (issue #353, #693)")
 			Expect(toc).To(HaveLen(1),
-				"RenderMarkdown must return TOC as the second value — "+
-					"consolidated from RenderMarkdownWithTOC, always extracts "+
-					"headings (issue #353)")
+				"RenderMarkdownWith must return TOC as the second value — "+
+					"always extracts headings, callers that don't need TOC "+
+					"discard with _ (issue #353)")
 			Expect(toc[0].Text).To(Equal("Hello World"))
 			_ = md
 		})
 
-		It("consolidated RenderMarkdown returns TOC for pages without headings (issue #353)", func() {
+		It("RenderMarkdownWith returns empty TOC for pages without headings (issue #353, #693)", func() {
 			opts := content.MarkdownOptions{
 				Unsafe:        true,
 				Typographer:   true,
@@ -953,13 +955,14 @@ var _ = Describe("RenderMarkdown", func() {
 			md := content.CreateGoldmark(opts)
 
 			source := []byte("Just a paragraph, no headings.\n")
-			html, toc, err := content.RenderMarkdown(source, md)
+			html, toc, err := content.RenderMarkdownWith(source, md)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(html)).To(ContainSubstring("<p>Just a paragraph"),
 				"content must render correctly")
 			Expect(toc).To(BeEmpty(),
-				"RenderMarkdown must return empty TOC when no headings exist — "+
-					"callers like BuildPhase1 discard the TOC with _ (issue #353)")
+				"RenderMarkdownWith must return empty TOC when no headings "+
+					"exist — callers like BuildPhase1 discard the TOC with _ "+
+					"(issue #353)")
 		})
 
 		It("reusing the same goldmark instance across multiple pages produces correct output (issue #353)", func() {
@@ -981,16 +984,17 @@ var _ = Describe("RenderMarkdown", func() {
 			}
 
 			for i, page := range pages {
-				html, toc, err := content.RenderMarkdown([]byte(page.source), md)
+				html, toc, err := content.RenderMarkdownWith([]byte(page.source), md)
 				Expect(err).NotTo(HaveOccurred(),
 					"page %d must render without error using shared goldmark instance", i+1)
 				Expect(string(html)).To(ContainSubstring(page.heading),
 					"page %d must contain its heading — goldmark.Markdown.Convert "+
 						"is stateless between calls, so a shared instance must "+
-						"produce identical results to per-call allocation (issue #353)", i+1)
+						"produce identical results to per-call allocation "+
+						"(issue #353, #693)", i+1)
 				Expect(toc).NotTo(BeEmpty(),
-					"page %d must have TOC entries from the consolidated "+
-						"RenderMarkdown (issue #353)", i+1)
+					"page %d must have TOC entries from "+
+						"RenderMarkdownWith (issue #353, #693)", i+1)
 				Expect(toc[0].Text).To(Equal(page.heading),
 					"page %d TOC must reflect that page's headings, not leak "+
 						"state from previous renders (issue #353)", i+1)
@@ -1007,15 +1011,14 @@ var _ = Describe("RenderMarkdown", func() {
 			md := content.CreateGoldmark(opts)
 
 			source := []byte("## Top\n\n### Mid\n\n#### Deep\n")
-			_, toc, err := content.RenderMarkdown(source, md)
+			_, toc, err := content.RenderMarkdownWith(source, md)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(toc).To(HaveLen(1))
 			Expect(toc[0].Children).To(HaveLen(1))
 			Expect(toc[0].Children[0].Children).To(HaveLen(1),
-				"TOC nesting must work correctly with the consolidated "+
-					"RenderMarkdown that accepts a pre-built goldmark instance — "+
+				"TOC nesting must work correctly with RenderMarkdownWith — "+
 					"the two-step parse/render/walk behavior from the former "+
-					"RenderMarkdownWithTOC must be preserved (issue #353)")
+					"RenderMarkdownWithTOC must be preserved (issue #353, #693)")
 		})
 
 		It("shared goldmark instance works with render hooks (issue #353)", func() {
@@ -1045,20 +1048,20 @@ var _ = Describe("RenderMarkdown", func() {
 			md := content.CreateGoldmark(opts)
 
 			source1 := []byte("## First Page\n\nContent.\n")
-			html1, toc1, err := content.RenderMarkdown(source1, md)
+			html1, toc1, err := content.RenderMarkdownWith(source1, md)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(html1)).To(ContainSubstring(`class="custom"`),
 				"render hooks must work with a pre-built goldmark instance — "+
 					"the pipeline creates one goldmark per build with hooks "+
-					"fully configured (issue #353)")
+					"fully configured (issue #353, #693)")
 			Expect(toc1).To(HaveLen(1))
 
 			source2 := []byte("## Second Page\n\n### Sub Section\n")
-			html2, toc2, err := content.RenderMarkdown(source2, md)
+			html2, toc2, err := content.RenderMarkdownWith(source2, md)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(html2)).To(ContainSubstring(`class="custom"`),
 				"render hooks must continue working on subsequent renders "+
-					"with the same goldmark instance (issue #353)")
+					"with the same goldmark instance (issue #353, #693)")
 			Expect(toc2).To(HaveLen(1),
 				"TOC must reflect second page's headings, not first page's")
 			Expect(toc2[0].Text).To(Equal("Second Page"))

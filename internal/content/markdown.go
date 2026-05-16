@@ -265,7 +265,7 @@ func CreateGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) gold
 func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
 	src := source
 	if !opts.TemplateTags {
-		src = escapeTemplateTags(source)
+		src = EscapeTemplateTags(source)
 	}
 	md := CreateGoldmark(opts)
 
@@ -277,9 +277,54 @@ func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// escapeTemplateTags inserts zero-width spaces between consecutive braces
+// RenderMarkdownWith converts Markdown source to HTML and extracts a table of
+// contents using a pre-created goldmark instance. Use this when rendering
+// multiple pages with the same options to avoid re-creating the instance per
+// page. The goldmark instance must have AutoHeadingID enabled for TOC IDs.
+func RenderMarkdownWith(source []byte, md goldmark.Markdown) ([]byte, []TOCEntry, error) {
+	reader := text.NewReader(source)
+	doc := md.Parser().Parse(reader)
+
+	var buf bytes.Buffer
+	if err := md.Renderer().Render(&buf, source, doc); err != nil {
+		return nil, nil, fmt.Errorf("markdown render error: %w", err)
+	}
+
+	result := buf.Bytes()
+
+	var flat []TOCEntry
+	ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		heading, ok := n.(*ast.Heading)
+		if !ok || heading.Level < 2 {
+			return ast.WalkContinue, nil
+		}
+
+		id := ""
+		if rawID, found := heading.AttributeString("id"); found {
+			id = string(rawID.([]byte))
+		}
+
+		var textBuf bytes.Buffer
+		extractText(&textBuf, heading, source)
+
+		flat = append(flat, TOCEntry{
+			ID:    id,
+			Text:  textBuf.String(),
+			Level: heading.Level,
+		})
+		return ast.WalkContinue, nil
+	})
+
+	toc := nestTOCEntries(flat)
+	return result, toc, nil
+}
+
+// EscapeTemplateTags inserts zero-width spaces between consecutive braces
 // so they don't survive as literal template syntax when preservation is disabled.
-func escapeTemplateTags(src []byte) []byte {
+func EscapeTemplateTags(src []byte) []byte {
 	result := templateTagPattern.ReplaceAllFunc(src, func(match []byte) []byte {
 		s := string(match)
 		// Insert zero-width space between {{ and }} / {% and %}
@@ -310,7 +355,7 @@ type TOCEntry struct {
 func RenderMarkdownWithTOC(source []byte, opts MarkdownOptions) ([]byte, []TOCEntry, error) {
 	src := source
 	if !opts.TemplateTags {
-		src = escapeTemplateTags(source)
+		src = EscapeTemplateTags(source)
 	}
 
 	extraOpts := []parser.Option{}
@@ -319,44 +364,7 @@ func RenderMarkdownWithTOC(source []byte, opts MarkdownOptions) ([]byte, []TOCEn
 	}
 	md := CreateGoldmark(opts, extraOpts...)
 
-	reader := text.NewReader(src)
-	doc := md.Parser().Parse(reader)
-
-	var buf bytes.Buffer
-	if err := md.Renderer().Render(&buf, src, doc); err != nil {
-		return nil, nil, fmt.Errorf("markdown render error: %w", err)
-	}
-
-	result := buf.Bytes()
-
-	var flat []TOCEntry
-	ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-		if !entering {
-			return ast.WalkContinue, nil
-		}
-		heading, ok := n.(*ast.Heading)
-		if !ok || heading.Level < 2 {
-			return ast.WalkContinue, nil
-		}
-
-		id := ""
-		if rawID, found := heading.AttributeString("id"); found {
-			id = string(rawID.([]byte))
-		}
-
-		var textBuf bytes.Buffer
-		extractText(&textBuf, heading, src)
-
-		flat = append(flat, TOCEntry{
-			ID:    id,
-			Text:  textBuf.String(),
-			Level: heading.Level,
-		})
-		return ast.WalkContinue, nil
-	})
-
-	toc := nestTOCEntries(flat)
-	return result, toc, nil
+	return RenderMarkdownWith(src, md)
 }
 
 // extractText recursively collects all text content from an AST node's subtree.
