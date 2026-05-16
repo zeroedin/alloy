@@ -459,6 +459,22 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			})
 		}
 	}
+	for _, batch := range batches {
+		for taxName, tc := range batch.taxonomies {
+			taxCfg := cfg.Taxonomies[taxName]
+			if taxCfg == nil {
+				continue
+			}
+			taxPages := collection.GenerateTaxonomyPages(tc, taxCfg)
+			for _, tp := range taxPages {
+				outPath := output.ComputeOutputPath(tp.URL)
+				outputEntries = append(outputEntries, validation.OutputPathEntry{
+					Path:   outPath,
+					Source: "taxonomy:" + taxName,
+				})
+			}
+		}
+	}
 	if conflicts, _ := validation.DetectConflicts(outputEntries); len(conflicts) > 0 {
 		c := conflicts[0]
 		return nil, fmt.Errorf("output path conflict: %q claimed by %s and %s",
