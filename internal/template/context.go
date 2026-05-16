@@ -166,7 +166,11 @@ func (tc *TemplateContext) ToMap() map[string]interface{} {
 		site["data"] = make(map[string]interface{})
 	}
 	if tc.Site.Pages != nil {
-		site["pages"] = tc.Site.Pages
+		pagesList := make([]interface{}, len(tc.Site.Pages))
+		for i, p := range tc.Site.Pages {
+			pagesList[i] = p.ToTemplateMap()
+		}
+		site["pages"] = pagesList
 	}
 	if tc.Collections != nil {
 		site["collections"] = tc.Collections
