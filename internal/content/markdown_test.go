@@ -5,7 +5,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/yuin/goldmark"
 
 	"github.com/zeroedin/alloy/internal/content"
 	tmpl "github.com/zeroedin/alloy/internal/template"
@@ -18,6 +17,7 @@ var _ = Describe("RenderMarkdown", func() {
 		TemplateTags:  true,
 		AutoHeadingID: true,
 	}
+	defaultMD := content.CreateGoldmark(defaultOpts)
 
 	// ── Basic Markdown ─────────────────────────────────────────────────
 
@@ -34,7 +34,7 @@ var _ = Describe("RenderMarkdown", func() {
 				AutoHeadingID: false,
 			}
 			source := []byte("# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\n")
-			out, err := content.RenderMarkdown(source, noAutoID)
+			out, _, err := content.RenderMarkdown(source, content.CreateGoldmark(noAutoID))
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<h1>H1</h1>"))
@@ -47,7 +47,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("converts paragraphs", func() {
 			source := []byte("First paragraph.\n\nSecond paragraph.\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<p>First paragraph.</p>"))
@@ -56,7 +56,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("converts bold and italic", func() {
 			source := []byte("This is **bold** and *italic* text.\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<strong>bold</strong>"))
@@ -65,14 +65,14 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("converts links", func() {
 			source := []byte("[Alloy](https://example.com)\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(out)).To(ContainSubstring(`<a href="https://example.com">Alloy</a>`))
 		})
 
 		It("converts unordered lists", func() {
 			source := []byte("- item one\n- item two\n- item three\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<ul>"))
@@ -84,7 +84,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("converts code blocks with language attribute", func() {
 			source := []byte("```go\nfmt.Println(\"hello\")\n```\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<code"))
@@ -98,7 +98,7 @@ var _ = Describe("RenderMarkdown", func() {
 	Context("CommonMark extensions", func() {
 		It("renders tables", func() {
 			source := []byte("| Name | Age |\n| ---- | --- |\n| Alice | 30 |\n| Bob | 25 |\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<table>"))
@@ -109,7 +109,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("renders task lists (checkboxes)", func() {
 			source := []byte("- [x] Done\n- [ ] Not done\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`type="checkbox"`))
@@ -124,7 +124,7 @@ var _ = Describe("RenderMarkdown", func() {
 		It("passes raw HTML blocks through when unsafe=true", func() {
 			source := []byte("<div class=\"custom\">Hello</div>\n")
 			opts := content.MarkdownOptions{Unsafe: true, Typographer: true, TemplateTags: true}
-			out, err := content.RenderMarkdown(source, opts)
+			out, _, err := content.RenderMarkdown(source, content.CreateGoldmark(opts))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(out)).To(ContainSubstring(`<div class="custom">Hello</div>`))
 		})
@@ -132,7 +132,7 @@ var _ = Describe("RenderMarkdown", func() {
 		It("strips raw HTML when unsafe=false", func() {
 			source := []byte("<div class=\"custom\">Hello</div>\n")
 			opts := content.MarkdownOptions{Unsafe: false}
-			out, err := content.RenderMarkdown(source, opts)
+			out, _, err := content.RenderMarkdown(source, content.CreateGoldmark(opts))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(out)).NotTo(ContainSubstring("<div"))
 		})
@@ -143,14 +143,14 @@ var _ = Describe("RenderMarkdown", func() {
 	Context("Template tag preservation", func() {
 		It("preserves {{ variable }} expressions through Markdown", func() {
 			source := []byte("Hello {{ name }}!\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(out)).To(ContainSubstring("{{ name }}"))
 		})
 
 		It("preserves {% tag %} blocks through Markdown", func() {
 			source := []byte("{% if show %}Visible{% endif %}\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("{% if show %}"))
@@ -159,7 +159,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("does not interfere with inline code containing {{ }}", func() {
 			source := []byte("Use `{{ variable }}` in templates.\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<code>{{ variable }}</code>"))
@@ -167,7 +167,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("does not interfere with fenced code blocks containing {{ }}", func() {
 			source := []byte("```liquid\n{{ page.title }}\n{% for item in items %}\n  {{ item }}\n{% endfor %}\n```\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("{{ page.title }}"))
@@ -179,7 +179,7 @@ var _ = Describe("RenderMarkdown", func() {
 			// multiple lines are matched as a single unit. Without this,
 			// goldmark splits the tag across lines and breaks it.
 			source := []byte("{{ \"hello\nworld\" | newline_to_br }}\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("newline_to_br"),
@@ -193,7 +193,7 @@ var _ = Describe("RenderMarkdown", func() {
 		It("disables template tag preservation when templateTags is false", func() {
 			source := []byte("Hello {{ name }}!\n")
 			opts := content.MarkdownOptions{Unsafe: true, Typographer: true, TemplateTags: false}
-			out, err := content.RenderMarkdown(source, opts)
+			out, _, err := content.RenderMarkdown(source, content.CreateGoldmark(opts))
 			Expect(err).NotTo(HaveOccurred())
 			// With templateTags disabled, {{ name }} should NOT be preserved
 			// as a raw node — goldmark may escape or mangle it
@@ -204,7 +204,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("preserves {% raw %}...{% endraw %} as literal template syntax", func() {
 			source := []byte("Show this: {% raw %}{{ not_a_variable }}{% endraw %}\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			// The raw block must pass through goldmark; the template engine
@@ -221,7 +221,7 @@ var _ = Describe("RenderMarkdown", func() {
 	Context("Block shortcode boundaries", func() {
 		It("block shortcode tags are not wrapped in <p>", func() {
 			source := []byte("# Title\n\n{% callout \"warning\" %}\nThis has **bold** text.\n{% endcallout %}\n\nAfter.\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			// The opening {% callout %} must NOT be inside a <p> tag
@@ -243,7 +243,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("inline shortcode on same line as text stays inline", func() {
 			source := []byte("Watch this: {% youtube \"abc123\" %} and more text.\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			// Inline shortcode should be inside a <p> — that's correct
@@ -253,7 +253,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("block shortcode with list content renders correctly", func() {
 			source := []byte("{% callout \"info\" %}\n\n- Item one\n- Item two\n\n{% endcallout %}\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			// List must be a proper <ul> not mangled by <p> wrapping
@@ -274,7 +274,7 @@ var _ = Describe("RenderMarkdown", func() {
 	Context("Expression tag paragraph preservation", func() {
 		It("{{ }} expression on its own line keeps <p> wrapper", func() {
 			source := []byte("{{ page.title }}\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(out)).To(ContainSubstring("<p>{{ page.title }}</p>"),
 				"expression tags on their own line must keep goldmark's paragraph wrapper")
@@ -282,7 +282,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("{{ }} expression inside user-authored <p> keeps tags", func() {
 			source := []byte("<p>{{ member.name }}</p>\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(out)).To(ContainSubstring("<p>{{ member.name }}</p>"),
 				"user-authored <p> tags around expressions must be preserved")
@@ -290,7 +290,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("{% %} block shortcode on its own line has <p> stripped", func() {
 			source := []byte("{% hero %}\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(out)).NotTo(ContainSubstring("<p>{% hero %}</p>"),
 				"block shortcode tags must not be wrapped in <p>")
@@ -308,10 +308,11 @@ var _ = Describe("RenderMarkdown", func() {
 		safeOpts := content.MarkdownOptions{
 			Unsafe: false, Typographer: true, TemplateTags: true, AutoHeadingID: true,
 		}
+		safeMD := content.CreateGoldmark(safeOpts)
 
 		It("multiple template tags on one line are inline, not block", func() {
 			source := []byte("{% if show %}Visible{% endif %}\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<p>{% if show %}Visible{% endif %}</p>"),
@@ -322,7 +323,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("preserves block template tags when unsafe is false", func() {
 			source := []byte("{% hero %}\nContent here.\n{% endhero %}\n")
-			out, err := content.RenderMarkdown(source, safeOpts)
+			out, _, err := content.RenderMarkdown(source, safeMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("{% hero %}"),
@@ -335,7 +336,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("preserves inline expression tags when unsafe is false", func() {
 			source := []byte("Hello {{ name }}!\n")
-			out, err := content.RenderMarkdown(source, safeOpts)
+			out, _, err := content.RenderMarkdown(source, safeMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("{{ name }}"),
@@ -346,7 +347,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("preserves inline {% %} control tags when unsafe is false", func() {
 			source := []byte("Show {% if active %}this{% endif %} text.\n")
-			out, err := content.RenderMarkdown(source, safeOpts)
+			out, _, err := content.RenderMarkdown(source, safeMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("{% if active %}"),
@@ -357,7 +358,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("does not produce empty <p></p> from blank lines adjacent to block template tags", func() {
 			source := []byte("{% helmet %}\n<style>\n  .intro h2 { color: red; }\n</style>\n{% endhelmet %}\n\n<section class=\"intro\">\nHello\n</section>\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).NotTo(ContainSubstring("<p></p>"),
@@ -369,7 +370,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("handles multiple consecutive block tags without blank lines between them", func() {
 			source := []byte("{% note %}\nFirst.\n{% endnote %}\n{% warning %}\nSecond.\n{% endwarning %}\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("{% note %}"))
@@ -384,7 +385,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("adjacent HTML blocks next to template tags do not interfere", func() {
 			source := []byte("<style>\n.foo { color: red; }\n</style>\n\n{% hero %}\nContent\n{% endhero %}\n\n<div class=\"box\">\nMore\n</div>\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<style>"))
@@ -397,7 +398,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("block template tag with blank lines inside renders inner content correctly", func() {
 			source := []byte("{% hero %}\n\nParagraph after blank.\n\n{% endhero %}\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<p>Paragraph after blank.</p>"),
@@ -409,7 +410,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("preserves whitespace-trimming template tags ({%- -%})", func() {
 			source := []byte("{%- if show -%}\nVisible\n{%- endif -%}\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("{%- if show -%}"))
@@ -418,7 +419,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("preserves template tags inside blockquotes", func() {
 			source := []byte("> {{ page.pullquote }}\n>\n> -- {{ page.author }}\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("{{ page.pullquote }}"))
@@ -428,7 +429,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("preserves template tags inside list items", func() {
 			source := []byte("- {{ item.title }}\n- {% include \"partial\" %}\n- Regular text\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("{{ item.title }}"))
@@ -438,7 +439,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("does not leave placeholder artifacts in output", func() {
 			source := []byte("{% hero %}\n{{ page.title }}\n{% endhero %}\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).NotTo(ContainSubstring("ALLOY_TPL"),
@@ -449,7 +450,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("template tag in heading contributes to TOC text", func() {
 			source := []byte("## {{ page.section_title }}\n\nBody text.\n")
-			_, toc, err := content.RenderMarkdownWithTOC(source, defaultOpts)
+			_, toc, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(toc).To(HaveLen(1))
 			Expect(toc[0].Text).To(ContainSubstring("{{ page.section_title }}"),
@@ -463,7 +464,7 @@ var _ = Describe("RenderMarkdown", func() {
 	Context("Goldmark extensions", func() {
 		It("renders footnotes (§6 goldmark extensions)", func() {
 			source := []byte("This has a footnote[^1].\n\n[^1]: This is the footnote text.\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			// Footnotes should produce a link and a footnote section
@@ -473,7 +474,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("applies typographer for smart quotes and em-dashes", func() {
 			source := []byte("She said \"hello\" -- and left...\n")
-			out, err := content.RenderMarkdown(source, defaultOpts)
+			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			// Typographer should convert:
@@ -563,9 +564,9 @@ var _ = Describe("RenderMarkdown", func() {
 		// defaultOpts has AutoHeadingID: true (production default)
 
 		It("generates id attributes on headings", func() {
-			out, err := content.RenderMarkdown(
+			out, _, err := content.RenderMarkdown(
 				[]byte("## Getting Started\n\n### Installation"),
-				defaultOpts)
+				defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`id="getting-started"`),
@@ -575,9 +576,9 @@ var _ = Describe("RenderMarkdown", func() {
 		})
 
 		It("handles duplicate headings with numeric suffix", func() {
-			out, err := content.RenderMarkdown(
+			out, _, err := content.RenderMarkdown(
 				[]byte("## Overview\n\nText.\n\n## Overview\n\nMore text.\n\n## Overview"),
-				defaultOpts)
+				defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`id="overview"`),
@@ -589,9 +590,9 @@ var _ = Describe("RenderMarkdown", func() {
 		})
 
 		It("respects manual heading attributes override", func() {
-			out, err := content.RenderMarkdown(
+			out, _, err := content.RenderMarkdown(
 				[]byte("## My Section {#custom-id}"),
-				defaultOpts)
+				defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`id="custom-id"`),
@@ -608,7 +609,7 @@ var _ = Describe("RenderMarkdown", func() {
 	Describe("Table of contents", func() {
 		It("extracts headings into a nested TOC structure", func() {
 			input := "## Getting Started\n\n### Installation\n\n### Quickstart\n\n## Configuration"
-			_, toc, err := content.RenderMarkdownWithTOC([]byte(input), defaultOpts)
+			_, toc, err := content.RenderMarkdown([]byte(input), defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(toc).To(HaveLen(2),
 				"top-level TOC must contain two h2 entries")
@@ -625,7 +626,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("excludes h1 from TOC", func() {
 			input := "# Page Title\n\n## Section One\n\n## Section Two"
-			_, toc, err := content.RenderMarkdownWithTOC([]byte(input), defaultOpts)
+			_, toc, err := content.RenderMarkdown([]byte(input), defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(toc).To(HaveLen(2),
 				"h1 must be excluded from TOC — it is the page title")
@@ -635,7 +636,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("returns empty TOC for pages with no headings", func() {
 			input := "Just a paragraph of text."
-			_, toc, err := content.RenderMarkdownWithTOC([]byte(input), defaultOpts)
+			_, toc, err := content.RenderMarkdown([]byte(input), defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(toc).To(BeEmpty(),
 				"pages without headings must have an empty TOC")
@@ -643,7 +644,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("uses manual {#id} override in TOC entry", func() {
 			input := "## My Section {#custom-id}"
-			_, toc, err := content.RenderMarkdownWithTOC([]byte(input), defaultOpts)
+			_, toc, err := content.RenderMarkdown([]byte(input), defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(toc).To(HaveLen(1))
 			Expect(toc[0].ID).To(Equal("custom-id"),
@@ -652,7 +653,7 @@ var _ = Describe("RenderMarkdown", func() {
 
 		It("nests h4 under h3 under h2", func() {
 			input := "## Top\n\n### Mid\n\n#### Deep"
-			_, toc, err := content.RenderMarkdownWithTOC([]byte(input), defaultOpts)
+			_, toc, err := content.RenderMarkdown([]byte(input), defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(toc).To(HaveLen(1))
 			Expect(toc[0].Children).To(HaveLen(1))
@@ -755,7 +756,7 @@ var _ = Describe("RenderMarkdown", func() {
 				},
 				HookRenderer: hookRenderer,
 			}
-			out, err := content.RenderMarkdown([]byte("```javascript\nconsole.log('hello');\n```"), opts)
+			out, _, err := content.RenderMarkdown([]byte("```javascript\nconsole.log('hello');\n```"), content.CreateGoldmark(opts))
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<rh-code-block"),
@@ -776,7 +777,7 @@ var _ = Describe("RenderMarkdown", func() {
 				},
 				HookRenderer: hookRenderer,
 			}
-			out, err := content.RenderMarkdown([]byte("[Click here](https://example.com)"), opts)
+			out, _, err := content.RenderMarkdown([]byte("[Click here](https://example.com)"), content.CreateGoldmark(opts))
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`class="custom"`),
@@ -795,7 +796,7 @@ var _ = Describe("RenderMarkdown", func() {
 				},
 				HookRenderer: hookRenderer,
 			}
-			out, err := content.RenderMarkdown([]byte("## My Section"), opts)
+			out, _, err := content.RenderMarkdown([]byte("## My Section"), content.CreateGoldmark(opts))
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`id="my-section"`),
@@ -814,7 +815,7 @@ var _ = Describe("RenderMarkdown", func() {
 				},
 				HookRenderer: hookRenderer,
 			}
-			out, err := content.RenderMarkdown([]byte(`![A photo](/photo.jpg "Photo caption")`), opts)
+			out, _, err := content.RenderMarkdown([]byte(`![A photo](/photo.jpg "Photo caption")`), content.CreateGoldmark(opts))
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<figure>"),
@@ -833,7 +834,7 @@ var _ = Describe("RenderMarkdown", func() {
 				},
 				HookRenderer: hookRenderer,
 			}
-			out, err := content.RenderMarkdown([]byte("> This is a note"), opts)
+			out, _, err := content.RenderMarkdown([]byte("> This is a note"), content.CreateGoldmark(opts))
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<rh-alert>"),
@@ -852,7 +853,7 @@ var _ = Describe("RenderMarkdown", func() {
 				},
 				HookRenderer: hookRenderer,
 			}
-			out, err := content.RenderMarkdown([]byte("| A | B |\n|---|---|\n| 1 | 2 |"), opts)
+			out, _, err := content.RenderMarkdown([]byte("| A | B |\n|---|---|\n| 1 | 2 |"), content.CreateGoldmark(opts))
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`<div class="table-wrapper">`),
@@ -870,7 +871,7 @@ var _ = Describe("RenderMarkdown", func() {
 				},
 				HookRenderer: hookRenderer,
 			}
-			out, err := content.RenderMarkdown([]byte("```mermaid\ngraph TD;\nA-->B;\n```"), opts)
+			out, _, err := content.RenderMarkdown([]byte("```mermaid\ngraph TD;\nA-->B;\n```"), content.CreateGoldmark(opts))
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`<div class="mermaid">`),
@@ -885,7 +886,7 @@ var _ = Describe("RenderMarkdown", func() {
 				Hooks:        map[string]string{},
 				HookRenderer: hookRenderer,
 			}
-			out, err := content.RenderMarkdown([]byte("```go\nfmt.Println(\"hello\")\n```"), opts)
+			out, _, err := content.RenderMarkdown([]byte("```go\nfmt.Println(\"hello\")\n```"), content.CreateGoldmark(opts))
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("<pre>"),
@@ -902,7 +903,7 @@ var _ = Describe("RenderMarkdown", func() {
 				},
 				HookRenderer: hookRenderer,
 			}
-			out, err := content.RenderMarkdown([]byte("[External](https://example.com) and [Internal](/about)"), opts)
+			out, _, err := content.RenderMarkdown([]byte("[External](https://example.com) and [Internal](/about)"), content.CreateGoldmark(opts))
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring(`target="_blank"`),
@@ -912,15 +913,14 @@ var _ = Describe("RenderMarkdown", func() {
 		})
 	})
 
-	// ── Shared goldmark instance (issue #353, #693) ────────────────
-	// RenderMarkdownWith accepts a pre-built goldmark.Markdown instance
+	// ── Shared goldmark instance (issue #353, #700) ────────────────
+	// RenderMarkdown accepts a pre-built goldmark.Markdown instance
 	// and returns ([]byte, []TOCEntry, error). The caller creates the
 	// instance once via CreateGoldmark and reuses it across all page
-	// renders. RenderMarkdown and RenderMarkdownWithTOC are preserved
-	// as convenience wrappers with unchanged signatures.
+	// renders. No convenience wrappers — single consolidated API.
 
 	Describe("Shared goldmark instance (issue #353)", func() {
-		It("RenderMarkdownWith accepts a pre-built goldmark.Markdown instance (issue #353, #693)", func() {
+		It("RenderMarkdown accepts a pre-built goldmark.Markdown instance (issue #353, #700)", func() {
 			opts := content.MarkdownOptions{
 				Unsafe:        true,
 				Typographer:   true,
@@ -930,22 +930,21 @@ var _ = Describe("RenderMarkdown", func() {
 			md := content.CreateGoldmark(opts)
 
 			source := []byte("## Hello World\n\nA paragraph.\n")
-			html, toc, err := content.RenderMarkdownWith(source, md)
+			html, toc, err := content.RenderMarkdown(source, md)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(html)).To(ContainSubstring("<h2"),
-				"RenderMarkdownWith must accept a pre-built goldmark.Markdown "+
+				"RenderMarkdown must accept a pre-built goldmark.Markdown "+
 					"instance — the pipeline creates one instance per build via "+
-					"CreateGoldmark and passes it to RenderMarkdownWith for all "+
-					"page renders (issue #353, #693)")
+					"CreateGoldmark and passes it to RenderMarkdown for all "+
+					"page renders (issue #353, #700)")
 			Expect(toc).To(HaveLen(1),
-				"RenderMarkdownWith must return TOC as the second value — "+
+				"RenderMarkdown must return TOC as the second value — "+
 					"always extracts headings, callers that don't need TOC "+
-					"discard with _ (issue #353)")
+					"discard with _ (issue #353, #700)")
 			Expect(toc[0].Text).To(Equal("Hello World"))
-			_ = md
 		})
 
-		It("RenderMarkdownWith returns empty TOC for pages without headings (issue #353, #693)", func() {
+		It("RenderMarkdown returns empty TOC for pages without headings (issue #353, #700)", func() {
 			opts := content.MarkdownOptions{
 				Unsafe:        true,
 				Typographer:   true,
@@ -955,14 +954,14 @@ var _ = Describe("RenderMarkdown", func() {
 			md := content.CreateGoldmark(opts)
 
 			source := []byte("Just a paragraph, no headings.\n")
-			html, toc, err := content.RenderMarkdownWith(source, md)
+			html, toc, err := content.RenderMarkdown(source, md)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(html)).To(ContainSubstring("<p>Just a paragraph"),
 				"content must render correctly")
 			Expect(toc).To(BeEmpty(),
-				"RenderMarkdownWith must return empty TOC when no headings "+
+				"RenderMarkdown must return empty TOC when no headings "+
 					"exist — callers like BuildPhase1 discard the TOC with _ "+
-					"(issue #353)")
+					"(issue #353, #700)")
 		})
 
 		It("reusing the same goldmark instance across multiple pages produces correct output (issue #353)", func() {
@@ -984,17 +983,17 @@ var _ = Describe("RenderMarkdown", func() {
 			}
 
 			for i, page := range pages {
-				html, toc, err := content.RenderMarkdownWith([]byte(page.source), md)
+				html, toc, err := content.RenderMarkdown([]byte(page.source), md)
 				Expect(err).NotTo(HaveOccurred(),
 					"page %d must render without error using shared goldmark instance", i+1)
 				Expect(string(html)).To(ContainSubstring(page.heading),
 					"page %d must contain its heading — goldmark.Markdown.Convert "+
 						"is stateless between calls, so a shared instance must "+
 						"produce identical results to per-call allocation "+
-						"(issue #353, #693)", i+1)
+						"(issue #353, #700)", i+1)
 				Expect(toc).NotTo(BeEmpty(),
 					"page %d must have TOC entries from "+
-						"RenderMarkdownWith (issue #353, #693)", i+1)
+						"RenderMarkdown (issue #353, #700)", i+1)
 				Expect(toc[0].Text).To(Equal(page.heading),
 					"page %d TOC must reflect that page's headings, not leak "+
 						"state from previous renders (issue #353)", i+1)
@@ -1011,14 +1010,14 @@ var _ = Describe("RenderMarkdown", func() {
 			md := content.CreateGoldmark(opts)
 
 			source := []byte("## Top\n\n### Mid\n\n#### Deep\n")
-			_, toc, err := content.RenderMarkdownWith(source, md)
+			_, toc, err := content.RenderMarkdown(source, md)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(toc).To(HaveLen(1))
 			Expect(toc[0].Children).To(HaveLen(1))
 			Expect(toc[0].Children[0].Children).To(HaveLen(1),
-				"TOC nesting must work correctly with RenderMarkdownWith — "+
-					"the two-step parse/render/walk behavior from the former "+
-					"RenderMarkdownWithTOC must be preserved (issue #353, #693)")
+				"TOC nesting must work correctly with RenderMarkdown — "+
+					"the two-step parse/render/walk behavior must be preserved "+
+					"(issue #353, #700)")
 		})
 
 		It("shared goldmark instance works with render hooks (issue #353)", func() {
@@ -1048,26 +1047,24 @@ var _ = Describe("RenderMarkdown", func() {
 			md := content.CreateGoldmark(opts)
 
 			source1 := []byte("## First Page\n\nContent.\n")
-			html1, toc1, err := content.RenderMarkdownWith(source1, md)
+			html1, toc1, err := content.RenderMarkdown(source1, md)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(html1)).To(ContainSubstring(`class="custom"`),
 				"render hooks must work with a pre-built goldmark instance — "+
 					"the pipeline creates one goldmark per build with hooks "+
-					"fully configured (issue #353, #693)")
+					"fully configured (issue #353, #700)")
 			Expect(toc1).To(HaveLen(1))
 
 			source2 := []byte("## Second Page\n\n### Sub Section\n")
-			html2, toc2, err := content.RenderMarkdownWith(source2, md)
+			html2, toc2, err := content.RenderMarkdown(source2, md)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(html2)).To(ContainSubstring(`class="custom"`),
 				"render hooks must continue working on subsequent renders "+
-					"with the same goldmark instance (issue #353, #693)")
+					"with the same goldmark instance (issue #353, #700)")
 			Expect(toc2).To(HaveLen(1),
 				"TOC must reflect second page's headings, not first page's")
 			Expect(toc2[0].Text).To(Equal("Second Page"))
 			Expect(toc2[0].Children).To(HaveLen(1))
-
-			_ = goldmark.New
 		})
 	})
 })
