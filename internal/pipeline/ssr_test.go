@@ -1,0 +1,391 @@
+package pipeline_test
+
+import (
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/zeroedin/alloy/internal/config"
+	"github.com/zeroedin/alloy/internal/pipeline"
+)
+
+var _ = Describe("Build Pipeline", func() {
+	Describe("Phase 1 → Phase 2 handoff", func() {
+		It("Phase 1 produces intermediate HTML preserving raw custom element tags", func() {
+			cfg := &config.Config{
+				Title: "Component Site",
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			intermediate, err := pipeline.BuildPhase1(cfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"Phase 1 must complete without error")
+			Expect(intermediate).NotTo(BeEmpty(),
+				"Phase 1 must produce at least one page of intermediate HTML")
+		})
+
+		It("Phase 2 invokes command per page, piping full HTML via stdin", func() {
+			// Intermediate HTML contains a custom element (hyphenated tag).
+			// BuildPhase2 must attempt to invoke the command for each page
+			// containing custom elements. Using a nonexistent command proves
+			// the invocation is attempted — the page's original HTML is
+			// preserved (SSR failed, no transform applied).
+			intermediate := map[string]string{
+				"content/index.md": `<html><body><ds-card title="Hello">content</ds-card></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				Command: "golit render --defs bundles/",
+			}
+			// The command won't exist in the test environment. BuildPhase2
+			// must not abort — it skips failed pages and preserves original HTML.
+			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"SSR command failure must not abort the build — errors are collected")
+			Expect(result).To(HaveKey("content/index.md"),
+				"failed SSR page must be present in result")
+			Expect(result["content/index.md"]).To(ContainSubstring("ds-card"),
+				"failed SSR page must preserve original HTML — proves command was "+
+					"attempted (not silently skipped) and original HTML was kept on failure")
+		})
+
+		It("Phase 2 receives Phase 1 output as its input", func() {
+			cfg := &config.Config{
+				Title: "SSR Site",
+				SSR: &config.SSRConfig{
+					// cat reads stdin, writes to stdout — proves the per-page
+					// stdio model works end-to-end
+					Command: "cat",
+				},
+				Build: config.BuildConfig{Output: "_site"},
+			}
+
+			// Phase 1 produces intermediate HTML
+			intermediate, err := pipeline.BuildPhase1(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(intermediate).NotTo(BeEmpty(),
+				"Phase 1 must produce intermediate output")
+
+			// Phase 2 takes Phase 1 output directly and pipes to ssr.command
+			// via stdin. cat passes HTML through unchanged.
+			result, err := pipeline.BuildPhase2(intermediate, cfg.SSR)
+			Expect(err).NotTo(HaveOccurred(),
+				"Phase 2 with cat must succeed — cat passes stdin to stdout")
+			Expect(result).NotTo(BeNil())
+			// Every page from Phase 1 must appear in Phase 2 output
+			for path := range intermediate {
+				Expect(result).To(HaveKey(path),
+					"Phase 2 output must contain every page from Phase 1")
+				Expect(result[path]).NotTo(BeEmpty(),
+					"Phase 2 output for %s must not be empty", path)
+			}
+		})
+
+		It("without SSR config, Phase 1 output is the final HTML", func() {
+			cfg := &config.Config{
+				Title: "No SSR Site",
+				Build: config.BuildConfig{Output: "_site"},
+				// SSR is nil — no ssr: config block
+			}
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.SSRSkipped).To(BeTrue(),
+				"without ssr: config, Phase 2 must be skipped entirely")
+		})
+	})
+
+	// ── SSR per-page render ─────────────────────────────────────────
+	// Phase 2 extracts the inner content of <body>, pipes it to
+	// ssr.command via stdin, and re-inserts the SSR'd body content
+	// into the original document skeleton. The SSR engine never sees
+	// <!DOCTYPE>, <html>, <head>, or <body> tags.
+
+	Describe("SSR per-page render", func() {
+		It("BuildPhase2 preserves original HTML when command is not found", func() {
+			intermediate := map[string]string{
+				"content/index.md": `<html><body><ds-button>Click</ds-button></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				Command: "nonexistent-ssr-tool render --defs bundles/",
+			}
+			// Command not found is a per-page failure, not a build-aborting error.
+			// The page's original HTML must be preserved in the result.
+			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"SSR command not found must not abort the build — page is skipped")
+			Expect(result).To(HaveKey("content/index.md"),
+				"page must be present in result even when SSR command is not found")
+			Expect(result["content/index.md"]).To(ContainSubstring("ds-button"),
+				"page must preserve original HTML when SSR command is not found")
+		})
+
+		It("BuildPhase2 does not fall back to local DSD transform", func() {
+			// When the command is unavailable, BuildPhase2 must NOT
+			// silently insert <template shadowrootmode> via a local transform.
+			// SSR is the external engine's responsibility. The page's
+			// original HTML must be preserved unchanged.
+			intermediate := map[string]string{
+				"content/index.md": `<html><body><ds-card>content</ds-card></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				Command: "nonexistent-ssr-tool render",
+			}
+			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"SSR command failure must not abort the build")
+			Expect(result).To(HaveKey("content/index.md"))
+			Expect(result["content/index.md"]).NotTo(ContainSubstring("shadowrootmode"),
+				"BuildPhase2 must not silently fall back to local DSD transform "+
+					"when the ssr.command is unavailable")
+		})
+
+		It("BuildPhase2 preserves document skeleton after SSR", func() {
+			// Phase 2 must extract body content, pipe it to the SSR command,
+			// and re-insert the result into the original document skeleton.
+			// The <head>, <script>, and other document tags must survive SSR.
+			intermediate := map[string]string{
+				"content/index.md": `<!DOCTYPE html><html><head><title>Test</title><script src="app.js"></script></head><body><h1>Hello</h1><ds-card>content</ds-card></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				// cat passes body content through unchanged — proves the
+				// document skeleton is preserved by Alloy, not the SSR engine
+				Command: "cat",
+			}
+			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"BuildPhase2 with cat must succeed")
+			Expect(result).To(HaveKey("content/index.md"))
+			html := result["content/index.md"]
+			Expect(html).To(ContainSubstring("<!DOCTYPE html>"),
+				"document skeleton must preserve DOCTYPE after SSR")
+			Expect(html).To(ContainSubstring("<head>"),
+				"document skeleton must preserve <head> after SSR")
+			Expect(html).To(ContainSubstring(`<script src="app.js"></script>`),
+				"document skeleton must preserve <script> tags in <head> after SSR")
+			Expect(html).To(ContainSubstring("<ds-card>"),
+				"body content must be present after SSR")
+			Expect(html).To(ContainSubstring("</html>"),
+				"document skeleton must preserve closing </html> after SSR")
+		})
+
+		It("BuildPhase2 passes through HTML unchanged when no custom elements present", func() {
+			// Pages without custom elements (no hyphenated tags) should pass
+			// through Phase 2 unchanged — no command invocations needed.
+			intermediate := map[string]string{
+				"content/plain.md": `<html><body><h1>Hello</h1><p>No components here.</p></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				// Command that would fail if invoked — proves it's NOT called
+				Command: "false",
+			}
+			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"BuildPhase2 must not error on pages without custom elements")
+			Expect(result).NotTo(BeNil())
+			Expect(result["content/plain.md"]).To(Equal(intermediate["content/plain.md"]),
+				"HTML without custom elements must pass through Phase 2 unchanged")
+		})
+	})
+
+	// ── SSR stream mode ────────────────────────────────────────────
+
+	Describe("SSR stream mode", func() {
+		It("BuildPhase2 uses persistent process when mode is stream", func() {
+			// With mode "stream", BuildPhase2 must start a persistent process
+			// and send NUL-delimited messages instead of spawning per page.
+			// Using a nonexistent command proves the stream startup is attempted.
+			intermediate := map[string]string{
+				"content/index.md": `<html><body><ds-card>Hello</ds-card></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				Command: "nonexistent-ssr-tool serve --stdio",
+				Mode:    "stream",
+			}
+			_, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).To(HaveOccurred(),
+				"BuildPhase2 in stream mode must attempt to start the persistent process")
+		})
+
+		It("BuildPhase2 defaults to exec mode when mode is empty", func() {
+			intermediate := map[string]string{
+				"content/index.md": `<html><body><ds-card>Hello</ds-card></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				Command: "nonexistent-ssr-tool render --defs bundles/",
+				// Mode is empty — defaults to exec
+			}
+			// Command not found is a per-page failure — page is skipped,
+			// original HTML preserved. The test proves exec mode is used
+			// (not stream) by verifying the page is in the result with
+			// its original HTML intact.
+			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"SSR command failure must not abort the build")
+			Expect(result).To(HaveKey("content/index.md"),
+				"page must be present in result when exec mode command fails")
+			Expect(result["content/index.md"]).To(ContainSubstring("ds-card"),
+				"page must preserve original HTML — proves exec mode was used "+
+					"(not stream) and the page was skipped on failure")
+		})
+	})
+
+	// ── Issue #162: SSR timeout wiring ──────────────────────────────
+	// RenderPageWithTimeout exists and is tested in internal/ssr, but
+	// BuildPhase2 exec mode calls RenderPage (no timeout). ssrCfg.Timeout
+	// is parsed but never used. Exec mode must enforce the timeout.
+
+	Describe("SSR timeout wiring", func() {
+		It("BuildPhase2 exec mode enforces ssrCfg.Timeout", func() {
+			intermediate := map[string]string{
+				"content/index.md": `<html><body><ds-card>Hello</ds-card></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				Command: "sleep 1",
+				Timeout: "50ms",
+			}
+			// sleep 1 takes 1 second — the 50ms timeout must kill it.
+			// Timeout is a per-page failure: page is skipped, original HTML
+			// preserved. The build does not abort.
+			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"SSR timeout must not abort the build — page is skipped")
+			Expect(result).To(HaveKey("content/index.md"),
+				"timed-out page must be present in result")
+			Expect(result["content/index.md"]).To(ContainSubstring("ds-card"),
+				"timed-out page must preserve original HTML")
+		})
+
+		It("BuildPhase2 uses default timeout when ssrCfg.Timeout is empty", func() {
+			intermediate := map[string]string{
+				"content/index.md": `<html><body><ds-card>Hello</ds-card></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				Command: "cat",
+				// Timeout is empty — should default to 30s, not hang forever
+			}
+			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"cat must complete well within the default 30s timeout")
+			Expect(result).NotTo(BeNil())
+		})
+	})
+
+	// ── Issue #173: Stream mode timeout wiring ──────────────────────
+	// Stream mode must enforce ssr.timeout per page, same as exec mode.
+
+	Describe("SSR stream mode timeout", func() {
+		It("BuildPhase2 stream mode enforces ssrCfg.Timeout", func() {
+			intermediate := map[string]string{
+				"content/index.md": `<html><body><ds-card>Hello</ds-card></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				Command: "sleep 1",
+				Mode:    "stream",
+				Timeout: "50ms",
+			}
+			// sleep 1 takes 1 second — the 50ms timeout must kill the read.
+			// Timeout is a per-page failure: page is skipped, original HTML
+			// preserved. The build does not abort.
+			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"stream mode timeout must not abort the build — page is skipped")
+			Expect(result).To(HaveKey("content/index.md"),
+				"timed-out page must be present in result")
+			Expect(result["content/index.md"]).To(ContainSubstring("ds-card"),
+				"timed-out page must preserve original HTML")
+		})
+	})
+
+	// ── Issue #164: SSR error collection (skip, don't abort) ─────────
+	// Per spec: failed pages should be skipped (original HTML preserved),
+	// errors collected, and reported at the end — not abort the build.
+
+	Describe("SSR error collection", func() {
+		It("exec mode skips failed pages and continues with remaining pages", func() {
+			intermediate := map[string]string{
+				// This page has a custom element — SSR will be attempted
+				"content/good.md": `<html><body><ds-card>Good</ds-card></body></html>`,
+				// This page has no custom elements — should pass through
+				"content/plain.md": `<html><body><h1>No components</h1></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				// nonexistent command — SSR will fail for pages with components
+				Command: "nonexistent-ssr-tool",
+			}
+			// BuildPhase2 must NOT abort on SSR failure. It must collect
+			// errors and return a result containing all pages.
+			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"BuildPhase2 must not return a fatal error when SSR fails — "+
+					"errors should be collected, not abort the build")
+			Expect(result).NotTo(BeNil())
+			Expect(result["content/plain.md"]).To(Equal(intermediate["content/plain.md"]),
+				"pages without custom elements must pass through unchanged "+
+					"even when SSR fails for other pages")
+		})
+
+		It("failed page preserves original HTML instead of being dropped", func() {
+			intermediate := map[string]string{
+				"content/page.md": `<html><body><ds-card>Content</ds-card></body></html>`,
+			}
+			ssrCfg := &config.SSRConfig{
+				Command: "nonexistent-ssr-tool",
+			}
+			// When SSR fails for a page, the original (un-SSR'd) HTML must
+			// be preserved in the output — not dropped, not cause a fatal error.
+			result, err := pipeline.BuildPhase2(intermediate, ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"SSR failure for one page must not abort the build")
+			Expect(result).To(HaveKey("content/page.md"),
+				"failed SSR page must be present in result with original HTML")
+			Expect(result["content/page.md"]).To(ContainSubstring("ds-card"),
+				"failed SSR page must preserve original HTML with raw custom elements")
+		})
+	})
+
+	// ── SSR skip behavior ────────────────────────────────────────────
+
+	Describe("SSR skip behavior", func() {
+		It("no SSR config sets SSRSkipped to true", func() {
+			cfg := &config.Config{
+				Title: "Plain Site",
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.SSRSkipped).To(BeTrue(),
+				"build without ssr: config must skip Phase 2")
+		})
+
+		It("with SSR config, Phase 2 runs and SSRSkipped is false", func() {
+			// Guard: without SSR, SSRSkipped must be true
+			noSSRCfg := &config.Config{
+				Title: "No SSR",
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			noSSRResult, err := pipeline.Build(noSSRCfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(noSSRResult).NotTo(BeNil())
+			Expect(noSSRResult.SSRSkipped).To(BeTrue(),
+				"guard: no SSR config must set SSRSkipped=true")
+
+			// Actual: with SSR, Build attempts Phase 2 (invokes ssr.command).
+			// Use "cat" — reads stdin, writes to stdout. Proves the per-page
+			// stdio model works end-to-end.
+			ssrCfg := &config.Config{
+				Title: "SSR Site",
+				SSR:   &config.SSRConfig{Command: "cat"},
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			ssrResult, err := pipeline.Build(ssrCfg)
+			Expect(err).NotTo(HaveOccurred(),
+				"Build with cat as SSR command must succeed — cat passes stdin to stdout")
+			Expect(ssrResult).NotTo(BeNil())
+			Expect(ssrResult.SSRSkipped).To(BeFalse(),
+				"build with ssr: config must run Phase 2")
+		})
+	})
+
+	// ── Content-colocated passthrough copy (issue #300) ─────────────
+	// Non-content files in content/ must be copied to _site/ preserving
+	// their path relative to content/.
+})

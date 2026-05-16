@@ -1,0 +1,441 @@
+package pipeline
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/zeroedin/alloy/internal/cache"
+	"github.com/zeroedin/alloy/internal/config"
+	"github.com/zeroedin/alloy/internal/content"
+	"github.com/zeroedin/alloy/internal/output"
+	"github.com/zeroedin/alloy/internal/permalink"
+	"github.com/zeroedin/alloy/internal/ssr"
+	tmpl "github.com/zeroedin/alloy/internal/template"
+)
+
+// BuildIncremental renders only pages that have changed since the previous
+// build (per the cache) or were invalidated by a layout/data change.
+// Used by alloy dev for incremental rebuilds on file watcher events.
+// When contentMap is nil, content is discovered from the filesystem.
+// If previousCache is nil, all pages are rendered (equivalent to full build).
+func BuildIncremental(cfg *config.Config, contentMap map[string]string, previousCache *cache.Cache, changedFiles []string, opts ...BuildOptions) (*BuildResult, error) {
+	if len(opts) > 1 {
+		return nil, fmt.Errorf("accepts at most one BuildOptions value, got %d", len(opts))
+	}
+
+	start := time.Now()
+
+	var options BuildOptions
+	if len(opts) == 1 {
+		options = opts[0]
+	}
+	reporter := options.Reporter
+
+	config.ApplyDefaults(cfg)
+
+	if contentMap != nil && len(contentMap) == 0 {
+		return &BuildResult{
+			OutputDir:  cfg.Build.Output,
+			PageCount:  0,
+			SSRSkipped: cfg.SSR == nil || options.SkipSSR,
+			Duration:   time.Since(start),
+		}, nil
+	}
+
+	var allPages []*content.Page
+	var fsMode bool
+
+	if contentMap == nil {
+		// Filesystem mode: discover content from the real project directory
+		fsMode = true
+		contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
+		var err error
+		allPages, err = content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return &BuildResult{
+					OutputDir:  cfg.Build.Output,
+					PageCount:  0,
+					SSRSkipped: cfg.SSR == nil || options.SkipSSR,
+					Duration:   time.Since(start),
+				}, nil
+			}
+			return nil, fmt.Errorf("content discovery: %w", err)
+		}
+	} else {
+		// Test mode: create temp directory with content files
+		tmpDir, err := os.MkdirTemp("", "alloy-incremental-*")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create temp dir: %w", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		for path, body := range contentMap {
+			fullPath := filepath.Join(tmpDir, path)
+			if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+				return nil, fmt.Errorf("failed to create dir for %s: %w", path, err)
+			}
+			if err := os.WriteFile(fullPath, []byte(body), 0644); err != nil {
+				return nil, fmt.Errorf("failed to write %s: %w", path, err)
+			}
+		}
+
+		contentDir := filepath.Join(tmpDir, "content")
+		allPages, err = content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
+		if err != nil {
+			return nil, fmt.Errorf("content discovery: %w", err)
+		}
+	}
+
+	// Determine which pages need rebuilding
+	var pagesToRender []*content.Page
+	skipped := 0
+
+	if previousCache == nil {
+		// No cache — render everything
+		pagesToRender = allPages
+	} else {
+		// Check for layout changes in changedFiles
+		layoutsDir := cfg.Structure.Layouts
+		if layoutsDir == "" {
+			layoutsDir = "layouts"
+		}
+		layoutPrefix := filepath.ToSlash(layoutsDir) + "/"
+		var layoutChanges []string
+		for _, f := range changedFiles {
+			if strings.HasPrefix(filepath.ToSlash(f), layoutPrefix) {
+				layoutChanges = append(layoutChanges, filepath.ToSlash(f))
+			}
+		}
+
+		// Find pages invalidated by layout changes
+		layoutInvalidated := make(map[string]bool)
+		for _, layoutPath := range layoutChanges {
+			for _, p := range previousCache.InvalidatedPages(layoutPath) {
+				layoutInvalidated[p] = true
+			}
+		}
+
+		for _, page := range allPages {
+			// Page invalidated by layout change?
+			if layoutInvalidated[page.RelPath] {
+				pagesToRender = append(pagesToRender, page)
+				continue
+			}
+			// Content changed?
+			var contentBytes []byte
+			if fsMode {
+				contentBytes = page.Content
+			} else {
+				contentPrefix := cfg.Structure.Content
+				if contentPrefix == "" {
+					contentPrefix = "content"
+				}
+				contentBytes = []byte(contentMap[filepath.ToSlash(filepath.Join(contentPrefix, page.RelPath))])
+			}
+			if !previousCache.ShouldSkipFile(page.RelPath, contentBytes) {
+				pagesToRender = append(pagesToRender, page)
+				continue
+			}
+			// Unchanged — skip
+			skipped++
+		}
+	}
+
+	// Reuse caller-provided pipeline state, or initialize from scratch
+	ps := options.PipelineState
+	if ps == nil {
+		registry, hooks, pluginWarnings := DiscoverPlugins(cfg)
+		for _, w := range pluginWarnings {
+			log.Printf("warning: %s", w)
+		}
+		var psErr error
+		ps, psErr = InitPipelineState(cfg, registry, hooks)
+		if psErr != nil {
+			return nil, psErr
+		}
+	}
+
+	// Inject site data into plugin runtimes (issue #339).
+	// Skip when PipelineState was provided by the caller — site data was
+	// already injected during the initial full build, avoiding repeated
+	// JSON serialization on every incremental rebuild.
+	if options.PipelineState == nil && ps.Registry != nil {
+		for _, rt := range ps.Registry.Runtimes() {
+			if err := rt.SetSiteData(ps.SiteData); err != nil {
+				log.Printf("warning: setting site data for plugin: %v", err)
+			}
+		}
+	}
+
+	allPages = content.FilterByLifecycle(allPages, time.Now(), cfg.IncludeDrafts)
+
+	// Re-filter pagesToRender against lifecycle-filtered allPages
+	filtered := make(map[*content.Page]bool, len(allPages))
+	for _, p := range allPages {
+		filtered[p] = true
+	}
+	var filteredToRender []*content.Page
+	for _, p := range pagesToRender {
+		if filtered[p] {
+			filteredToRender = append(filteredToRender, p)
+		}
+	}
+	pagesToRender = filteredToRender
+
+	permalinkCfg := buildPermalinkCfg(ps, cfg.Permalinks)
+	for _, page := range allPages {
+		url, err := permalink.ResolveForSection(page, permalinkCfg)
+		if err != nil {
+			return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
+		}
+		page.URL = url
+	}
+
+	allPages, bc, err := applyBatchContext(allPages, cfg, ps, permalinkCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Track which RelPaths need rendering before pagination expands them
+	renderRelPaths := make(map[string]bool, len(pagesToRender))
+	for _, p := range pagesToRender {
+		renderRelPaths[p.RelPath] = true
+	}
+
+	allPages = processPagination(allPages, cfg, ps.SiteData, bc.Collections, ps.Engine)
+
+	// Rebuild pagesToRender from post-pagination allPages so virtual pages
+	// generated from a changed source page are included.
+	pagesToRender = nil
+	for _, p := range allPages {
+		if renderRelPaths[p.RelPath] {
+			pagesToRender = append(pagesToRender, p)
+		}
+	}
+
+	templateUsage := make(map[string][]string)
+	rc := &RenderContext{
+		Cfg:            cfg,
+		SiteData:       ps.SiteData,
+		CollectionsCtx: bc.Collections,
+		TaxonomiesCtx:  bc.TaxonomiesCtx,
+		Pages:          allPages,
+		Engine:         ps.Engine,
+		TemplateUsage:  templateUsage,
+		LayoutCache:    make(map[string]tmpl.Template),
+	}
+	rendered, renderErr := renderPages(pagesToRender, rc, nil)
+	if renderErr != nil {
+		return nil, renderErr
+	}
+
+	// Pass 2: layout resolution + rendering (issue #628)
+	layoutsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts)
+	engineName := cfg.Templates.Engine
+	for _, page := range pagesToRender {
+		layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, engineName, permalinkCfg)
+		if err != nil {
+			if layoutVal, hasLayout := page.FrontMatter["layout"]; hasLayout && layoutVal != nil {
+				log.Printf("warning: layout %v not found for %s: %v", layoutVal, page.RelPath, err)
+			}
+			continue
+		}
+		if layoutPath == "" {
+			continue
+		}
+		if err := renderPageThroughLayouts(page, layoutPath, layoutsDir, engineName, rc); err != nil {
+			return nil, err
+		}
+		if err := renderPageFormats(page, layoutsDir, engineName, rc); err != nil {
+			return nil, err
+		}
+	}
+
+	renderedContent := make(map[string]string, len(pagesToRender))
+	for _, page := range pagesToRender {
+		if len(page.RenderedBody) > 0 {
+			renderedContent[renderedContentKey(page)] = page.HTML()
+		}
+	}
+
+	// Phase 2: SSR for incremental rebuilds (preview mode)
+	ssrSkipped := cfg.SSR == nil || options.SkipSSR
+	ssrPagesRendered := 0
+
+	if cfg.SSR != nil && !options.SkipSSR {
+		// Collect pages needing SSR: rebuilt pages with custom elements.
+		// Scan raw content (not rendered) since goldmark may strip raw HTML.
+		contentPrefix := cfg.Structure.Content
+		if contentPrefix == "" {
+			contentPrefix = "content"
+		}
+		ssrHTML := make(map[string]string)
+		for _, page := range pagesToRender {
+			var rawContent string
+			if fsMode {
+				rawContent = string(page.Content)
+			} else {
+				rawContent = contentMap[filepath.ToSlash(filepath.Join(contentPrefix, page.RelPath))]
+			}
+			if tags := ssr.ScanComponents(rawContent); len(tags) > 0 {
+				key := renderedContentKey(page)
+				if html := renderedContent[key]; html != "" {
+					ssrHTML[key] = html
+				}
+			}
+		}
+
+		// Also check for component definition changes — re-SSR pages
+		// using changed components even if Phase 1 skipped them
+		for _, f := range changedFiles {
+			normalized := filepath.ToSlash(f)
+			if strings.HasPrefix(normalized, "components/") {
+				// Extract component name from path (e.g., "components/ds-card/ds-card.js" → "ds-card")
+				parts := strings.SplitN(strings.TrimPrefix(normalized, "components/"), "/", 2)
+				componentTag := parts[0]
+				if fsMode {
+					// Filesystem mode: scan all discovered pages for component usage
+					for _, p := range allPages {
+						pKey := renderedContentKey(p)
+						if _, alreadyQueued := ssrHTML[pKey]; alreadyQueued {
+							continue
+						}
+						if tags := ssr.ScanComponents(string(p.Content)); len(tags) > 0 {
+							for _, tag := range tags {
+								if tag == componentTag {
+									if html := renderedContent[pKey]; html != "" {
+										ssrHTML[pKey] = html
+									} else {
+										onDemand, renderErr := renderPages([]*content.Page{p}, rc, nil)
+										if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
+											ssrHTML[pKey] = p.HTML()
+										}
+									}
+									break
+								}
+							}
+						}
+					}
+				} else {
+					// Test mode: scan contentMap for component usage
+					contentPrefix := cfg.Structure.Content
+					if contentPrefix == "" {
+						contentPrefix = "content"
+					}
+					for path, body := range contentMap {
+						relPath := strings.TrimPrefix(path, contentPrefix+"/")
+						if tags := ssr.ScanComponents(body); len(tags) > 0 {
+							for _, tag := range tags {
+								if tag == componentTag {
+									for _, p := range allPages {
+										if p.RelPath != relPath {
+											continue
+										}
+										pKey := renderedContentKey(p)
+										if _, alreadyQueued := ssrHTML[pKey]; alreadyQueued {
+											continue
+										}
+										if html := renderedContent[pKey]; html != "" {
+											ssrHTML[pKey] = html
+										} else {
+											onDemand, renderErr := renderPages([]*content.Page{p}, rc, nil)
+											if renderErr == nil && len(onDemand) > 0 && len(p.RenderedBody) > 0 {
+												ssrHTML[pKey] = p.HTML()
+											}
+										}
+									}
+									break
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if len(ssrHTML) > 0 {
+			ssrResult, err := BuildPhase2(ssrHTML, cfg.SSR)
+			if err != nil {
+				log.Printf("warning: incremental SSR failed: %v", err)
+			} else {
+				for _, page := range pagesToRender {
+					if transformed, ok := ssrResult[renderedContentKey(page)]; ok {
+						page.SetRenderedBody([]byte(transformed))
+					}
+				}
+				for relPath, html := range ssrResult {
+					renderedContent[relPath] = html
+				}
+				ssrPagesRendered = len(ssrResult)
+			}
+		}
+	}
+
+	if err := validateOutputDir(cfg); err != nil {
+		return nil, err
+	}
+	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
+	dirCache := output.NewDirectoryCache()
+	for _, page := range pagesToRender {
+		if !output.ShouldWrite(page.URL) {
+			continue
+		}
+		outPath := output.ComputeOutputPath(page.URL)
+		if err := output.WriteFileCached(outputDir, outPath, page.RenderedBody, dirCache); err != nil {
+			return nil, fmt.Errorf("writing output %s: %w", outPath, err)
+		}
+		for format, fmtBody := range page.FormatBodies {
+			fmtPath := formatOutputPath(outPath, format)
+			if err := output.WriteFileCached(outputDir, fmtPath, fmtBody, dirCache); err != nil {
+				return nil, fmt.Errorf("writing %s output %s: %w", format, fmtPath, err)
+			}
+		}
+		aliases, aliasErr := permalink.ResolveAliases(page)
+		if aliasErr != nil {
+			return nil, fmt.Errorf("resolving aliases for %s: %w", page.RelPath, aliasErr)
+		}
+		if len(aliases) > 0 {
+			if err := output.WriteAliasesCached(outputDir, aliases, page.RenderedBody, dirCache); err != nil {
+				return nil, fmt.Errorf("writing aliases for %s: %w", page.RelPath, err)
+			}
+		}
+	}
+
+	// Build in-memory cache: clone previous (preserves skipped page hashes),
+	// then update only rendered pages + carry forward template tracking.
+	var buildCache *cache.Cache
+	if previousCache != nil {
+		buildCache = previousCache.Clone()
+	} else {
+		buildCache = cache.New()
+	}
+	for _, page := range pagesToRender {
+		buildCache.SetHash(page.RelPath, cache.HashContent(page.Content))
+	}
+	for pagePath, layoutPaths := range templateUsage {
+		for _, layoutPath := range layoutPaths {
+			buildCache.TrackTemplateUsage(pagePath, layoutPath)
+		}
+	}
+
+	result := &BuildResult{
+		OutputDir:        cfg.Build.Output,
+		PageCount:        len(pagesToRender),
+		PagesSkipped:     skipped,
+		SSRPagesRendered: ssrPagesRendered,
+		Duration:         time.Since(start),
+		SSRSkipped:       ssrSkipped,
+		PagesRendered:    rendered,
+		RenderedContent:  renderedContent,
+		Cache:            buildCache,
+	}
+
+	reportSummary(reporter, result.PageCount, result.Duration, result.PagesSkipped)
+
+	return result, nil
+}
