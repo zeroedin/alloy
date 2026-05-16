@@ -186,10 +186,12 @@ var _ = Describe("DeepMerge", func() {
 		})
 
 		It("deep-merges nested maps across 3+ directory levels", func() {
-			// 3 levels of _data.yaml with nested map keys:
+			// 3 levels of _data.yaml with nested map keys, pre-accumulated
+			// the way LoadDirectoryCascade produces them (parent merged into
+			// child at each level):
 			//   content/           → theme: { color: "blue", font: "sans-serif" }
-			//   content/blog/      → theme: { color: "green" }  (overrides color, font inherited)
-			//   content/blog/deep/ → theme: { size: "large" }   (adds size, color+font inherited)
+			//   content/blog/      → theme: { color: "green", font: "sans-serif" }
+			//   content/blog/deep/ → theme: { color: "green", font: "sans-serif", size: "large" }
 			cascadeData := map[string]map[string]interface{}{
 				"content/": {
 					"theme": map[string]interface{}{
@@ -200,11 +202,14 @@ var _ = Describe("DeepMerge", func() {
 				"content/blog/": {
 					"theme": map[string]interface{}{
 						"color": "green",
+						"font":  "sans-serif",
 					},
 				},
 				"content/blog/deep/": {
 					"theme": map[string]interface{}{
-						"size": "large",
+						"color": "green",
+						"font":  "sans-serif",
+						"size":  "large",
 					},
 				},
 			}
