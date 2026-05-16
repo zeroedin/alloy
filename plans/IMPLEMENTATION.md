@@ -259,6 +259,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
 **Files**: `context.go`, `layout.go`, `shortcodes.go`
 
 - `BuildTemplateContext(page, siteData, allPages, collections, paginationCtx *pagination.PaginationContext, asName string)`: Populate `TemplateContext` from page + site data. All pages live under `site.pages` (not top-level `pages`) for consistency with `site.title`, `site.data`, etc. When `paginationCtx` is non-nil, set `ctx.Pagination` and inject `ctx.Custom[asName]` as a top-level alias for `pagination.items`. Non-paginated callers pass `nil, ""`.
+- `ToMap()` must convert `site.pages` items via `ToTemplateMap()` (issue #712) — same treatment as collections and taxonomies. Raw `[]*content.Page` structs are not accessible to Liquid filters (`where`, `sort`, `map`, `group_by`) because `getMapValue()` only handles `map[string]interface{}`. Convert to `[]interface{}` of template maps so front matter fields are top-level properties.
 - `TemplateContext` struct additions: `Pagination *pagination.PaginationContext` field, `Custom map[string]interface{}` field for dynamic top-level variables (the `as` alias).
 - `ResolveLayout`: Lookup chain per spec (front matter > section name > filename > default). Handle `layout: false`.
 - `ResolveLayoutWithCascade(page, layoutsDir, engine, permalinkCfg, cascadeData)`: Same lookup chain as `ResolveLayout`, but also considers `_data.yaml` cascade data for layout resolution. Front matter takes priority over cascade data.
