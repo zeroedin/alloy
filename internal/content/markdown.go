@@ -199,10 +199,10 @@ func (r *templateTagEscapingRenderer) RegisterFuncs(reg renderer.NodeRendererFun
 
 func escapeTag(tag []byte) []byte {
 	s := string(tag)
-	s = strings.ReplaceAll(s, "{{", "{​{")
-	s = strings.ReplaceAll(s, "}}", "}​}")
-	s = strings.ReplaceAll(s, "{%", "{​%")
-	s = strings.ReplaceAll(s, "%}", "%​}")
+	s = strings.ReplaceAll(s, "{{", "{\u200B{")
+	s = strings.ReplaceAll(s, "}}", "}\u200B}")
+	s = strings.ReplaceAll(s, "{%", "{\u200B%")
+	s = strings.ReplaceAll(s, "%}", "%\u200B}")
 	return []byte(s)
 }
 
