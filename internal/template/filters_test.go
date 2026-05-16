@@ -448,7 +448,7 @@ var _ = Describe("Built-in Filters", func() {
 			TemplateTags:  false,
 			AutoHeadingID: true,
 		}
-		renderResult, err := content.RenderMarkdown([]byte(input), opts)
+		renderResult, _, err := content.RenderMarkdown([]byte(input), content.CreateGoldmark(opts))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(markdownifyResult).To(Equal(string(renderResult)),
 			"markdownify and RenderMarkdown must use the same config-driven "+
