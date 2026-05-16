@@ -1,0 +1,23 @@
+title: "Alloy"
+baseURL: "https://www.alloyssg.dev"
+
+build:
+  output: _site
+  clean: true
+
+content:
+  formats: ["md", "html"]
+  markdown:
+    goldmark:
+      unsafe: true
+      typographer: true
+      templateTags: true
+
+templates:
+  engine: "liquid"
+
+structure:
+  content: "docs/content"
+  layouts: "docs/layouts"
+  static: "docs/static"
+  data: "docs/data"
