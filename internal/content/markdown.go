@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	htmlstd "html"
-	"regexp"
 	"strings"
 
 	"github.com/yuin/goldmark"
@@ -31,10 +30,6 @@ type MarkdownOptions struct {
 	Hooks         map[string]string
 	HookRenderer  HookRenderer
 }
-
-// templateTagPattern matches {{ ... }} and {% ... %} template expressions,
-// including those containing newlines (e.g., {{ "hello\nworld" | filter }}).
-var templateTagPattern = regexp.MustCompile(`(?s)(\{\{.*?\}\}|\{%.*?%\})`)
 
 // ── Custom AST node types for template tags ───────────────────────────
 
@@ -193,7 +188,42 @@ func (r *templateTagRenderer) renderBlock(w util.BufWriter, source []byte, node 
 	return ast.WalkContinue, nil
 }
 
-// ── Extension ─────────────────────────────────────────────────────────
+// ── Escaping renderer (TemplateTags: false) ──────────────────────────
+
+type templateTagEscapingRenderer struct{}
+
+func (r *templateTagEscapingRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
+	reg.Register(KindTemplateTagInline, r.renderInline)
+	reg.Register(KindTemplateTagBlock, r.renderBlock)
+}
+
+func escapeTag(tag []byte) []byte {
+	s := string(tag)
+	s = strings.ReplaceAll(s, "{{", "{​{")
+	s = strings.ReplaceAll(s, "}}", "}​}")
+	s = strings.ReplaceAll(s, "{%", "{​%")
+	s = strings.ReplaceAll(s, "%}", "%​}")
+	return []byte(s)
+}
+
+func (r *templateTagEscapingRenderer) renderInline(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if entering {
+		n := node.(*TemplateTagInline)
+		_, _ = w.Write(escapeTag(n.TagText))
+	}
+	return ast.WalkContinue, nil
+}
+
+func (r *templateTagEscapingRenderer) renderBlock(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if entering {
+		n := node.(*TemplateTagBlock)
+		_, _ = w.Write(escapeTag(n.TagText))
+		_ = w.WriteByte('\n')
+	}
+	return ast.WalkContinue, nil
+}
+
+// ── Extensions ───────────────────────────────────────────────────────
 
 type templateTagsExtension struct{}
 
@@ -213,13 +243,30 @@ func (e *templateTagsExtension) Extend(m goldmark.Markdown) {
 	)
 }
 
+type templateTagEscapingExtension struct{}
+
+func (e *templateTagEscapingExtension) Extend(m goldmark.Markdown) {
+	m.Parser().AddOptions(
+		parser.WithBlockParsers(
+			util.Prioritized(&templateTagBlockParser{}, 50),
+		),
+		parser.WithInlineParsers(
+			util.Prioritized(&templateTagInlineParser{}, 90),
+		),
+	)
+	m.Renderer().AddOptions(
+		renderer.WithNodeRenderers(
+			util.Prioritized(&templateTagEscapingRenderer{}, 100),
+		),
+	)
+}
+
 // ── Goldmark configuration ───────────────────────────────────────────
 
 // CreateGoldmark builds a configured goldmark instance from options.
-// It configures extensions (Table, TaskList, Footnote, optionally Typographer),
-// parser options (AutoHeadingID, Attribute), and renderer options (Unsafe).
-// When TemplateTags is true, the templateTagsExtension is registered to handle
-// {{ }} and {% %} patterns via custom AST nodes.
+// When TemplateTags is true, template tags are preserved verbatim in the output.
+// When false, they are escaped with zero-width spaces so the template engine
+// won't recognize them.
 func CreateGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) goldmark.Markdown {
 	extensions := []goldmark.Extender{
 		extension.Table,
@@ -231,6 +278,8 @@ func CreateGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) gold
 	}
 	if opts.TemplateTags {
 		extensions = append(extensions, &templateTagsExtension{})
+	} else {
+		extensions = append(extensions, &templateTagEscapingExtension{})
 	}
 
 	rendererOpts := []renderer.Option{}
@@ -261,27 +310,11 @@ func CreateGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) gold
 
 // ── Rendering ─────────────────────────────────────────────────────────
 
-// RenderMarkdown converts Markdown source to HTML.
-func RenderMarkdown(source []byte, opts MarkdownOptions) ([]byte, error) {
-	src := source
-	if !opts.TemplateTags {
-		src = EscapeTemplateTags(source)
-	}
-	md := CreateGoldmark(opts)
-
-	var buf bytes.Buffer
-	if err := md.Convert(src, &buf); err != nil {
-		return nil, fmt.Errorf("markdown render error: %w", err)
-	}
-
-	return buf.Bytes(), nil
-}
-
-// RenderMarkdownWith converts Markdown source to HTML and extracts a table of
+// RenderMarkdown converts Markdown source to HTML and extracts a table of
 // contents using a pre-created goldmark instance. Use this when rendering
 // multiple pages with the same options to avoid re-creating the instance per
 // page. The goldmark instance must have AutoHeadingID enabled for TOC IDs.
-func RenderMarkdownWith(source []byte, md goldmark.Markdown) ([]byte, []TOCEntry, error) {
+func RenderMarkdown(source []byte, md goldmark.Markdown) ([]byte, []TOCEntry, error) {
 	reader := text.NewReader(source)
 	doc := md.Parser().Parse(reader)
 
@@ -322,22 +355,6 @@ func RenderMarkdownWith(source []byte, md goldmark.Markdown) ([]byte, []TOCEntry
 	return result, toc, nil
 }
 
-// EscapeTemplateTags inserts zero-width spaces between consecutive braces
-// so they don't survive as literal template syntax when preservation is disabled.
-func EscapeTemplateTags(src []byte) []byte {
-	result := templateTagPattern.ReplaceAllFunc(src, func(match []byte) []byte {
-		s := string(match)
-		// Insert zero-width space between {{ and }} / {% and %}
-		// so the template engine won't recognize them.
-		s = strings.ReplaceAll(s, "{{", "{\u200B{")
-		s = strings.ReplaceAll(s, "}}", "}\u200B}")
-		s = strings.ReplaceAll(s, "{%", "{\u200B%")
-		s = strings.ReplaceAll(s, "%}", "%\u200B}")
-		return []byte(s)
-	})
-	return result
-}
-
 // ── Table of contents ─────────────────────────────────────────────────
 
 // TOCEntry represents a heading in the table of contents.
@@ -346,25 +363,6 @@ type TOCEntry struct {
 	Text     string     `json:"text"`
 	Level    int        `json:"level"`
 	Children []TOCEntry `json:"children,omitempty"`
-}
-
-// RenderMarkdownWithTOC renders markdown and extracts a nested table of contents
-// from the heading structure. h1 headings are excluded from the TOC.
-// Auto heading IDs are always enabled regardless of opts.AutoHeadingID,
-// since TOC entries require IDs to be useful.
-func RenderMarkdownWithTOC(source []byte, opts MarkdownOptions) ([]byte, []TOCEntry, error) {
-	src := source
-	if !opts.TemplateTags {
-		src = EscapeTemplateTags(source)
-	}
-
-	extraOpts := []parser.Option{}
-	if !opts.AutoHeadingID {
-		extraOpts = append(extraOpts, parser.WithAutoHeadingID(), parser.WithAttribute())
-	}
-	md := CreateGoldmark(opts, extraOpts...)
-
-	return RenderMarkdownWith(src, md)
 }
 
 // extractText recursively collects all text content from an AST node's subtree.
