@@ -327,4 +327,71 @@ var _ = Describe("DeepMerge", func() {
 				"deep level must be in cascade")
 		})
 	})
+
+	// ── FindCascadeData nearest-match optimization (issue #219) ──────
+	// LoadDirectoryCascade already accumulates ancestor data into each
+	// directory entry. FindCascadeData should return the nearest ancestor
+	// match instead of re-merging all ancestors — the accumulated entry
+	// already contains the full chain.
+
+	Describe("FindCascadeData nearest-match (issue #219)", func() {
+		It("nearest directory entry contains full ancestor chain (issue #219)", func() {
+			result, err := cascade.LoadDirectoryCascade(fixtureContentDir())
+			Expect(err).NotTo(HaveOccurred())
+
+			deepEntry := result["content/blog/deep/"]
+			Expect(deepEntry).NotTo(BeNil(),
+				"LoadDirectoryCascade must have an entry for content/blog/deep/")
+
+			found := cascade.FindCascadeData(result, "content", "blog/deep/article.md")
+			Expect(found).NotTo(BeNil())
+
+			Expect(found).To(Equal(deepEntry),
+				"FindCascadeData must return the same data as the nearest "+
+					"LoadDirectoryCascade entry — LoadDirectoryCascade already "+
+					"accumulates ancestor data via DeepMerge(parentData, data), "+
+					"so re-merging all ancestors in FindCascadeData is redundant "+
+					"(issue #219)")
+		})
+
+		It("nearest-match result contains all inherited keys from full chain (issue #219)", func() {
+			result, err := cascade.LoadDirectoryCascade(fixtureContentDir())
+			Expect(err).NotTo(HaveOccurred())
+
+			data := cascade.FindCascadeData(result, "content", "blog/deep/article.md")
+			Expect(data).NotTo(BeNil())
+
+			Expect(data).To(HaveKey("layout"),
+				"must inherit layout from content/blog/_data.yaml (ancestor)")
+			Expect(data["layout"]).To(Equal("post"))
+
+			Expect(data).To(HaveKey("category"),
+				"must have category from content/blog/deep/_data.yaml (self)")
+			Expect(data["category"]).To(Equal("deep-dive"))
+
+			author, ok := data["author"].(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(author["name"]).To(Equal("Deep Author"),
+				"deep/ author.name must override blog/ author.name")
+			Expect(author["twitter"]).To(Equal("@blogauthor"),
+				"deep/ must preserve author.twitter inherited from blog/ — "+
+					"all ancestor keys must be present in the nearest-match "+
+					"entry without re-merging (issue #219)")
+		})
+
+		It("nearest-match for directory without _data.yaml walks up correctly (issue #219)", func() {
+			result, err := cascade.LoadDirectoryCascade(fixtureContentDir())
+			Expect(err).NotTo(HaveOccurred())
+
+			data := cascade.FindCascadeData(result, "content", "blog/deep/nested/leaf.md")
+			Expect(data).NotTo(BeNil(),
+				"page in directory without _data.yaml must inherit from nearest ancestor")
+
+			deepEntry := result["content/blog/deep/"]
+			Expect(data).To(Equal(deepEntry),
+				"FindCascadeData for blog/deep/nested/leaf.md must return the "+
+					"content/blog/deep/ entry — the nearest ancestor with data, "+
+					"already containing the full accumulated chain (issue #219)")
+		})
+	})
 })

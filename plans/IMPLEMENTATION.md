@@ -75,7 +75,7 @@ Used by `LoadFile` and `LoadExternalFiles` for `.json` files only. Front matter,
 
 - `DeepMerge`: Recursive map merge, arrays replaced (not concatenated)
 - `LoadDirectoryCascade`: Walk content dir for `_data.yaml` files, merge parent->child. Only creates entries for directories that contain `_data.yaml`.
-- `FindCascadeData(cascadeData, contentBase, relPath)`: Ancestor-walking lookup. Given a page's `relPath`, computes the directory key and walks up the directory tree to find the nearest ancestor with cascade data. Returns `nil` when no ancestor has data. The pipeline must use this instead of exact key lookup — otherwise pages in directories without `_data.yaml` miss ancestor inheritance (spec §3 requires cascade to flow to all descendants).
+- `FindCascadeData(cascadeData, contentBase, relPath)`: Nearest-match lookup (issue #219). Given a page's `relPath`, walks up the directory tree and returns the nearest ancestor entry from `LoadDirectoryCascade`. Returns `nil` when no ancestor has data. Since `LoadDirectoryCascade` already accumulates ancestor data into each entry via `DeepMerge(parentData, data)`, the nearest match contains the full chain — no re-merge needed. The pipeline must use this instead of exact key lookup — otherwise pages in directories without `_data.yaml` miss ancestor inheritance (spec §3 requires cascade to flow to all descendants).
 - `BuildContext`/`BuildContextFull`: Allocate `PageContext` with shared pointers
 - `Get`: Lookup order: Computed > FrontMatter > Directory > Global. May need `PluginData` field added.
 
