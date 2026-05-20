@@ -634,12 +634,12 @@ var _ = Describe("Build Pipeline", func() {
 			// ps.SiteData is loaded from _data/ at this point (Alice, Bob).
 			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
 			defer registry.Close()
-			ps, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
 			Expect(psErr).NotTo(HaveOccurred())
 
 			// Initial incremental build (no cache — renders everything)
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: ps})
+				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result1.RenderedContent["/team/alice/"]).To(ContainSubstring("Alice"),
 				"sanity: initial build must render Alice")
@@ -654,7 +654,7 @@ var _ = Describe("Build Pipeline", func() {
 			// change is in changedFiles but ps.SiteData is stale.
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"_data/team.json"},
-				pipeline.BuildOptions{PipelineState: ps})
+				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
 
 			charlieHTML := result2.RenderedContent["/team/charlie/"]
@@ -699,12 +699,12 @@ var _ = Describe("Build Pipeline", func() {
 			// Simulate dev.go: create PipelineState once
 			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
 			defer registry.Close()
-			ps, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
 			Expect(psErr).NotTo(HaveOccurred())
 
 			// Initial build
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: ps})
+				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Modify data — change item content (not adding/removing)
@@ -717,7 +717,7 @@ var _ = Describe("Build Pipeline", func() {
 			// references has changed, so its virtual pages must be re-rendered.
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"_data/colors.json"},
-				pipeline.BuildOptions{PipelineState: ps})
+				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
 
 			redHTML := result2.RenderedContent["/colors/red/"]
@@ -748,9 +748,6 @@ var _ = Describe("Build Pipeline", func() {
 				0644)).To(Succeed())
 			Expect(os.WriteFile(filepath.Join(contentDir, "sizes.html"),
 				[]byte("---\ntitle: \"{{ size.name }}\"\npagination:\n  data: site.data.sizes\n  perPage: 1\n  as: size\npermalink: \"/sizes/{{ size.slug }}/\"\n---\n<p>{{ size.name }}</p>"),
-				0644)).To(Succeed())
-			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
-				[]byte("---\ntitle: Home\n---\n# Home"),
 				0644)).To(Succeed())
 			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
 				[]byte("{{ content }}"), 0644)).To(Succeed())
@@ -832,12 +829,12 @@ var _ = Describe("Build Pipeline", func() {
 			// Simulate dev.go: create PipelineState once
 			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
 			defer registry.Close()
-			ps, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
 			Expect(psErr).NotTo(HaveOccurred())
 
 			// Initial build — 3 virtual pages
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: ps})
+				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result1.RenderedContent["/items/gamma/"]).To(ContainSubstring("Gamma"),
 				"sanity: initial build must include Gamma")
@@ -849,7 +846,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"_data/items.json"},
-				pipeline.BuildOptions{PipelineState: ps})
+				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(result2.RenderedContent).NotTo(HaveKey("/items/gamma/"),
@@ -893,12 +890,12 @@ var _ = Describe("Build Pipeline", func() {
 			// Simulate dev.go: create PipelineState once at startup
 			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
 			defer registry.Close()
-			ps, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
 			Expect(psErr).NotTo(HaveOccurred())
 
 			// Initial incremental build
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: ps})
+				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
 
 			colorHTML := result1.RenderedContent["/tokens/color/"]
@@ -913,7 +910,7 @@ var _ = Describe("Build Pipeline", func() {
 			// Incremental rebuild with same PipelineState
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"content/tokens.html"},
-				pipeline.BuildOptions{PipelineState: ps})
+				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
 
 			colorHTML2 := result2.RenderedContent["/tokens/color/"]
