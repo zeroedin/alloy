@@ -172,6 +172,42 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
+	// Reload site data when data directory files have changed (issue #717).
+	// The full Build() path loads data anew each invocation; the incremental
+	// path reuses PipelineState from server startup, so data edits are
+	// invisible to processPagination unless we reload here.
+	dataDir := cfg.Structure.Data
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	dataPrefix := filepath.ToSlash(dataDir) + "/"
+	hasDataChange := false
+	for _, f := range changedFiles {
+		if strings.HasPrefix(filepath.ToSlash(f), dataPrefix) {
+			hasDataChange = true
+			break
+		}
+	}
+	if hasDataChange {
+		freshData, err := loadSiteData(cfg)
+		if err != nil {
+			log.Printf("warning: reloading site data: %v", err)
+		} else {
+			ps.SiteData = freshData
+		}
+		// Invalidate paginated pages that reference site.data — their content
+		// hash is unchanged but their data source has, so they must re-render.
+		for _, page := range allPages {
+			if paginationRaw, ok := page.FrontMatter["pagination"]; ok {
+				if pm, ok := paginationRaw.(map[string]interface{}); ok {
+					if dataRef, ok := pm["data"].(string); ok && strings.HasPrefix(dataRef, "site.data.") {
+						pagesToRender = append(pagesToRender, page)
+					}
+				}
+			}
+		}
+	}
+
 	allPages = content.FilterByLifecycle(allPages, time.Now(), cfg.IncludeDrafts)
 
 	// Re-filter pagesToRender against lifecycle-filtered allPages
