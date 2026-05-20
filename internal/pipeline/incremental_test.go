@@ -588,4 +588,349 @@ var _ = Describe("Build Pipeline", func() {
 	// Mode "exec" (default): one process per page. Mode "stream": persistent
 	// process with NUL-delimited messages. The SSR engine handles all
 	// component rendering internally.
+
+	// ── Paginated virtual pages in incremental rebuild (issue #717) ──
+	// When BuildIncremental re-renders a paginated source template, the
+	// generated virtual pages must retain their pagination data
+	// (_paginationCtx, _paginationData, as variable). The dev server
+	// reuses a single PipelineState across rebuilds — processPagination
+	// must resolve data sources correctly even with a cached PipelineState.
+	// When data files change on disk, BuildIncremental must re-load site
+	// data rather than using stale PipelineState.SiteData.
+
+	Describe("Paginated virtual pages in incremental rebuild (issue #717)", func() {
+		It("data file change with reused PipelineState picks up new data", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			dataDir := filepath.Join(tmpDir, "_data")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			outputDir := filepath.Join(tmpDir, "_site")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(dataDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(dataDir, "team.json"),
+				[]byte(`[{"name":"Alice","slug":"alice"},{"name":"Bob","slug":"bob"}]`),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "team.html"),
+				[]byte("---\ntitle: \"{{ member.name }}\"\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ member.slug }}/\"\n---\n<p>{{ member.name }}</p>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("{{ content }}"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Stale Data Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Data:    "_data",
+				},
+			}
+
+			// Simulate dev.go: create PipelineState once at startup.
+			// ps.SiteData is loaded from _data/ at this point (Alice, Bob).
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			ps, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			// Initial incremental build (no cache — renders everything)
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: ps})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result1.RenderedContent["/team/alice/"]).To(ContainSubstring("Alice"),
+				"sanity: initial build must render Alice")
+
+			// Data file changes on disk — add Charlie
+			Expect(os.WriteFile(filepath.Join(dataDir, "team.json"),
+				[]byte(`[{"name":"Alice","slug":"alice"},{"name":"Bob","slug":"bob"},{"name":"Charlie","slug":"charlie"}]`),
+				0644)).To(Succeed())
+
+			// Incremental rebuild with SAME PipelineState — ps.SiteData
+			// still has the old 2-item array from startup. The data file
+			// change is in changedFiles but ps.SiteData is stale.
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"_data/team.json"},
+				pipeline.BuildOptions{PipelineState: ps})
+			Expect(err).NotTo(HaveOccurred())
+
+			charlieHTML := result2.RenderedContent["/team/charlie/"]
+			Expect(charlieHTML).To(ContainSubstring("Charlie"),
+				"new team member 'Charlie' must appear after data file change — "+
+					"BuildIncremental must re-load site data from disk when data "+
+					"files are in changedFiles, not use stale PipelineState.SiteData "+
+					"(issue #717)")
+		})
+
+		It("data file change invalidates paginated pages for re-rendering", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			dataDir := filepath.Join(tmpDir, "_data")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			outputDir := filepath.Join(tmpDir, "_site")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(dataDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(dataDir, "colors.json"),
+				[]byte(`[{"name":"Red","slug":"red"},{"name":"Blue","slug":"blue"}]`),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "colors.html"),
+				[]byte("---\ntitle: \"{{ color.name }}\"\npagination:\n  data: site.data.colors\n  perPage: 1\n  as: color\npermalink: \"/colors/{{ color.slug }}/\"\n---\n<p>{{ color.name }}</p>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("{{ content }}"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Data Invalidation Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Data:    "_data",
+				},
+			}
+
+			// Simulate dev.go: create PipelineState once
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			ps, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			// Initial build
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: ps})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Modify data — change item content (not adding/removing)
+			Expect(os.WriteFile(filepath.Join(dataDir, "colors.json"),
+				[]byte(`[{"name":"Crimson","slug":"red"},{"name":"Navy","slug":"blue"}]`),
+				0644)).To(Succeed())
+
+			// Data file changed. The paginated source template (colors.html)
+			// has NOT changed — its cache hash is the same. But the data it
+			// references has changed, so its virtual pages must be re-rendered.
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"_data/colors.json"},
+				pipeline.BuildOptions{PipelineState: ps})
+			Expect(err).NotTo(HaveOccurred())
+
+			redHTML := result2.RenderedContent["/colors/red/"]
+			Expect(redHTML).To(ContainSubstring("Crimson"),
+				"data file change must trigger re-rendering of paginated pages "+
+					"that reference the changed data — even though the source "+
+					"template content hash is unchanged, the data source it "+
+					"paginates over has changed (issue #717)")
+
+			blueHTML := result2.RenderedContent["/colors/blue/"]
+			Expect(blueHTML).To(ContainSubstring("Navy"),
+				"all virtual pages from the changed data source must reflect "+
+					"the updated data values (issue #717)")
+		})
+
+		It("all virtual pages from invalidated source are re-rendered, not just the source", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			dataDir := filepath.Join(tmpDir, "_data")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			outputDir := filepath.Join(tmpDir, "_site")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(dataDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(dataDir, "sizes.json"),
+				[]byte(`[{"name":"Small","slug":"sm"},{"name":"Medium","slug":"md"},{"name":"Large","slug":"lg"}]`),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "sizes.html"),
+				[]byte("---\ntitle: \"{{ size.name }}\"\npagination:\n  data: site.data.sizes\n  perPage: 1\n  as: size\npermalink: \"/sizes/{{ size.slug }}/\"\n---\n<p>{{ size.name }}</p>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home\n---\n# Home"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("{{ content }}"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Virtual Page Count Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Data:    "_data",
+				},
+			}
+
+			// Full build to get cache
+			fullResult, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Modify the paginated source
+			Expect(os.WriteFile(filepath.Join(contentDir, "sizes.html"),
+				[]byte("---\ntitle: \"{{ size.name }}\"\npagination:\n  data: site.data.sizes\n  perPage: 1\n  as: size\npermalink: \"/sizes/{{ size.slug }}/\"\n---\n<p>{{ size.name }} token</p>"),
+				0644)).To(Succeed())
+
+			incrResult, err := pipeline.BuildIncremental(cfg, nil, fullResult.Cache,
+				[]string{"content/sizes.html"})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(incrResult.PageCount).To(Equal(3),
+				"all 3 virtual pages from the invalidated source must be re-rendered — "+
+					"not just 1. The source RelPath 'sizes.html' is shared by all "+
+					"virtual pages, so renderRelPaths match must include all of them "+
+					"(issue #717)")
+
+			smHTML := incrResult.RenderedContent["/sizes/sm/"]
+			mdHTML := incrResult.RenderedContent["/sizes/md/"]
+			lgHTML := incrResult.RenderedContent["/sizes/lg/"]
+
+			Expect(smHTML).To(ContainSubstring("Small"),
+				"virtual page /sizes/sm/ must have 'Small' after incremental rebuild (issue #717)")
+			Expect(mdHTML).To(ContainSubstring("Medium"),
+				"virtual page /sizes/md/ must have 'Medium' after incremental rebuild (issue #717)")
+			Expect(lgHTML).To(ContainSubstring("Large"),
+				"virtual page /sizes/lg/ must have 'Large' after incremental rebuild (issue #717)")
+		})
+
+		It("data file removal drops virtual pages from paginated source", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			dataDir := filepath.Join(tmpDir, "_data")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			outputDir := filepath.Join(tmpDir, "_site")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(dataDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(dataDir, "items.json"),
+				[]byte(`[{"name":"Alpha","slug":"alpha"},{"name":"Beta","slug":"beta"},{"name":"Gamma","slug":"gamma"}]`),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "items.html"),
+				[]byte("---\ntitle: \"{{ item.name }}\"\npagination:\n  data: site.data.items\n  perPage: 1\n  as: item\npermalink: \"/items/{{ item.slug }}/\"\n---\n<p>{{ item.name }}</p>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("{{ content }}"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Data Removal Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Data:    "_data",
+				},
+			}
+
+			// Simulate dev.go: create PipelineState once
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			ps, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			// Initial build — 3 virtual pages
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: ps})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result1.RenderedContent["/items/gamma/"]).To(ContainSubstring("Gamma"),
+				"sanity: initial build must include Gamma")
+
+			// Remove Gamma from data
+			Expect(os.WriteFile(filepath.Join(dataDir, "items.json"),
+				[]byte(`[{"name":"Alpha","slug":"alpha"},{"name":"Beta","slug":"beta"}]`),
+				0644)).To(Succeed())
+
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"_data/items.json"},
+				pipeline.BuildOptions{PipelineState: ps})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result2.RenderedContent).NotTo(HaveKey("/items/gamma/"),
+				"removed data item 'Gamma' must not produce a virtual page "+
+					"after data file change — BuildIncremental must re-load data "+
+					"from disk, not use stale PipelineState.SiteData that still "+
+					"contains the old 3-item array (issue #717)")
+		})
+
+		It("paginated source template change produces correct output with reused PipelineState", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			dataDir := filepath.Join(tmpDir, "_data")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			outputDir := filepath.Join(tmpDir, "_site")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(dataDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(dataDir, "categories.json"),
+				[]byte(`[{"name":"Color","slug":"color"},{"name":"Font","slug":"font"},{"name":"Spacing","slug":"spacing"}]`),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "tokens.html"),
+				[]byte("---\ntitle: \"{{ category.name }} Tokens\"\npagination:\n  data: site.data.categories\n  perPage: 1\n  as: category\npermalink: \"/tokens/{{ category.slug }}/\"\n---\n<h1>{{ category.name }}</h1>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("{{ content }}"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Template Change Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Data:    "_data",
+				},
+			}
+
+			// Simulate dev.go: create PipelineState once at startup
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			ps, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			// Initial incremental build
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: ps})
+			Expect(err).NotTo(HaveOccurred())
+
+			colorHTML := result1.RenderedContent["/tokens/color/"]
+			Expect(colorHTML).To(ContainSubstring("Color"),
+				"sanity: initial build must render Color")
+
+			// Modify the paginated source template (not the data)
+			Expect(os.WriteFile(filepath.Join(contentDir, "tokens.html"),
+				[]byte("---\ntitle: \"{{ category.name }} Tokens\"\npagination:\n  data: site.data.categories\n  perPage: 1\n  as: category\npermalink: \"/tokens/{{ category.slug }}/\"\n---\n<h1>{{ category.name }}</h1>\n<p>Updated content</p>"),
+				0644)).To(Succeed())
+
+			// Incremental rebuild with same PipelineState
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"content/tokens.html"},
+				pipeline.BuildOptions{PipelineState: ps})
+			Expect(err).NotTo(HaveOccurred())
+
+			colorHTML2 := result2.RenderedContent["/tokens/color/"]
+			fontHTML2 := result2.RenderedContent["/tokens/font/"]
+			spacingHTML2 := result2.RenderedContent["/tokens/spacing/"]
+
+			Expect(colorHTML2).To(ContainSubstring("Color"),
+				"virtual page /tokens/color/ must render with category.name='Color' "+
+					"after template change with reused PipelineState — if nil, "+
+					"processPagination failed to resolve site.data.categories "+
+					"(issue #717)")
+			Expect(colorHTML2).To(ContainSubstring("Updated content"),
+				"template changes must appear in re-rendered virtual pages")
+			Expect(fontHTML2).To(ContainSubstring("Font"),
+				"virtual page /tokens/font/ must have pagination data (issue #717)")
+			Expect(spacingHTML2).To(ContainSubstring("Spacing"),
+				"virtual page /tokens/spacing/ must have pagination data (issue #717)")
+		})
+	})
 })

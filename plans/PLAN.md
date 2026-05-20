@@ -1267,6 +1267,8 @@ In dev mode, after the initial full build, the file watcher triggers incremental
 
 **Shared data changes** — When global data files (`data/`), directory data (`_data.yaml`), or collections change, all pages that could be affected are rebuilt. Per-page content-hash detection still prevents unnecessary work for pages whose own content hasn't changed.
 
+**Data file changes and PipelineState (issue #717)** — In dev mode, `PipelineState` is created once at server startup and reused across all `BuildIncremental` calls. `PipelineState.SiteData` is loaded from `cfg.Structure.Data` at creation time. When data files change on disk during a dev session, `BuildIncremental` must re-load site data from disk and update `PipelineState.SiteData` before `processPagination` runs. Without this, paginated virtual pages that reference `site.data.*` use stale data — new items are invisible, modified values don't appear, and removed items persist as ghost pages. Data file changes must also invalidate all paginated pages whose `pagination.data` references the changed data source, forcing re-rendering even when the source template's content hash is unchanged.
+
 **Template invalidation** — Template changes invalidate pages that use that specific template (tracked via the layout resolution step), not all pages in a stage.
 
 **Component invalidation** — Handled entirely in Phase 2. A component definition change triggers re-SSR of all pages using that component (tracked via `componentToPages` in `.alloy/components.json`). Phase 1 is untouched. See Section 6.
