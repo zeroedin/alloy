@@ -26,7 +26,7 @@ func killProcGroup(pid int) error {
 	return syscall.Kill(-pgid, syscall.SIGTERM)
 }
 
-func withPIDFile(projectRoot string, create bool, fn func(f *os.File, lines []string) []string) {
+func withPIDFile(projectRoot string, create bool, fn func(lines []string) []string) {
 	if projectRoot == "" {
 		return
 	}
@@ -34,7 +34,7 @@ func withPIDFile(projectRoot string, create bool, fn func(f *os.File, lines []st
 
 	if create {
 		alloyDir := filepath.Dir(path)
-		if err := os.MkdirAll(alloyDir, 0755); err != nil {
+		if err := os.MkdirAll(alloyDir, 0700); err != nil {
 			return
 		}
 	}
@@ -43,7 +43,7 @@ func withPIDFile(projectRoot string, create bool, fn func(f *os.File, lines []st
 	if create {
 		flags |= os.O_CREATE
 	}
-	f, err := os.OpenFile(path, flags, 0644)
+	f, err := os.OpenFile(path, flags, 0600)
 	if err != nil {
 		return
 	}
@@ -55,7 +55,11 @@ func withPIDFile(projectRoot string, create bool, fn func(f *os.File, lines []st
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 
-	data, _ := io.ReadAll(f)
+	data, err := io.ReadAll(f)
+	if err != nil {
+		log.Printf("warning: PID file read: %v", err)
+		return
+	}
 	var lines []string
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
 		if strings.TrimSpace(line) != "" {
@@ -63,27 +67,32 @@ func withPIDFile(projectRoot string, create bool, fn func(f *os.File, lines []st
 		}
 	}
 
-	result := fn(f, lines)
+	result := fn(lines)
 
 	if err := f.Truncate(0); err != nil {
 		log.Printf("warning: PID file truncate: %v", err)
 		return
 	}
-	f.Seek(0, 0)
+	if _, err := f.Seek(0, 0); err != nil {
+		log.Printf("warning: PID file seek: %v", err)
+		return
+	}
 	if len(result) > 0 {
-		f.WriteString(strings.Join(result, "\n") + "\n")
+		if _, err := f.WriteString(strings.Join(result, "\n") + "\n"); err != nil {
+			log.Printf("warning: PID file write: %v", err)
+		}
 	}
 }
 
 func addPIDToFile(projectRoot string, pid int) {
-	withPIDFile(projectRoot, true, func(f *os.File, lines []string) []string {
+	withPIDFile(projectRoot, true, func(lines []string) []string {
 		return append(lines, fmt.Sprintf("%d", pid))
 	})
 }
 
 func removePIDFromFile(projectRoot string, pid int) {
 	pidStr := fmt.Sprintf("%d", pid)
-	withPIDFile(projectRoot, false, func(f *os.File, lines []string) []string {
+	withPIDFile(projectRoot, false, func(lines []string) []string {
 		var kept []string
 		for _, line := range lines {
 			if line != pidStr {
@@ -95,17 +104,16 @@ func removePIDFromFile(projectRoot string, pid int) {
 }
 
 func cleanStalePIDs(projectRoot string) {
-	withPIDFile(projectRoot, false, func(f *os.File, lines []string) []string {
-		var kept []string
+	withPIDFile(projectRoot, false, func(lines []string) []string {
 		for _, line := range lines {
 			pid, err := strconv.Atoi(line)
 			if err != nil || pid <= 0 {
 				continue
 			}
 			if syscall.Kill(pid, 0) == nil {
-				syscall.Kill(pid, syscall.SIGTERM)
+				killProcGroup(pid)
 			}
 		}
-		return kept
+		return nil
 	})
 }

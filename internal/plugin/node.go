@@ -480,12 +480,13 @@ var (
 )
 
 func cleanStalePIDsOnce(projectRoot string) {
+	key := filepath.Clean(projectRoot)
 	stalePIDCleanupMu.Lock()
 	defer stalePIDCleanupMu.Unlock()
-	if stalePIDCleanupRoots[projectRoot] {
+	if stalePIDCleanupRoots[key] {
 		return
 	}
-	stalePIDCleanupRoots[projectRoot] = true
+	stalePIDCleanupRoots[key] = true
 	cleanStalePIDs(projectRoot)
 }
 

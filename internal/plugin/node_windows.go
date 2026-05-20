@@ -4,6 +4,7 @@ package plugin
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,7 +36,7 @@ func withPIDFile(projectRoot string, create bool, fn func(lines []string) []stri
 
 	if create {
 		alloyDir := filepath.Dir(path)
-		if err := os.MkdirAll(alloyDir, 0755); err != nil {
+		if err := os.MkdirAll(alloyDir, 0700); err != nil {
 			return
 		}
 	}
@@ -52,9 +53,13 @@ func withPIDFile(projectRoot string, create bool, fn func(lines []string) []stri
 	result := fn(lines)
 
 	if len(result) > 0 {
-		os.WriteFile(path, []byte(strings.Join(result, "\n")+"\n"), 0644)
+		if err := os.WriteFile(path, []byte(strings.Join(result, "\n")+"\n"), 0600); err != nil {
+			log.Printf("warning: PID file write: %v", err)
+		}
 	} else {
-		os.WriteFile(path, []byte{}, 0644)
+		if err := os.WriteFile(path, []byte{}, 0600); err != nil {
+			log.Printf("warning: PID file write: %v", err)
+		}
 	}
 }
 
