@@ -474,6 +474,21 @@ func pidFilePath(projectRoot string) string {
 	return filepath.Join(projectRoot, ".alloy", "workers.pid")
 }
 
+var (
+	stalePIDCleanupMu    sync.Mutex
+	stalePIDCleanupRoots = make(map[string]bool)
+)
+
+func cleanStalePIDsOnce(projectRoot string) {
+	stalePIDCleanupMu.Lock()
+	defer stalePIDCleanupMu.Unlock()
+	if stalePIDCleanupRoots[projectRoot] {
+		return
+	}
+	stalePIDCleanupRoots[projectRoot] = true
+	cleanStalePIDs(projectRoot)
+}
+
 // NewNodeBridge creates a Node bridge for the given project root.
 func NewNodeBridge(projectRoot string) *NodeBridge {
 	return &NodeBridge{
@@ -535,7 +550,7 @@ func (b *NodeBridge) Start() error {
 	}
 	b.stdout = bufio.NewReader(stdoutPipe)
 
-	cleanStalePIDs(b.projectRoot, 0)
+	cleanStalePIDsOnce(b.projectRoot)
 
 	if err := b.cmd.Start(); err != nil {
 		os.Remove(b.scriptPath)
@@ -648,10 +663,13 @@ func (b *NodeBridge) Stop() error {
 		select {
 		case <-done:
 		case <-ctx.Done():
-			if err := killProcGroup(pid); err != nil {
+			killProcGroup(pid)
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
 				b.cmd.Process.Kill()
+				<-done
 			}
-			<-done
 		}
 		removePIDFromFile(b.projectRoot, pid)
 		b.cmd = nil
