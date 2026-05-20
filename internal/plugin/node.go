@@ -511,6 +511,7 @@ func (b *NodeBridge) Start() error {
 	b.scriptPath = scriptPath
 
 	b.cmd = exec.Command("node", b.scriptPath)
+	setProcGroup(b.cmd)
 	if b.projectRoot != "" {
 		if info, err := os.Stat(b.projectRoot); err == nil && info.IsDir() {
 			b.cmd.Dir = b.projectRoot
@@ -534,6 +535,9 @@ func (b *NodeBridge) Start() error {
 		os.Remove(b.scriptPath)
 		return fmt.Errorf("starting node: %w", err)
 	}
+
+	cleanStalePIDs(b.projectRoot)
+	addPIDToFile(b.projectRoot, b.cmd.Process.Pid)
 
 	b.state = BridgeRunning
 	return nil
@@ -625,12 +629,13 @@ func (b *NodeBridge) Send(msg *Message) (*Message, error) {
 	return &resp, nil
 }
 
-// Stop gracefully shuts down the Node subprocess.
+// Stop gracefully shuts down the Node subprocess and its process group.
 func (b *NodeBridge) Stop() error {
 	if b.stdin != nil {
 		b.stdin.Close()
 	}
 	if b.cmd != nil && b.cmd.Process != nil {
+		pid := b.cmd.Process.Pid
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		done := make(chan error, 1)
@@ -638,9 +643,11 @@ func (b *NodeBridge) Stop() error {
 		select {
 		case <-done:
 		case <-ctx.Done():
-			b.cmd.Process.Kill()
+			killProcGroup(pid)
 			<-done
 		}
+		removePIDFromFile(b.projectRoot, pid)
+		b.cmd = nil
 	}
 	if b.scriptPath != "" {
 		os.Remove(b.scriptPath)
