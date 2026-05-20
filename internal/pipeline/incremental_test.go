@@ -1006,9 +1006,11 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(os.MkdirAll(dataDir, 0755)).To(Succeed())
 			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
 
-			// Create a collection-based paginated page and some data
-			Expect(os.WriteFile(filepath.Join(dataDir, "unrelated.json"),
-				[]byte(`{"key":"value"}`),
+			// Create a collection-based paginated page AND a data-based
+			// paginated page referencing the same data file. When the data
+			// file changes, only the data-based page should be invalidated.
+			Expect(os.WriteFile(filepath.Join(dataDir, "widgets.json"),
+				[]byte(`[{"name":"Sprocket","slug":"sprocket"}]`),
 				0644)).To(Succeed())
 			Expect(os.WriteFile(filepath.Join(contentDir, "posts", "_data.yaml"),
 				[]byte("permalink: \"/:year/:month/:slug/\"\n"),
@@ -1018,6 +1020,10 @@ var _ = Describe("Build Pipeline", func() {
 				0644)).To(Succeed())
 			Expect(os.WriteFile(filepath.Join(contentDir, "archive.html"),
 				[]byte("---\ntitle: Archive\npagination:\n  data: collections.posts\n  perPage: 10\n  as: posts\npermalink: \"/archive/\"\n---\n{% for post in posts %}<p>{{ post.title }}</p>{% endfor %}"),
+				0644)).To(Succeed())
+			// Control page: paginates site.data.widgets — SHOULD be invalidated
+			Expect(os.WriteFile(filepath.Join(contentDir, "widgets.html"),
+				[]byte("---\ntitle: \"{{ widget.name }}\"\npagination:\n  data: site.data.widgets\n  perPage: 1\n  as: widget\npermalink: \"/widgets/{{ widget.slug }}/\"\n---\n<p>{{ widget.name }}</p>"),
 				0644)).To(Succeed())
 			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
 				[]byte("{{ content }}"), 0644)).To(Succeed())
@@ -1043,21 +1049,27 @@ var _ = Describe("Build Pipeline", func() {
 				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
 
-			// Modify data file — this should NOT invalidate the archive page
-			// because it paginates over collections.posts, not site.data.*
-			Expect(os.WriteFile(filepath.Join(dataDir, "unrelated.json"),
-				[]byte(`{"key":"changed"}`),
+			// Modify data file — should invalidate widgets (site.data.*) but
+			// NOT archive (collections.posts)
+			Expect(os.WriteFile(filepath.Join(dataDir, "widgets.json"),
+				[]byte(`[{"name":"Gear","slug":"gear"}]`),
 				0644)).To(Succeed())
 
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
-				[]string{"_data/unrelated.json"},
+				[]string{"_data/widgets.json"},
 				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(result2.PagesSkipped).To(BeNumerically(">", 0),
-				"collections-based paginated page must be skipped (cached) when "+
-					"only data files change — the data reload invalidation must only "+
-					"target pages with pagination.data starting with 'site.data.', "+
+			// Positive: site.data.* page WAS invalidated and re-rendered
+			Expect(result2.RenderedContent).To(HaveKey("/widgets/gear/"),
+				"site.data-based paginated page must be re-rendered when its "+
+					"data source changes (control case, issue #719)")
+
+			// Negative: collections-based page was NOT re-rendered
+			Expect(result2.RenderedContent).NotTo(HaveKey("/archive/"),
+				"collections-based paginated page must NOT be re-rendered when "+
+					"only data files change — the invalidation must only target "+
+					"pages with pagination.data starting with 'site.data.', "+
 					"not 'collections.*' (issue #719)")
 		})
 
@@ -1102,6 +1114,9 @@ var _ = Describe("Build Pipeline", func() {
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
 				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
+			Expect(result1.RenderedContent["/broken/"]).NotTo(BeEmpty(),
+				"sanity: page with non-string pagination.data must still be "+
+					"discovered and rendered (issue #719)")
 
 			// Modify data file — should not cause panic during pagination
 			// invalidation scan even though broken.html has non-string data
