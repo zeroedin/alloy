@@ -930,4 +930,254 @@ var _ = Describe("Build Pipeline", func() {
 				"virtual page /tokens/spacing/ must have pagination data (issue #717)")
 		})
 	})
+
+	Describe("Incremental rebuild data reload edge cases (issue #719)", func() {
+		It("malformed data file keeps stale data and re-renders pages with old values", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			dataDir := filepath.Join(tmpDir, "_data")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			outputDir := filepath.Join(tmpDir, "_site")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(dataDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(dataDir, "items.json"),
+				[]byte(`[{"name":"Alpha","slug":"alpha"}]`),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "items.html"),
+				[]byte("---\ntitle: \"{{ item.name }}\"\npagination:\n  data: site.data.items\n  perPage: 1\n  as: item\npermalink: \"/items/{{ item.slug }}/\"\n---\n<p>{{ item.name }}</p>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("{{ content }}"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Malformed Data Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Data:    "_data",
+				},
+			}
+
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result1.RenderedContent["/items/alpha/"]).To(ContainSubstring("Alpha"),
+				"sanity: initial build must render Alpha")
+
+			// Write malformed JSON to the data file
+			Expect(os.WriteFile(filepath.Join(dataDir, "items.json"),
+				[]byte(`{{{NOT VALID JSON`),
+				0644)).To(Succeed())
+
+			// Incremental rebuild with malformed data — loadSiteData should
+			// fail, the implementation should log a warning and keep stale
+			// ps.SiteData so pages still render with old values rather than
+			// crashing or producing empty output.
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"_data/items.json"},
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred(),
+				"malformed data file must not cause BuildIncremental to return an error — "+
+					"it should log a warning and continue with stale data (issue #719)")
+
+			alphaHTML := result2.RenderedContent["/items/alpha/"]
+			Expect(alphaHTML).To(ContainSubstring("Alpha"),
+				"when data reload fails, pages must re-render with stale data — "+
+					"not crash, not produce empty output (issue #719)")
+		})
+
+		It("collections-based pagination is not invalidated by data file changes", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			dataDir := filepath.Join(tmpDir, "_data")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			outputDir := filepath.Join(tmpDir, "_site")
+			Expect(os.MkdirAll(filepath.Join(contentDir, "posts"), 0755)).To(Succeed())
+			Expect(os.MkdirAll(dataDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			// Create a collection-based paginated page and some data
+			Expect(os.WriteFile(filepath.Join(dataDir, "unrelated.json"),
+				[]byte(`{"key":"value"}`),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "posts", "_data.yaml"),
+				[]byte("permalink: \"/:year/:month/:slug/\"\n"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "posts", "first.md"),
+				[]byte("---\ntitle: First Post\ndate: 2026-01-15\n---\n# First"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "archive.html"),
+				[]byte("---\ntitle: Archive\npagination:\n  data: collections.posts\n  perPage: 10\n  as: posts\npermalink: \"/archive/\"\n---\n{% for post in posts %}<p>{{ post.title }}</p>{% endfor %}"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("{{ content }}"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Collections Pagination Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Data:    "_data",
+				},
+			}
+
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Modify data file — this should NOT invalidate the archive page
+			// because it paginates over collections.posts, not site.data.*
+			Expect(os.WriteFile(filepath.Join(dataDir, "unrelated.json"),
+				[]byte(`{"key":"changed"}`),
+				0644)).To(Succeed())
+
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"_data/unrelated.json"},
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result2.PagesSkipped).To(BeNumerically(">", 0),
+				"collections-based paginated page must be skipped (cached) when "+
+					"only data files change — the data reload invalidation must only "+
+					"target pages with pagination.data starting with 'site.data.', "+
+					"not 'collections.*' (issue #719)")
+		})
+
+		It("non-string pagination.data field does not cause invalidation or panic", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			dataDir := filepath.Join(tmpDir, "_data")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			outputDir := filepath.Join(tmpDir, "_site")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(dataDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(dataDir, "stuff.json"),
+				[]byte(`[{"name":"Thing"}]`),
+				0644)).To(Succeed())
+			// pagination.data is a number — the type assertion chain in the
+			// invalidation logic must silently skip this (not panic or crash)
+			Expect(os.WriteFile(filepath.Join(contentDir, "broken.html"),
+				[]byte("---\ntitle: Broken Page\npagination:\n  data: 42\n  as: item\npermalink: \"/broken/\"\n---\n<p>static</p>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("{{ content }}"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Non-String Data Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Data:    "_data",
+				},
+			}
+
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Modify data file — should not cause panic during pagination
+			// invalidation scan even though broken.html has non-string data
+			Expect(os.WriteFile(filepath.Join(dataDir, "stuff.json"),
+				[]byte(`[{"name":"Other Thing"}]`),
+				0644)).To(Succeed())
+
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"_data/stuff.json"},
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred(),
+				"non-string pagination.data must not cause a panic or error "+
+					"during data-change invalidation scan — the type assertion "+
+					"chain must silently skip non-string values (issue #719)")
+			Expect(result2).NotTo(BeNil(),
+				"build must complete successfully with non-string pagination.data (issue #719)")
+		})
+
+		It("data file change detected with custom cfg.Structure.Data directory", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			dataDir := filepath.Join(tmpDir, "custom_data")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			outputDir := filepath.Join(tmpDir, "_site")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(dataDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(dataDir, "team.json"),
+				[]byte(`[{"name":"Alice","slug":"alice"},{"name":"Bob","slug":"bob"}]`),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "team.html"),
+				[]byte("---\ntitle: \"{{ member.name }}\"\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ member.slug }}/\"\n---\n<p>{{ member.name }}</p>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("{{ content }}"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Custom Data Dir Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content:  "content",
+					Layouts:  "layouts",
+					Data:     "custom_data",
+				},
+			}
+
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result1.RenderedContent["/team/alice/"]).To(ContainSubstring("Alice"),
+				"sanity: initial build with custom data dir must render Alice")
+
+			// Add a new team member via the custom data directory
+			Expect(os.WriteFile(filepath.Join(dataDir, "team.json"),
+				[]byte(`[{"name":"Alice","slug":"alice"},{"name":"Bob","slug":"bob"},{"name":"Charlie","slug":"charlie"}]`),
+				0644)).To(Succeed())
+
+			// changedFiles path must use the custom directory name, not "data"
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"custom_data/team.json"},
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+
+			charlieHTML := result2.RenderedContent["/team/charlie/"]
+			Expect(charlieHTML).To(ContainSubstring("Charlie"),
+				"data file change must be detected when cfg.Structure.Data is a "+
+					"custom directory name — the dataPrefix check must use the "+
+					"configured value, not the default 'data' (issue #719)")
+		})
+	})
 })
