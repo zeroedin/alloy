@@ -12,10 +12,12 @@ import (
 
 func setProcGroup(cmd *exec.Cmd) {}
 
-func killProcGroup(pid int) error { return nil }
-
-func pidFilePath(projectRoot string) string {
-	return filepath.Join(projectRoot, ".alloy", "workers.pid")
+func killProcGroup(pid int) error {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return p.Kill()
 }
 
 func addPIDToFile(projectRoot string, pid int) {
@@ -56,7 +58,7 @@ func removePIDFromFile(projectRoot string, pid int) {
 	}
 }
 
-func cleanStalePIDs(projectRoot string) {
+func cleanStalePIDs(projectRoot string, currentPID int) {
 	if projectRoot == "" {
 		return
 	}

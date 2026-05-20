@@ -470,6 +470,10 @@ type NodeBridge struct {
 	scriptPath  string
 }
 
+func pidFilePath(projectRoot string) string {
+	return filepath.Join(projectRoot, ".alloy", "workers.pid")
+}
+
 // NewNodeBridge creates a Node bridge for the given project root.
 func NewNodeBridge(projectRoot string) *NodeBridge {
 	return &NodeBridge{
@@ -531,12 +535,13 @@ func (b *NodeBridge) Start() error {
 	}
 	b.stdout = bufio.NewReader(stdoutPipe)
 
+	cleanStalePIDs(b.projectRoot, 0)
+
 	if err := b.cmd.Start(); err != nil {
 		os.Remove(b.scriptPath)
 		return fmt.Errorf("starting node: %w", err)
 	}
 
-	cleanStalePIDs(b.projectRoot)
 	addPIDToFile(b.projectRoot, b.cmd.Process.Pid)
 
 	b.state = BridgeRunning
@@ -643,7 +648,9 @@ func (b *NodeBridge) Stop() error {
 		select {
 		case <-done:
 		case <-ctx.Done():
-			killProcGroup(pid)
+			if err := killProcGroup(pid); err != nil {
+				b.cmd.Process.Kill()
+			}
 			<-done
 		}
 		removePIDFromFile(b.projectRoot, pid)

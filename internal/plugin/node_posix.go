@@ -4,6 +4,8 @@ package plugin
 
 import (
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,10 +26,6 @@ func killProcGroup(pid int) error {
 	return syscall.Kill(-pgid, syscall.SIGTERM)
 }
 
-func pidFilePath(projectRoot string) string {
-	return filepath.Join(projectRoot, ".alloy", "workers.pid")
-}
-
 func addPIDToFile(projectRoot string, pid int) {
 	if projectRoot == "" {
 		return
@@ -44,15 +42,17 @@ func addPIDToFile(projectRoot string, pid int) {
 	}
 	defer f.Close()
 
-	syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		log.Printf("warning: PID file lock: %v", err)
+		return
+	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 
-	data, _ := os.ReadFile(path)
+	data, _ := io.ReadAll(f)
 	line := fmt.Sprintf("%d\n", pid)
-	content := string(data) + line
 	f.Truncate(0)
 	f.Seek(0, 0)
-	f.WriteString(content)
+	f.WriteString(string(data) + line)
 }
 
 func removePIDFromFile(projectRoot string, pid int) {
@@ -67,10 +67,13 @@ func removePIDFromFile(projectRoot string, pid int) {
 	}
 	defer f.Close()
 
-	syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		log.Printf("warning: PID file lock: %v", err)
+		return
+	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 
-	data, err := os.ReadFile(path)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return
 	}
@@ -91,7 +94,7 @@ func removePIDFromFile(projectRoot string, pid int) {
 	}
 }
 
-func cleanStalePIDs(projectRoot string) {
+func cleanStalePIDs(projectRoot string, currentPID int) {
 	if projectRoot == "" {
 		return
 	}
@@ -103,10 +106,13 @@ func cleanStalePIDs(projectRoot string) {
 	}
 	defer f.Close()
 
-	syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		log.Printf("warning: PID file lock: %v", err)
+		return
+	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 
-	data, err := os.ReadFile(path)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return
 	}
@@ -120,6 +126,10 @@ func cleanStalePIDs(projectRoot string) {
 		}
 		pid, err := strconv.Atoi(line)
 		if err != nil {
+			continue
+		}
+		if pid == currentPID {
+			kept = append(kept, line)
 			continue
 		}
 		if syscall.Kill(pid, 0) == nil {
