@@ -1,3 +1,5 @@
+//go:build !windows
+
 package plugin_test
 
 import (
@@ -226,14 +228,18 @@ var _ = Describe("NodeBridge", func() {
 			bridge := plugin.NewNodeBridge("/project")
 			err := bridge.Start()
 			Expect(err).NotTo(HaveOccurred())
+			defer bridge.Stop()
 
 			pid := bridge.PID()
 			Expect(pid).To(BeNumerically(">", 0))
 
+			pgid, err := syscall.Getpgid(pid)
+			Expect(err).NotTo(HaveOccurred())
+
 			err = bridge.Stop()
 			Expect(err).NotTo(HaveOccurred())
 
-			err = syscall.Kill(-pid, 0)
+			err = syscall.Kill(-pgid, 0)
 			Expect(err).To(HaveOccurred(),
 				"process group should not exist after Stop")
 		})
@@ -316,6 +322,7 @@ var _ = Describe("NodeBridge", func() {
 			bridge := plugin.NewNodeBridge("/project")
 			err := bridge.Start()
 			Expect(err).NotTo(HaveOccurred())
+			defer bridge.Stop()
 
 			pid := bridge.PID()
 			Expect(pid).To(BeNumerically(">", 0))
