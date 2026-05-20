@@ -319,6 +319,10 @@ var _ = Describe("NodeBridge", func() {
 			sleeper := exec.Command("sleep", "300")
 			sleeper.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 			Expect(sleeper.Start()).To(Succeed())
+			DeferCleanup(func() {
+				_ = sleeper.Process.Kill()
+				_, _ = sleeper.Process.Wait()
+			})
 			stalePID := sleeper.Process.Pid
 
 			alloyDir := filepath.Join(tmpDir, ".alloy")
@@ -375,6 +379,14 @@ var _ = Describe("NodeBridge", func() {
 			bridges := make([]*plugin.NodeBridge, numBridges)
 			errs := make(chan error, numBridges)
 
+			DeferCleanup(func() {
+				for _, b := range bridges {
+					if b != nil {
+						b.Stop()
+					}
+				}
+			})
+
 			for i := 0; i < numBridges; i++ {
 				go func(idx int) {
 					b := plugin.NewNodeBridge(tmpDir)
@@ -391,13 +403,6 @@ var _ = Describe("NodeBridge", func() {
 				err := <-errs
 				Expect(err).NotTo(HaveOccurred())
 			}
-			defer func() {
-				for _, b := range bridges {
-					if b != nil {
-						b.Stop()
-					}
-				}
-			}()
 
 			pidFile := filepath.Join(tmpDir, ".alloy", "workers.pid")
 			data, err := os.ReadFile(pidFile)
