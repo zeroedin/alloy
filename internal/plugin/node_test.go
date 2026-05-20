@@ -439,6 +439,12 @@ var _ = Describe("NodeBridge", func() {
 
 			err := bridge.Start()
 			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() {
+				bridge.Stop()
+				if pid := bridge.PID(); pid > 0 {
+					syscall.Kill(-pid, syscall.SIGKILL)
+				}
+			})
 
 			pid := bridge.PID()
 			Expect(pid).To(BeNumerically(">", 0))
@@ -458,6 +464,12 @@ var _ = Describe("NodeBridge", func() {
 
 			err := bridge.Start()
 			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() {
+				bridge.Stop()
+				if pid := bridge.PID(); pid > 0 {
+					syscall.Kill(-pid, syscall.SIGKILL)
+				}
+			})
 
 			done := make(chan error, 1)
 			go func() { done <- bridge.Stop() }()
