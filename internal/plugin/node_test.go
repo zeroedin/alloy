@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -312,6 +313,106 @@ var _ = Describe("NodeBridge", func() {
 				"stale PID should be cleaned from the file on startup")
 			Expect(string(data)).To(ContainSubstring(fmt.Sprintf("%d", bridge.PID())),
 				"current PID should be in the file")
+		})
+
+		It("kills a real stale process found in workers.pid on Start", func() {
+			sleeper := exec.Command("sleep", "300")
+			sleeper.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			Expect(sleeper.Start()).To(Succeed())
+			DeferCleanup(func() {
+				_ = sleeper.Process.Kill()
+				_, _ = sleeper.Process.Wait()
+			})
+			stalePID := sleeper.Process.Pid
+
+			alloyDir := filepath.Join(tmpDir, ".alloy")
+			Expect(os.MkdirAll(alloyDir, 0755)).To(Succeed())
+			pidFile := filepath.Join(alloyDir, "workers.pid")
+			Expect(os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", stalePID)), 0644)).To(Succeed())
+
+			bridge := plugin.NewNodeBridge(tmpDir)
+			err := bridge.Start()
+			Expect(err).NotTo(HaveOccurred())
+			defer bridge.Stop()
+
+			Eventually(func() error {
+				return syscall.Kill(stalePID, 0)
+			}, "5s", "100ms").Should(HaveOccurred(),
+				"stale process should be killed during startup cleanup")
+		})
+
+		It("handles malformed entries in workers.pid without error", func() {
+			alloyDir := filepath.Join(tmpDir, ".alloy")
+			Expect(os.MkdirAll(alloyDir, 0755)).To(Succeed())
+			pidFile := filepath.Join(alloyDir, "workers.pid")
+			Expect(os.WriteFile(pidFile, []byte("not-a-number\n-1\n0\n\n"), 0644)).To(Succeed())
+
+			bridge := plugin.NewNodeBridge(tmpDir)
+			err := bridge.Start()
+			Expect(err).NotTo(HaveOccurred())
+			defer bridge.Stop()
+
+			data, err := os.ReadFile(pidFile)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(data)).To(ContainSubstring(fmt.Sprintf("%d", bridge.PID())),
+				"current PID should be in the file after cleaning malformed entries")
+		})
+	})
+
+	// ── Concurrent PID file access (#726) ────────────────────────────
+
+	Describe("Concurrent PID file access", func() {
+		var tmpDir string
+
+		BeforeEach(func() {
+			var err error
+			tmpDir, err = os.MkdirTemp("", "alloy-concurrent-pid-test-*")
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		AfterEach(func() {
+			os.RemoveAll(tmpDir)
+		})
+
+		It("multiple bridges writing to same PID file preserves all PIDs", func() {
+			const numBridges = 4
+			bridges := make([]*plugin.NodeBridge, numBridges)
+			errs := make(chan error, numBridges)
+
+			DeferCleanup(func() {
+				for _, b := range bridges {
+					if b != nil {
+						b.Stop()
+					}
+				}
+			})
+
+			for i := 0; i < numBridges; i++ {
+				go func(idx int) {
+					b := plugin.NewNodeBridge(tmpDir)
+					if err := b.Start(); err != nil {
+						errs <- fmt.Errorf("bridge %d: %w", idx, err)
+						return
+					}
+					bridges[idx] = b
+					errs <- nil
+				}(i)
+			}
+
+			for i := 0; i < numBridges; i++ {
+				err := <-errs
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			pidFile := filepath.Join(tmpDir, ".alloy", "workers.pid")
+			data, err := os.ReadFile(pidFile)
+			Expect(err).NotTo(HaveOccurred())
+
+			content := string(data)
+			for i, b := range bridges {
+				Expect(content).To(ContainSubstring(fmt.Sprintf("%d", b.PID())),
+					fmt.Sprintf("PID file should contain bridge %d PID", i))
+			}
 		})
 	})
 
