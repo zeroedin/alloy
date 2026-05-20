@@ -201,6 +201,17 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 					}
 				}
 			}
+		} else {
+			// freshData is nil with no error: either the data directory was
+			// deleted or it contains only malformed files (loadSiteData swallows
+			// parse errors with a warning log). Check whether the directory
+			// still exists to disambiguate.
+			dataDirAbs := resolveDir(cfg.ProjectRoot, dataDir)
+			if _, statErr := os.Stat(dataDirAbs); os.IsNotExist(statErr) {
+				ps.SiteData = nil
+			}
+			// Directory exists but loadSiteData returned nil — a parse error
+			// was already logged; keep stale data so pagination doesn't break.
 		}
 		// Invalidate paginated pages that reference site.data — their content
 		// hash is unchanged but their data source has, so they must re-render.

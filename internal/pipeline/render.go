@@ -133,10 +133,9 @@ func renderPages(pages []*content.Page, rc *RenderContext, reporter ProgressRepo
 // renderedContentKey returns the key to use in RenderedContent for a page.
 // Regular pages use RelPath; generated pages (taxonomy, paginated) use URL.
 func renderedContentKey(page *content.Page) string {
-	if _, ok := page.FrontMatter["_paginationCtx"]; ok && page.URL != "" {
-		return page.URL
-	}
-	if _, ok := page.FrontMatter["pagination"]; ok && page.URL != "" {
+	_, hasPaginationCtx := page.FrontMatter["_paginationCtx"]
+	_, hasPagination := page.FrontMatter["pagination"]
+	if (hasPaginationCtx || hasPagination) && page.URL != "" {
 		return page.URL
 	}
 	if page.RelPath == "" && page.URL != "" {
