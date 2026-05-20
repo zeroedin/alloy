@@ -194,6 +194,13 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 			log.Printf("warning: reloading site data: %v", err)
 		} else {
 			ps.SiteData = freshData
+			if ps.Registry != nil {
+				for _, rt := range ps.Registry.Runtimes() {
+					if err := rt.SetSiteData(ps.SiteData); err != nil {
+						log.Printf("warning: updating plugin site data after reload: %v", err)
+					}
+				}
+			}
 		}
 		// Invalidate paginated pages that reference site.data — their content
 		// hash is unchanged but their data source has, so they must re-render.
