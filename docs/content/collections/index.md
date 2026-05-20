@@ -1,110 +1,141 @@
 ---
 layout: doc
 title: Collections
+nav_weight: 10
 ---
 
-Collections group related pages into ordered lists that you can loop over in templates. Not every subdirectory is a collection -- Alloy creates collections explicitly, not implicitly from your directory tree.
+Collections group related content pages so templates can iterate, sort, and filter them. Alloy creates collections automatically from your content structure -- no manual registration required.
+
+```yaml
+# content/blog/_data.yaml
+permalink: "/:year/:month/:slug/"
+```
+
+Any section whose `_data.yaml` permalink pattern contains date tokens (`:year`, `:month`, `:day`) becomes a collection. The pages under `content/blog/` are now available in templates as `collections.blog`.
+
+## Directory-Based Collections
+
+Collections follow from your content directory structure. A directory with a date-based permalink pattern in its `_data.yaml` collects all child pages:
+
+```
+content/
+  blog/
+    _data.yaml          # permalink: "/:year/:month/:slug/"
+    first-post.md       # -> collections.blog
+    second-post.md      # -> collections.blog
+    2024/
+      archived.md       # -> collections.blog (subdirectories inherit)
+  docs/
+    getting-started.md  # not a collection (no date-based permalink)
+```
+
+Regular directories without date-based permalink patterns are just pages, not collections. To group non-blog pages across sections, use [taxonomies](/collections/taxonomies/).
+
+## Iterating Collections
+
+Loop through a collection in your templates to build index pages, feeds, or navigation:
 
 ```liquid
 {% for post in collections.blog %}
   <article>
     <h2><a href="{{ post.url }}">{{ post.title }}</a></h2>
     <time>{{ post.date | date: "%B %d, %Y" }}</time>
+    <p>{{ post.summary }}</p>
   </article>
 {% endfor %}
 ```
 
-## Creating collections
+Each item in the collection is a page object with all the usual properties: `url`, `title`, `date`, `summary`, and any custom front matter fields.
 
-There are two ways to create a collection.
+## Default Sort Order
 
-**Date-based permalink pattern.** Add a `_data.yaml` file with a permalink containing date tokens (`:year`, `:month`, `:day`). Any section with a date-based permalink pattern automatically becomes a collection:
+Collections sort by **date descending** (newest first). When two pages share the same date, the full datetime is compared. If the datetime is identical or no time component is provided, filename alphabetical ascending is the tiebreaker. Pages without a date sort after all dated pages, ordered by filename.
 
-```yaml
-# content/blog/_data.yaml
-permalink: "/blog/:year/:month/:day/:slug/"
-```
+Sort is deterministic across builds.
 
-All pages under `content/blog/` are now members of `collections.blog`, sorted by date descending.
+## Custom Sort Order
 
-**Taxonomy collections.** When you declare a taxonomy in config and pages use the corresponding front matter key, Alloy creates per-term collections automatically. See [Taxonomies](/collections/taxonomies/) for details.
-
-A plain subdirectory without a date-based permalink or taxonomy association is just a directory -- it does not produce a collection.
-
-## Default sort order
-
-Collections sort by **date descending** (newest first). Pages without a date fall to the end in filename order.
-
-```liquid
-{%- comment -%} Newest post first, no configuration needed {%- endcomment -%}
-{% for post in collections.blog %}
-  {{ post.title }} — {{ post.date | date: "%Y-%m-%d" }}
-{% endfor %}
-```
-
-## Custom sort via config
-
-Override the default sort in `alloy.config.yaml`:
+Override the default sort for a collection in your site config:
 
 ```yaml
 # alloy.config.yaml
 collections:
   blog:
-    sortBy: title
-    order: asc
+    sortBy: "date"
+    order: "desc"
 ```
 
-`sortBy` accepts any front matter field. `order` is `asc` or `desc` (default `desc`).
+You can sort by any front matter field. For a portfolio sorted by a custom `order` field:
 
-## Inline sort in templates
-
-Use the `sort` filter to re-sort a collection in a specific template without changing the global order:
-
-```liquid
-{% assign sorted = collections.blog | sort: "title" %}
-{% for post in sorted %}
-  <li>{{ post.title }}</li>
-{% endfor %}
+```yaml
+collections:
+  projects:
+    sortBy: "order"
+    order: "asc"
 ```
 
-The `sort` filter is numeric-aware. Values that can be parsed as numbers are compared numerically: `"2"`, `"10"`, `"1"` sort as `1, 2, 10` -- not the lexicographic `1, 10, 2`. This applies to any field, including custom front matter like `order` or `weight`.
+## Sorting in Templates
+
+Sort inline using built-in array filters:
 
 ```liquid
-{% assign by_weight = collections.docs | sort: "weight" %}
+{% assign alphabetical = collections.blog | sort: "title" %}
+{% assign by_author = collections.blog | sort: "author" %}
+{% assign recent = collections.blog | sort: "date" | reverse %}
 ```
 
-## Collection data shape
+The `sort` filter is numeric-aware. Values like `order: 1, 2, 10, 20` sort correctly as numbers, not as strings (`1, 10, 2, 20`).
 
-Each item in a collection is a page object with all its resolved front matter fields plus computed fields:
+### Numeric Sort Rules
 
-| Field | Description |
-|---|---|
-| `url` | The resolved permalink |
-| `title` | Page title |
-| `date` | Page date |
-| `content` | Rendered HTML body |
-| Any front matter key | Custom fields from front matter or `_data.yaml` cascade |
+- `int` values (YAML `order: 10`) are compared as integers, including negatives
+- `float64` with no fractional part (JSON `"order": 10.0`) are compared as integers
+- String values containing only digits (`order: "10"`) are parsed and compared as integers
+- Everything else falls back to string comparison
+- Nil or missing values sort to the end
 
-Collections are materialized eagerly during the build and frozen as read-only data. Modifying a collection in a template has no effect -- the data is a snapshot, not a live query.
+## Filtering Collections
 
-## Accessing collections
-
-Collections are available in every template as `collections.<name>`:
+Use the `where` filter to narrow a collection by any front matter field:
 
 ```liquid
-{%- comment -%} List the 5 most recent blog posts {%- endcomment -%}
-{% for post in collections.blog limit: 5 %}
-  <a href="{{ post.url }}">{{ post.title }}</a>
-{% endfor %}
-
-{%- comment -%} Count all articles {%- endcomment -%}
-<p>{{ collections.articles | size }} articles published</p>
-
-{%- comment -%} Filter to a subset {%- endcomment -%}
 {% assign featured = collections.blog | where: "featured", true %}
 {% for post in featured %}
-  <div class="featured">{{ post.title }}</div>
+  <a href="{{ post.url }}">{{ post.title }}</a>
 {% endfor %}
 ```
 
-Taxonomy-generated collections are accessed via the `taxonomies` object instead. `taxonomies.tags.javascript` returns all pages tagged "javascript". See [Taxonomies](/collections/taxonomies/) for the full taxonomy API.
+Combine with other filters for powerful queries:
+
+```liquid
+{% assign recent_tutorials = collections.blog
+    | where: "category", "tutorial"
+    | sort: "date"
+    | reverse %}
+```
+
+## Collection Lifecycle
+
+Collections interact with [content lifecycle](/content/) rules:
+
+- **Drafts** (`draft: true`): excluded from collections in `alloy build` and `alloy serve`, included in `alloy dev`
+- **Future publish dates**: excluded from collections everywhere until the date arrives
+- **Expired content**: excluded from collections everywhere
+
+Lifecycle filtering happens before pagination. A paginated list of 47 articles with 3 drafts produces pages based on 44 items in build mode, but may differ in dev mode where drafts are included.
+
+## Accessing All Pages
+
+All published pages are available as `site.pages` regardless of whether they belong to a collection:
+
+```liquid
+{% for page in site.pages %}
+  <a href="{{ page.url }}">{{ page.title }}</a>
+{% endfor %}
+```
+
+## Related
+
+- [Taxonomies](/collections/taxonomies/) -- cross-cutting groups via tags, categories, and custom keys
+- [Lifecycle Events](/hooks/) -- hooks that fire during collection building
+- [Data Cascade](/content/) -- how `_data.yaml` drives collection creation

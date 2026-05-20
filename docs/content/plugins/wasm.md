@@ -1,197 +1,286 @@
 ---
 layout: doc
 title: WASM Plugins
+nav_weight: 30
 ---
 
-WASM plugins are `.wasm` binaries compiled from Rust, TinyGo, or AssemblyScript. They run in-process via wazero with ~1-10 microsecond per-call latency -- the fastest option for custom filters on hot paths.
+WASM plugins are compiled binaries that run native WebAssembly instructions inside the Alloy process. They execute 5-10x faster than QuickJS plugins, making them ideal for filters and transforms called on every page.
 
 ```
 plugins/
-└── slugify.wasm    # compiled from Rust, TinyGo, or AssemblyScript
+  custom-slugify.wasm    # Compiled from Rust, TinyGo, or AssemblyScript
 ```
 
-## ABI
+Drop a `.wasm` file in `plugins/` and Alloy loads it automatically via wazero (pure Go, zero CGo).
 
-Every WASM plugin must export two functions:
+## When to Use WASM
+
+WASM plugins are worth the compilation step when:
+
+- A filter runs on every page in a large site (thousands of calls per build)
+- You need maximum throughput for data transforms
+- You prefer Rust, Go, or AssemblyScript over JavaScript
+
+For one-off or low-frequency operations, [QuickJS plugins](/plugins/quickjs/) are simpler (no build step).
+
+## ABI Contract
+
+WASM modules communicate with Alloy through linear memory using a pointer/length convention. Your module must export specific functions that Alloy calls during the build.
+
+### Required Export
 
 ```
-alloc(size: i32) -> ptr: i32
-filter(ptr: i32, len: i32) -> (ptr: i32, len: i32)
+alloc(size i32) -> ptr i32
 ```
 
-**`alloc`** allocates a buffer of `size` bytes in the WASM module's linear memory and returns a pointer. Alloy calls this to write input data into the module before invoking `filter`.
+Alloc returns a pointer to a block of `size` bytes in the module's linear memory. Alloy uses this to write input data before calling filter, shortcode, or hook exports. This avoids writing at hardcoded offsets that could collide with the module's data section, stack, or heap.
 
-**`filter`** receives a pointer and length to the input data, processes it, and returns a pointer and length to the output data. The input and output are raw UTF-8 strings.
+### Filter Export
 
-Return `(0, 0)` from `filter` to signal an error. If a `last_error` export is present, Alloy calls it to retrieve the error message.
+```
+filter(ptr i32, len i32) -> (ptr i32, len i32)
+```
 
-## Optional exports
+Receives a UTF-8 string at the given pointer/length. Returns a pointer/length pair for the result string. Input and output are raw UTF-8 -- the filter transforms the value and returns the transformed value.
 
-| Export | Signature | Data format | Purpose |
-|---|---|---|---|
-| `shortcode` | `(ptr, len) -> (ptr, len)` | JSON input, HTML output | Register a shortcode handler |
-| `hooks` | `() -> (ptr, len)` | JSON array of event names | Declare which lifecycle events to subscribe to |
-| `hook` | `(ptr, len) -> (ptr, len)` | JSON payload in, JSON payload out | Handle a lifecycle event |
-| `last_error` | `() -> (ptr, len)` | UTF-8 error message | Called when `filter` or `shortcode` returns `(0, 0)` |
+### Optional Exports
 
-## Data formats
+```
+shortcode(ptr i32, len i32) -> (ptr i32, len i32)
+hooks() -> (ptr i32, len i32)
+hook(ptr i32, len i32) -> (ptr i32, len i32)
+last_error() -> (ptr i32, len i32)
+```
 
-- **Filters** receive and return raw UTF-8 text. No JSON wrapping.
-- **Shortcodes** receive a JSON object (`{"args": ["arg1", "arg2"], "body": "..."}`) and return an HTML string.
-- **Hooks** receive and return JSON payloads matching the event schema. See [Lifecycle Events](/hooks/).
+- **`shortcode`**: Input is a JSON object `{ "name": "youtube", "args": ["abc123"], "content": "" }`. Output is a UTF-8 HTML string.
+- **`hooks`**: Called once at module load, no input. Returns a JSON array of hook name strings (e.g., `["onContentTransformed"]`).
+- **`hook`**: Input is a JSON payload with an `"event"` key. Output is the modified JSON payload.
+- **`last_error`**: Called when any export returns `(0, 0)`. Returns an error message string.
 
-## Rust example
+### Calling Sequence
+
+For every call from Alloy to a WASM export:
+
+1. Alloy calls `alloc(inputLen)` to get a write offset in WASM memory
+2. Alloy writes input bytes at the returned pointer
+3. Alloy calls the target export (e.g., `filter(ptr, len)`)
+4. The module reads input, processes it, writes the result to its own memory
+5. The module returns `(resultPtr, resultLen)`
+6. Alloy reads result bytes from WASM memory
+
+### Error Handling
+
+If any export returns `(0, 0)`, Alloy treats it as an error. If the module exports `last_error()`, Alloy reads and surfaces the error message. No silent fallback to the original input.
+
+If `hooks()` returns invalid JSON (not an array of strings), module loading fails. If `hook()` returns non-JSON bytes, the hook call returns an error.
+
+## Rust Example
 
 ```rust
-// src/lib.rs
 use std::alloc::{alloc, Layout};
 use std::slice;
+use std::str;
 
+// Required: memory allocator for host writes
 #[no_mangle]
-pub extern "C" fn alloc(size: i32) -> *mut u8 {
+pub extern "C" fn alloc(size: i32) -> i32 {
     let layout = Layout::from_size_align(size as usize, 1).unwrap();
-    unsafe { alloc(layout) }
+    unsafe { alloc(layout) as i32 }
 }
 
+// Filter: convert text to uppercase
 #[no_mangle]
 pub extern "C" fn filter(ptr: i32, len: i32) -> u64 {
     let input = unsafe {
         let slice = slice::from_raw_parts(ptr as *const u8, len as usize);
-        std::str::from_utf8(slice).unwrap()
+        str::from_utf8(slice).unwrap()
     };
 
-    let output = input.to_uppercase();
-    let out_bytes = output.into_bytes();
-    let out_ptr = alloc(out_bytes.len() as i32);
+    let result = input.to_uppercase();
+    let result_bytes = result.as_bytes();
+    let result_ptr = alloc(result_bytes.len() as i32);
 
     unsafe {
         std::ptr::copy_nonoverlapping(
-            out_bytes.as_ptr(),
-            out_ptr,
-            out_bytes.len(),
+            result_bytes.as_ptr(),
+            result_ptr as *mut u8,
+            result_bytes.len(),
         );
     }
 
-    // Pack (ptr, len) into a single u64 return
-    ((out_ptr as u64) << 32) | (out_bytes.len() as u64)
+    // Pack (ptr, len) into a single i64 return value
+    ((result_ptr as u64) << 32) | (result_bytes.len() as u64)
 }
 ```
 
-Build:
+Build with:
 
 ```bash
 cargo build --target wasm32-unknown-unknown --release
 cp target/wasm32-unknown-unknown/release/my_filter.wasm plugins/
 ```
 
-## TinyGo example
+## TinyGo Example
 
 ```go
 package main
 
 import "unsafe"
 
+// Required: memory allocator
 //export alloc
-func alloc(size int32) *byte {
-	buf := make([]byte, size)
-	return &buf[0]
+func alloc(size int32) int32 {
+    buf := make([]byte, size)
+    return int32(uintptr(unsafe.Pointer(&buf[0])))
 }
 
+// Filter: count words in text
 //export filter
-func filter(ptr, length int32) uint64 {
-	input := unsafe.Slice((*byte)(unsafe.Pointer(uintptr(ptr))), length)
-	// Reverse the string
-	output := make([]byte, len(input))
-	for i, b := range input {
-		output[len(input)-1-i] = b
-	}
-	outPtr := alloc(int32(len(output)))
-	copy(unsafe.Slice(outPtr, len(output)), output)
-	return uint64(uintptr(unsafe.Pointer(outPtr)))<<32 | uint64(len(output))
+func filter(ptr, length int32) (int32, int32) {
+    input := ptrToString(ptr, length)
+    words := 0
+    inWord := false
+    for _, c := range input {
+        if c == ' ' || c == '\n' || c == '\t' {
+            inWord = false
+        } else if !inWord {
+            inWord = true
+            words++
+        }
+    }
+    result := itoa(words)
+    return stringToPtr(result)
+}
+
+func ptrToString(ptr, length int32) string {
+    return unsafe.String((*byte)(unsafe.Pointer(uintptr(ptr))), length)
+}
+
+func stringToPtr(s string) (int32, int32) {
+    buf := []byte(s)
+    ptr := &buf[0]
+    return int32(uintptr(unsafe.Pointer(ptr))), int32(len(buf))
+}
+
+func itoa(n int) string {
+    if n == 0 {
+        return "0"
+    }
+    s := ""
+    for n > 0 {
+        s = string(rune('0'+n%10)) + s
+        n /= 10
+    }
+    return s
 }
 
 func main() {}
 ```
 
-Build:
+Build with:
 
 ```bash
-tinygo build -o plugins/reverse.wasm -target wasi -no-debug .
+tinygo build -o plugins/word-count.wasm -target wasi .
 ```
 
-## AssemblyScript example
+## AssemblyScript Example
 
 ```typescript
-// assembly/index.ts
+// src/word-count.ts
+
+// Required: memory allocator
 export function alloc(size: i32): i32 {
   return heap.alloc(size) as i32;
 }
 
+// Filter: count words
 export function filter(ptr: i32, len: i32): u64 {
   const input = String.UTF8.decodeUnsafe(ptr, len);
-  const output = input.toLowerCase();
-  const encoded = String.UTF8.encode(output);
-  const outPtr = alloc(encoded.byteLength);
-  memory.copy(outPtr, changetype<i32>(encoded), encoded.byteLength);
-  return (u64(outPtr) << 32) | u64(encoded.byteLength);
+  const words = input.trim().split(" ").filter(w => w.length > 0);
+  const result = words.length.toString();
+
+  const resultBuf = String.UTF8.encode(result);
+  const resultPtr = alloc(resultBuf.byteLength);
+  memory.copy(resultPtr, changetype<usize>(resultBuf), resultBuf.byteLength);
+
+  return (u64(resultPtr) << 32) | u64(resultBuf.byteLength);
 }
 ```
 
-Build:
+Build with:
 
 ```bash
-npx asc assembly/index.ts -o plugins/lowercase.wasm --optimize
+asc src/word-count.ts -o plugins/word-count.wasm
 ```
 
-## Error handling
+## Hook Support
 
-Return `(0, 0)` from `filter` or `shortcode` to signal an error. If your module exports `last_error`, Alloy calls it to retrieve the error message:
+WASM modules can register lifecycle hooks by exporting `hooks()` and `hook()`:
 
 ```rust
-static mut LAST_ERROR: Option<String> = None;
+use serde_json::{json, Value};
 
 #[no_mangle]
-pub extern "C" fn filter(ptr: i32, len: i32) -> u64 {
-    match process(ptr, len) {
-        Ok(result) => result,
-        Err(msg) => {
-            unsafe { LAST_ERROR = Some(msg); }
-            0 // (0, 0) signals error
-        }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn last_error() -> u64 {
-    let msg = unsafe { LAST_ERROR.take().unwrap_or_default() };
-    let bytes = msg.into_bytes();
+pub extern "C" fn hooks() -> u64 {
+    let names = json!(["onContentTransformed"]);
+    let bytes = names.to_string().into_bytes();
     let ptr = alloc(bytes.len() as i32);
     unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
+        std::ptr::copy_nonoverlapping(
+            bytes.as_ptr(), ptr as *mut u8, bytes.len()
+        );
     }
     ((ptr as u64) << 32) | (bytes.len() as u64)
 }
+
+#[no_mangle]
+pub extern "C" fn hook(ptr: i32, len: i32) -> u64 {
+    let input = unsafe {
+        let slice = std::slice::from_raw_parts(ptr as *const u8, len as usize);
+        std::str::from_utf8(slice).unwrap()
+    };
+
+    let mut payload: Value = serde_json::from_str(input).unwrap();
+
+    if payload["event"] == "onContentTransformed" {
+        if let Some(html) = payload["html"].as_str() {
+            let modified = html.replace("<img ", "<img loading=\"lazy\" ");
+            payload["html"] = json!(modified);
+        }
+    }
+
+    let result = payload.to_string().into_bytes();
+    let result_ptr = alloc(result.len() as i32);
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            result.as_ptr(), result_ptr as *mut u8, result.len()
+        );
+    }
+    ((result_ptr as u64) << 32) | (result.len() as u64)
+}
 ```
 
-Without `last_error`, Alloy logs a generic "WASM filter returned error" message.
+WASM hooks always run at default priority 50. There is no mechanism for per-hook priority in the WASM ABI.
 
-## Performance
+## Compilation Cache
 
-| Metric | Typical value |
-|---|---|
-| Module load | ~1-5ms (once, at build start) |
-| Per-call latency | ~1-10 microseconds |
-| Memory overhead | ~1-2MB per module |
-
-WASM plugins are the fastest plugin tier. For a filter called 10,000 times in a build, total overhead is 10-100ms. Use WASM when per-call latency matters -- heavy string processing, content transforms on large sites.
+Alloy caches compiled WASM modules in `.alloy/wasm-cache/` so subsequent builds skip the compilation step. The cache persists across builds.
 
 ## Sandboxing
 
-WASM plugins run in the same wazero sandbox as QuickJS plugins:
+WASM plugins run in isolated memory via wazero. They cannot access the filesystem, network, or system resources. Safe to run untrusted community plugins.
 
-- No filesystem access
-- No network access
-- No system calls
-- Communication only through the defined ABI exports
+## Performance Comparison
 
-WASM modules from any source are safe to run. They cannot access anything outside their own linear memory unless Alloy explicitly passes data through the ABI.
+| Runtime | Per-call | Best For |
+|---|---|---|
+| QuickJS (JS) | ~10-50 microseconds | Prototyping, low-frequency filters |
+| WASM (compiled) | ~1-10 microseconds | Hot-path filters on every page |
+| Node (Tier 3) | ~1-5 milliseconds | npm packages, system access |
+
+## Related
+
+- [Plugin System](/plugins/) -- overview and tier comparison
+- [QuickJS Plugins](/plugins/quickjs/) -- JS plugins with no build step
+- [Node Plugins](/plugins/node/) -- full Node.js access
+- [Lifecycle Events](/hooks/) -- all hook events and payloads

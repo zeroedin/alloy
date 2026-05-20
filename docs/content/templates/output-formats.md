@@ -1,157 +1,247 @@
 ---
 layout: doc
 title: Output Formats
+nav_weight: 50
 ---
 
-A single content page can produce multiple output files. Add the `outputs` field to front matter to specify which formats a page generates:
+Alloy can render a single content page into multiple output formats. Liquid is format-agnostic -- templates can produce HTML, JSON, XML, plain text, or any other text-based format.
 
 ```yaml
 ---
-title: Recent Articles
-layout: default
+title: "My Blog Post"
 outputs: ["html", "json"]
 ---
 ```
 
-This page produces both `/articles/index.html` (using the default layout) and `/articles/index.json` (using a JSON-specific layout). Each format requires a matching layout file.
-
-## Layout naming convention
-
-Output format layouts use a compound file extension: `<name>.<format>.<engine-ext>`.
-
-| Layout file | Output format | Output file |
-|---|---|---|
-| `default.liquid` | HTML (default) | `index.html` |
-| `default.json.liquid` | JSON | `index.json` |
-| `feed.xml.liquid` | XML | `feed.xml` |
-| `search.json.liquid` | JSON | `search.json` |
-
-The template engine is format-agnostic -- Liquid syntax works the same whether producing HTML, JSON, XML, or plain text. The layout file extension tells Alloy what output format to generate.
-
-## Format layout resolution
-
-When a page requests a non-HTML output format, Alloy resolves the layout by checking candidates in order:
-
-1. `layouts/single.<format>.liquid`
-2. `layouts/<section>.<format>.liquid`
-3. `layouts/<filename>.<format>.liquid`
-4. `layouts/default.<format>.liquid`
-
-For a page in the `blog` section requesting JSON output, Alloy tries `single.json.liquid`, then `blog.json.liquid`, then the page's filename, then `default.json.liquid`.
-
-## RSS/Atom feed
-
-Alloy does not include a built-in feed template. Create your own `layouts/feed.xml.liquid`:
-
 ```liquid
-<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
-  <title>{{ site.title }}</title>
-  <link href="{{ site.baseURL }}"/>
-  <link href="{{ site.baseURL }}/feed.xml" rel="self"/>
-  <updated>{{ site.buildDate | date: "%Y-%m-%dT%H:%M:%SZ" }}</updated>
-  <id>{{ site.baseURL }}/</id>
-  {% for post in collections.posts %}
-  <entry>
-    <title>{{ post.title | escape }}</title>
-    <link href="{{ post.url | absolute_url: site.baseURL }}"/>
-    <id>{{ post.url | absolute_url: site.baseURL }}</id>
-    <updated>{{ post.date | date: "%Y-%m-%dT%H:%M:%SZ" }}</updated>
-    <content type="html">{{ post.body | escape }}</content>
-  </entry>
-  {% endfor %}
-</feed>
+<!-- layouts/post.json.liquid -->
+{
+  "title": "{{ page.title }}",
+  "url": "{{ page.url | absolute_url }}",
+  "date": "{{ page.date | date: '%Y-%m-%dT%H:%M:%S%z' }}",
+  "content": {{ content | json }}
+}
 ```
 
-Then create a content file that uses this layout:
+This page generates both `/my-blog-post/index.html` and `/my-blog-post/index.json`.
+
+## How it works
+
+Content rendering (Markdown to HTML) happens once per page. Layout rendering happens once per output format. Each format uses a separate layout file, so the same content can be presented differently in each format.
+
+The `outputs` front matter field lists which formats to generate. When omitted, Alloy renders HTML only.
+
+## Template file extensions
+
+The file extension before `.liquid` (or the bare extension for Go templates) determines the output format:
+
+**Liquid engine:**
+
+```
+layouts/default.liquid          --> HTML output
+layouts/post.json.liquid        --> JSON output
+layouts/feed.xml.liquid         --> XML output
+layouts/data.csv.liquid         --> CSV output
+layouts/robots.txt.liquid       --> plain text output
+```
+
+**Go template engine:**
+
+```
+layouts/default.html            --> HTML output
+layouts/post.json                --> JSON output
+layouts/feed.xml                 --> XML output
+```
+
+## Requesting multiple formats
+
+Add the `outputs` array to a page's front matter to generate additional formats beyond HTML:
 
 ```yaml
 ---
-title: Feed
-layout: feed
-permalink: /feed.xml
+title: "API Reference"
+layout: "single"
+outputs: ["html", "json"]
 ---
 ```
 
-The `permalink` field controls the output path. The layout's compound extension (`feed.xml.liquid`) tells Alloy to produce XML output.
+Alloy renders the page twice -- once with `layouts/single.liquid` (HTML) and once with `layouts/single.json.liquid` (JSON). Each format produces a separate output file.
 
-## JSON API endpoint
+### Layout resolution for formats
 
-Expose content as a JSON endpoint with a JSON layout:
+For a page requesting `json` output, the Liquid engine looks for layouts in this order:
+
+1. `layouts/single.json.liquid` (format-specific with `.liquid` extension)
+2. `layouts/single.json` (format-specific with bare extension, parsed as Liquid)
+
+The layout must exist for each requested format. A missing format-specific layout is a build error.
+
+## Practical examples
+
+### JSON API endpoint
+
+Generate a JSON representation of your blog index alongside the HTML page:
+
+```yaml
+# content/blog/index.md
+---
+title: "Blog"
+layout: "blog-index"
+outputs: ["html", "json"]
+---
+```
 
 ```liquid
+<!-- layouts/blog-index.json.liquid -->
 {
-  "articles": [
-    {% for article in collections.articles %}
+  "posts": [
+    {% for post in collections.blog %}
     {
-      "title": {{ article.title | json }},
-      "url": {{ article.url | json }},
-      "date": {{ article.date | date: "%Y-%m-%d" | json }},
-      "summary": {{ article.summary | json }}
+      "title": "{{ post.title | escape }}",
+      "url": "{{ post.url | absolute_url }}",
+      "date": "{{ post.date | date: '%Y-%m-%dT%H:%M:%S%z' }}",
+      "summary": "{{ post.summary | escape }}"
     }{% unless forloop.last %},{% endunless %}
     {% endfor %}
   ]
 }
 ```
 
-Save as `layouts/api.json.liquid`, then create the content page:
+Output: `/blog/index.json` with a machine-readable list of posts.
+
+### RSS/Atom feed
+
+Feeds are opt-in templates, not auto-generated. Place a `feed.xml` template in the `layouts/` directory:
+
+```liquid
+<!-- layouts/feed.xml.liquid -->
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>{{ site.title }}</title>
+    <link>{{ site.baseURL }}</link>
+    <description>{{ site.description }}</description>
+    <atom:link href="{{ '/feed.xml' | absolute_url }}" rel="self" type="application/rss+xml"/>
+    {% for post in collections.blog limit: 20 %}
+    <item>
+      <title>{{ post.title | xml_escape }}</title>
+      <link>{{ post.url | absolute_url }}</link>
+      <pubDate>{{ post.date | rfc822_date }}</pubDate>
+      <guid>{{ post.url | absolute_url }}</guid>
+      <description>{{ post.summary | xml_escape }}</description>
+    </item>
+    {% endfor %}
+  </channel>
+</rss>
+```
+
+**Feed template placement determines scope:**
+
+| Template location | Output path | Use case |
+|---|---|---|
+| `layouts/feed.xml.liquid` | `/feed.xml` | Site-wide feed |
+| `layouts/blog/feed.xml.liquid` | `/blog/feed.xml` | Section feed |
+| `layouts/taxonomies/tags/feed.xml.liquid` | `/tags/:slug/feed.xml` | Per-tag feed (rendered once per term) |
+
+Each feed template has access to the same `collections`, `taxonomies`, and `site` context as any other template. The template controls what data it renders.
+
+### Sitemap
+
+Alloy auto-generates `sitemap.xml` from all published pages. Configure it in `alloy.config.yaml`:
+
+```yaml
+sitemap:
+  changefreq: "weekly"
+  priority: 0.5
+```
+
+Override per page in front matter:
 
 ```yaml
 ---
-title: Articles API
-layout: api
-permalink: /api/articles.json
-outputs: ["json"]
+title: "Home"
+sitemap:
+  priority: 1.0
+  changefreq: "daily"
 ---
 ```
 
-The `json` filter serializes values with proper escaping and quoting, ensuring valid JSON output.
+Exclude a page from the sitemap:
 
-## Search index
+```yaml
+---
+title: "Internal Page"
+sitemap: false
+---
+```
 
-A common pattern is generating a search index for client-side search:
+Disable sitemap generation entirely:
+
+```yaml
+# alloy.config.yaml
+sitemap: false
+```
+
+### Search index
+
+Build a search index for client-side search (Pagefind, Lunr, etc.):
+
+```yaml
+# content/search.md
+---
+title: "Search"
+layout: "search"
+outputs: ["html", "json"]
+permalink: "/search/"
+---
+```
 
 ```liquid
+<!-- layouts/search.json.liquid -->
 [
-  {% for page in collections.all %}
+  {% for page in site.pages %}
   {
-    "title": {{ page.title | json }},
-    "url": {{ page.url | json }},
-    "body": {{ page.body | strip_html | truncate: 500 | json }}
+    "title": "{{ page.title | escape }}",
+    "url": "{{ page.url }}",
+    "content": "{{ page.summary | strip_html | escape }}"
   }{% unless forloop.last %},{% endunless %}
   {% endfor %}
 ]
 ```
 
-Save as `layouts/search.json.liquid` and create `content/search.json` with `layout: search` and `outputs: ["json"]`.
+## Custom output formats
 
-## Sitemap
+Any text-based format works. The output format is determined by the layout file extension, not by a predefined list. Create a layout with the appropriate extension and reference it from your content:
 
-Alloy generates a `sitemap.xml` automatically during the build. Every content page is included unless excluded. Configure sitemap behavior in `alloy.config.yaml`:
-
-```yaml
-# alloy.config.yaml
-sitemap:
-  enabled: true          # default: true
+```liquid
+<!-- layouts/component.css.liquid -->
+:host {
+  {% for token in site.data.tokens %}
+  --{{ token.name }}: {{ token.value }};
+  {% endfor %}
+}
 ```
 
-The built-in sitemap includes all pages with their URLs and last-modified dates. Pages with `draft: true` are excluded from production builds, and pages with `permalink: false` are excluded entirely.
-
-## Multiple outputs per page
-
-When a page lists multiple formats in `outputs`, Alloy renders the page once per format, each with its own layout:
-
 ```yaml
+# content/tokens.md
 ---
-title: About
-layout: default
-outputs: ["html", "json"]
+title: "Design Tokens"
+layout: "component"
+outputs: ["css"]
+permalink: "/tokens.css"
 ---
 ```
 
-This produces two files:
+This generates a CSS file from your design token data.
 
-- `/about/index.html` using `default.liquid`
-- `/about/index.json` using `default.json.liquid`
+## Engine-specific notes
 
-The HTML output is always generated unless explicitly excluded from the `outputs` list. Non-HTML formats only generate when listed.
+The template engine is a global, project-wide setting. One engine is active per build. You cannot mix Liquid and Go template syntax within a single project's active templates.
+
+When switching engines, create layout files with the appropriate extensions for the new engine. Alloy does not convert between template syntaxes.
+
+## Related
+
+- [Templates Overview](/templates/) -- engine configuration and template context
+- [Layouts](/templates/layouts/) -- layout resolution and chaining
+- [Filters](/templates/filters/) -- filters useful for feed and API output (`xml_escape`, `json`, `absolute_url`)

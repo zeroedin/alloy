@@ -1,29 +1,6 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ page.title }} — Alloy</title>
-  <meta name="description" content="{{ page.description | default: 'Alloy is a fast, extensible static site generator built in Go.' }}">
-  <link rel="stylesheet" href="/css/main.css">
-</head>
-<body>
-  <header class="site-header">
-    <nav class="top-nav">
-      <a href="/" class="logo">Alloy</a>
-      <div class="nav-links">
-        <a href="/getting-started/">Docs</a>
-        <a href="/plugins/">Plugins</a>
-        <a href="/cli/">CLI</a>
-        <a href="https://github.com/zeroedin/alloy" target="_blank" rel="noopener">GitHub</a>
-      </div>
-    </nav>
-  </header>
-  <main class="page-content">
-    {{ content }}
-  </main>
-  <footer class="site-footer">
-    <p>Alloy is open source under the <a href="https://github.com/zeroedin/alloy/blob/main/LICENSE">MIT License</a>.</p>
-  </footer>
-</body>
-</html>
+---
+layout: base
+---
+<main class="page-content">
+  {{ content }}
+</main>

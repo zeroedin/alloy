@@ -1,18 +1,42 @@
 ---
 layout: doc
 title: Advanced Features
+nav_weight: 10
 ---
 
-Alloy handles most sites with content, templates, and plugins alone. These features cover specialized needs: rendering web components on the server, building multilingual sites, and controlling how static assets reach the output directory.
-
-## Server-Side Rendering
-
-Alloy can pipe your HTML through an external SSR command to expand custom elements into Declarative Shadow DOM. This runs as a second phase after content rendering, so your templates produce standard HTML first, then SSR transforms it. See [Server-Side Rendering](/advanced/ssr/).
+Alloy includes several advanced features for complex site architectures. This section covers capabilities beyond the core content-to-HTML pipeline.
 
 ## Internationalization
 
-The `languages:` config key activates multi-language support. Each language gets its own content tree, output directory, and translation strings accessible in templates. Collections and taxonomies are scoped per-language automatically. See [Internationalization](/advanced/i18n/).
+Build multilingual sites with per-language content trees, shared layouts, and automatic translation linking:
+
+```yaml
+# alloy.config.yaml
+languages:
+  en:
+    title: "My Site"
+    weight: 1
+    root: true
+  fr:
+    title: "Mon Site"
+    weight: 2
+```
+
+Each language gets its own content directory and output prefix. Layouts are shared. See [Internationalization](/advanced/i18n/) for the full guide.
 
 ## Static Files and Passthrough
 
-Files in `static/` are copied to the output root as-is. For assets outside your project tree, passthrough copy maps external directories into the output with glob pattern support. In dev mode, these files are served directly from source without copying. See [Static Files and Passthrough](/advanced/static/).
+Control how non-content files reach the output directory. Static files are copied as-is. Passthrough mappings bring in files from outside your project (monorepo packages, shared assets). Glob patterns and exclude filters control what gets copied.
+
+```yaml
+# alloy.config.yaml
+passthrough:
+  - from: "../design-system/dist/elements"
+    to: "elements"
+  - from: "../shared-assets/fonts/**/*.woff2"
+    to: "assets/fonts"
+    exclude:
+      - "*.map"
+```
+
+See [Static Files and Passthrough](/advanced/static/) for details.

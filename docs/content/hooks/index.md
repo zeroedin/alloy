@@ -1,184 +1,288 @@
 ---
 layout: doc
 title: Lifecycle Events
+nav_weight: 10
 ---
 
-Hooks let plugins respond to events during the build pipeline. Register a hook with `alloy.hook(event, options, fn)` or the alias `alloy.on(event, options, fn)`:
+Lifecycle hooks let plugins run code at specific points in the build pipeline. Register a hook with `alloy.hook()` or `alloy.on()` to modify content, inject pages, transform data, or observe build events.
 
 ```javascript
 // plugins/lazy-images.js
-alloy.hook("onContentTransformed", { priority: 50, pages: true }, (page) => {
-  page.body = page.body.replace(
-    /<img(?!\s+loading) /g,
-    '<img loading="lazy" '
-  );
-  return page;
-});
-```
-
-The options object is required. At minimum, pass `{ priority: 50 }`.
-
-## Event reference
-
-| Event | Fires | Payload | Return | Per-page |
-|---|---|---|---|---|
-| `onConfig` | After config is loaded | `{ config }` | Modified config | No |
-| `onDataFetched` | After data files are loaded | `{ data }` | Modified data | No |
-| `onContentLoaded` | After all content files are parsed | `{ pages }` | Modified pages array | No |
-| `onDataCascadeReady` | After data cascade is resolved | `{ pages }` | Modified pages array | No |
-| `onPagesReady` | After pages are built, before taxonomy | `{ pages }` | `{ addPages: [...] }` | No |
-| `onBeforeValidation` | Before content validation | `{ pages }` | Modified pages array | No |
-| `onAfterValidation` | After content validation | `{ pages, errors }` | Modified pages/errors | No |
-| `onContentTransformed` | After Markdown rendering | `{ page }` | Modified page | Yes |
-| `onPageRendered` | After template rendering | `{ page }` | Modified page | Yes |
-| `onAssetProcess` | Per asset file | `{ asset }` | Modified asset | No |
-| `onBuildComplete` | After all output is written | `{ stats }` | None | No |
-| `onDevServerStart` | When dev server starts | `{ server }` | None | No |
-| `onFileChanged` | On file change in dev mode | `{ path, event }` | None | No |
-
-## When each event fires
-
-Events fire in this order during a build:
-
-```
-onConfig
-  → onDataFetched
-    → onContentLoaded
-      → onDataCascadeReady
-        → onPagesReady
-          → onBeforeValidation
-            → onAfterValidation
-              → onContentTransformed (per page)
-                → onPageRendered (per page)
-                  → onAssetProcess (per asset)
-                    → onBuildComplete
-```
-
-`onDevServerStart` and `onFileChanged` only fire in dev mode.
-
-## Per-page vs batch hooks
-
-**Batch hooks** (`onContentLoaded`, `onPagesReady`, etc.) receive the full page set and fire once per build. Use them for cross-page operations like injecting virtual pages or computing global data.
-
-**Per-page hooks** (`onContentTransformed`, `onPageRendered`) fire once for every page with a single-page payload. They run through the Node worker pool when using Node plugins, enabling parallel processing. Use them for content transforms that operate on one page at a time.
-
-## Registration
-
-```javascript
-alloy.hook(event, options, fn);
-alloy.on(event, options, fn);    // alias, identical behavior
-```
-
-The options object controls priority, scoping, and data access. See [Hook Scoping](/hooks/scoping/) for details on `pages`, `pageFields`, and `data` options.
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `priority` | number | 50 | Lower runs first |
-| `pages` | boolean/string | false | Page scoping mode |
-| `pageFields` | array | all fields | Subset of page fields to receive |
-| `data` | array | none | Site data keys to include |
-
-## Priority ordering
-
-Hooks on the same event run in priority order (lower numbers first). Hooks with equal priority run in plugin load order (alphabetical by filename, Tier 1 before Tier 2 before Tier 3):
-
-```javascript
-// plugins/a-meta.js — runs first (priority 10)
-alloy.hook("onContentTransformed", { priority: 10, pages: true }, (page) => {
-  page.meta = computeMeta(page);
-  return page;
-});
-
-// plugins/b-transform.js — runs second (priority 50)
-alloy.hook("onContentTransformed", { priority: 50, pages: true }, (page) => {
-  // page.meta is available from the previous hook
-  return page;
-});
-```
-
-## Hook chaining
-
-Each hook receives the output of the previous hook on the same event. The return value of one hook becomes the input to the next:
-
-```javascript
-// First hook: adds lazy loading
-alloy.hook("onContentTransformed", { priority: 10, pages: true }, (page) => {
-  page.body = page.body.replace(/<img /g, '<img loading="lazy" ');
-  return page;
-});
-
-// Second hook: wraps images in figures
-alloy.hook("onContentTransformed", { priority: 20, pages: true }, (page) => {
-  // page.body already has loading="lazy" from the first hook
-  page.body = page.body.replace(
-    /<img([^>]+)>/g,
-    '<figure><img$1></figure>'
-  );
-  return page;
-});
-```
-
-If a hook does not return a value (returns `undefined`), the original input is passed to the next hook unchanged.
-
-## Example: lazy loading images
-
-```javascript
-// plugins/lazy-images.js
-alloy.hook("onContentTransformed", { priority: 50, pages: true }, (page) => {
-  // Skip pages that opt out
-  if (page.lazyImages === false) return page;
-
-  page.body = page.body.replace(
-    /<img(?!\s+loading)([^>]*)>/g,
-    '<img loading="lazy"$1>'
-  );
-  return page;
-});
-```
-
-## Example: HTML minification
-
-```javascript
-// plugins/minify.js — Node plugin for npm access
-export const runtime = "node";
-import { minify } from "html-minifier-terser";
-
 export default function(alloy) {
-  alloy.hook("onPageRendered", { priority: 90, pages: true }, async (page) => {
-    if (!page.url.endsWith("/")) return page;
-
-    page.body = await minify(page.body, {
-      collapseWhitespace: true,
-      removeComments: true,
-    });
+  alloy.hook("onContentTransformed", {}, (page) => {
+    page.html = page.html.replace(/<img /g, '<img loading="lazy" ');
     return page;
   });
 }
 ```
 
-## Example: virtual page injection with onPagesReady
+Hooks work identically across all plugin tiers (QuickJS, WASM, Node). Payloads are JSON-serializable.
 
-`onPagesReady` is unique: instead of modifying existing pages, it can inject new virtual pages by returning an `addPages` array:
+## Hook Registration
 
 ```javascript
-// plugins/archives.js
-alloy.hook("onPagesReady", { priority: 50 }, (data) => {
-  const years = new Set(
-    data.pages.map(p => new Date(p.date).getFullYear())
-  );
+alloy.hook(eventName, options, handlerFn);
+// or equivalently:
+alloy.on(eventName, options, handlerFn);
+```
 
-  const archivePages = [...years].map(year => ({
-    title: `Archive: ${year}`,
-    permalink: `/archive/${year}/`,
-    layout: "archive",
-    year: year,
-    body: "",
-  }));
+The `options` object is required. It controls execution order and payload scoping:
 
-  return { addPages: archivePages };
+```javascript
+alloy.hook("onPageRendered", {
+  priority: 10,                       // lower runs first (default 50)
+  data: ["navigation"],               // site.data keys to include
+  pages: "/blog/**",                  // page filter (glob)
+  pageFields: ["frontMatter", "url"]  // fields per page
+}, fn);
+```
+
+See [Hook Scoping](/hooks/scoping/) for the full scoping API.
+
+## All Lifecycle Events
+
+### Per-Build Hooks
+
+These fire once per build. Payloads are JSON objects representing build-level state.
+
+#### onConfig
+
+Fires after config is loaded. Plugin can mutate configuration values.
+
+```javascript
+alloy.hook("onConfig", {}, (config) => {
+  config.build.output = "dist";
+  return config;
 });
 ```
 
-Virtual pages injected by `onPagesReady` are added before taxonomy processing. They appear in collections and can have taxonomy terms assigned.
+| Field | Description |
+|---|---|
+| `title` | Site title |
+| `baseURL` | Site base URL |
+| `build` | Build settings (`output`, `clean`) |
+| ... | All config fields |
 
-Each page in the `addPages` array must include at minimum a `permalink` and a `title`. Other fields (`layout`, `body`, custom front matter) are optional and follow the same rules as regular page front matter.
+#### onDataFetched
+
+Fires after external data sources are fetched and merged into site data. Plugin can modify or enrich the data.
+
+```javascript
+alloy.hook("onDataFetched", { data: ["team"] }, (data) => {
+  if (data.team) {
+    data.teamCount = data.team.length;
+    data.teamByDepartment = {};
+    for (const member of data.team) {
+      const dept = member.department || "unassigned";
+      if (!data.teamByDepartment[dept]) data.teamByDepartment[dept] = [];
+      data.teamByDepartment[dept].push(member);
+    }
+  }
+  return data;
+});
+```
+
+This is the primary mechanism for adding computed data that templates can access via `site.data.*`.
+
+#### onBeforeValidation
+
+Fires before output path conflict detection. Plugins can register additional output paths (e.g., `_redirects` or `_headers` for Netlify):
+
+```javascript
+alloy.hook("onBeforeValidation", {}, (outputMap) => {
+  outputMap.add("_redirects", { source: "plugin:netlify-redirects" });
+  return outputMap;
+});
+```
+
+#### onAfterValidation
+
+Fires after validation passes. Plugins receive the validated output manifest (read-only) and the data cascade (mutable):
+
+```javascript
+alloy.hook("onAfterValidation", {}, (payload) => {
+  payload.cascade.buildTimestamp = new Date().toISOString();
+  return payload;
+});
+```
+
+### Pre-Taxonomy Hook
+
+#### onPagesReady
+
+Fires once per language batch, after the data cascade is applied but before taxonomy collection. This is the injection point for virtual pages that need to participate in taxonomies.
+
+```javascript
+alloy.hook("onPagesReady", { data: ["elements"], pages: false }, (payload) => {
+  var elements = payload.siteData.elements || [];
+  var newPages = [];
+  for (var i = 0; i < elements.length; i++) {
+    var el = elements[i];
+    newPages.push({
+      path: "demos/" + el.slug + ".md",
+      url: "/demos/" + el.slug + "/",
+      frontMatter: {
+        title: el.name + " Demo",
+        layout: "demo",
+        tags: [el.tagName]
+      },
+      content: "## " + el.name + "\n\n" + el.description
+    });
+  }
+  return { addPages: newPages };
+});
+```
+
+**Virtual page fields:**
+
+| Field | Required | Description |
+|---|---|---|
+| `path` | yes | Source-relative identifier (e.g., `demos/button.md`) |
+| `url` | yes | Permalink (e.g., `/demos/button/`) |
+| `frontMatter` | no | Page metadata, including taxonomy terms like `tags` |
+| `content` | no | Raw markdown content (rendered through the pipeline) |
+
+Virtual pages injected here flow through the full remaining pipeline: taxonomy collection, content rendering, layout resolution, and output writing.
+
+When using `pages: false` in the options, return `{ addPages: [...] }` to inject pages without round-tripping all existing pages through the plugin bridge.
+
+### Content Hooks
+
+#### onContentLoaded
+
+Fires once with the full pages array after content rendering. Modify `frontMatter` and `html` on existing pages. Other fields (`content`, `path`, `url`) are present for inspection but mutations are not applied back.
+
+```javascript
+alloy.hook("onContentLoaded", {
+  pages: true,
+  pageFields: ["frontMatter", "html", "url"]
+}, (pages) => {
+  pages.forEach(page => {
+    if (page.frontMatter.draft) {
+      page.frontMatter.noindex = true;
+    }
+  });
+  return pages;
+});
+```
+
+The return array must be the same length and order as the input. Virtual page injection is not supported here -- use `onPagesReady` instead.
+
+#### onDataCascadeReady
+
+Fires once with the full pages array after the data cascade is resolved. Each entry has the per-page cascade data. Plugin can enrich cascade data.
+
+```javascript
+alloy.hook("onDataCascadeReady", { pages: true }, (pages) => {
+  pages.forEach(page => {
+    page.data.generatedAt = new Date().toISOString();
+  });
+  return pages;
+});
+```
+
+### Per-Page Hooks
+
+These fire once per page. They receive page-scoped payloads.
+
+#### onContentTransformed
+
+Fires after Markdown-to-HTML conversion but before layout rendering. Receives a page-scoped object with `html`, `toc`, `path`, `url`, and `frontMatter`.
+
+```javascript
+alloy.hook("onContentTransformed", {}, (page) => {
+  // Add lazy loading to images
+  page.html = page.html.replace(/<img /g, '<img loading="lazy" ');
+
+  // Build TOC for non-markdown pages
+  if (!page.toc || page.toc.length === 0) {
+    page.toc = extractHeadingsFromHTML(page.html);
+  }
+
+  return page;
+});
+```
+
+#### onPageRendered
+
+Fires after template rendering produces the final page HTML. Receives an HTML string and returns an HTML string.
+
+```javascript
+alloy.hook("onPageRendered", {}, (html) => {
+  return html.replace(/\s+/g, ' ').trim();
+});
+```
+
+### Per-Asset Hook
+
+#### onAssetProcess (Tier 3 Only)
+
+Fires once per asset file during asset copy. Receives `{ path, content }` and returns `{ content }`.
+
+```javascript
+alloy.hook("onAssetProcess", {}, async (asset) => {
+  if (asset.path.endsWith('.css')) {
+    return { content: await minifyCSS(asset.content) };
+  }
+  return asset;
+});
+```
+
+### Read-Only Hooks
+
+Return values are ignored. Plugins observe but cannot modify.
+
+#### onBuildComplete
+
+```javascript
+alloy.hook("onBuildComplete", {}, (result) => {
+  console.log(`Built ${result.pageCount} pages in ${result.duration}`);
+});
+```
+
+#### onDevServerStart
+
+```javascript
+alloy.hook("onDevServerStart", {}, (info) => {
+  console.log(`Server ready at ${info.url}`);
+});
+```
+
+#### onFileChanged
+
+```javascript
+alloy.hook("onFileChanged", {}, (filePath) => {
+  console.log(`Changed: ${filePath}`);
+});
+```
+
+## Hook Execution Order
+
+Hooks execute by priority (lower runs first), then by alphabetical plugin filename within the same priority. Each hook receives the output of the previous one -- they chain, not race.
+
+```javascript
+// Plugin A: runs first
+alloy.hook("onPageRendered", { priority: 10 }, transformFn);
+
+// Plugin B: runs second (default priority 50)
+alloy.hook("onPageRendered", {}, analyticsFn);
+
+// Plugin C: runs last
+alloy.hook("onPageRendered", { priority: 100 }, ssrFn);
+```
+
+## Hook Timeout
+
+Each hook call is subject to the configured timeout (default 5 seconds). A timed-out hook produces a warning, its modifications are discarded, and the build continues with the pre-hook payload.
+
+```yaml
+plugins:
+  timeout: 5000
+```
+
+## Related
+
+- [Hook Scoping](/hooks/scoping/) -- control what data hooks receive
+- [Plugin System](/plugins/) -- plugin tiers and registration
+- [QuickJS Plugins](/plugins/quickjs/) -- embedded JS plugins
+- [Node Plugins](/plugins/node/) -- subprocess plugins with npm access

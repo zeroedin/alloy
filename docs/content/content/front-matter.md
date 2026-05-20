@@ -1,26 +1,24 @@
 ---
 layout: doc
 title: Front Matter
+nav_weight: 20
 ---
 
-Front matter is a metadata block at the top of every content file. It defines the page's title, layout, URL, and any custom fields you need in templates.
+Front matter is the metadata block at the top of every content file. Alloy uses it to determine the page title, URL, layout, taxonomy membership, and lifecycle state.
 
-```markdown
+```yaml
 ---
-title: My First Post
-layout: post
+title: "Building a Design System"
 date: 2026-04-10
-tags: ["go", "ssg"]
+layout: post
+tags: ["css", "design-systems"]
+description: "A practical guide to building a component library from scratch."
 ---
-
-Post content starts here.
 ```
 
-All front matter fields are available in templates as `page.<field>` (Liquid) or `.page.<field>` (Go templates).
+## Supported formats
 
-## Format delimiters
-
-Alloy detects the front matter format from its opening delimiter:
+Alloy detects the front matter format by its delimiter:
 
 | Delimiter | Format | Example |
 |---|---|---|
@@ -28,87 +26,200 @@ Alloy detects the front matter format from its opening delimiter:
 | `+++` | TOML | `+++`<br>`title = "My Post"`<br>`+++` |
 | `{` | JSON | `{ "title": "My Post" }` |
 
-YAML is the most common choice. All three formats parse into the same internal structure — the rest of the pipeline is format-agnostic.
+YAML is the most common. All three parse into the same internal data structure, so the rest of the pipeline is format-agnostic.
 
-## Empty front matter
+## Required vs optional
 
-A file with empty delimiters is a valid content page. All fields default to nil/zero. This is useful for pages that get all their metadata from the [data cascade](/content/data-cascade/):
+Front matter delimiters are required on all content files. Empty front matter is valid:
 
 ```markdown
 ---
 ---
 
-This page inherits layout, tags, and permalink from _data.yaml.
+Page content starts here.
 ```
+
+A content file without any delimiters is a build error. The error message will suggest adding empty front matter if you have no metadata to set.
 
 ## Built-in fields
 
-These fields have special meaning to Alloy:
+These fields have special meaning in Alloy. All are optional -- omit any you do not need.
 
-| Field | Type | Description |
-|---|---|---|
-| `title` | string | Page title. Used in `page.title` and as the default `:title` permalink token. |
-| `layout` | string | Layout template name (without extension). `layout: false` skips layout wrapping. |
-| `permalink` | string / false | Output URL. Supports tokens (`:slug`, `:year`) and template expressions (`{{ }}`). `false` processes the page but writes no output file. |
-| `date` | date | Content date. Used for sorting and permalink tokens `:year`, `:month`, `:day`. |
-| `tags` | array | Taxonomy tags. Populates `taxonomies.tags.*` collections. |
-| `draft` | bool | `true` excludes the page from production builds. Visible in dev mode. |
-| `publishDate` | date | Page is excluded everywhere until this date arrives. |
-| `expiryDate` | date | Page is excluded everywhere after this date passes. |
-| `summary` | string | Short description. Available as `page.summary`. Not auto-generated — author-provided only. |
-| `slug` | string | Overrides the `:slug` permalink token. Defaults to the slugified filename. |
-| `aliases` | array | Additional output paths for this page (not redirects — identical copies). |
-| `outputs` | array | Output formats to generate (e.g., `["html", "json"]`). Each format needs a matching layout. |
-| `description` | string | Page description, often used in meta tags. Available as `page.description`. |
+### title
+
+The page title. Available in templates as `{{ page.title }}`.
+
+```yaml
+title: "Getting Started with Alloy"
+```
+
+### date
+
+The content date, used for sort order in collections and for permalink tokens (`:year`, `:month`, `:day`). Accepts any format that Go's `time.Parse` understands.
+
+```yaml
+date: 2026-04-10
+date: 2026-04-10T14:30:00Z
+```
+
+When two pages in a collection share the same date, the full datetime is compared. If the datetime is identical or has no time component, filename alphabetical order is the tiebreaker.
+
+### layout
+
+The layout template to use for this page. Overrides the automatic layout lookup.
+
+```yaml
+layout: post
+```
+
+Set `layout: false` to skip layout wrapping entirely. The rendered content is written directly to the output file with no surrounding HTML.
+
+### permalink
+
+The output URL for this page. Overrides the automatic URL computed from the file path and cascade patterns.
+
+```yaml
+permalink: "/about/"
+permalink: "/blog/:year/:month/:slug/"
+permalink: "/team/{{ member.slug }}/"
+```
+
+Set `permalink: false` to process the page (include it in collections) without writing an output file. See [Permalinks](/content/permalinks/) for the full token reference.
+
+### slug
+
+Overrides the `:slug` permalink token. By default, `:slug` is derived from the filename.
+
+```yaml
+slug: "custom-url-segment"
+```
+
+### description
+
+A short description of the page. Available as `{{ page.description }}` in templates. Alloy does not use this field internally, but it is conventional for SEO meta tags and feed entries.
+
+```yaml
+description: "A step-by-step walkthrough for configuring Alloy."
+```
+
+### summary
+
+A page summary. Available as `{{ page.summary }}` in templates. Summaries are static data -- they are not rendered through the template engine.
+
+```yaml
+summary: "Learn how to set up your first Alloy project in under five minutes."
+```
+
+Supports HTML via YAML multiline strings:
+
+```yaml
+summary: |
+  <p>Learn how to set up your first Alloy project.</p>
+  <p>Covers installation, config, and your first build.</p>
+```
+
+If no `summary` is set, `{{ page.summary }}` is nil. Alloy does not auto-generate summaries.
+
+### tags
+
+An array of taxonomy terms. Alloy uses tags (and other declared taxonomies) to group pages into collections.
+
+```yaml
+tags: ["javascript", "web-components"]
+```
+
+Tags can also be set at the directory level via `_data.yaml`, so every page in a section inherits them without repeating the list. See [Data Cascade](/content/data-cascade/).
+
+### draft
+
+Marks the page as a draft.
+
+```yaml
+draft: true
+```
+
+Draft pages are excluded from `alloy build` and `alloy serve`. They are visible in `alloy dev` so authors can preview work in progress. See [Content Lifecycle](/content/lifecycle/) for the full rules.
+
+### publishDate
+
+The date when the page becomes published. Pages with a future `publishDate` are excluded from all build modes, including dev.
+
+```yaml
+publishDate: 2026-05-01
+```
+
+To preview a future-dated page in dev mode, set `draft: true` -- the draft flag overrides date filtering in dev mode.
+
+### expiryDate
+
+The date when the page expires. Pages with a past `expiryDate` are excluded from all build modes.
+
+```yaml
+expiryDate: 2026-12-31
+```
+
+### aliases
+
+Additional output paths for this page. Each alias writes an identical copy of the rendered HTML -- not a redirect.
+
+```yaml
+aliases:
+  - /about-us/
+  - /team/
+```
+
+Aliases participate in the pre-build conflict detection. If an alias collides with another page's output path, the build fails. See [Permalinks](/content/permalinks/) for details.
+
+### outputs
+
+An array of output formats. Alloy looks for a matching layout for each format.
+
+```yaml
+outputs: ["html", "json"]
+```
+
+A page requesting `json` output needs a corresponding layout (e.g., `layouts/single.json.liquid`). The page is rendered once per format.
+
+### sitemap
+
+Per-page sitemap overrides.
+
+```yaml
+sitemap:
+  priority: 0.8
+  changefreq: "daily"
+```
+
+Set `sitemap: false` to exclude the page from the generated sitemap.
+
+### pagination
+
+Configures pagination or virtual page generation for this page. See [Pagination](/content/pagination/) for the full reference.
+
+```yaml
+pagination:
+  data: collections.articles
+  perPage: 10
+  as: articles
+```
 
 ## Custom fields
 
-Any key in front matter becomes a `page.*` variable in templates:
+Any additional key-value pair in front matter is available in templates as `{{ page.fieldName }}`. Alloy does not restrict which keys you can use:
 
 ```yaml
 ---
-title: Building Web Components
-author: Alice
-difficulty: intermediate
+title: "Team Member"
+role: "Engineering Lead"
+github: "https://github.com/example"
 order: 3
 ---
 ```
 
 ```liquid
-<p>Written by {{ page.author }}</p>
-<span class="badge">{{ page.difficulty }}</span>
+<h1>{{ page.title }}</h1>
+<p>{{ page.role }}</p>
+<a href="{{ page.github }}">GitHub</a>
 ```
 
-## Table of contents
-
-Alloy automatically extracts headings from Markdown content and exposes them as `page.toc` — a nested array of heading data. Each entry has `id`, `text`, `level`, and `children` fields.
-
-```liquid
-<nav class="toc">
-  {% for item in page.toc %}
-    <a href="#{{ item.id }}">{{ item.text }}</a>
-    {% if item.children.size > 0 %}
-      <ul>
-        {% for child in item.children %}
-          <li><a href="#{{ child.id }}">{{ child.text }}</a></li>
-        {% endfor %}
-      </ul>
-    {% endif %}
-  {% endfor %}
-</nav>
-```
-
-Headings get auto-generated `id` attributes by default (e.g., "Getting Started" becomes `id="getting-started"`). Override with the heading attributes syntax:
-
-```markdown
-## My Custom Section {#custom-id}
-```
-
-Configure TOC and heading IDs in `alloy.config.yaml`:
-
-```yaml
-content:
-  markdown:
-    toc: true            # default: true — generate page.toc
-    autoHeadingID: true   # default: true — add id attributes to headings
-```
+Custom fields participate in the [Data Cascade](/content/data-cascade/) -- they can be set at the directory level in `_data.yaml` and overridden per-page in front matter.

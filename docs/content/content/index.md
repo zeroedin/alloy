@@ -1,90 +1,124 @@
 ---
 layout: doc
 title: Content Overview
+nav_weight: 10
 ---
 
-Alloy processes Markdown and HTML files from the `content/` directory into output pages. Every content file needs front matter — even if it's empty.
-
-```markdown
----
-title: About Us
-layout: default
----
-
-This is the about page. Write **Markdown** here.
-```
-
-## Content file requirements
-
-A file in `content/` is treated as content when its extension matches `content.formats` (default: `md` and `html`) and it has front matter. Front matter is the metadata block at the top of the file, delimited by `---` (YAML), `+++` (TOML), or `{` (JSON).
-
-Empty front matter is valid — a file with just `---` / `---` and a body is a content page with default metadata. But a Markdown file with no delimiters at all is a build error:
-
-```markdown
----
----
-
-No metadata needed, but the delimiters are required.
-```
-
-## HTML content handling
-
-HTML files have three classification paths based on their content:
-
-| Condition | Treatment |
-|---|---|
-| Has front matter (`---`, `+++`, `{`) | Content page, processed normally |
-| No front matter + starts with `<!DOCTYPE` or `<html>` | Passthrough — copied to output as-is |
-| No front matter + HTML fragment (no DOCTYPE) | Content page with empty front matter, wrapped by cascade layout |
-
-HTML fragments inherit their layout from the `_data.yaml` cascade. A `_data.yaml` with `layout: element` wraps every fragment in that directory with the element layout. Set `layout: false` to skip layout wrapping and pass fragments through unwrapped.
+Content in Alloy lives in the `content/` directory. Each file with a supported extension (`.md`, `.html` by default) becomes a page on your site. Alloy reads the front matter, applies the data cascade, renders the body, wraps it in a layout, and writes the result to `_site/`.
 
 ```
-content/patterns/card/
-├── _data.yaml           # layout: "element"
-├── index.html           # has front matter → content page
-└── patterns/
-    ├── themes.html      # fragment → wrapped in element layout
-    └── image.html       # fragment → wrapped in element layout
+content/
+├── index.md               # → _site/index.html  (site root)
+├── about.html             # → _site/about/index.html
+└── blog/
+    ├── _data.yaml          # Directory-level data (cascades to all blog pages)
+    ├── index.md            # → _site/blog/index.html
+    ├── first-post.md       # → _site/blog/first-post/index.html
+    └── second-post/        # Page bundle (co-located assets)
+        ├── index.md        # → _site/blog/second-post/index.html
+        └── hero.jpg        # Copied to _site/blog/second-post/hero.jpg
 ```
-
-HTML fragments go through template processing — Liquid or Go template tags in the fragment body are evaluated.
-
-## Content-colocated assets
-
-Files in `content/` whose extension does not match `content.formats` are copied to the output directory as-is, preserving their path relative to `content/`. No template processing, no Markdown rendering — raw file copy.
-
-```
-content/about/
-├── index.md        # content file → processed through pipeline
-├── diagram.svg     # passthrough → copied to _site/about/diagram.svg
-├── hero.png        # passthrough → copied to _site/about/hero.png
-└── data-sheet.pdf  # passthrough → copied to _site/about/data-sheet.pdf
-```
-
-This lets you keep images, diagrams, and downloads next to the content that references them. In templates, reference colocated assets with relative paths:
-
-```markdown
----
-title: About Us
-layout: default
----
-
-![Architecture diagram](diagram.svg)
-
-Download the [data sheet](data-sheet.pdf).
-```
-
-Excluded from passthrough: `_data.yaml` / `_data.yml` (cascade data files), dot-prefixed files (`.DS_Store`, `.gitkeep`), and directories.
 
 ## Supported content formats
 
-The `content.formats` config controls which file extensions are eligible as content:
+The `content.formats` config controls which file extensions are treated as content. The default is `["md", "html"]`:
 
 ```yaml
 # alloy.config.yaml
 content:
-  formats: ["md", "html"]   # default
+  formats: ["md", "html"]
 ```
 
-Adding `liquid` to the list processes `.liquid` files as content — but only when the template engine is set to `liquid`. The Go template engine cannot render Liquid syntax, so `.liquid` files are always passthrough when `templates.engine: "gotemplate"`.
+Files matching these extensions go through the full pipeline: front matter extraction, data cascade, template rendering, and layout wrapping. Everything else in `content/` is treated as a passthrough file and copied to the output as-is.
+
+## Front matter is required
+
+Every content file must start with front matter delimiters. Alloy supports YAML (`---`), TOML (`+++`), and JSON (`{}`):
+
+```markdown
+---
+title: "My First Post"
+date: 2026-04-10
+tags: ["tutorial", "getting-started"]
+---
+
+This is the body of the post. It supports **Markdown**, Liquid template
+tags like {{ site.title }}, and raw HTML.
+```
+
+Empty front matter is valid -- use `---` followed by `---` on the next line when you have no metadata to set. Files without any front matter delimiters produce a build error.
+
+## How content is processed
+
+Every content file passes through a multi-stage pipeline:
+
+1. **Discovery** -- Alloy walks the `content/` directory and identifies content files by extension.
+2. **Front matter extraction** -- Metadata is parsed from the top of each file.
+3. **Data cascade** -- Global data, directory data (`_data.yaml`), and front matter are merged. See [Data Cascade](/content/data-cascade/).
+4. **Permalink resolution** -- The output URL is computed from front matter, cascade patterns, or the file path. See [Permalinks](/content/permalinks/).
+5. **Content rendering** -- Markdown is converted to HTML. Template tags (`{{ }}`, `{% %}`) are evaluated.
+6. **Layout wrapping** -- The rendered content is injected into a layout template as `{{ content }}`.
+7. **Output** -- The final HTML is written to `_site/`.
+
+For a deeper look at each stage, see [Content Lifecycle](/content/lifecycle/).
+
+## Markdown configuration
+
+Alloy uses goldmark for Markdown rendering. Configure it in `alloy.config.yaml`:
+
+```yaml
+content:
+  markdown:
+    goldmark:
+      unsafe: true          # Allow raw HTML in Markdown (default: false)
+      typographer: true      # Smart quotes and dashes
+      templateTags: true     # Preserve {{ }} and {% %} through Markdown (default: true)
+    autoHeadingID: true      # Add id attributes to headings (default: true)
+    toc: true                # Generate page.toc data (default: true)
+```
+
+With `templateTags: true` (the default), Liquid and Go template syntax passes through the Markdown parser untouched. You can mix Markdown and template logic in the same file without escaping.
+
+## HTML content files
+
+`.html` files in `content/` are classified based on their content:
+
+1. **Has front matter** -- Processed as a content page, same as Markdown.
+2. **No front matter + starts with `<!DOCTYPE` or `<html>`** -- Treated as a full HTML document and copied to output as-is (passthrough).
+3. **No front matter + no DOCTYPE** -- Treated as an HTML fragment. The file body becomes the page content with empty front matter, inheriting its layout from the `_data.yaml` cascade.
+
+This classification lets you co-locate standalone HTML documents alongside templated content without adding front matter to every file.
+
+## Co-located assets
+
+Non-content files inside `content/` are automatically copied to the output, preserving their relative path. This enables page bundles where a post and its images live together:
+
+```
+content/blog/my-post/
+├── index.md          # Content file → _site/blog/my-post/index.html
+├── diagram.svg       # Passthrough → _site/blog/my-post/diagram.svg
+└── hero.png          # Passthrough → _site/blog/my-post/hero.png
+```
+
+Reference co-located assets with relative paths in your Markdown: `![Diagram](diagram.svg)`.
+
+## Custom directory structure
+
+Override the default `content/` path in config:
+
+```yaml
+# alloy.config.yaml
+structure:
+  content: "./docs/pages/"
+```
+
+All pipeline stages, the file watcher, and the dev server respect the configured path.
+
+## What to read next
+
+- [Front Matter](/content/front-matter/) -- All available front matter fields
+- [Data Cascade](/content/data-cascade/) -- How global, directory, and page data merge
+- [Permalinks](/content/permalinks/) -- URL patterns and tokens
+- [Pagination](/content/pagination/) -- List pages and virtual page generation
+- [Content Lifecycle](/content/lifecycle/) -- Draft, future, and expired content
+- [Data Files](/content/data-files/) -- Global data from `data/` and external sources

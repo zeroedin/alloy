@@ -1,225 +1,216 @@
 ---
 layout: doc
 title: Hook Scoping
+nav_weight: 20
 ---
 
-The options object passed to `alloy.hook()` controls which pages a hook sees and what data it receives. Scoping reduces payload size and lets Alloy optimize hook execution.
+Hook scoping controls what subset of site data and pages a hook receives. By declaring what your hook needs at registration time, you reduce the serialization cost of each hook dispatch -- especially important for large sites with thousands of pages.
 
 ```javascript
-alloy.hook("onContentTransformed", {
-  priority: 50,
-  pages: "content/blog/**",
-  pageFields: ["title", "body", "url"],
-  data: ["site"],
-}, (page) => {
-  // Only fires for blog pages
-  // page only has title, body, and url fields
-  return page;
+alloy.hook("onContentLoaded", {
+  data: ["navigation", "team"],       // only these site.data keys
+  pages: "/blog/**",                  // only blog pages
+  pageFields: ["frontMatter", "url"]  // only these fields per page
+}, (pages) => {
+  // Receives only what was declared
+  return pages;
 });
 ```
 
-## The options object
+## The `scope:` Options
 
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `priority` | number | 50 | Execution order. Lower runs first. |
-| `pages` | `false` / `true` / `string` | `false` | Which pages trigger this hook |
-| `pageFields` | array of strings | all fields | Subset of page fields included in the payload |
-| `data` | array of strings | none | Site data keys to include in the payload |
+### `data` -- Site Data Keys
 
-The options object is required. At minimum, pass `{}` or `{ priority: 50 }`.
+Controls which `site.data` keys are serialized in the hook payload.
 
-## Pages filtering
-
-The `pages` option determines which pages a per-page hook (`onContentTransformed`, `onPageRendered`) fires for, and whether batch hooks receive page data.
-
-### pages: false
-
-The hook does not receive any page data. Use this for hooks that operate on non-page data (config, assets, build stats):
+| Value | Behavior |
+|---|---|
+| `undefined` (omitted) | No site data serialized |
+| `["navigation", "team"]` | Only these keys |
+| `["*"]` | All site data keys |
 
 ```javascript
-alloy.hook("onConfig", { pages: false }, (data) => {
-  // No page data in payload
-  data.config.customSetting = true;
-  return data;
+// Only receive navigation data
+alloy.hook("onAfterValidation", { data: ["navigation"] }, (payload) => {
+  // payload.cascade has navigation data
+});
+
+// Receive all site data
+alloy.hook("onDataFetched", { data: ["*"] }, (data) => {
+  // Full site.data available
 });
 ```
 
-### pages: true
+### `pages` -- Page Filtering
 
-The hook fires for every page:
+Controls which pages are included in the hook payload.
+
+| Value | Mode | Description |
+|---|---|---|
+| `false` (default) | Skip | No pages serialized |
+| `true` or `"**"` | All | All pages included |
+| `"/blog/**"` | Glob | Only pages matching the path glob |
+| `{ tags: ["component"] }` | Taxonomy | Only pages matching taxonomy terms |
 
 ```javascript
-alloy.hook("onContentTransformed", { pages: true }, (page) => {
-  // Fires for every page in the site
-  return page;
-});
+// No pages (default -- best for data-only hooks)
+alloy.hook("onDataFetched", { pages: false }, fn);
+
+// All pages
+alloy.hook("onContentLoaded", { pages: true }, fn);
+
+// Only blog pages (glob filter)
+alloy.hook("onContentLoaded", { pages: "/blog/**" }, fn);
+
+// Only pages tagged "component" (taxonomy filter)
+alloy.hook("onContentLoaded", {
+  pages: { tags: ["component", "form"] }
+}, fn);
 ```
 
-### Glob patterns
+#### Taxonomy Filter Rules
 
-A glob string filters pages by their source path relative to `content/`:
+Multiple terms within the same taxonomy are OR'd (union):
 
 ```javascript
-// Only blog posts
-alloy.hook("onContentTransformed", {
-  pages: "blog/**",
-}, (page) => {
-  return page;
-});
-
-// Only top-level pages (not in subdirectories)
-alloy.hook("onContentTransformed", {
-  pages: "*.md",
-}, (page) => {
-  return page;
-});
-
-// Multiple sections
-alloy.hook("onContentTransformed", {
-  pages: "{blog,news}/**",
-}, (page) => {
-  return page;
-});
+// Pages tagged "component" OR "form"
+{ pages: { tags: ["component", "form"] } }
 ```
 
-The glob uses `**` for recursive matching and `*` for single-segment wildcards.
-
-### Taxonomy filter
-
-Filter pages by taxonomy term:
+Multiple taxonomies are AND'd (intersection):
 
 ```javascript
-alloy.hook("onContentTransformed", {
-  pages: "taxonomy:tags/javascript",
-}, (page) => {
-  // Only pages tagged "javascript"
-  return page;
-});
+// Pages tagged "component" AND categorized "ui"
+{ pages: { tags: ["component"], categories: ["ui"] } }
 ```
 
-The format is `taxonomy:<taxonomy-name>/<term>`.
+### `pageFields` -- Per-Page Fields
 
-## pageFields
+Controls which fields are populated on each page in the payload.
 
-By default, hooks receive all page fields. Use `pageFields` to request only the fields you need, reducing serialization overhead for Node plugins:
+| Value | Behavior |
+|---|---|
+| `undefined` (omitted) | All fields |
+| `["frontMatter", "url"]` | Only these fields |
+| `["*"]` | All fields (explicit) |
 
 ```javascript
-alloy.hook("onContentTransformed", {
+// Only need front matter and URL (skip html, toc, content)
+alloy.hook("onContentLoaded", {
   pages: true,
-  pageFields: ["body", "url"],
-}, (page) => {
-  // page.body and page.url are present
-  // page.title, page.date, etc. are not included
-  page.body = transform(page.body);
-  return page;
-});
+  pageFields: ["frontMatter", "url"]
+}, fn);
 ```
 
-Fields you set on the returned page are merged back into the full page object, even if they were not in `pageFields`. This lets you modify `body` without requesting `title`.
+Available fields: `path`, `url`, `frontMatter`, `content`, `html`, `toc`.
 
-## data
+## Union Scope
 
-Request specific site data keys to be included in the hook payload:
+When multiple hooks register for the same event with different scopes, Alloy computes a union and serializes it once for all hooks on that event.
+
+If hook A requests `pageFields: ["html"]` and hook B requests `pageFields: ["toc"]`, both hooks receive pages with `html` AND `toc` populated.
 
 ```javascript
-alloy.hook("onContentTransformed", {
-  pages: true,
-  data: ["site", "collections"],
-}, (page) => {
-  const blogPosts = alloy.data.collections.blog;
-  // Use site-wide data while processing each page
-  return page;
-});
+// Plugin A
+alloy.hook("onContentLoaded", { pageFields: ["html"] }, fnA);
+
+// Plugin B
+alloy.hook("onContentLoaded", { pageFields: ["toc"] }, fnB);
+
+// Both receive pages with html AND toc
 ```
 
-Without `data`, site data is not included in the per-call payload (though `alloy.data` remains available in QuickJS plugins). For Node plugins, specifying `data` keys avoids sending the entire site data snapshot over the JSON-RPC channel on every call.
+This is a performance optimization -- one serialization pass per event instead of one per hook. Scoping reduces the total work, but it is not an isolation boundary. Plugin A may see fields it did not request if another plugin on the same event requested them.
 
-## Union scope
+## `addPages` Return Shape
 
-When multiple hooks subscribe to the same event, Alloy computes the **union** of their requested scopes. If hook A requests `pageFields: ["title", "body"]` and hook B requests `pageFields: ["body", "url"]`, both hooks receive pages with `title`, `body`, and `url`.
-
-```javascript
-// Hook A
-alloy.hook("onContentTransformed", {
-  pages: true,
-  pageFields: ["title", "body"],
-}, (page) => { /* ... */ });
-
-// Hook B
-alloy.hook("onContentTransformed", {
-  pages: true,
-  pageFields: ["body", "url"],
-}, (page) => {
-  // Receives title, body, AND url — union of both hooks' requests
-  return page;
-});
-```
-
-The same union logic applies to `data` keys and `pages` globs. If one hook requests `pages: "blog/**"` and another requests `pages: true`, the effective scope is all pages.
-
-Scoping is an optimization hint, not an isolation boundary. A hook may receive more data than it requested due to union computation with other hooks on the same event.
-
-## Hook availability matrix
-
-Not all scoping options apply to every event. Per-page options (`pages`, `pageFields`) are only meaningful for events that carry page data:
-
-| Event | `pages` | `pageFields` | `data` | Notes |
-|---|---|---|---|---|
-| `onConfig` | -- | -- | -- | Receives config object only |
-| `onDataFetched` | -- | -- | Yes | Operates on raw data files |
-| `onContentLoaded` | Yes | Yes | Yes | Batch, receives all pages |
-| `onDataCascadeReady` | Yes | Yes | Yes | Batch, post-cascade |
-| `onPagesReady` | Yes | Yes | Yes | Batch, return `addPages` |
-| `onBeforeValidation` | Yes | Yes | Yes | Batch |
-| `onAfterValidation` | Yes | Yes | Yes | Batch |
-| `onContentTransformed` | Yes | Yes | Yes | Per-page |
-| `onPageRendered` | Yes | Yes | Yes | Per-page |
-| `onAssetProcess` | -- | -- | -- | Receives asset object |
-| `onBuildComplete` | -- | -- | -- | Receives build stats |
-| `onDevServerStart` | -- | -- | -- | Receives server object |
-| `onFileChanged` | -- | -- | -- | Receives file path and event |
-
-A `--` means the option is ignored for that event.
-
-## addPages return shape for onPagesReady
-
-The `onPagesReady` hook has a unique return shape. Instead of returning a modified page, it returns an object with an `addPages` array of virtual page definitions:
+When a hook declares `pages: false` and needs to inject virtual pages (via `onPagesReady`), use the `addPages` return shape to avoid round-tripping all existing pages:
 
 ```javascript
 alloy.hook("onPagesReady", {
-  priority: 50,
-  pages: true,
-  pageFields: ["title", "date", "tags", "url"],
-}, (data) => {
-  // Read existing pages to generate new ones
-  const tagCounts = {};
-  for (const page of data.pages) {
-    for (const tag of (page.tags || [])) {
-      tagCounts[tag] = (tagCounts[tag] || 0) + 1;
-    }
-  }
-
-  return {
-    addPages: [{
-      title: "Tag Statistics",
-      permalink: "/stats/tags/",
-      layout: "stats",
-      tagCounts: tagCounts,
-      body: "",
-    }],
-  };
+  data: ["elements"],
+  pages: false          // don't serialize existing pages
+}, (payload) => {
+  const elements = payload.siteData.elements || [];
+  const newPages = elements.map(el => ({
+    path: `demos/${el.slug}.md`,
+    url: `/demos/${el.slug}/`,
+    frontMatter: { title: `${el.name} Demo`, layout: "demo" },
+    content: `## ${el.name}\n\n${el.description}`
+  }));
+  return { addPages: newPages };
 });
 ```
 
-Each virtual page in `addPages` must be a map with at minimum:
+The pipeline detects the `addPages` key and appends the new pages without requiring the plugin to process existing pages.
 
-| Field | Required | Description |
-|---|---|---|
-| `permalink` | Yes | Output URL for the page |
-| `title` | Yes | Page title |
-| `layout` | No | Layout template name |
-| `body` | No | Page body content (pre-rendered HTML or Markdown) |
-| Any key | No | Custom front matter fields |
+## Hook Availability Matrix
 
-Virtual pages are injected before taxonomy processing. They participate in collections and can carry taxonomy terms (`tags`, `categories`, etc.) just like regular content pages.
+Not all scope options work on all hooks. Two constraints apply:
+
+1. **Pageless hooks** (`onConfig`, `onBeforeValidation`, `onAfterValidation`, `onDataFetched`) do not receive pages. Setting `pages` to anything other than `false` produces a validation error.
+
+2. **Pre-taxonomy hooks** (`onPagesReady`) cannot use taxonomy filtering because taxonomy indices have not been built yet.
+
+| Hook | Pages | Glob Filter | Taxonomy Filter |
+|---|:---:|:---:|:---:|
+| `onConfig` | no | error | error |
+| `onBeforeValidation` | no | error | error |
+| `onAfterValidation` | no | error | error |
+| `onDataFetched` | no | error | error |
+| `onPagesReady` | yes (batch) | yes | error |
+| `onContentLoaded` | yes (batch) | yes | yes |
+| `onDataCascadeReady` | yes (batch) | yes | yes |
+| `onContentTransformed` | per-page | n/a | n/a |
+| `onPageRendered` | per-page | n/a | n/a |
+| `onAssetProcess` | per-asset | n/a | n/a |
+| `onBuildComplete` | no | n/a | n/a |
+
+Per-page hooks (`onContentTransformed`, `onPageRendered`) fire with a fixed payload shape. The pipeline already knows which page to serialize, so `pages` and `pageFields` scope options do not apply. Use `data` and `priority` on per-page hooks.
+
+Registering an invalid scope mode on a hook produces a validation error at plugin load time -- before the build starts.
+
+## Practical Example: Docs Site with Component Demos
+
+A documentation site that generates demo pages from a data file, only processing pages it cares about:
+
+```javascript
+// plugins/demo-generator.js
+export default function(alloy) {
+  // Generate demo pages from data (only needs elements data, no existing pages)
+  alloy.hook("onPagesReady", {
+    data: ["elements"],
+    pages: false
+  }, (payload) => {
+    const elements = payload.siteData.elements || [];
+    return {
+      addPages: elements.map(el => ({
+        path: `demos/${el.slug}.md`,
+        url: `/demos/${el.slug}/`,
+        frontMatter: {
+          title: `${el.name} Demo`,
+          layout: "demo",
+          tags: [el.tagName]
+        },
+        content: `## ${el.name}\n\n${el.description}`
+      }))
+    };
+  });
+
+  // Enrich only demo pages after rendering (glob filter)
+  alloy.hook("onContentLoaded", {
+    pages: "/demos/**",
+    pageFields: ["frontMatter", "html"]
+  }, (pages) => {
+    pages.forEach(page => {
+      page.frontMatter.generatedAt = new Date().toISOString();
+    });
+    return pages;
+  });
+}
+```
+
+## Related
+
+- [Lifecycle Events](/hooks/) -- all hook events and payloads
+- [Plugin System](/plugins/) -- plugin tiers and registration

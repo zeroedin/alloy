@@ -1,154 +1,209 @@
 ---
 layout: doc
 title: QuickJS Plugins
+nav_weight: 20
 ---
 
-QuickJS plugins are plain `.js` files in the `plugins/` directory. No build step, no bundler, no npm install. Drop a file in, and it runs sandboxed via wazero at microsecond-level latency.
-
-```javascript
-// plugins/word-count.js
-alloy.filter("wordcount", (content) => {
-  return content.split(/\s+/).filter(w => w.length > 0).length.toString();
-});
-```
-
-```liquid
-{{ page.content | wordcount }} words
-```
-
-## Registering filters
-
-Use `alloy.filter(name, fn)` to register a Liquid filter. The function receives the input value and any arguments passed in the template:
+QuickJS plugins are plain JavaScript files that run on an embedded QuickJS engine inside the Alloy process. No Node.js dependency, no build step -- drop a `.js` file in `plugins/` and it works immediately.
 
 ```javascript
 // plugins/reading-time.js
-alloy.filter("reading_time", (content) => {
-  const words = content.split(/\s+/).length;
-  const minutes = Math.ceil(words / 250);
-  return `${minutes} min read`;
-});
+export default function(alloy) {
+  alloy.filter("readingTime", (content) => {
+    const words = content.split(/\s+/).filter(w => w.length > 0).length;
+    const minutes = Math.ceil(words / 200);
+    return `${minutes} min read`;
+  });
+}
 ```
 
 ```liquid
-{{ page.content | reading_time }}
+<span>{{ page.content | readingTime }}</span>
 ```
 
-Filters with arguments:
+## How It Works
+
+Alloy embeds a single QuickJS instance compiled to WASM, running via wazero (pure Go, zero CGo). Your `.js` files are evaluated in this shared context at startup.
+
+- **Startup cost**: ~10-50ms one-time
+- **Per-call cost**: ~10-50 microseconds
+- **Memory**: ~2-4MB
+
+QuickJS plugins are sandboxed -- they cannot access the filesystem, network, or system resources.
+
+## Registering Filters
+
+Filters transform values in template expressions:
 
 ```javascript
-// plugins/truncate-words.js
-alloy.filter("truncate_smart", (text, maxWords) => {
-  const words = text.split(/\s+/);
-  if (words.length <= maxWords) return text;
-  return words.slice(0, maxWords).join(" ") + "...";
-});
+// plugins/filters.js
+export default function(alloy) {
+  // Simple string filter
+  alloy.filter("initials", (name) => {
+    return name.split(' ').map(w => w[0]).join('');
+  });
+
+  // Filter with arguments
+  alloy.filter("truncateAt", (text, maxLength) => {
+    if (text.length <= maxLength) return text;
+    return text.slice(0, maxLength) + '...';
+  });
+
+  // Numeric filter
+  alloy.filter("percentage", (value, total) => {
+    return Math.round((value / total) * 100) + '%';
+  });
+}
 ```
+
+Use in templates:
 
 ```liquid
-{{ page.summary | truncate_smart: 30 }}
+{{ page.author | initials }}
+{{ page.description | truncateAt: 120 }}
+{{ page.score | percentage: page.maxScore }}
 ```
 
-## Registering shortcodes
+Filter arguments are passed as additional parameters after the input value.
 
-Use `alloy.shortcode(name, fn)` to register a custom Liquid tag. The function receives an array of string arguments and, for block shortcodes, the inner body content:
+## Registering Shortcodes
+
+Shortcodes embed rich HTML snippets in content files:
 
 ```javascript
-// plugins/youtube.js
-alloy.shortcode("youtube", (args) => {
-  const id = args[0];
-  return `<div class="video-embed">
-    <iframe src="https://www.youtube.com/embed/${id}"
-            frameborder="0" allowfullscreen></iframe>
-  </div>`;
-});
+// plugins/shortcodes.js
+export default function(alloy) {
+  // Inline shortcode (self-closing)
+  alloy.shortcode("youtube", (args) => {
+    const id = args[0];
+    return `<iframe src="https://www.youtube.com/embed/${id}"
+            frameborder="0" allowfullscreen></iframe>`;
+  });
+
+  // Block shortcode (wraps content)
+  alloy.shortcode("callout", (args, content) => {
+    const type = args[0] || "info";
+    return `<div class="callout callout--${type}">${content}</div>`;
+  });
+
+  // Shortcode using site data
+  alloy.shortcode("componentDemo", (args) => {
+    const tagName = args[0];
+    const elements = alloy.data.elements || [];
+    const el = elements.find(e => e.tagName === tagName);
+    if (!el) return `<!-- unknown component: ${tagName} -->`;
+    return `<div class="demo">
+      <h3>${el.name}</h3>
+      <${el.tagName}></${el.tagName}>
+    </div>`;
+  });
+}
 ```
+
+Use in content:
 
 ```liquid
 {% youtube "dQw4w9WgXcQ" %}
-```
 
-Block shortcodes receive the body as the second argument:
-
-```javascript
-// plugins/callout.js
-alloy.shortcode("callout", (args, body) => {
-  const type = args[0] || "info";
-  return `<aside class="callout callout-${type}">${body}</aside>`;
-});
-```
-
-```liquid
 {% callout "warning" %}
-  Back up your data before upgrading.
+Do not use this in production without testing first.
 {% endcallout %}
+
+{% componentDemo "rh-button" %}
 ```
 
-## Accessing site data
+## Registering Hooks
 
-`alloy.data` provides a read-only snapshot of site data. It is available inside filter and shortcode functions, not at the top level of the plugin file:
+Hooks let plugins run code at specific points in the build pipeline:
 
 ```javascript
-// plugins/site-title.js
-alloy.filter("with_site_title", (text) => {
-  const title = alloy.data.site.title;
-  return `${text} | ${title}`;
+// plugins/transforms.js
+export default function(alloy) {
+  // Add lazy loading to all images
+  alloy.hook("onContentTransformed", {}, (page) => {
+    page.html = page.html.replace(/<img /g, '<img loading="lazy" ');
+    return page;
+  });
+
+  // Minify final HTML output
+  alloy.hook("onPageRendered", {}, (html) => {
+    return html.replace(/\s+/g, ' ').trim();
+  });
+}
+```
+
+### Hook Options
+
+The second argument to `alloy.hook()` is a required options object:
+
+```javascript
+// Control execution order with priority (lower runs first, default 50)
+alloy.hook("onPageRendered", { priority: 10 }, earlyTransformFn);
+alloy.hook("onPageRendered", { priority: 100 }, lateTransformFn);
+
+// Declare what data the hook needs (reduces serialization cost)
+alloy.hook("onContentLoaded", {
+  data: ["navigation"],     // only serialize these site.data keys
+  pages: "/blog/**",        // only receive blog pages
+  pageFields: ["frontMatter", "url"]  // only these fields per page
+}, fn);
+```
+
+See [Lifecycle Events](/hooks/) for all available hooks and [Hook Scoping](/hooks/scoping/) for the full scoping API.
+
+## Accessing Site Data
+
+`alloy.data` provides read-only access to the same data available as `site.data` in templates:
+
+```javascript
+export default function(alloy) {
+  alloy.filter("teamMember", (slug) => {
+    const team = alloy.data.team || [];
+    const member = team.find(m => m.slug === slug);
+    return member ? member.name : slug;
+  });
+}
+```
+
+Access `alloy.data` inside filter, shortcode, and hook functions -- not at the top level of your plugin. During plugin evaluation, `alloy.data` is `undefined`.
+
+To modify data, use hooks like `onDataFetched`:
+
+```javascript
+alloy.hook("onDataFetched", { data: ["team"] }, (data) => {
+  data.teamCount = data.team.length;
+  return data;
 });
 ```
 
-`alloy.data` includes:
+## QuickJS vs Node
 
-| Key | Contents |
-|---|---|
-| `alloy.data.site` | Config values (`title`, `baseURL`, etc.) |
-| `alloy.data.collections` | All named collections |
-| `alloy.data.taxonomies` | All taxonomy term maps |
-
-The data is a snapshot taken at plugin execution time. It is read-only -- mutations have no effect on the build.
-
-## Registering hooks
-
-Use `alloy.hook(event, options, fn)` to subscribe to build lifecycle events. The options object is required:
+A `.js` file in `plugins/` runs on QuickJS by default. If your plugin needs Node APIs or npm packages, add `runtime: "node"`:
 
 ```javascript
-// plugins/image-lazy.js
-alloy.hook("onContentTransformed", { priority: 50, pages: true }, (page) => {
-  page.body = page.body.replace(
-    /<img /g,
-    '<img loading="lazy" '
-  );
-  return page;
-});
+// This runs on QuickJS (default)
+export default function(alloy) { /* ... */ }
+
+// This runs on Node (Tier 3)
+export const runtime = "node";
+export default function(alloy) { /* ... */ }
 ```
 
-See [Lifecycle Events](/hooks/) for the full list of events and their payloads.
-
-## Performance
-
-QuickJS plugins run inside wazero (pure Go WebAssembly runtime) with these characteristics:
-
-| Metric | Typical value |
-|---|---|
-| Startup | ~10-50ms (once, at build start) |
-| Per-call latency | ~10-50 microseconds |
-| Memory overhead | ~2-4MB per plugin instance |
-
-For a site with 1000 pages and a filter called once per page, total plugin overhead is roughly 10-50ms -- negligible compared to I/O and template rendering.
-
-## Sandboxing
-
-QuickJS plugins run in a strict sandbox enforced by wazero:
-
-- No filesystem access
-- No network access
-- No system calls
-- No access to the host process
-
-The only data a QuickJS plugin can access is what Alloy passes to it through function arguments and `alloy.data`. This makes QuickJS plugins safe to run from untrusted sources.
+See [Node Plugins](/plugins/node/) for details on Tier 3 plugins.
 
 ## Limitations
 
-- No `require()` or `import` -- each plugin is a single self-contained file
-- No async/await -- all functions are synchronous
-- No Node.js APIs (`fs`, `path`, `http`, etc.)
-- No npm packages -- if you need npm, use a [Node plugin](/plugins/node/)
-- `alloy.data` is not available at the top level of the file, only inside registered functions
+- No filesystem access (`fs`, `path`)
+- No network access (`fetch`, `http`)
+- No Node.js APIs or npm packages
+- No `require()` or `import` of external modules
+- `alloy.data` is read-only -- mutations do not propagate to templates
+
+For any of these capabilities, use a [Node plugin](/plugins/node/) instead.
+
+## Related
+
+- [Plugin System](/plugins/) -- overview and tier comparison
+- [WASM Plugins](/plugins/wasm/) -- compiled plugins for maximum performance
+- [Node Plugins](/plugins/node/) -- full Node.js access
+- [Lifecycle Events](/hooks/) -- all hook events and payloads

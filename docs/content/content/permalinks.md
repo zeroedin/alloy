@@ -1,108 +1,141 @@
 ---
 layout: doc
 title: Permalinks
+nav_weight: 40
 ---
 
-Permalinks control the output URL for each page. Set them in front matter, inherit them from `_data.yaml`, or let Alloy derive them from the file path.
+Permalinks control the output URL for each page. Alloy resolves URLs through a three-level priority chain: front matter first, then the `_data.yaml` cascade, then the file path.
 
 ```yaml
-# content/blog/_data.yaml — all blog posts get date-based URLs
-permalink: "/blog/:year/:month/:slug/"
+# content/blog/_data.yaml
+permalink: "/:year/:month/:slug/"
 ```
 
-A post at `content/blog/my-post.md` with `date: 2026-04-10` becomes `/blog/2026/04/my-post/`.
+With this directory data, a post at `content/blog/my-post.md` with `date: 2026-04-10` outputs to `/2026/04/my-post/`.
 
 ## Resolution order
 
-Alloy resolves permalinks in this order, first match wins:
+1. **Front matter `permalink:`** -- Always wins. A page with an explicit permalink ignores all cascade patterns.
+2. **`_data.yaml` cascade `permalink:`** -- Section-level patterns with token replacement. Applied to all pages in the directory and its subdirectories.
+3. **`DefaultFromPath`** -- The file path maps directly to the URL. `content/about.md` becomes `/about/`.
 
-1. **Front matter `permalink:`** — always wins
-2. **`_data.yaml` cascade `permalink:`** — section-level pattern
-3. **`DefaultFromPath`** — file path maps directly to URL (`content/about.md` becomes `/about/`)
-
-There is no site-level `permalinks:` config key. URL patterns are section-level data that belongs in `_data.yaml` — sections own their own URL structure.
+There is no site-level `permalinks:` config key. URL patterns are section-level data set in `_data.yaml` -- sections own their own URL structure.
 
 ## Available tokens
 
-Use tokens in permalink patterns for dynamic URL segments:
+Tokens in permalink patterns are replaced with values from the page's front matter and metadata:
 
 | Token | Value | Example |
 |---|---|---|
-| `:year` | Content date (4-digit) | `2026` |
-| `:month` | Content date (2-digit) | `04` |
-| `:day` | Content date (2-digit) | `10` |
+| `:year` | Content date, 4-digit | `2026` |
+| `:month` | Content date, 2-digit | `04` |
+| `:day` | Content date, 2-digit | `10` |
 | `:slug` | Slugified title or filename | `my-first-post` |
 | `:title` | Raw title from front matter | `My First Post` |
 | `:section` | Top-level content directory | `blog` |
 | `:filename` | Source filename without extension | `my-first-post` |
 
-Token replacement is fast — 3000 pages with token replacement takes approximately 1ms.
+### Blog with date-based URLs
 
-## Template permalinks
+```yaml
+# content/blog/_data.yaml
+layout: post
+permalink: "/blog/:year/:month/:slug/"
+```
 
-Permalinks containing `{{ }}` are rendered through the configured template engine (Liquid or Go templates). Use this for computed URLs based on custom front matter fields:
+```yaml
+# content/blog/my-first-post.md
+---
+title: "My First Post"
+date: 2026-04-10
+---
+```
+
+Output: `/blog/2026/04/my-first-post/`
+
+### Docs site with flat URLs
+
+```yaml
+# content/docs/_data.yaml
+layout: doc
+permalink: "/docs/:slug/"
+```
+
+Every page under `content/docs/` gets a flat URL like `/docs/getting-started/`, regardless of subdirectory depth.
+
+## Front matter permalinks
+
+A page can set its own URL directly, overriding any cascade pattern:
 
 ```yaml
 ---
-title: My Post
-customField: special-category
+title: "About Us"
+permalink: "/about/"
+---
+```
+
+### Template permalinks
+
+Front matter permalinks that contain `{{ }}` are rendered through the configured template engine. This lets you build dynamic URLs from any front matter field:
+
+```yaml
+---
+title: "My Post"
 permalink: "/{{ page.customField | slugify }}/{{ page.date | date: '%Y' }}/"
 ---
 ```
 
-The permalink template syntax must match the configured engine. A Liquid permalink in a Go template project will fail, and vice versa. Only pages with `{{ }}` in their permalink pay the template rendering cost.
+Template permalinks use the same engine configured in `templates.engine`. A Liquid permalink (`{{ page.slug }}`) in a Go template project will fail, and vice versa. Only pages with `{{ }}` in their permalink pay the template rendering cost.
 
-## Static overrides
+### Static overrides
 
-Front matter can set a fixed permalink or override just the slug token:
-
-```yaml
----
-title: About Our Company
-permalink: "/about/"        # fixed URL, no tokens
----
-```
+Permalinks without tokens or template tags are a zero-cost fast path:
 
 ```yaml
 ---
-title: A Very Long Title That Would Make an Ugly URL
-slug: "short-url"           # overrides :slug token only
+permalink: "/custom/path/here/"
 ---
 ```
 
-## Section-level patterns via _data.yaml
+### Overriding just the slug
 
-Use `_data.yaml` to set URL patterns for an entire section:
+To change only the URL segment derived from the filename, set `slug:` instead of a full permalink:
 
 ```yaml
-# content/blog/_data.yaml
-permalink: "/:section/:year/:month/:slug/"
+---
+title: "A Very Long Title That Would Make an Ugly URL"
+slug: "short-url"
+---
 ```
 
-This cascades to all pages in `content/blog/` and its subdirectories. Individual pages can still override with their own front matter `permalink:`.
+With a cascade pattern of `/:year/:month/:slug/`, this page outputs to `/:year/:month/short-url/`.
 
-## Index file behavior
+## Index files
 
-Index files (`index.md`, `index.html`) resolve to their parent directory path and **skip** cascade permalink patterns. This prevents a `_data.yaml` pattern from turning `content/index.md` (title: "Home") into `/home/` instead of `/`.
+Index files (`index.md`, `index.html`) resolve to their parent directory path by default, skipping cascade permalink patterns:
 
-- `content/index.md` resolves to `/`
-- `content/blog/index.md` resolves to `/blog/`
-- `content/blog/second-post/index.md` resolves to `/blog/second-post/`
+- `content/index.md` -- `/` (site root)
+- `content/blog/index.md` -- `/blog/` (section landing)
+- `content/blog/second-post/index.md` -- `/blog/second-post/` (page bundle)
 
-The lookup order for index files:
+This prevents a cascade pattern from turning `content/index.md` (title: "Home") into `/home/` instead of `/`.
 
-1. Front matter `permalink:` (if set) — always honored
-2. `DefaultFromPath` — strips `/index` suffix, returns directory path
+Front matter `permalink:` still works on index files:
 
-Non-index files follow the full resolution chain including `_data.yaml` cascade patterns.
+```yaml
+---
+title: "Home"
+permalink: "/docs/"
+---
+```
 
 ## `permalink: false`
 
-Process the page (include it in collections, make its data available) but write no output file. Useful for data-only pages that feed into other pages via collections:
+Process the page (include it in collections, make its data available) without writing an output file. Useful for data-only pages:
 
 ```yaml
 ---
-title: Shared Config
+title: "Shared Config"
 permalink: false
 layout: false
 sharedData: "value available in collections but no output page"
@@ -111,11 +144,11 @@ sharedData: "value available in collections but no output page"
 
 ## Aliases
 
-A page can output at multiple paths. Aliases are additional output locations for the same rendered content — not redirects. Three identical files, no server configuration needed:
+A page can output at multiple paths. Aliases write identical copies of the rendered HTML -- not redirects.
 
 ```yaml
 ---
-title: About Us
+title: "About Us"
 permalink: "/about/"
 aliases:
   - /about-us/
@@ -123,4 +156,14 @@ aliases:
 ---
 ```
 
-This writes the same rendered HTML to `_site/about/index.html`, `_site/about-us/index.html`, and `_site/team/index.html`. If an alias conflicts with another page's output path, the build fails with a conflict error.
+This writes the same HTML to `_site/about/index.html`, `_site/about-us/index.html`, and `_site/team/index.html`.
+
+Aliases are validated during the pre-build conflict detection pass. If an alias collides with another page's output path, the build fails with a clear error.
+
+## Trailing slashes
+
+All permalinks should end with a trailing slash. Alloy writes pages as `path/index.html`, so `/about/` becomes `_site/about/index.html`. This produces clean URLs that work with any static file server.
+
+## Performance
+
+Token replacement for 3,000 pages takes approximately 1ms. Only pages with `{{ }}` in their permalink pay the template rendering cost (~50 microseconds per page).

@@ -1,14 +1,15 @@
 <nav class="sidebar-nav" aria-label="Documentation">
-  {% for section in site.data.navigation.sections %}
-    <div class="sidebar-section">
-      <h3><a href="{{ section.path }}">{{ section.title }}</a></h3>
-      <ul>
-        {% for item in section.items %}
-          <li>
-            <a href="{{ item.path }}">{{ item.title }}</a>
-          </li>
-        {% endfor %}
-      </ul>
-    </div>
+  {% assign doc_pages = site.pages | where: "layout", "doc" | sort: "nav_section_weight" %}
+  {% assign sections = doc_pages | map: "nav_section" | uniq %}
+  {% for section in sections %}
+    {% assign pages = doc_pages | where: "nav_section", section | sort: "nav_weight" %}
+    <h3>{{ section }}</h3>
+    <ul>
+      {% for p in pages %}
+        <li>
+          <a href="{{ p.url }}">{{ p.title }}</a>
+        </li>
+      {% endfor %}
+    </ul>
   {% endfor %}
 </nav>

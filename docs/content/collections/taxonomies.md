@@ -1,181 +1,225 @@
 ---
 layout: doc
 title: Taxonomies
+nav_weight: 20
 ---
 
-Taxonomies classify pages by terms like tags, categories, or any custom grouping. Declare a taxonomy in config, add terms to your front matter, and Alloy generates index and per-term pages automatically.
+Taxonomies create cross-cutting groups from front matter values. A blog post and a docs page can both be tagged "javascript" and appear in the same taxonomy collection. Alloy auto-generates index and per-term pages from your taxonomy declarations.
 
 ```yaml
 # alloy.config.yaml
 taxonomies:
-  tags: {}
-  categories: {}
+  tags:
+  categories:
 ```
 
 ```yaml
-# content/blog/my-post.md
+# content/blog/web-components.md
 ---
-title: Building with WebAssembly
-tags: [wasm, performance]
-categories: [engineering]
+title: "Building Web Components"
+tags: ["javascript", "web-components", "lit"]
+categories: ["tutorials"]
 ---
 ```
 
-This post appears in `taxonomies.tags.wasm`, `taxonomies.tags.performance`, and `taxonomies.categories.engineering`.
+This populates `taxonomies.tags.javascript`, `taxonomies.tags.web-components`, `taxonomies.tags.lit`, and `taxonomies.categories.tutorials` -- each containing a list of pages with that term.
 
-## Declaring taxonomies
+## Declaring Taxonomies
 
-Each key under `taxonomies:` in config maps to a front matter array field of the same name. The value is a configuration object (use `{}` for defaults):
+Taxonomies are declared in `alloy.config.yaml`. The declaration tells Alloy which front matter keys organize pages into named groups.
+
+### Simple Declaration
 
 ```yaml
 taxonomies:
-  tags: {}
+  tags:
   categories:
-    permalink: "/category/:slug/"
-    layout: category
-  topics:
+  series:
+```
+
+Each key uses defaults: `tags` generates pages at `/tags/` and `/tags/:slug/`, using a layout named `tags`.
+
+### Customized Declaration
+
+```yaml
+taxonomies:
+  tags:
+    permalink: "/topics/:slug/"
+    layout: "topic"
+  categories:
+    permalink: "/sections/:slug/"
+    layout: "term"
+```
+
+### Full Options
+
+| Option | Default | Description |
+|---|---|---|
+| `permalink` | `"/<name>/:slug/"` | URL pattern for term pages |
+| `layout` | taxonomy name | Layout template to use |
+| `render` | `true` | Whether to generate output pages |
+
+## Taxonomy Pages
+
+When `render: true` (the default), Alloy generates two kinds of pages per taxonomy:
+
+- **Index page** (`/tags/`) -- lists all terms
+- **Term pages** (`/tags/javascript/`, `/tags/lit/`) -- lists pages with that term
+
+Both use the same layout template. The `taxonomy` object in the template context tells you which type you are rendering:
+
+```liquid
+{% if taxonomy.term %}
+  <!-- Rendering /tags/javascript/ -->
+  <h1>{{ taxonomy.term }}</h1>
+  {% for post in taxonomy.pages %}
+    <a href="{{ post.url }}">{{ post.title }}</a>
+  {% endfor %}
+{% else %}
+  <!-- Rendering /tags/ -->
+  {% for term in taxonomy.terms %}
+    <a href="{{ term.url }}">
+      {{ term.name }} ({{ term.pages | size }})
+    </a>
+  {% endfor %}
+{% endif %}
+```
+
+### Layout Lookup Order
+
+For a taxonomy named `tags` with the default layout:
+
+1. `layouts/taxonomies/tags.liquid`
+2. `layouts/tags.liquid`
+
+For a taxonomy with `layout: "term"`:
+
+1. `layouts/taxonomies/term.liquid`
+2. `layouts/term.liquid`
+
+If no layout is found, the build fails:
+
+```
+[alloy] ERROR No layout found for taxonomy "tags"
+        Expected: layouts/taxonomies/tags.liquid or layouts/tags.liquid
+        Build aborted.
+```
+
+## Collection-Only Taxonomies (No Pages)
+
+Set `render: false` to build taxonomy data without generating pages:
+
+```yaml
+taxonomies:
+  tags:
     render: false
 ```
 
-Front matter keys that are not declared in `taxonomies` config are ignored -- Alloy will not create taxonomy pages for undeclared keys, even if pages use them as arrays.
-
-## Front matter usage
-
-Assign terms to a page by listing them in the corresponding front matter field:
-
-```yaml
----
-title: My Post
-tags: [javascript, css, html]
-categories: [tutorials]
----
-```
-
-Terms are case-sensitive. `JavaScript` and `javascript` are distinct terms with separate pages.
-
-## Applying terms via _data.yaml
-
-Use the data cascade to apply taxonomy terms to an entire section:
-
-```yaml
-# content/blog/_data.yaml
-tags: [blog]
-categories: [articles]
-```
-
-Every page under `content/blog/` inherits these terms. Pages can add their own terms in front matter, but remember that arrays replace rather than merge -- a page with `tags: [css]` in its front matter gets only `css`, not `blog` and `css`. To include both, list all values:
-
-```yaml
----
-tags: [blog, css]
----
-```
-
-## Auto-generated pages
-
-For each declared taxonomy with rendering enabled, Alloy generates two types of pages:
-
-**Index page** -- lists all terms for the taxonomy. Output at `/<taxonomy>/` (e.g., `/tags/`).
-
-**Per-term pages** -- lists all pages with that term. Output at `/<taxonomy>/<term>/` (e.g., `/tags/javascript/`).
-
-No content files are needed for these pages. Alloy creates them from the taxonomy data.
-
-## Template context
-
-Taxonomy pages receive a `taxonomy` object in their template context:
-
-**On the index page** (`/tags/`):
-
-| Field | Type | Description |
-|---|---|---|
-| `taxonomy.term` | nil | Always nil on the index page |
-| `taxonomy.terms` | array of objects | Each has `.name` (string) and `.pages` (array) |
+The data is still available as `taxonomies.tags.*` in templates. This is useful for organizing content into navigation sections without needing browsable taxonomy pages:
 
 ```liquid
+<!-- Use tags for navigation without dedicated tag pages -->
+{% assign nav_items = taxonomies.tags.foundations | sort: "order" %}
+{% for page in nav_items %}
+  <a href="{{ page.url }}">{{ page.title }}</a>
+{% endfor %}
+```
+
+When `render: false`, duplicate term slugs are not an error since no output pages are generated.
+
+## Using Taxonomies in Templates
+
+### Accessing All Terms
+
+```liquid
+<!-- List all tags with page counts -->
 <ul>
-  {% for t in taxonomy.terms %}
+  {% for term in taxonomy.terms %}
     <li>
-      <a href="/tags/{{ t.name | slugify }}/">{{ t.name }}</a>
-      ({{ t.pages | size }})
+      <a href="{{ term.url }}">{{ term.name }}</a>
+      <span>({{ term.pages | size }})</span>
     </li>
   {% endfor %}
 </ul>
 ```
 
-**On a term page** (`/tags/javascript/`):
-
-| Field | Type | Description |
-|---|---|---|
-| `taxonomy.term` | string | The current term (`"javascript"`) |
-| `taxonomy.pages` | array | All pages with this term |
+### Accessing a Specific Term
 
 ```liquid
-<h2>Posts tagged "{{ taxonomy.term }}"</h2>
-{% for page in taxonomy.pages %}
+<!-- Show all pages tagged "javascript" -->
+{% for post in taxonomies.tags.javascript %}
+  <article>
+    <h3><a href="{{ post.url }}">{{ post.title }}</a></h3>
+  </article>
+{% endfor %}
+```
+
+### Sorting Taxonomy Collections
+
+```liquid
+{% assign sorted = taxonomies.tags.foundations | sort: "order" %}
+{% for page in sorted %}
   <a href="{{ page.url }}">{{ page.title }}</a>
 {% endfor %}
 ```
 
-## Layout lookup order
+## Applying Tags via Data Cascade
 
-Alloy resolves layouts for taxonomy pages in this order:
-
-1. `layouts/taxonomies/<taxonomy>.liquid` (e.g., `layouts/taxonomies/tags.liquid`)
-2. `layouts/<taxonomy>.liquid` (e.g., `layouts/tags.liquid`)
-3. The default layout
-
-The same layout is used for both the index page and per-term pages. Differentiate them by checking `taxonomy.term`:
-
-```liquid
-{% if taxonomy.term %}
-  {%- comment -%} Per-term page {%- endcomment -%}
-  <h2>{{ taxonomy.term }}</h2>
-  {% for page in taxonomy.pages %}
-    <a href="{{ page.url }}">{{ page.title }}</a>
-  {% endfor %}
-{% else %}
-  {%- comment -%} Index page {%- endcomment -%}
-  {% for t in taxonomy.terms %}
-    <a href="/tags/{{ t.name | slugify }}/">{{ t.name }}</a>
-  {% endfor %}
-{% endif %}
-```
-
-## Custom permalink
-
-Override the default URL pattern for taxonomy pages:
+Tags can be applied to all pages in a directory using `_data.yaml`, avoiding repetition in every file:
 
 ```yaml
-taxonomies:
-  categories:
-    permalink: "/category/:slug/"
+# content/tutorials/_data.yaml
+categories: ["tutorials"]
+tags: ["learning"]
 ```
 
-The `:slug` token is replaced with the slugified term name. The index page always renders at the base path (`/category/`).
+Every page under `content/tutorials/` inherits these taxonomy values. Individual pages can override with their own front matter (front matter always wins over cascade data).
 
-## Custom layout
+## Custom Taxonomies
 
-Specify a layout name directly in the taxonomy config:
+You can create any taxonomy beyond tags and categories:
 
 ```yaml
+# alloy.config.yaml
 taxonomies:
   tags:
-    layout: tag-list
+  categories:
+  series:
+    permalink: "/series/:slug/"
+    layout: "series"
+  authors:
+    permalink: "/team/:slug/"
+    layout: "author"
 ```
-
-This looks for `layouts/tag-list.liquid` (or `layouts/tag-list.html` with Go templates), bypassing the default lookup order.
-
-## Disabling output with render: false
-
-Set `render: false` to create taxonomy collections without generating output pages. The taxonomy data is still available in templates -- you just don't get the auto-generated index and term pages:
 
 ```yaml
-taxonomies:
-  series:
-    render: false
+# content/blog/my-post.md
+---
+title: "Part 3: Advanced Patterns"
+series: ["web-components-guide"]
+authors: ["alice"]
+---
 ```
 
-Pages can still use `series: [beginner-go]` in front matter, and you can access `taxonomies.series.beginner-go` in templates. No `/series/` or `/series/beginner-go/` pages are written to disk.
+This generates `/series/web-components-guide/` and `/team/alice/` pages listing all associated content.
 
-This is useful for internal groupings that drive template logic but don't need their own landing pages.
+## Undeclared Keys Are Ignored
+
+If a post has `mood: ["happy"]` in front matter but `mood` is not in the `taxonomies` config, no collection is created. This prevents noisy collections from arbitrary front matter arrays (image lists, related links, etc.).
+
+## Taxonomy Namespace
+
+Taxonomies live under their own top-level template variable, `taxonomies`, separate from section collections:
+
+```liquid
+{{ collections.blog }}            <!-- section collection -->
+{{ taxonomies.tags.javascript }}  <!-- taxonomy collection -->
+```
+
+This prevents collisions between section names and taxonomy names.
+
+## Related
+
+- [Collections](/collections/) -- directory-based section collections
+- [Data Cascade](/content/) -- how `_data.yaml` values cascade into taxonomy terms
+- [Lifecycle Events](/hooks/) -- the `onPagesReady` hook fires before taxonomy collection

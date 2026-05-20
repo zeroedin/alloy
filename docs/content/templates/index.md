@@ -1,106 +1,125 @@
 ---
 layout: doc
 title: Templates Overview
+nav_weight: 10
 ---
 
-Alloy templates control how your content is rendered into output pages. The default template engine is Liquid, powered by the Notifuse/liquidgo library.
-
-```liquid
-<article>
-  <h1>{{ page.title }}</h1>
-  <time>{{ page.date | date: "%B %d, %Y" }}</time>
-  {{ content }}
-</article>
-```
-
-## Template engines
-
-Alloy supports two template engines. The engine is a **global, project-wide setting** -- every layout, partial, and content template uses the same engine.
-
-| Engine | Config value | File extension | Syntax |
-|---|---|---|---|
-| Liquid (default) | `"liquid"` | `.liquid` | `{{ var }}`, `{% tag %}` |
-| Go html/template | `"gotemplate"` | `.html` | `{{ .var }}`, `{{ range }}` |
-
-Switch engines in `alloy.config.yaml`:
+Alloy uses the [Liquid](https://liquidmarkup.org/) template language by default. Templates live in the `layouts/` directory, are parsed once at startup, and rendered per page with full access to the site's data cascade.
 
 ```yaml
 # alloy.config.yaml
 templates:
-  engine: "gotemplate"   # default: "liquid"
+  engine: "liquid"   # default; also supports "go" (Go html/template)
 ```
 
-## File extension conventions
+```liquid
+<!-- layouts/default.liquid -->
+<!DOCTYPE html>
+<html>
+<head><title>{{ page.title }}</title></head>
+<body>
+  {% include "partials/header" %}
+  {{ content }}
+  {% include "partials/footer" %}
+</body>
+</html>
+```
 
-With the Liquid engine, Alloy resolves layout files by looking for `.liquid` first, then falling back to the bare extension. A layout named `post` resolves as:
+Every content page is rendered through its resolved layout. The layout receives the page's rendered body as `{{ content }}` and can access all front matter fields via the `page` object.
 
-1. `layouts/post.liquid`
-2. `layouts/post`
+## Template engines
 
-With the Go template engine, Alloy looks for `.html`:
+Alloy supports two built-in (Tier 1) template engines. The engine is a global, project-wide setting -- one engine is active per build.
 
-1. `layouts/post.html`
-2. `layouts/post`
+| Engine | Config value | File extension | Syntax |
+|---|---|---|---|
+| Liquid | `"liquid"` (default) | `.liquid` | `{{ var }}`, `{% tag %}` |
+| Go templates | `"go"` | `.html` | `{{ .var }}`, `{{ range }}` |
+
+Both engines receive the same `map[string]any` context from the data cascade. All built-in [filters](/templates/filters/) are registered in both engines at startup.
+
+A third-party engine (Nunjucks, EJS, Pug) can be registered via the Node bridge as a Tier 3 plugin engine, though every page render becomes an IPC round-trip with significant performance cost.
 
 ## Template context
 
-Every template has access to these top-level objects:
+Every template receives these top-level variables:
 
-| Object | Contents |
+| Variable | Description |
 |---|---|
-| `page` | Front matter fields + computed fields (`url`, `date`, `section`, `toc`) |
-| `site` | Config values and global data (`site.title`, `site.baseURL`, `site.data.*`) |
-| `collections` | Named content collections (`collections.articles`, `collections.docs`) |
-| `taxonomies` | Taxonomy term maps (`taxonomies.tags`, `taxonomies.categories`) |
-| `pagination` | Pagination state when the page uses [pagination](/content/pagination/) |
-| `content` | Rendered page body (available in layouts) |
-
-Access context in Liquid with dot notation:
+| `page` | Current page data: `page.title`, `page.url`, `page.date`, `page.summary`, `page.toc`, plus all front matter fields |
+| `content` | The rendered body of the current page (Markdown already converted to HTML) |
+| `site` | Site-wide data: `site.title`, `site.baseURL`, `site.language`, `site.data.*`, `site.pages` |
+| `collections` | Section-based collections: `collections.blog`, `collections.docs`, etc. |
+| `taxonomies` | Taxonomy groups: `taxonomies.tags.javascript`, `taxonomies.categories.tutorials`, etc. |
+| `pagination` | Pagination context (only on paginated pages): `pagination.pageNumber`, `pagination.totalPages`, `pagination.nextPage`, `pagination.previousPage` |
 
 ```liquid
-<title>{{ page.title }} - {{ site.title }}</title>
+<h1>{{ page.title }}</h1>
+<time>{{ page.date | date: "%B %d, %Y" }}</time>
+{{ content }}
 
-<nav>
-  {% for item in site.data.navigation %}
-    <a href="{{ item.url }}">{{ item.label }}</a>
-  {% endfor %}
-</nav>
-```
-
-In Go template mode, prefix variables with a dot:
-
-```html
-<title>{{ .page.title }} - {{ .site.title }}</title>
-
-<nav>
-  {{ range .site.data.navigation }}
-    <a href="{{ .url }}">{{ .label }}</a>
-  {{ end }}
-</nav>
+<h2>Recent posts</h2>
+{% for post in collections.blog limit: 5 %}
+  <a href="{{ post.url }}">{{ post.title }}</a>
+{% endfor %}
 ```
 
 ## Template resolution
 
-Alloy evaluates templates in content files before rendering Markdown. Template tags (`{{ }}` and `{% %}`) in your Markdown body are processed by the template engine, then the result is passed through the Markdown renderer.
+The `.liquid` extension marks a file as a Liquid template. The extension before `.liquid` determines the output format:
 
-Template tags inside fenced code blocks are automatically detected and preserved -- they render as literal text, not evaluated expressions:
-
-````markdown
-```liquid
-{{ page.title }}
 ```
-````
-
-This outputs the literal string `{{ page.title }}` in a code block, not the evaluated value.
-
-## Global data in templates
-
-Files in the `data/` directory are available as `site.data.<filename>`. A file at `data/authors.yaml` containing a list of authors is accessible as `site.data.authors`:
-
-```liquid
-{% for author in site.data.authors %}
-  <span>{{ author.name }}</span>
-{% endfor %}
+layouts/default.liquid          --> HTML output (default)
+layouts/feed.xml.liquid         --> XML output
+layouts/api.json.liquid         --> JSON output
 ```
 
-JSON, YAML, and CSV data files are all supported. See [Data Files](/content/data-files/) for details.
+When the Liquid engine cannot find a `.liquid` file, it falls back to the bare extension and parses it as Liquid. The Go engine uses bare extensions directly (`.html`, `.xml`, `.json`) and never reads `.liquid` files.
+
+```
+layouts/
+├── default.liquid     <-- used when engine: "liquid"
+├── default.html       <-- used when engine: "go" (or as Liquid fallback)
+├── feed.xml.liquid    <-- used when engine: "liquid"
+├── feed.xml           <-- used when engine: "go" (or as Liquid fallback)
+└── robots.txt         <-- static content, used by either engine
+```
+
+If a file contains syntax for the wrong engine, the build fails with a parse error. Alloy does not inspect file contents to determine the engine.
+
+## Rendering pipeline
+
+Alloy renders content in a strict order:
+
+1. **Markdown rendering** -- Goldmark parses `.md` files into HTML. Template tags (`{{ }}`, `{% %}`) are preserved through Markdown via a custom goldmark extension.
+2. **Template rendering** -- The configured engine evaluates Liquid or Go template syntax in the rendered output and in layouts.
+3. **Layout wrapping** -- The page body is injected into its resolved layout via `{{ content }}`. Layouts can chain to parent layouts.
+
+Template tags inside `<code>` blocks in Markdown files are automatically escaped so they display as literal text rather than being evaluated.
+
+## Directory structure
+
+```
+layouts/
+├── default.liquid         # Fallback layout for all pages
+├── blog.liquid            # Blog index layout (matches section name)
+├── post.liquid            # Blog post layout (child of date-based section)
+└── partials/              # Reusable template fragments
+    ├── header.liquid
+    └── footer.liquid
+```
+
+The layouts directory is configurable:
+
+```yaml
+# alloy.config.yaml
+structure:
+  layouts: "./docs/layouts/"   # default: "layouts"
+```
+
+## Next steps
+
+- [Layouts](/templates/layouts/) -- layout chaining, resolution order, partials
+- [Filters](/templates/filters/) -- built-in and custom filter reference
+- [Shortcodes](/templates/shortcodes/) -- reusable content snippets with parameters
+- [Output Formats](/templates/output-formats/) -- multi-format rendering (HTML, JSON, XML)

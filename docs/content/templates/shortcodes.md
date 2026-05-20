@@ -1,100 +1,246 @@
 ---
 layout: doc
 title: Shortcodes
+nav_weight: 40
 ---
 
-Shortcodes are reusable template fragments that extend Liquid's tag syntax. They are defined by plugins and used in content files as custom Liquid tags.
+Shortcodes are reusable content snippets that accept arguments and output HTML. They let you embed rich elements in Markdown content without writing raw HTML.
 
 ```liquid
 {% youtube "dQw4w9WgXcQ" %}
+```
 
+```html
+<!-- Output -->
+<iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ"
+        frameborder="0" allowfullscreen></iframe>
+```
+
+Shortcodes are registered via [plugins](/plugins/) and used in content files as custom Liquid tags (or Go template functions).
+
+## Using shortcodes in content
+
+### Inline shortcodes
+
+Inline shortcodes take positional arguments and produce self-contained output:
+
+```liquid
+{% youtube "dQw4w9WgXcQ" %}
+{% github_star "alloy-ssg/alloy" %}
+```
+
+### Block shortcodes
+
+Block shortcodes wrap inner content, letting you add markup around authored text:
+
+```liquid
 {% callout "warning" %}
-  Back up your data before upgrading.
+  Do not deploy to production without running the test suite first.
 {% endcallout %}
 ```
 
-Shortcodes bridge the gap between writing content in Markdown and embedding rich, structured components that Markdown alone cannot express.
-
-## Using shortcodes
-
-Shortcodes are invoked as Liquid tags in content files. There are two forms:
-
-**Inline shortcodes** take arguments and produce output with no body:
-
-```liquid
-{% youtube "dQw4w9WgXcQ" %}
-{% icon "check" %}
-{% version %}
+```html
+<!-- Output -->
+<div class="callout callout--warning">
+  Do not deploy to production without running the test suite first.
+</div>
 ```
 
-**Block shortcodes** wrap content between opening and closing tags:
+### Go template syntax
 
-```liquid
-{% callout "info" %}
-  This is an informational note. **Markdown** works inside.
-{% endcallout %}
+With the Go template engine, shortcodes are registered as template functions:
 
-{% details "Click to expand" %}
-  Hidden content goes here.
-{% enddetails %}
+```html
+{{ youtube "dQw4w9WgXcQ" }}
+{{ callout "warning" "Do not deploy to production without running the test suite first." }}
 ```
 
-The closing tag is always `end` + the tag name: `{% endcallout %}`, `{% enddetails %}`.
+## Registering shortcodes
 
-## Passing parameters
+Shortcodes are defined in plugin files placed in the `plugins/` directory. No configuration is needed -- drop a file in `plugins/` and its shortcodes are immediately available in all content files.
 
-Arguments are passed as quoted strings after the tag name:
+### JS plugin (Tier 2 -- in-process)
 
-```liquid
-{% image "hero.jpg" "A scenic mountain view" %}
-```
-
-The plugin receives these as an ordered list of string arguments. Unquoted words are also supported for simple single-word parameters:
-
-```liquid
-{% icon check %}
-{% badge primary %}
-```
-
-## How shortcodes work
-
-Shortcodes are Liquid tags registered by plugins. When a plugin calls `addTag`, it registers a new tag name and a handler function. The handler receives:
-
-1. **Arguments** -- the list of string parameters passed to the tag
-2. **Body** -- the inner content for block shortcodes (empty string for inline shortcodes)
-
-The handler returns an HTML string that replaces the tag in the rendered output.
-
-A plugin defining a callout shortcode:
+The simplest way to define shortcodes. JS plugins run on embedded QuickJS with no build step:
 
 ```javascript
-// plugins/callout.js
-export default function(api) {
-  api.addTag("callout", (args, body) => {
-    const type = args[0] || "info";
-    return `<div class="callout callout-${type}">${body}</div>`;
+// plugins/shortcodes.js
+export default function(alloy) {
+  alloy.shortcode("youtube", (args) => {
+    const id = args[0];
+    return `<iframe src="https://www.youtube.com/embed/${id}"
+            frameborder="0" allowfullscreen></iframe>`;
+  });
+
+  alloy.shortcode("callout", (args, content) => {
+    const level = args[0];
+    return `<div class="callout callout--${level}">${content}</div>`;
   });
 }
 ```
 
-When the content file uses `{% callout "warning" %}...{% endcallout %}`, the plugin receives `["warning"]` as args and the inner content as body.
+The first argument to `alloy.shortcode()` is the tag name. The callback receives an `args` array of positional arguments. Block shortcodes receive a second `content` parameter containing the inner content.
 
-## Shortcodes in Markdown
+### Node plugin (Tier 3 -- full Node.js access)
 
-Shortcodes are evaluated during the template rendering phase, before Markdown processing. This means the HTML output of a shortcode is passed through the Markdown renderer. Block-level HTML (like `<div>`) is preserved by Markdown, while inline HTML is left as-is within surrounding text.
+Use Tier 3 when your shortcode needs npm packages, filesystem access, or network calls:
 
-```markdown
-Here is an important note:
+```javascript
+// plugins/code-highlight.js
+export const runtime = "node";
+import prism from 'prismjs';
 
-{% callout "warning" %}
-  Always **back up** your data.
-{% endcallout %}
-
-And the text continues.
+export default function(alloy) {
+  alloy.shortcode("highlight", (args, content) => {
+    const language = args[0] || "text";
+    const html = prism.highlight(content, prism.languages[language], language);
+    return `<pre class="language-${language}"><code>${html}</code></pre>`;
+  });
+}
 ```
 
-## Built-in shortcodes
+Tier 3 plugins must have `"type": "module"` in the project's `package.json`.
 
-Alloy does not ship built-in shortcodes. All shortcodes are plugin-defined, keeping the core minimal and avoiding opinionated defaults. Common patterns like callouts, figures, and embeds are implemented as plugins you add to your project.
+### WASM plugin (Tier 2 -- compiled)
 
-See [Plugins](/plugins/) for how to create plugins that register shortcodes with `addTag`.
+For maximum performance, compile shortcodes to WASM from Rust, TinyGo, or AssemblyScript:
+
+**Rust:**
+
+```rust
+// plugins/shortcodes.rs (compile with wasm-pack)
+use alloy_plugin::*;
+
+#[alloy_shortcode("youtube")]
+fn youtube(args: Vec<&str>) -> String {
+    let id = args[0];
+    format!(
+        r#"<iframe src="https://www.youtube.com/embed/{}"
+        frameborder="0" allowfullscreen></iframe>"#,
+        id
+    )
+}
+
+#[alloy_shortcode("callout")]
+fn callout(args: Vec<&str>, content: &str) -> String {
+    let level = args[0];
+    format!(r#"<div class="callout callout--{}">{}</div>"#, level, content)
+}
+```
+
+**TinyGo:**
+
+```go
+// plugins/shortcodes.go (compile with TinyGo)
+package main
+
+import "fmt"
+
+//export register
+func register(alloy *Alloy) {
+    alloy.Shortcode("youtube", func(args []string) string {
+        return fmt.Sprintf(
+            `<iframe src="https://www.youtube.com/embed/%s"
+            frameborder="0" allowfullscreen></iframe>`,
+            args[0],
+        )
+    })
+
+    alloy.Shortcode("callout", func(args []string, content string) string {
+        return fmt.Sprintf(
+            `<div class="callout callout--%s">%s</div>`,
+            args[0], content,
+        )
+    })
+}
+```
+
+JS plugins run at ~10-50 microseconds per call. Compiled WASM runs at ~1-10 microseconds per call. Choose based on whether you need the simplicity of plain JS or the performance of compiled code.
+
+## Accessing site data
+
+Shortcode plugins can access global data from `data/` files via `alloy.data`:
+
+```javascript
+// plugins/status-tag.js
+export default function(alloy) {
+  alloy.shortcode("statusTag", (args) => {
+    const key = args[0];
+    const legend = alloy.data.statusLegend;  // from data/statusLegend.yaml
+    const entry = legend[key];
+    return `<rh-tag color="${entry.color}" icon="${entry.icon}">${entry.pretty}</rh-tag>`;
+  });
+}
+```
+
+```liquid
+{% statusTag "beta" %}
+```
+
+`alloy.data` is a read-only snapshot of `site.data` injected after data files are loaded. Access it inside shortcode functions, not at the top level of the plugin file -- top-level access during evaluation returns `undefined`.
+
+## Practical examples
+
+### Responsive image shortcode
+
+```javascript
+// plugins/responsive-image.js
+export default function(alloy) {
+  alloy.shortcode("image", (args) => {
+    const src = args[0];
+    const alt = args[1] || "";
+    return `
+      <figure>
+        <img src="${src}" alt="${alt}" loading="lazy" decoding="async">
+        ${alt ? `<figcaption>${alt}</figcaption>` : ""}
+      </figure>`;
+  });
+}
+```
+
+```liquid
+{% image "/img/hero.jpg" "A sunset over the mountains" %}
+```
+
+### Admonition block shortcode
+
+```javascript
+// plugins/admonition.js
+export default function(alloy) {
+  alloy.shortcode("note", (args, content) => {
+    return `<div class="admonition admonition--note">
+      <p class="admonition-title">Note</p>
+      <div>${content}</div>
+    </div>`;
+  });
+
+  alloy.shortcode("tip", (args, content) => {
+    return `<div class="admonition admonition--tip">
+      <p class="admonition-title">Tip</p>
+      <div>${content}</div>
+    </div>`;
+  });
+}
+```
+
+```liquid
+{% note %}
+  Remember to run `alloy build` before deploying.
+{% endnote %}
+
+{% tip %}
+  Use `alloy dev` during local development for live reloading.
+{% endtip %}
+```
+
+## Name conflicts
+
+If two plugins register the same shortcode name, the last one loaded wins. Plugins load in alphabetical filename order within `plugins/`: built-in Go functions first, then Tier 2 (`.js` and `.wasm`), then Tier 3 (`.js` with `runtime: "node"`).
+
+Alloy logs a warning when a name collision occurs so you know which plugin took precedence.
+
+## Related
+
+- [Filters](/templates/filters/) -- transform values in template expressions
+- [Plugins](/plugins/) -- plugin system overview and tiers
+- [Templates Overview](/templates/) -- template engine basics and context

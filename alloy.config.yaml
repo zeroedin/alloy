@@ -11,7 +11,7 @@ content:
     goldmark:
       unsafe: true
       typographer: true
-      templateTags: true
+      templateTags: false
 
 templates:
   engine: "liquid"
