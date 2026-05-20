@@ -172,6 +172,60 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
+	// Reload site data when data directory files have changed (issue #717).
+	// The full Build() path loads data anew each invocation; the incremental
+	// path reuses PipelineState from server startup, so data edits are
+	// invisible to processPagination unless we reload here.
+	dataDir := cfg.Structure.Data
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	dataPrefix := filepath.ToSlash(dataDir) + "/"
+	hasDataChange := false
+	for _, f := range changedFiles {
+		if strings.HasPrefix(filepath.ToSlash(f), dataPrefix) {
+			hasDataChange = true
+			break
+		}
+	}
+	if hasDataChange {
+		freshData, err := loadSiteData(cfg)
+		if err != nil {
+			log.Printf("warning: reloading site data: %v", err)
+		} else if freshData != nil {
+			ps.SiteData = freshData
+			if ps.Registry != nil {
+				for _, rt := range ps.Registry.Runtimes() {
+					if err := rt.SetSiteData(ps.SiteData); err != nil {
+						log.Printf("warning: updating plugin site data after reload: %v", err)
+					}
+				}
+			}
+		} else {
+			// freshData is nil with no error: either the data directory was
+			// deleted or it contains only malformed files (loadSiteData swallows
+			// parse errors with a warning log). Check whether the directory
+			// still exists to disambiguate.
+			dataDirAbs := resolveDir(cfg.ProjectRoot, dataDir)
+			if _, statErr := os.Stat(dataDirAbs); os.IsNotExist(statErr) {
+				ps.SiteData = nil
+			}
+			// Directory exists but loadSiteData returned nil — a parse error
+			// was already logged; keep stale data so pagination doesn't break.
+		}
+		// Invalidate paginated pages that reference site.data — their content
+		// hash is unchanged but their data source has, so they must re-render.
+		for _, page := range allPages {
+			if paginationRaw, ok := page.FrontMatter["pagination"]; ok {
+				if pm, ok := paginationRaw.(map[string]interface{}); ok {
+					if dataRef, ok := pm["data"].(string); ok && strings.HasPrefix(dataRef, "site.data.") {
+						pagesToRender = append(pagesToRender, page)
+					}
+				}
+			}
+		}
+	}
+
 	allPages = content.FilterByLifecycle(allPages, time.Now(), cfg.IncludeDrafts)
 
 	// Re-filter pagesToRender against lifecycle-filtered allPages
@@ -205,6 +259,15 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	renderRelPaths := make(map[string]bool, len(pagesToRender))
 	for _, p := range pagesToRender {
 		renderRelPaths[p.RelPath] = true
+	}
+
+	// Capture content hashes before pagination — virtual pages have nil
+	// Content, so the cache must use the original discovered page's bytes.
+	prePageContentHash := make(map[string]string, len(allPages))
+	for _, p := range allPages {
+		if len(p.Content) > 0 {
+			prePageContentHash[p.RelPath] = cache.HashContent(p.Content)
+		}
 	}
 
 	allPages = processPagination(allPages, cfg, ps.SiteData, bc.Collections, ps.Engine)
@@ -415,7 +478,11 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		buildCache = cache.New()
 	}
 	for _, page := range pagesToRender {
-		buildCache.SetHash(page.RelPath, cache.HashContent(page.Content))
+		if h, ok := prePageContentHash[page.RelPath]; ok {
+			buildCache.SetHash(page.RelPath, h)
+		} else if len(page.Content) > 0 {
+			buildCache.SetHash(page.RelPath, cache.HashContent(page.Content))
+		}
 	}
 	for pagePath, layoutPaths := range templateUsage {
 		for _, layoutPath := range layoutPaths {
