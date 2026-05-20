@@ -12,3 +12,9 @@ func AppendHook(r *NodeRuntime, name string) {
 func RegisterRuntime(reg *Registry, rt PluginFilterRuntime, name string, hooks *HookRegistry) {
 	reg.registerRuntime(rt, name, hooks)
 }
+
+// SetBridgeCommand overrides the command a NodeBridge will spawn on Start().
+func SetBridgeCommand(b *NodeBridge, name string, args ...string) {
+	b.overrideCmdName = name
+	b.overrideCmdArgs = args
+}

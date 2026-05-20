@@ -468,6 +468,9 @@ type NodeBridge struct {
 	mu          sync.Mutex
 	nextID      int
 	scriptPath  string
+
+	overrideCmdName string
+	overrideCmdArgs []string
 }
 
 func pidFilePath(projectRoot string) string {
@@ -530,7 +533,11 @@ func (b *NodeBridge) Start() error {
 	}
 	b.scriptPath = scriptPath
 
-	b.cmd = exec.Command("node", b.scriptPath)
+	if b.overrideCmdName != "" {
+		b.cmd = exec.Command(b.overrideCmdName, b.overrideCmdArgs...)
+	} else {
+		b.cmd = exec.Command("node", b.scriptPath)
+	}
 	setProcGroup(b.cmd)
 	if b.projectRoot != "" {
 		if info, err := os.Stat(b.projectRoot); err == nil && info.IsDir() {

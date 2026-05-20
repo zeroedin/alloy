@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -413,6 +414,62 @@ var _ = Describe("NodeBridge", func() {
 				Expect(content).To(ContainSubstring(fmt.Sprintf("%d", b.PID())),
 					fmt.Sprintf("PID file should contain bridge %d PID", i))
 			}
+		})
+	})
+
+	// ── Stop timeout escalation (#726) ───────────────────────────────
+
+	Describe("Stop timeout escalation", func() {
+		var tmpDir string
+
+		BeforeEach(func() {
+			var err error
+			tmpDir, err = os.MkdirTemp("", "alloy-escalation-test-*")
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		AfterEach(func() {
+			os.RemoveAll(tmpDir)
+		})
+
+		It("escalates to SIGKILL when process ignores SIGTERM", func() {
+			bridge := plugin.NewNodeBridge(tmpDir)
+			plugin.SetBridgeCommand(bridge, "sh", "-c",
+				"trap '' TERM; while true; do sleep 1; done")
+
+			err := bridge.Start()
+			Expect(err).NotTo(HaveOccurred())
+
+			pid := bridge.PID()
+			Expect(pid).To(BeNumerically(">", 0))
+
+			err = bridge.Stop()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = syscall.Kill(pid, 0)
+			Expect(err).To(HaveOccurred(),
+				"process should be dead after SIGKILL escalation")
+		})
+
+		It("Stop completes within bounded time when process resists shutdown", func() {
+			bridge := plugin.NewNodeBridge(tmpDir)
+			plugin.SetBridgeCommand(bridge, "sh", "-c",
+				"trap '' TERM; while true; do sleep 1; done")
+
+			err := bridge.Start()
+			Expect(err).NotTo(HaveOccurred())
+
+			done := make(chan error, 1)
+			go func() { done <- bridge.Stop() }()
+
+			select {
+			case err := <-done:
+				Expect(err).NotTo(HaveOccurred())
+			case <-time.After(15 * time.Second):
+				Fail("Stop() should complete within bounded time, not hang indefinitely")
+			}
+
+			Expect(bridge.State()).To(Equal(plugin.BridgeStopped))
 		})
 	})
 

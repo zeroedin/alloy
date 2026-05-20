@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 func setProcGroup(cmd *exec.Cmd) {
@@ -112,8 +113,24 @@ func cleanStalePIDs(projectRoot string) {
 			}
 			if syscall.Kill(pid, 0) == nil {
 				killProcGroup(pid)
+				reapProcess(pid)
 			}
 		}
 		return nil
 	})
+}
+
+// reapProcess collects a zombie if the killed PID happens to be a child
+// of the current process. For foreign processes (the normal production
+// case, where stale workers are orphans adopted by init), Wait4 returns
+// ECHILD immediately and this is a no-op.
+func reapProcess(pid int) {
+	var ws syscall.WaitStatus
+	for range 10 {
+		wpid, err := syscall.Wait4(pid, &ws, syscall.WNOHANG, nil)
+		if wpid > 0 || err != nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
