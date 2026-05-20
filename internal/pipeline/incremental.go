@@ -192,7 +192,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		freshData, err := loadSiteData(cfg)
 		if err != nil {
 			log.Printf("warning: reloading site data: %v", err)
-		} else {
+		} else if freshData != nil {
 			ps.SiteData = freshData
 			if ps.Registry != nil {
 				for _, rt := range ps.Registry.Runtimes() {
@@ -248,6 +248,15 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	renderRelPaths := make(map[string]bool, len(pagesToRender))
 	for _, p := range pagesToRender {
 		renderRelPaths[p.RelPath] = true
+	}
+
+	// Capture content hashes before pagination — virtual pages have nil
+	// Content, so the cache must use the original discovered page's bytes.
+	prePageContentHash := make(map[string]string, len(allPages))
+	for _, p := range allPages {
+		if len(p.Content) > 0 {
+			prePageContentHash[p.RelPath] = cache.HashContent(p.Content)
+		}
 	}
 
 	allPages = processPagination(allPages, cfg, ps.SiteData, bc.Collections, ps.Engine)
@@ -458,7 +467,11 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		buildCache = cache.New()
 	}
 	for _, page := range pagesToRender {
-		buildCache.SetHash(page.RelPath, cache.HashContent(page.Content))
+		if h, ok := prePageContentHash[page.RelPath]; ok {
+			buildCache.SetHash(page.RelPath, h)
+		} else if len(page.Content) > 0 {
+			buildCache.SetHash(page.RelPath, cache.HashContent(page.Content))
+		}
 	}
 	for pagePath, layoutPaths := range templateUsage {
 		for _, layoutPath := range layoutPaths {

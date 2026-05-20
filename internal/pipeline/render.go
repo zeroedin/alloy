@@ -136,6 +136,9 @@ func renderedContentKey(page *content.Page) string {
 	if _, ok := page.FrontMatter["_paginationCtx"]; ok && page.URL != "" {
 		return page.URL
 	}
+	if _, ok := page.FrontMatter["pagination"]; ok && page.URL != "" {
+		return page.URL
+	}
 	if page.RelPath == "" && page.URL != "" {
 		return page.URL
 	}
