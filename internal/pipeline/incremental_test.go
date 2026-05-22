@@ -1195,4 +1195,231 @@ var _ = Describe("Build Pipeline", func() {
 					"configured value, not the default 'data' (issue #719)")
 		})
 	})
+
+	Describe("Pagination data survives content-only incremental rebuild (issue #721)", func() {
+		It("paginated virtual pages retain data when only a content file changes", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			dataDir := filepath.Join(tmpDir, "_data")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			outputDir := filepath.Join(tmpDir, "_site")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(dataDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			// Data file with items for pagination
+			Expect(os.WriteFile(filepath.Join(dataDir, "categories.json"),
+				[]byte(`[{"name":"Color","slug":"color"},{"name":"Spacing","slug":"spacing"}]`),
+				0644)).To(Succeed())
+
+			// Paginated page referencing site.data.categories
+			Expect(os.WriteFile(filepath.Join(contentDir, "tokens.html"),
+				[]byte("---\ntitle: \"{{ category.name }}\"\npagination:\n  data: site.data.categories\n  perPage: 1\n  as: category\npermalink: \"/tokens/{{ category.slug }}/\"\n---\n<h1>{{ category.name }}</h1>"),
+				0644)).To(Succeed())
+
+			// Unrelated content page
+			Expect(os.WriteFile(filepath.Join(contentDir, "about.md"),
+				[]byte("---\ntitle: About\n---\n# About page"),
+				0644)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("{{ content }}"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Pagination Persistence Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Data:    "_data",
+				},
+			}
+
+			// Test InitPipelineState → BuildIncremental without a prior Build().
+			// This verifies that InitPipelineState's raw data-file loading is
+			// sufficient for pagination. The Build() → InitPipelineState()
+			// lifecycle is tested separately in Test 2.
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			// Initial build (no cache) — all pages rendered
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result1.RenderedContent["/tokens/color/"]).To(ContainSubstring("Color"),
+				"sanity: initial build must render /tokens/color/ with data")
+			Expect(result1.RenderedContent["/tokens/spacing/"]).To(ContainSubstring("Spacing"),
+				"sanity: initial build must render /tokens/spacing/ with data")
+
+			// Modify only a content file — NO data file change
+			Expect(os.WriteFile(filepath.Join(contentDir, "about.md"),
+				[]byte("---\ntitle: About Us\n---\n# About us page updated"),
+				0644)).To(Succeed())
+
+			// Incremental rebuild with content-only change, but pass NO
+			// cache so ALL pages are re-rendered (simulates a full-render
+			// scenario triggered by the debouncer or first rebuild).
+			// The paginated pages must still have their data.
+			result2, err := pipeline.BuildIncremental(cfg, nil, nil,
+				[]string{"content/about.md"},
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result2.RenderedContent["/tokens/color/"]).To(ContainSubstring("Color"),
+				"paginated page /tokens/color/ must retain its data during a "+
+					"content-only rebuild — the category variable must not be nil "+
+					"(issue #721)")
+			Expect(result2.RenderedContent["/tokens/spacing/"]).To(ContainSubstring("Spacing"),
+				"paginated page /tokens/spacing/ must retain its data during a "+
+					"content-only rebuild (issue #721)")
+
+			// Third rebuild without cache: verify SiteData hasn't been destroyed
+			// by the previous incremental rebuild. This catches the case where
+			// processPagination or applyBatchContext mutates PipelineState.SiteData.
+			// Pass nil cache to force all pages to re-render so the assertion
+			// is unconditional.
+			result3, err := pipeline.BuildIncremental(cfg, nil, nil,
+				[]string{"content/about.md"},
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result3.RenderedContent["/tokens/color/"]).To(ContainSubstring("Color"),
+				"pagination data must survive multiple incremental rebuilds — "+
+					"PipelineState.SiteData must not degrade over successive "+
+					"content-only rebuilds (issue #721)")
+		})
+
+		It("paginated pages render correctly after a full-rebuild fallback followed by incremental", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			dataDir := filepath.Join(tmpDir, "_data")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			outputDir := filepath.Join(tmpDir, "_site")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(dataDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(dataDir, "items.json"),
+				[]byte(`[{"name":"Widget","slug":"widget"}]`),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "catalog.html"),
+				[]byte("---\ntitle: \"{{ item.name }}\"\npagination:\n  data: site.data.items\n  perPage: 1\n  as: item\npermalink: \"/catalog/{{ item.slug }}/\"\n---\n<p>{{ item.name }}</p>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home\n---\n# Welcome"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("{{ content }}"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Full Then Incremental Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Data:    "_data",
+				},
+			}
+
+			// Simulate dev.go startup: full Build() then separate InitPipelineState
+			_, err := pipeline.Build(cfg, pipeline.BuildOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			// dev.go creates a SEPARATE PipelineState for incremental rebuilds
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			// Simulate: debouncer triggers full rebuild (>10 events), then
+			// next change is incremental. dev.go does NOT update pipelineState.
+			_, err = pipeline.Build(cfg, pipeline.BuildOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Now do an incremental rebuild using the ps from InitPipelineState
+			// (not from Build's internal ps) — this is what dev.go does.
+			// Pass nil cache so all pages are re-rendered and the assertion
+			// is unconditional.
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home\n---\n# Welcome updated"),
+				0644)).To(Succeed())
+
+			incrResult, err := pipeline.BuildIncremental(cfg, nil, nil,
+				[]string{"content/index.md"},
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(incrResult.RenderedContent["/catalog/widget/"]).To(ContainSubstring("Widget"),
+				"after a full-rebuild fallback, the next incremental rebuild "+
+					"must still have SiteData available for pagination — "+
+					"the PipelineState created by InitPipelineState must not "+
+					"lose its SiteData (issue #721)")
+		})
+
+		It("InitPipelineState loads data-file keys for pagination", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			dataDir := filepath.Join(tmpDir, "_data")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			outputDir := filepath.Join(tmpDir, "_site")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(dataDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+
+			// Data file provides raw categories
+			Expect(os.WriteFile(filepath.Join(dataDir, "categories.json"),
+				[]byte(`[{"name":"Color","slug":"color"}]`),
+				0644)).To(Succeed())
+
+			// Page paginates over site.data.categories
+			Expect(os.WriteFile(filepath.Join(contentDir, "tokens.html"),
+				[]byte("---\ntitle: \"{{ cat.name }}\"\npagination:\n  data: site.data.categories\n  perPage: 1\n  as: cat\npermalink: \"/tokens/{{ cat.slug }}/\"\n---\n<p>{{ cat.name }}</p>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("{{ content }}"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Plugin Data Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Data:    "_data",
+				},
+			}
+
+			// InitPipelineState loads raw data-file keys via loadSiteData.
+			// Plugin enrichment (onDataFetched) is a site-level concern
+			// handled by dev.go wiring, not by InitPipelineState.
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			// Verify the PipelineState has data-file keys.
+			Expect(pipelineState.SiteData).NotTo(BeNil(),
+				"InitPipelineState must load SiteData from data files — "+
+					"nil SiteData causes 'site data is nil' errors in "+
+					"pagination resolution (issue #721)")
+			Expect(pipelineState.SiteData).To(HaveKey("categories"),
+				"InitPipelineState SiteData must contain data-file keys — "+
+					"categories.json should produce 'categories' key (issue #721)")
+
+			// Incremental rebuild must work with this PipelineState
+			result, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RenderedContent["/tokens/color/"]).To(ContainSubstring("Color"),
+				"paginated page must render correctly when using PipelineState "+
+					"from InitPipelineState with data-file keys (issue #721)")
+		})
+	})
 })
