@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -156,6 +155,46 @@ func newDevCommand() *cobra.Command {
 					log.Printf("warning: plugin hook onFileChanged: %v", err)
 				}
 
+				// Recopy static/asset/passthrough files before any rebuild decision.
+				// Runs unconditionally so mixed batches (content + static) don't
+				// lose static changes — BuildIncremental doesn't recopy these.
+				outputDir := cfg.Build.Output
+				if !filepath.IsAbs(outputDir) {
+					outputDir = filepath.Join(cfg.ProjectRoot, outputDir)
+				}
+				for _, ev := range events {
+					if server.RebuildScopeForChangeType(ev.ChangeType) != server.RebuildRecopy {
+						continue
+					}
+					srcPath := filepath.Join(cfg.ProjectRoot, ev.Path)
+					var destPath string
+					switch ev.ChangeType {
+					case server.StaticChange:
+						rel, _ := filepath.Rel(cfg.Structure.Static, ev.Path)
+						destPath = filepath.Join(outputDir, rel)
+					case server.AssetChange:
+						rel, _ := filepath.Rel(cfg.Structure.Assets, ev.Path)
+						destPath = filepath.Join(outputDir, rel)
+					case server.PassthroughChange:
+						dest, err := server.RecopyPassthroughFile(ev.Path, cfg)
+						if err != nil {
+							log.Printf("warning: passthrough recopy: %v", err)
+							continue
+						}
+						destPath = filepath.Join(cfg.ProjectRoot, dest)
+					}
+					if destPath == "" {
+						continue
+					}
+					if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+						log.Printf("warning: recopy mkdir: %v", err)
+						continue
+					}
+					if err := fileutil.CopyFile(srcPath, destPath); err != nil {
+						log.Printf("warning: recopy %s: %v", ev.Path, err)
+					}
+				}
+
 				needsRebuild := false
 				for _, ev := range events {
 					if server.RebuildScopeForChangeType(ev.ChangeType) == server.RebuildPipeline {
@@ -165,55 +204,6 @@ func newDevCommand() *cobra.Command {
 				}
 
 				if !needsRebuild {
-					buildOutput := cfg.Build.Output
-					if buildOutput == "" {
-						buildOutput = "_site"
-					}
-					outputDir := buildOutput
-					if !filepath.IsAbs(outputDir) {
-						outputDir = filepath.Join(cfg.ProjectRoot, outputDir)
-					}
-					staticDir := cfg.Structure.Static
-					if staticDir == "" {
-						staticDir = "static"
-					}
-					assetsDir := cfg.Structure.Assets
-					if assetsDir == "" {
-						assetsDir = "assets"
-					}
-					for _, ev := range events {
-						scope := server.RebuildScopeForChangeType(ev.ChangeType)
-						if scope != server.RebuildRecopy {
-							continue
-						}
-						srcPath := filepath.Join(cfg.ProjectRoot, ev.Path)
-						var destPath string
-						switch ev.ChangeType {
-						case server.StaticChange:
-							rel := strings.TrimPrefix(filepath.ToSlash(ev.Path), filepath.ToSlash(staticDir)+"/")
-							destPath = filepath.Join(outputDir, rel)
-						case server.AssetChange:
-							rel := strings.TrimPrefix(filepath.ToSlash(ev.Path), filepath.ToSlash(assetsDir)+"/")
-							destPath = filepath.Join(outputDir, rel)
-						case server.PassthroughChange:
-							dest, err := server.RecopyPassthroughFile(ev.Path, cfg)
-							if err != nil {
-								log.Printf("warning: passthrough recopy: %v", err)
-								continue
-							}
-							destPath = filepath.Join(cfg.ProjectRoot, dest)
-						}
-						if destPath == "" {
-							continue
-						}
-						if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-							log.Printf("warning: recopy mkdir: %v", err)
-							continue
-						}
-						if err := fileutil.CopyFile(srcPath, destPath); err != nil {
-							log.Printf("warning: recopy %s: %v", ev.Path, err)
-						}
-					}
 					srv.BroadcastReload()
 					return
 				}
