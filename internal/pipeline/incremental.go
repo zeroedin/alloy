@@ -11,8 +11,10 @@ import (
 	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
+	"github.com/zeroedin/alloy/internal/ordered"
 	"github.com/zeroedin/alloy/internal/output"
 	"github.com/zeroedin/alloy/internal/permalink"
+	"github.com/zeroedin/alloy/internal/plugin"
 	"github.com/zeroedin/alloy/internal/ssr"
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
@@ -194,6 +196,23 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 			log.Printf("warning: reloading site data: %v", err)
 		} else if freshData != nil {
 			ps.SiteData = freshData
+			if ps.Hooks != nil && ps.Hooks.HasHooks(plugin.OnDataFetched) {
+				dataResult, hookErr := ps.Hooks.RunWithTimeout(plugin.OnDataFetched, ps.SiteData)
+				if hookErr != nil {
+					log.Printf("warning: plugin hook onDataFetched after data reload: %v", hookErr)
+				} else {
+					switch modified := dataResult.(type) {
+					case map[string]interface{}:
+						for k, v := range modified {
+							ps.SiteData[k] = v
+						}
+					case *ordered.Map:
+						for _, entry := range modified.Entries() {
+							ps.SiteData[entry.Key] = entry.Value
+						}
+					}
+				}
+			}
 			if ps.Registry != nil {
 				for _, rt := range ps.Registry.Runtimes() {
 					if err := rt.SetSiteData(ps.SiteData); err != nil {
@@ -500,6 +519,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		PagesRendered:    rendered,
 		RenderedContent:  renderedContent,
 		Cache:            buildCache,
+		SiteData:         ps.SiteData,
 	}
 
 	reportSummary(reporter, result.PageCount, result.Duration, result.PagesSkipped)

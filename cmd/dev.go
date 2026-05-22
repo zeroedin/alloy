@@ -136,6 +136,16 @@ func newDevCommand() *cobra.Command {
 			if psErr != nil {
 				log.Printf("warning: pipeline state init: %v", psErr)
 			}
+			if ps != nil && initialResult != nil && initialResult.SiteData != nil {
+				ps.SiteData = initialResult.SiteData
+				if ps.Registry != nil {
+					for _, rt := range ps.Registry.Runtimes() {
+						if err := rt.SetSiteData(ps.SiteData); err != nil {
+							log.Printf("warning: updating plugin site data: %v", err)
+						}
+					}
+				}
+			}
 
 			// Set up file watcher for live rebuild
 			watcher := startWatcher(cfg, srv, func(events []server.ChangeEvent, rebuildScope server.RebuildScope) {
@@ -177,6 +187,16 @@ func newDevCommand() *cobra.Command {
 					} else {
 						if fullResult != nil && fullResult.Cache != nil {
 							previousCache = fullResult.Cache
+						}
+						if ps != nil && fullResult != nil && fullResult.SiteData != nil {
+							ps.SiteData = fullResult.SiteData
+							if ps.Registry != nil {
+								for _, rt := range ps.Registry.Runtimes() {
+									if err := rt.SetSiteData(ps.SiteData); err != nil {
+										log.Printf("warning: updating plugin site data: %v", err)
+									}
+								}
+							}
 						}
 						srv.Overlay().ClearErrors()
 						if !cfg.Quiet {
