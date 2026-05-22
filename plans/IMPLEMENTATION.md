@@ -471,7 +471,7 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
      → `_site/about/diagram.svg`. Use `static.CopyFile(src, dst)` or equivalent.
      Add `ContentPassthroughs []string` to `BuildResult` — relative paths of
      non-content files copied from `content/` to output.
-     In dev mode (alloy dev), skip the copy — files are served from source.
+     Dev mode also writes to `_site/` — all modes serve from the output directory.
 19. output.GenerateSitemap(pages, baseURL, outputDir)     ✅ done
 20. cache.SaveTo(cacheFile)                               ✅ done
 ```
@@ -977,9 +977,9 @@ if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.
 
 - HTTP server with mode-aware behavior (dev/preview)
 - File watcher with debouncing and change classification
-- **Passthrough watching (issue #275)**: `WatchDirs(cfg)` must iterate `cfg.Passthrough` and append each `from:` path. `ClassifyChange(path, cfg)` must add a `PassthroughChange` type for files matching passthrough source directories. The serve rebuild handler should recopy only the changed file to `_site/<to>/<relative-path>` on `PassthroughChange` instead of triggering a full pipeline rebuild. In `alloy dev`, passthrough changes only trigger a browser reload (files are served from source). `addRecursiveWatch` must be called on each passthrough `from:` directory.
+- **Passthrough watching (issue #275)**: `WatchDirs(cfg)` must iterate `cfg.Passthrough` and append each `from:` path. `ClassifyChange(path, cfg)` must add a `PassthroughChange` type for files matching passthrough source directories. On `PassthroughChange`, recopy only the changed file to `_site/<to>/<relative-path>` instead of triggering a full pipeline rebuild — this applies to both `alloy dev` and `alloy serve` since both serve from `_site/`. `addRecursiveWatch` must be called on each passthrough `from:` directory.
 - **Watch directory config (issue #530)**: `WatchMapping` struct in `internal/config/config.go` — `From string`, `Type string` with yaml/toml/json tags. `Watch []WatchMapping` field on `Config` after `Passthrough`. `Validate()`: reject empty `from`, reject `type` not in {content, layout, data}, include array index in error. Reject nonexistent `from` directories (`os.Stat` or equivalent — fail fast). Reject duplicate `from` paths (build a seen-set, error on collision). Reject `from` matching base structure dirs (content, layouts, data, assets, static). Normalize trailing slashes in `from` (strip before storing/comparing). `WatchDirs()`: loop after passthrough — append `w.From` (or `static.GlobRoot(w.From)` for globs). `ClassifyChange()`: in `default:` branch, check watch dirs before passthrough loop — switch on `w.Type` to return `ContentChange`/`LayoutChange`/`DataChange`. No new `ChangeType` constant needed — reuses existing types. No changes to `cmd/serve.go`, `cmd/watcher.go`, or `RebuildScopeForChangeType` — existing dispatch handles all three types correctly.
-- **Content-colocated file serving (issue #300)**: In dev mode, the server's request handler must fall back to the content directory for URLs that don't match a rendered page in memory. `ServeContentFile(urlPath string) ([]byte, error)` reads the file from `content/<urlPath>` and returns its bytes. Returns error if the file doesn't exist. This is only used in dev mode — serve mode has the files in `_site/` from the build.
+- **Content-colocated file serving (issue #300)**: Content-colocated non-content files (SVGs, images, JS in `content/`) are copied to `_site/` during the build. The server serves them from `_site/` like any other output file — no special request handler fallback needed.
 - Error overlay injection
 - `WebSocketReloadMessage()`: Return `{"type": "reload"}` JSON string for connected browser reload
 - `DebounceInterval()`: Return configurable debounce interval in milliseconds for file watcher
