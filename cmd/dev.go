@@ -138,6 +138,13 @@ func newDevCommand() *cobra.Command {
 			}
 			if ps != nil && initialResult != nil && initialResult.SiteData != nil {
 				ps.SiteData = initialResult.SiteData
+				if ps.Registry != nil {
+					for _, rt := range ps.Registry.Runtimes() {
+						if err := rt.SetSiteData(ps.SiteData); err != nil {
+							log.Printf("warning: updating plugin site data: %v", err)
+						}
+					}
+				}
 			}
 
 			// Set up file watcher for live rebuild
@@ -181,8 +188,15 @@ func newDevCommand() *cobra.Command {
 						if fullResult != nil && fullResult.Cache != nil {
 							previousCache = fullResult.Cache
 						}
-						if fullResult != nil && fullResult.SiteData != nil {
+						if ps != nil && fullResult != nil && fullResult.SiteData != nil {
 							ps.SiteData = fullResult.SiteData
+							if ps.Registry != nil {
+								for _, rt := range ps.Registry.Runtimes() {
+									if err := rt.SetSiteData(ps.SiteData); err != nil {
+										log.Printf("warning: updating plugin site data: %v", err)
+									}
+								}
+							}
 						}
 						srv.Overlay().ClearErrors()
 						if !cfg.Quiet {

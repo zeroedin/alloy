@@ -519,6 +519,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		PagesRendered:    rendered,
 		RenderedContent:  renderedContent,
 		Cache:            buildCache,
+		SiteData:         ps.SiteData,
 	}
 
 	reportSummary(reporter, result.PageCount, result.Duration, result.PagesSkipped)
