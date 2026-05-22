@@ -1237,13 +1237,16 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 
-			// Simulate dev.go: create PipelineState once, reuse across rebuilds
+			// Test InitPipelineState → BuildIncremental without a prior Build().
+			// This verifies that InitPipelineState's raw data-file loading is
+			// sufficient for pagination. The Build() → InitPipelineState()
+			// lifecycle is tested separately in Test 2.
 			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
 			defer registry.Close()
 			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
 			Expect(psErr).NotTo(HaveOccurred())
 
-			// Initial build (no cache) — simulates alloy dev startup
+			// Initial build (no cache) — all pages rendered
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
 				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
@@ -1274,23 +1277,20 @@ var _ = Describe("Build Pipeline", func() {
 				"paginated page /tokens/spacing/ must retain its data during a "+
 					"content-only rebuild (issue #721)")
 
-			// Third rebuild with cache: verify SiteData hasn't been destroyed
+			// Third rebuild without cache: verify SiteData hasn't been destroyed
 			// by the previous incremental rebuild. This catches the case where
 			// processPagination or applyBatchContext mutates PipelineState.SiteData.
-			result3, err := pipeline.BuildIncremental(cfg, nil, result2.Cache,
+			// Pass nil cache to force all pages to re-render so the assertion
+			// is unconditional.
+			result3, err := pipeline.BuildIncremental(cfg, nil, nil,
 				[]string{"content/about.md"},
 				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
 
-			// Paginated pages should be cached (skipped) this time since their
-			// content didn't change. But if they ARE re-rendered, they must
-			// still have data.
-			if html, wasReRendered := result3.RenderedContent["/tokens/color/"]; wasReRendered {
-				Expect(html).To(ContainSubstring("Color"),
-					"pagination data must survive multiple incremental rebuilds — "+
-						"PipelineState.SiteData must not degrade over successive "+
-						"content-only rebuilds (issue #721)")
-			}
+			Expect(result3.RenderedContent["/tokens/color/"]).To(ContainSubstring("Color"),
+				"pagination data must survive multiple incremental rebuilds — "+
+					"PipelineState.SiteData must not degrade over successive "+
+					"content-only rebuilds (issue #721)")
 		})
 
 		It("paginated pages render correctly after a full-rebuild fallback followed by incremental", func() {
@@ -1328,7 +1328,7 @@ var _ = Describe("Build Pipeline", func() {
 			}
 
 			// Simulate dev.go startup: full Build() then separate InitPipelineState
-			initialResult, err := pipeline.Build(cfg, pipeline.BuildOptions{})
+			_, err := pipeline.Build(cfg, pipeline.BuildOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
 			// dev.go creates a SEPARATE PipelineState for incremental rebuilds
@@ -1338,38 +1338,31 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(psErr).NotTo(HaveOccurred())
 
 			// Simulate: debouncer triggers full rebuild (>10 events), then
-			// next change is incremental. dev.go updates previousCache from
-			// the full rebuild but does NOT update pipelineState.
-			fullResult, err := pipeline.Build(cfg, pipeline.BuildOptions{})
+			// next change is incremental. dev.go does NOT update pipelineState.
+			_, err = pipeline.Build(cfg, pipeline.BuildOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
-			previousCache := fullResult.Cache
-			if previousCache == nil && initialResult != nil {
-				previousCache = initialResult.Cache
-			}
-
 			// Now do an incremental rebuild using the ps from InitPipelineState
-			// (not from Build's internal ps) — this is what dev.go does
+			// (not from Build's internal ps) — this is what dev.go does.
+			// Pass nil cache so all pages are re-rendered and the assertion
+			// is unconditional.
 			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
 				[]byte("---\ntitle: Home\n---\n# Welcome updated"),
 				0644)).To(Succeed())
 
-			incrResult, err := pipeline.BuildIncremental(cfg, nil, previousCache,
+			incrResult, err := pipeline.BuildIncremental(cfg, nil, nil,
 				[]string{"content/index.md"},
 				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
 
-			// The paginated page must still work with the pipelineState's SiteData
-			if html, wasReRendered := incrResult.RenderedContent["/catalog/widget/"]; wasReRendered {
-				Expect(html).To(ContainSubstring("Widget"),
-					"after a full-rebuild fallback, the next incremental rebuild "+
-						"must still have SiteData available for pagination — "+
-						"the PipelineState created by InitPipelineState must not "+
-						"lose its SiteData (issue #721)")
-			}
+			Expect(incrResult.RenderedContent["/catalog/widget/"]).To(ContainSubstring("Widget"),
+				"after a full-rebuild fallback, the next incremental rebuild "+
+					"must still have SiteData available for pagination — "+
+					"the PipelineState created by InitPipelineState must not "+
+					"lose its SiteData (issue #721)")
 		})
 
-		It("BuildIncremental SiteData includes onDataFetched plugin enrichments", func() {
+		It("InitPipelineState loads data-file keys for pagination", func() {
 			tmpDir := GinkgoT().TempDir()
 			contentDir := filepath.Join(tmpDir, "content")
 			dataDir := filepath.Join(tmpDir, "_data")
@@ -1403,23 +1396,15 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 
-			// Full Build() runs onDataFetched, which may enrich SiteData.
-			// The PipelineState it creates is internal and discarded.
-			_, err := pipeline.Build(cfg, pipeline.BuildOptions{})
-			Expect(err).NotTo(HaveOccurred())
-
-			// dev.go creates a separate PipelineState via InitPipelineState.
-			// This only calls loadSiteData — no onDataFetched, no external
-			// sources. SiteData has data-file keys but NOT plugin-injected keys.
+			// InitPipelineState loads raw data-file keys via loadSiteData.
+			// Plugin enrichment (onDataFetched) is a site-level concern
+			// handled by dev.go wiring, not by InitPipelineState.
 			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
 			defer registry.Close()
 			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
 			Expect(psErr).NotTo(HaveOccurred())
 
 			// Verify the PipelineState has data-file keys.
-			// Build() runs onDataFetched which may ADD or MODIFY keys.
-			// BuildIncremental must produce the same SiteData as Build for
-			// pagination to resolve correctly.
 			Expect(pipelineState.SiteData).NotTo(BeNil(),
 				"InitPipelineState must load SiteData from data files — "+
 					"nil SiteData causes 'site data is nil' errors in "+
@@ -1434,8 +1419,7 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RenderedContent["/tokens/color/"]).To(ContainSubstring("Color"),
 				"paginated page must render correctly when using PipelineState "+
-					"from InitPipelineState, even without onDataFetched enrichment "+
-					"(issue #721)")
+					"from InitPipelineState with data-file keys (issue #721)")
 		})
 	})
 })
