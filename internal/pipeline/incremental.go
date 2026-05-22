@@ -316,33 +316,38 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		return nil, renderErr
 	}
 
-	// Lifecycle hooks between passes — mirrors Build() flow (issue #731)
-	if ps.Hooks.HasHooks(plugin.OnContentLoaded) {
-		contentScope := computeUnionScope(ps.Hooks.ScopeFor(plugin.OnContentLoaded))
-		contentPayload := serializePagesForHook(pagesToRender, contentScope)
-		contentResult, hookErr := ps.Hooks.RunWithTimeout(plugin.OnContentLoaded, contentPayload)
-		if hookErr != nil {
-			log.Printf("warning: plugin hook onContentLoaded: %v", hookErr)
-		} else if returnedPages, ok := contentResult.([]interface{}); ok {
-			if len(returnedPages) == len(contentPayload) {
-				scopedPaths := make(map[string]bool, len(contentPayload))
-				for _, cp := range contentPayload {
-					scopedPaths[cp.Path] = true
-				}
-				pathToIdx := make(map[string]int, len(pagesToRender))
-				for i, page := range pagesToRender {
-					pathToIdx[page.RelPath] = i
-				}
-				for _, rp := range returnedPages {
-					if pageMap, ok := toGoMap(rp); ok {
-						if fm, ok := toGoMap(pageMap["frontMatter"]); ok {
-							returnedPath, _ := pageMap["path"].(string)
-							if !scopedPaths[returnedPath] {
-								continue
-							}
-							if origIdx, ok := pathToIdx[returnedPath]; ok {
-								for k, v := range fm {
-									pagesToRender[origIdx].FrontMatter[k] = v
+	// Lifecycle hooks between passes — mirrors Build() flow (issue #731).
+	// Warning-only errors: dev server resilience (Build() returns fatal errors).
+	if ps.Hooks != nil {
+		if ps.Hooks.HasHooks(plugin.OnContentLoaded) {
+			contentScope := computeUnionScope(ps.Hooks.ScopeFor(plugin.OnContentLoaded))
+			contentPayload := serializePagesForHook(pagesToRender, contentScope)
+			contentResult, hookErr := ps.Hooks.RunWithTimeout(plugin.OnContentLoaded, contentPayload)
+			if hookErr != nil {
+				log.Printf("warning: plugin hook onContentLoaded: %v", hookErr)
+			} else if returnedPages, ok := contentResult.([]interface{}); ok {
+				if len(returnedPages) != len(contentPayload) {
+					log.Printf("warning: plugin hook onContentLoaded: returned %d pages but input had %d; ignoring mutations", len(returnedPages), len(contentPayload))
+				} else {
+					scopedPaths := make(map[string]bool, len(contentPayload))
+					for _, cp := range contentPayload {
+						scopedPaths[cp.Path] = true
+					}
+					pathToIdx := make(map[string]int, len(pagesToRender))
+					for i, page := range pagesToRender {
+						pathToIdx[page.RelPath] = i
+					}
+					for _, rp := range returnedPages {
+						if pageMap, ok := toGoMap(rp); ok {
+							if fm, ok := toGoMap(pageMap["frontMatter"]); ok {
+								returnedPath, _ := pageMap["path"].(string)
+								if !scopedPaths[returnedPath] {
+									continue
+								}
+								if origIdx, ok := pathToIdx[returnedPath]; ok {
+									for k, v := range fm {
+										pagesToRender[origIdx].FrontMatter[k] = v
+									}
 								}
 							}
 						}
@@ -350,33 +355,35 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				}
 			}
 		}
-	}
-	if ps.Hooks.HasHooks(plugin.OnDataCascadeReady) {
-		cascadeScope := computeUnionScope(ps.Hooks.ScopeFor(plugin.OnDataCascadeReady))
-		cascadePayload := serializePagesForCascadeHook(pagesToRender, cascadeScope)
-		cascadeResult, hookErr := ps.Hooks.RunWithTimeout(plugin.OnDataCascadeReady, cascadePayload)
-		if hookErr != nil {
-			log.Printf("warning: plugin hook onDataCascadeReady: %v", hookErr)
-		} else if returnedPages, ok := cascadeResult.([]interface{}); ok {
-			if len(returnedPages) == len(cascadePayload) {
-				scopedPaths := make(map[string]bool, len(cascadePayload))
-				for _, cp := range cascadePayload {
-					scopedPaths[cp.Path] = true
-				}
-				pathToIdx := make(map[string]int, len(pagesToRender))
-				for i, page := range pagesToRender {
-					pathToIdx[page.RelPath] = i
-				}
-				for _, rp := range returnedPages {
-					if pageMap, ok := toGoMap(rp); ok {
-						if data, ok := toGoMap(pageMap["data"]); ok {
-							returnedPath, _ := pageMap["path"].(string)
-							if !scopedPaths[returnedPath] {
-								continue
-							}
-							if origIdx, ok := pathToIdx[returnedPath]; ok {
-								for k, v := range data {
-									pagesToRender[origIdx].FrontMatter[k] = v
+		if ps.Hooks.HasHooks(plugin.OnDataCascadeReady) {
+			cascadeScope := computeUnionScope(ps.Hooks.ScopeFor(plugin.OnDataCascadeReady))
+			cascadePayload := serializePagesForCascadeHook(pagesToRender, cascadeScope)
+			cascadeResult, hookErr := ps.Hooks.RunWithTimeout(plugin.OnDataCascadeReady, cascadePayload)
+			if hookErr != nil {
+				log.Printf("warning: plugin hook onDataCascadeReady: %v", hookErr)
+			} else if returnedPages, ok := cascadeResult.([]interface{}); ok {
+				if len(returnedPages) != len(cascadePayload) {
+					log.Printf("warning: plugin hook onDataCascadeReady: returned %d pages but input had %d; ignoring mutations", len(returnedPages), len(cascadePayload))
+				} else {
+					scopedPaths := make(map[string]bool, len(cascadePayload))
+					for _, cp := range cascadePayload {
+						scopedPaths[cp.Path] = true
+					}
+					pathToIdx := make(map[string]int, len(pagesToRender))
+					for i, page := range pagesToRender {
+						pathToIdx[page.RelPath] = i
+					}
+					for _, rp := range returnedPages {
+						if pageMap, ok := toGoMap(rp); ok {
+							if data, ok := toGoMap(pageMap["data"]); ok {
+								returnedPath, _ := pageMap["path"].(string)
+								if !scopedPaths[returnedPath] {
+									continue
+								}
+								if origIdx, ok := pathToIdx[returnedPath]; ok {
+									for k, v := range data {
+										pagesToRender[origIdx].FrontMatter[k] = v
+									}
 								}
 							}
 						}
@@ -384,9 +391,9 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				}
 			}
 		}
-	}
-	if err := fireContentTransformedHooks(pagesToRender, ps.Hooks); err != nil {
-		log.Printf("warning: plugin hook onContentTransformed: %v", err)
+		if err := fireContentTransformedHooks(pagesToRender, ps.Hooks); err != nil {
+			log.Printf("warning: plugin hook onContentTransformed: %v", err)
+		}
 	}
 
 	// Pass 2: layout resolution + rendering (issue #628)
@@ -411,7 +418,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
-	if ps.Hooks.HasHooks(plugin.OnPageRendered) {
+	if ps.Hooks != nil && ps.Hooks.HasHooks(plugin.OnPageRendered) {
 		payloads := make([]interface{}, len(pagesToRender))
 		for i, page := range pagesToRender {
 			payloads[i] = page.HTML()
@@ -617,8 +624,15 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 
 	reportSummary(reporter, result.PageCount, result.Duration, result.PagesSkipped)
 
-	if _, hookErr := ps.Hooks.RunWithTimeout(plugin.OnBuildComplete, result); hookErr != nil {
-		log.Printf("warning: plugin hook onBuildComplete: %v", hookErr)
+	if ps.Hooks != nil && ps.Hooks.HasHooks(plugin.OnBuildComplete) {
+		if _, hookErr := ps.Hooks.RunWithTimeout(plugin.OnBuildComplete, result); hookErr != nil {
+			log.Printf("warning: plugin hook onBuildComplete: %v", hookErr)
+		}
+	}
+	if ps.Hooks != nil {
+		for _, w := range ps.Hooks.Warnings() {
+			log.Printf("warning: %s", w)
+		}
 	}
 
 	return result, nil
