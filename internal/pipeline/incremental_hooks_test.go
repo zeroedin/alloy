@@ -62,6 +62,7 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 
+			config.ApplyDefaults(cfg)
 			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
 			defer registry.Close()
 			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
@@ -132,6 +133,7 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 
+			config.ApplyDefaults(cfg)
 			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
 			defer registry.Close()
 			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
@@ -146,6 +148,19 @@ var _ = Describe("Build Pipeline", func() {
 					"the hook computes a label from cascade data that should "+
 					"appear in the rendered output. Currently BuildIncremental "+
 					"skips onDataCascadeReady entirely (issue #731)")
+
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: About Updated\nlayout: default\n---\n# About Updated"),
+				0644)).To(Succeed())
+
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"content/index.md"},
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result2.RenderedContent["index.md"]).To(ContainSubstring("cascade-About Updated"),
+				"onDataCascadeReady must fire on subsequent incremental rebuilds "+
+					"with cache, not just the nil-cache path (issue #731)")
 		})
 
 		It("onContentTransformed fires during BuildIncremental", func() {
@@ -187,6 +202,7 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 
+			config.ApplyDefaults(cfg)
 			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
 			defer registry.Close()
 			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
@@ -201,6 +217,19 @@ var _ = Describe("Build Pipeline", func() {
 					"the hook wraps content HTML in a div that should appear "+
 					"in the rendered output. Currently BuildIncremental skips "+
 					"onContentTransformed entirely (issue #731)")
+
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home Updated\nlayout: default\n---\n# Home Updated"),
+				0644)).To(Succeed())
+
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"content/index.md"},
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result2.RenderedContent["index.md"]).To(ContainSubstring(`class="transformed"`),
+				"onContentTransformed must fire on subsequent incremental rebuilds "+
+					"with cache, not just the nil-cache path (issue #731)")
 		})
 
 		It("onPageRendered fires during BuildIncremental", func() {
@@ -241,6 +270,7 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 
+			config.ApplyDefaults(cfg)
 			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
 			defer registry.Close()
 			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
@@ -256,6 +286,19 @@ var _ = Describe("Build Pipeline", func() {
 					"in the final rendered output. This is the most visible "+
 					"symptom of issue #731: Lit SSR and other post-render "+
 					"transforms are skipped on incremental rebuilds")
+
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home Updated\nlayout: default\n---\n# Home Updated"),
+				0644)).To(Succeed())
+
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"content/index.md"},
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result2.RenderedContent["index.md"]).To(ContainSubstring("<!-- ssr-marker -->"),
+				"onPageRendered must fire on subsequent incremental rebuilds "+
+					"with cache, not just the nil-cache path (issue #731)")
 		})
 
 		It("onBuildComplete fires during BuildIncremental", func() {
@@ -264,6 +307,7 @@ var _ = Describe("Build Pipeline", func() {
 			layoutsDir := filepath.Join(tmpDir, "layouts")
 			pluginsDir := filepath.Join(tmpDir, "plugins")
 			outputDir := filepath.Join(tmpDir, "_site")
+			markerFile := filepath.Join(tmpDir, "build-complete.marker")
 
 			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
 			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
@@ -278,11 +322,11 @@ var _ = Describe("Build Pipeline", func() {
 				0644)).To(Succeed())
 
 			Expect(os.WriteFile(filepath.Join(pluginsDir, "build-complete.js"),
-				[]byte(`export default function(alloy) {
+				[]byte(`import { writeFileSync } from 'fs';
+export default function(alloy) {
+  const marker = alloy.projectRoot + '/build-complete.marker';
   alloy.hook('onBuildComplete', {}, function(result) {
-    if (!result || typeof result !== 'object') {
-      throw new Error('onBuildComplete must receive a result object');
-    }
+    writeFileSync(marker, 'fired', 'utf8');
     return result;
   });
 }`),
@@ -299,6 +343,7 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 
+			config.ApplyDefaults(cfg)
 			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
 			defer registry.Close()
 			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
@@ -306,11 +351,13 @@ var _ = Describe("Build Pipeline", func() {
 
 			_, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
 				pipeline.BuildOptions{PipelineState: pipelineState})
-			Expect(err).NotTo(HaveOccurred(),
-				"onBuildComplete must fire during BuildIncremental without "+
-					"error — the hook validates it receives a result object. "+
-					"If this fails, BuildIncremental is not dispatching "+
-					"onBuildComplete at all (issue #731)")
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(markerFile).To(BeAnExistingFile(),
+				"onBuildComplete must fire during BuildIncremental — "+
+					"the hook writes a sentinel file that should exist after "+
+					"the build completes. If missing, BuildIncremental is not "+
+					"dispatching onBuildComplete at all (issue #731)")
 		})
 	})
 })
