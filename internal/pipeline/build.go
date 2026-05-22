@@ -79,6 +79,7 @@ type BuildResult struct {
 	ContentPassthroughs []string          // relative paths of non-content files copied from content/ to output
 	StageTimings        []StageTiming     // per-stage durations (populated when BuildOptions.Profile is true)
 	Cache               *cache.Cache      // in-memory cache with content hashes for incremental rebuild (issue #639)
+	SiteData            map[string]interface{} // enriched site data (data files + external sources + hooks)
 }
 
 // RenderContext bundles shared rendering state passed through the render call
@@ -553,6 +554,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			Duration:       time.Since(start),
 			SSRSkipped:     cfg.SSR == nil || options.SkipSSR,
 			StageTimings:   timer.Timings(),
+			SiteData:       siteData,
 		}
 		return r, nil
 	}
@@ -937,6 +939,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		ContentPassthroughs: contentPassthroughs,
 		StageTimings:        timer.Timings(),
 		Cache:               buildCache,
+		SiteData:            siteData,
 	}
 
 	reportSummary(reporter, result.PageCount, result.Duration, 0)

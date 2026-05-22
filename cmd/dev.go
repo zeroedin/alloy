@@ -136,6 +136,9 @@ func newDevCommand() *cobra.Command {
 			if psErr != nil {
 				log.Printf("warning: pipeline state init: %v", psErr)
 			}
+			if ps != nil && initialResult != nil && initialResult.SiteData != nil {
+				ps.SiteData = initialResult.SiteData
+			}
 
 			// Set up file watcher for live rebuild
 			watcher := startWatcher(cfg, srv, func(events []server.ChangeEvent, rebuildScope server.RebuildScope) {
@@ -177,6 +180,9 @@ func newDevCommand() *cobra.Command {
 					} else {
 						if fullResult != nil && fullResult.Cache != nil {
 							previousCache = fullResult.Cache
+						}
+						if fullResult != nil && fullResult.SiteData != nil {
+							ps.SiteData = fullResult.SiteData
 						}
 						srv.Overlay().ClearErrors()
 						if !cfg.Quiet {
