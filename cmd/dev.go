@@ -186,6 +186,12 @@ func newDevCommand() *cobra.Command {
 					if destPath == "" {
 						continue
 					}
+					if ev.IsRemove {
+						if err := os.Remove(destPath); err != nil && !os.IsNotExist(err) {
+							log.Printf("warning: recopy remove %s: %v", ev.Path, err)
+						}
+						continue
+					}
 					if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 						log.Printf("warning: recopy mkdir: %v", err)
 						continue
