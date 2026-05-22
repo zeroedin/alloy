@@ -7,12 +7,14 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 
 	"github.com/spf13/cobra"
 	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/config"
+	"github.com/zeroedin/alloy/internal/fileutil"
 	"github.com/zeroedin/alloy/internal/pipeline"
 	"github.com/zeroedin/alloy/internal/plugin"
 	"github.com/zeroedin/alloy/internal/server"
@@ -151,6 +153,52 @@ func newDevCommand() *cobra.Command {
 			watcher := startWatcher(cfg, srv, func(events []server.ChangeEvent, rebuildScope server.RebuildScope) {
 				if _, err := hooks.RunWithTimeout(plugin.OnFileChanged, events); err != nil {
 					log.Printf("warning: plugin hook onFileChanged: %v", err)
+				}
+
+				// Recopy static/asset/passthrough files before any rebuild decision.
+				// Runs unconditionally so mixed batches (content + static) don't
+				// lose static changes — BuildIncremental doesn't recopy these.
+				outputDir := cfg.Build.Output
+				if !filepath.IsAbs(outputDir) {
+					outputDir = filepath.Join(cfg.ProjectRoot, outputDir)
+				}
+				for _, ev := range events {
+					if server.RebuildScopeForChangeType(ev.ChangeType) != server.RebuildRecopy {
+						continue
+					}
+					srcPath := filepath.Join(cfg.ProjectRoot, ev.Path)
+					var destPath string
+					switch ev.ChangeType {
+					case server.StaticChange:
+						rel, _ := filepath.Rel(cfg.Structure.Static, ev.Path)
+						destPath = filepath.Join(outputDir, rel)
+					case server.AssetChange:
+						rel, _ := filepath.Rel(cfg.Structure.Assets, ev.Path)
+						destPath = filepath.Join(outputDir, rel)
+					case server.PassthroughChange:
+						dest, err := server.RecopyPassthroughFile(ev.Path, cfg)
+						if err != nil {
+							log.Printf("warning: passthrough recopy: %v", err)
+							continue
+						}
+						destPath = filepath.Join(cfg.ProjectRoot, dest)
+					}
+					if destPath == "" {
+						continue
+					}
+					if ev.IsRemove {
+						if err := os.Remove(destPath); err != nil && !os.IsNotExist(err) {
+							log.Printf("warning: recopy remove %s: %v", ev.Path, err)
+						}
+						continue
+					}
+					if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+						log.Printf("warning: recopy mkdir: %v", err)
+						continue
+					}
+					if err := fileutil.CopyFile(srcPath, destPath); err != nil {
+						log.Printf("warning: recopy %s: %v", ev.Path, err)
+					}
 				}
 
 				needsRebuild := false

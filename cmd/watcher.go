@@ -66,6 +66,7 @@ func startWatcher(cfg *config.Config, srv *server.Server, dispatch watcherDispat
 				pending = append(pending, server.ChangeEvent{
 					Path:       relPath,
 					ChangeType: changeType,
+					IsRemove:   event.Op&(fsnotify.Remove|fsnotify.Rename) != 0,
 				})
 
 				if event.Op&fsnotify.Create != 0 {
