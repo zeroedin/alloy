@@ -21,7 +21,7 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
 			Expect(os.WriteFile(
 				filepath.Join(pluginsDir, "test-plugin.js"),
-				[]byte("// runtime: \"node\"\nexport default function(alloy) { alloy.filter('testNodeFilter', (v) => v); }"),
+				[]byte("export const runtime = \"node\";\nexport default function(alloy) { alloy.filter('testNodeFilter', (v) => v); }"),
 				0644,
 			)).To(Succeed())
 

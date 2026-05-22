@@ -1,6 +1,7 @@
 package pipeline_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -322,14 +323,14 @@ var _ = Describe("Build Pipeline", func() {
 				0644)).To(Succeed())
 
 			Expect(os.WriteFile(filepath.Join(pluginsDir, "build-complete.js"),
-				[]byte(`import { writeFileSync } from 'fs';
+				[]byte(fmt.Sprintf(`export const runtime = "node";
+import { writeFileSync } from 'fs';
 export default function(alloy) {
-  const marker = alloy.projectRoot + '/build-complete.marker';
   alloy.hook('onBuildComplete', {}, function(result) {
-    writeFileSync(marker, 'fired', 'utf8');
+    writeFileSync(%q, 'fired', 'utf8');
     return result;
   });
-}`),
+}`, markerFile)),
 				0644)).To(Succeed())
 
 			cfg := &config.Config{
