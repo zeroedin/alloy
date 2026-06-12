@@ -301,6 +301,12 @@
     &:hover {
       text-decoration: none;
     }
+
+    .logo-icon {
+      width: 48px;
+      height: auto;
+      fill: light-dark(black, white);
+    }
   }
 
   /* Nav links */
@@ -461,7 +467,10 @@
 
   .hero-logo {
     display: block;
-    margin: 0 auto var(--space-lg);
+    margin: 0 auto var(--space-sm);
+    width: 128px;
+    height: auto;
+    fill: light-dark(black, white);
   }
 
   .hero-subtitle {
