@@ -35,6 +35,7 @@ const (
 type ChangeEvent struct {
 	Path       string
 	ChangeType ChangeType
+	IsRemove   bool
 }
 
 // RebuildScope indicates whether to do an incremental or full rebuild.

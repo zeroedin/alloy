@@ -470,6 +470,26 @@ type NodeBridge struct {
 	scriptPath  string
 }
 
+func pidFilePath(projectRoot string) string {
+	return filepath.Join(projectRoot, ".alloy", "workers.pid")
+}
+
+var (
+	stalePIDCleanupMu    sync.Mutex
+	stalePIDCleanupRoots = make(map[string]bool)
+)
+
+func cleanStalePIDsOnce(projectRoot string) {
+	key := filepath.Clean(projectRoot)
+	stalePIDCleanupMu.Lock()
+	defer stalePIDCleanupMu.Unlock()
+	if stalePIDCleanupRoots[key] {
+		return
+	}
+	stalePIDCleanupRoots[key] = true
+	cleanStalePIDs(projectRoot)
+}
+
 // NewNodeBridge creates a Node bridge for the given project root.
 func NewNodeBridge(projectRoot string) *NodeBridge {
 	return &NodeBridge{
@@ -511,6 +531,7 @@ func (b *NodeBridge) Start() error {
 	b.scriptPath = scriptPath
 
 	b.cmd = exec.Command("node", b.scriptPath)
+	setProcGroup(b.cmd)
 	if b.projectRoot != "" {
 		if info, err := os.Stat(b.projectRoot); err == nil && info.IsDir() {
 			b.cmd.Dir = b.projectRoot
@@ -530,10 +551,14 @@ func (b *NodeBridge) Start() error {
 	}
 	b.stdout = bufio.NewReader(stdoutPipe)
 
+	cleanStalePIDsOnce(b.projectRoot)
+
 	if err := b.cmd.Start(); err != nil {
 		os.Remove(b.scriptPath)
 		return fmt.Errorf("starting node: %w", err)
 	}
+
+	addPIDToFile(b.projectRoot, b.cmd.Process.Pid)
 
 	b.state = BridgeRunning
 	return nil
@@ -625,12 +650,13 @@ func (b *NodeBridge) Send(msg *Message) (*Message, error) {
 	return &resp, nil
 }
 
-// Stop gracefully shuts down the Node subprocess.
+// Stop gracefully shuts down the Node subprocess and its process group.
 func (b *NodeBridge) Stop() error {
 	if b.stdin != nil {
 		b.stdin.Close()
 	}
 	if b.cmd != nil && b.cmd.Process != nil {
+		pid := b.cmd.Process.Pid
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		done := make(chan error, 1)
@@ -638,9 +664,16 @@ func (b *NodeBridge) Stop() error {
 		select {
 		case <-done:
 		case <-ctx.Done():
-			b.cmd.Process.Kill()
-			<-done
+			killProcGroup(pid)
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				b.cmd.Process.Kill()
+				<-done
+			}
 		}
+		removePIDFromFile(b.projectRoot, pid)
+		b.cmd = nil
 	}
 	if b.scriptPath != "" {
 		os.Remove(b.scriptPath)

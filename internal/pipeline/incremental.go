@@ -11,8 +11,10 @@ import (
 	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
+	"github.com/zeroedin/alloy/internal/ordered"
 	"github.com/zeroedin/alloy/internal/output"
 	"github.com/zeroedin/alloy/internal/permalink"
+	"github.com/zeroedin/alloy/internal/plugin"
 	"github.com/zeroedin/alloy/internal/ssr"
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
@@ -172,6 +174,77 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
+	// Reload site data when data directory files have changed (issue #717).
+	// The full Build() path loads data anew each invocation; the incremental
+	// path reuses PipelineState from server startup, so data edits are
+	// invisible to processPagination unless we reload here.
+	dataDir := cfg.Structure.Data
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	dataPrefix := filepath.ToSlash(dataDir) + "/"
+	hasDataChange := false
+	for _, f := range changedFiles {
+		if strings.HasPrefix(filepath.ToSlash(f), dataPrefix) {
+			hasDataChange = true
+			break
+		}
+	}
+	if hasDataChange {
+		freshData, err := loadSiteData(cfg)
+		if err != nil {
+			log.Printf("warning: reloading site data: %v", err)
+		} else if freshData != nil {
+			ps.SiteData = freshData
+			if ps.Hooks != nil && ps.Hooks.HasHooks(plugin.OnDataFetched) {
+				dataResult, hookErr := ps.Hooks.RunWithTimeout(plugin.OnDataFetched, ps.SiteData)
+				if hookErr != nil {
+					log.Printf("warning: plugin hook onDataFetched after data reload: %v", hookErr)
+				} else {
+					switch modified := dataResult.(type) {
+					case map[string]interface{}:
+						for k, v := range modified {
+							ps.SiteData[k] = v
+						}
+					case *ordered.Map:
+						for _, entry := range modified.Entries() {
+							ps.SiteData[entry.Key] = entry.Value
+						}
+					}
+				}
+			}
+			if ps.Registry != nil {
+				for _, rt := range ps.Registry.Runtimes() {
+					if err := rt.SetSiteData(ps.SiteData); err != nil {
+						log.Printf("warning: updating plugin site data after reload: %v", err)
+					}
+				}
+			}
+		} else {
+			// freshData is nil with no error: either the data directory was
+			// deleted or it contains only malformed files (loadSiteData swallows
+			// parse errors with a warning log). Check whether the directory
+			// still exists to disambiguate.
+			dataDirAbs := resolveDir(cfg.ProjectRoot, dataDir)
+			if _, statErr := os.Stat(dataDirAbs); os.IsNotExist(statErr) {
+				ps.SiteData = nil
+			}
+			// Directory exists but loadSiteData returned nil — a parse error
+			// was already logged; keep stale data so pagination doesn't break.
+		}
+		// Invalidate paginated pages that reference site.data — their content
+		// hash is unchanged but their data source has, so they must re-render.
+		for _, page := range allPages {
+			if paginationRaw, ok := page.FrontMatter["pagination"]; ok {
+				if pm, ok := paginationRaw.(map[string]interface{}); ok {
+					if dataRef, ok := pm["data"].(string); ok && strings.HasPrefix(dataRef, "site.data.") {
+						pagesToRender = append(pagesToRender, page)
+					}
+				}
+			}
+		}
+	}
+
 	allPages = content.FilterByLifecycle(allPages, time.Now(), cfg.IncludeDrafts)
 
 	// Re-filter pagesToRender against lifecycle-filtered allPages
@@ -207,6 +280,15 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		renderRelPaths[p.RelPath] = true
 	}
 
+	// Capture content hashes before pagination — virtual pages have nil
+	// Content, so the cache must use the original discovered page's bytes.
+	prePageContentHash := make(map[string]string, len(allPages))
+	for _, p := range allPages {
+		if len(p.Content) > 0 {
+			prePageContentHash[p.RelPath] = cache.HashContent(p.Content)
+		}
+	}
+
 	allPages = processPagination(allPages, cfg, ps.SiteData, bc.Collections, ps.Engine)
 
 	// Rebuild pagesToRender from post-pagination allPages so virtual pages
@@ -234,6 +316,86 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		return nil, renderErr
 	}
 
+	// Lifecycle hooks between passes — mirrors Build() flow (issue #731).
+	// Warning-only errors: dev server resilience (Build() returns fatal errors).
+	if ps.Hooks != nil {
+		if ps.Hooks.HasHooks(plugin.OnContentLoaded) {
+			contentScope := computeUnionScope(ps.Hooks.ScopeFor(plugin.OnContentLoaded))
+			contentPayload := serializePagesForHook(pagesToRender, contentScope)
+			contentResult, hookErr := ps.Hooks.RunWithTimeout(plugin.OnContentLoaded, contentPayload)
+			if hookErr != nil {
+				log.Printf("warning: plugin hook onContentLoaded: %v", hookErr)
+			} else if returnedPages, ok := contentResult.([]interface{}); ok {
+				if len(returnedPages) != len(contentPayload) {
+					log.Printf("warning: plugin hook onContentLoaded: returned %d pages but input had %d; ignoring mutations", len(returnedPages), len(contentPayload))
+				} else {
+					scopedPaths := make(map[string]bool, len(contentPayload))
+					for _, cp := range contentPayload {
+						scopedPaths[cp.Path] = true
+					}
+					pathToIdx := make(map[string]int, len(pagesToRender))
+					for i, page := range pagesToRender {
+						pathToIdx[page.RelPath] = i
+					}
+					for _, rp := range returnedPages {
+						if pageMap, ok := toGoMap(rp); ok {
+							if fm, ok := toGoMap(pageMap["frontMatter"]); ok {
+								returnedPath, _ := pageMap["path"].(string)
+								if !scopedPaths[returnedPath] {
+									continue
+								}
+								if origIdx, ok := pathToIdx[returnedPath]; ok {
+									for k, v := range fm {
+										pagesToRender[origIdx].FrontMatter[k] = v
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if ps.Hooks.HasHooks(plugin.OnDataCascadeReady) {
+			cascadeScope := computeUnionScope(ps.Hooks.ScopeFor(plugin.OnDataCascadeReady))
+			cascadePayload := serializePagesForCascadeHook(pagesToRender, cascadeScope)
+			cascadeResult, hookErr := ps.Hooks.RunWithTimeout(plugin.OnDataCascadeReady, cascadePayload)
+			if hookErr != nil {
+				log.Printf("warning: plugin hook onDataCascadeReady: %v", hookErr)
+			} else if returnedPages, ok := cascadeResult.([]interface{}); ok {
+				if len(returnedPages) != len(cascadePayload) {
+					log.Printf("warning: plugin hook onDataCascadeReady: returned %d pages but input had %d; ignoring mutations", len(returnedPages), len(cascadePayload))
+				} else {
+					scopedPaths := make(map[string]bool, len(cascadePayload))
+					for _, cp := range cascadePayload {
+						scopedPaths[cp.Path] = true
+					}
+					pathToIdx := make(map[string]int, len(pagesToRender))
+					for i, page := range pagesToRender {
+						pathToIdx[page.RelPath] = i
+					}
+					for _, rp := range returnedPages {
+						if pageMap, ok := toGoMap(rp); ok {
+							if data, ok := toGoMap(pageMap["data"]); ok {
+								returnedPath, _ := pageMap["path"].(string)
+								if !scopedPaths[returnedPath] {
+									continue
+								}
+								if origIdx, ok := pathToIdx[returnedPath]; ok {
+									for k, v := range data {
+										pagesToRender[origIdx].FrontMatter[k] = v
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if err := fireContentTransformedHooks(pagesToRender, ps.Hooks); err != nil {
+			log.Printf("warning: plugin hook onContentTransformed: %v", err)
+		}
+	}
+
 	// Pass 2: layout resolution + rendering (issue #628)
 	layoutsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts)
 	engineName := cfg.Templates.Engine
@@ -253,6 +415,26 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 		if err := renderPageFormats(page, layoutsDir, engineName, rc); err != nil {
 			return nil, err
+		}
+	}
+
+	if ps.Hooks != nil && ps.Hooks.HasHooks(plugin.OnPageRendered) {
+		payloads := make([]interface{}, len(pagesToRender))
+		for i, page := range pagesToRender {
+			payloads[i] = page.HTML()
+		}
+		results, hookErr := ps.Hooks.RunBatchWithProgress(plugin.OnPageRendered, payloads, nil)
+		if hookErr != nil {
+			log.Printf("warning: plugin hook onPageRendered: %v", hookErr)
+		} else {
+			for i, result := range results {
+				switch modified := result.(type) {
+				case string:
+					pagesToRender[i].SetRenderedBody([]byte(modified))
+				case []byte:
+					pagesToRender[i].SetRenderedBody(modified)
+				}
+			}
 		}
 	}
 
@@ -415,7 +597,11 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		buildCache = cache.New()
 	}
 	for _, page := range pagesToRender {
-		buildCache.SetHash(page.RelPath, cache.HashContent(page.Content))
+		if h, ok := prePageContentHash[page.RelPath]; ok {
+			buildCache.SetHash(page.RelPath, h)
+		} else if len(page.Content) > 0 {
+			buildCache.SetHash(page.RelPath, cache.HashContent(page.Content))
+		}
 	}
 	for pagePath, layoutPaths := range templateUsage {
 		for _, layoutPath := range layoutPaths {
@@ -433,9 +619,21 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		PagesRendered:    rendered,
 		RenderedContent:  renderedContent,
 		Cache:            buildCache,
+		SiteData:         ps.SiteData,
 	}
 
 	reportSummary(reporter, result.PageCount, result.Duration, result.PagesSkipped)
+
+	if ps.Hooks != nil && ps.Hooks.HasHooks(plugin.OnBuildComplete) {
+		if _, hookErr := ps.Hooks.RunWithTimeout(plugin.OnBuildComplete, result); hookErr != nil {
+			log.Printf("warning: plugin hook onBuildComplete: %v", hookErr)
+		}
+	}
+	if ps.Hooks != nil {
+		for _, w := range ps.Hooks.Warnings() {
+			log.Printf("warning: %s", w)
+		}
+	}
 
 	return result, nil
 }

@@ -1,10 +1,15 @@
+//go:build !windows
+
 package plugin_test
 
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -199,6 +204,261 @@ var _ = Describe("NodeBridge", func() {
 			bridge := plugin.NewNodeBridge("/my-project")
 			logPath := bridge.LogPath()
 			Expect(logPath).To(Equal(filepath.Join("/my-project", ".alloy", "plugin.log")))
+		})
+	})
+
+	// ── Process group isolation (#723) ────────────────────────────────
+
+	Describe("Process group isolation", func() {
+		It("spawns Node subprocess in its own process group", func() {
+			bridge := plugin.NewNodeBridge("/project")
+			err := bridge.Start()
+			Expect(err).NotTo(HaveOccurred())
+			defer bridge.Stop()
+
+			pid := bridge.PID()
+			Expect(pid).To(BeNumerically(">", 0))
+
+			pgid, err := syscall.Getpgid(pid)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pgid).To(Equal(pid),
+				"Node process should be the leader of its own process group (pgid == pid)")
+		})
+
+		It("Stop kills the entire process group, not just the leader", func() {
+			bridge := plugin.NewNodeBridge("/project")
+			err := bridge.Start()
+			Expect(err).NotTo(HaveOccurred())
+			defer bridge.Stop()
+
+			pid := bridge.PID()
+			Expect(pid).To(BeNumerically(">", 0))
+
+			pgid, err := syscall.Getpgid(pid)
+			Expect(err).NotTo(HaveOccurred())
+
+			err = bridge.Stop()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = syscall.Kill(-pgid, 0)
+			Expect(err).To(HaveOccurred(),
+				"process group should not exist after Stop")
+		})
+	})
+
+	// ── Crash recovery via PID file (#723) ────────────────────────────
+
+	Describe("PID file management", func() {
+		var tmpDir string
+
+		BeforeEach(func() {
+			var err error
+			tmpDir, err = os.MkdirTemp("", "alloy-pidfile-test-*")
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		AfterEach(func() {
+			os.RemoveAll(tmpDir)
+		})
+
+		It("writes worker PIDs to .alloy/workers.pid on Start", func() {
+			bridge := plugin.NewNodeBridge(tmpDir)
+			err := bridge.Start()
+			Expect(err).NotTo(HaveOccurred())
+			defer bridge.Stop()
+
+			pidFile := filepath.Join(tmpDir, ".alloy", "workers.pid")
+			Expect(pidFile).To(BeAnExistingFile())
+
+			data, err := os.ReadFile(pidFile)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(data)).To(ContainSubstring(fmt.Sprintf("%d", bridge.PID())))
+		})
+
+		It("removes PID from .alloy/workers.pid on Stop", func() {
+			bridge := plugin.NewNodeBridge(tmpDir)
+			err := bridge.Start()
+			Expect(err).NotTo(HaveOccurred())
+
+			pidFile := filepath.Join(tmpDir, ".alloy", "workers.pid")
+			Expect(pidFile).To(BeAnExistingFile())
+
+			err = bridge.Stop()
+			Expect(err).NotTo(HaveOccurred())
+
+			if _, statErr := os.Stat(pidFile); statErr == nil {
+				data, err := os.ReadFile(pidFile)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(strings.TrimSpace(string(data))).To(BeEmpty(),
+					"PID file should be empty after clean shutdown")
+			}
+		})
+
+		It("cleans up stale PIDs from a previous session on next Start", func() {
+			alloyDir := filepath.Join(tmpDir, ".alloy")
+			Expect(os.MkdirAll(alloyDir, 0755)).To(Succeed())
+			pidFile := filepath.Join(alloyDir, "workers.pid")
+
+			stalePID := 2147483647
+			Expect(os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", stalePID)), 0644)).To(Succeed())
+
+			bridge := plugin.NewNodeBridge(tmpDir)
+			err := bridge.Start()
+			Expect(err).NotTo(HaveOccurred())
+			defer bridge.Stop()
+
+			data, err := os.ReadFile(pidFile)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(data)).NotTo(ContainSubstring(fmt.Sprintf("%d", stalePID)),
+				"stale PID should be cleaned from the file on startup")
+			Expect(string(data)).To(ContainSubstring(fmt.Sprintf("%d", bridge.PID())),
+				"current PID should be in the file")
+		})
+
+		It("kills a real stale process found in workers.pid on Start", func() {
+			sleeper := exec.Command("sleep", "300")
+			sleeper.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			Expect(sleeper.Start()).To(Succeed())
+			DeferCleanup(func() {
+				_ = sleeper.Process.Kill()
+				_, _ = sleeper.Process.Wait()
+			})
+			stalePID := sleeper.Process.Pid
+
+			alloyDir := filepath.Join(tmpDir, ".alloy")
+			Expect(os.MkdirAll(alloyDir, 0755)).To(Succeed())
+			pidFile := filepath.Join(alloyDir, "workers.pid")
+			Expect(os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", stalePID)), 0644)).To(Succeed())
+
+			bridge := plugin.NewNodeBridge(tmpDir)
+			err := bridge.Start()
+			Expect(err).NotTo(HaveOccurred())
+			defer bridge.Stop()
+
+			Eventually(func() error {
+				return syscall.Kill(stalePID, 0)
+			}, "5s", "100ms").Should(HaveOccurred(),
+				"stale process should be killed during startup cleanup")
+		})
+
+		It("handles malformed entries in workers.pid without error", func() {
+			alloyDir := filepath.Join(tmpDir, ".alloy")
+			Expect(os.MkdirAll(alloyDir, 0755)).To(Succeed())
+			pidFile := filepath.Join(alloyDir, "workers.pid")
+			Expect(os.WriteFile(pidFile, []byte("not-a-number\n-1\n0\n\n"), 0644)).To(Succeed())
+
+			bridge := plugin.NewNodeBridge(tmpDir)
+			err := bridge.Start()
+			Expect(err).NotTo(HaveOccurred())
+			defer bridge.Stop()
+
+			data, err := os.ReadFile(pidFile)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(data)).To(ContainSubstring(fmt.Sprintf("%d", bridge.PID())),
+				"current PID should be in the file after cleaning malformed entries")
+		})
+	})
+
+	// ── Concurrent PID file access (#726) ────────────────────────────
+
+	Describe("Concurrent PID file access", func() {
+		var tmpDir string
+
+		BeforeEach(func() {
+			var err error
+			tmpDir, err = os.MkdirTemp("", "alloy-concurrent-pid-test-*")
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		AfterEach(func() {
+			os.RemoveAll(tmpDir)
+		})
+
+		It("multiple bridges writing to same PID file preserves all PIDs", func() {
+			const numBridges = 4
+			bridges := make([]*plugin.NodeBridge, numBridges)
+			errs := make(chan error, numBridges)
+
+			DeferCleanup(func() {
+				for _, b := range bridges {
+					if b != nil {
+						b.Stop()
+					}
+				}
+			})
+
+			for i := 0; i < numBridges; i++ {
+				go func(idx int) {
+					b := plugin.NewNodeBridge(tmpDir)
+					if err := b.Start(); err != nil {
+						errs <- fmt.Errorf("bridge %d: %w", idx, err)
+						return
+					}
+					bridges[idx] = b
+					errs <- nil
+				}(i)
+			}
+
+			for i := 0; i < numBridges; i++ {
+				err := <-errs
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			pidFile := filepath.Join(tmpDir, ".alloy", "workers.pid")
+			data, err := os.ReadFile(pidFile)
+			Expect(err).NotTo(HaveOccurred())
+
+			content := string(data)
+			for i, b := range bridges {
+				Expect(content).To(ContainSubstring(fmt.Sprintf("%d", b.PID())),
+					fmt.Sprintf("PID file should contain bridge %d PID", i))
+			}
+		})
+	})
+
+	// ── Process cleanup verification (#723) ───────────────────────────
+
+	Describe("Process cleanup", func() {
+		It("process is no longer running after Stop", func() {
+			bridge := plugin.NewNodeBridge("/project")
+			err := bridge.Start()
+			Expect(err).NotTo(HaveOccurred())
+			defer bridge.Stop()
+
+			pid := bridge.PID()
+			Expect(pid).To(BeNumerically(">", 0))
+
+			err = bridge.Stop()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = syscall.Kill(pid, 0)
+			Expect(err).To(HaveOccurred(),
+				"process should not exist after Stop")
+		})
+
+		It("Stop is idempotent — calling twice does not error", func() {
+			bridge := plugin.NewNodeBridge("/project")
+			err := bridge.Start()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = bridge.Stop()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = bridge.Stop()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(bridge.State()).To(Equal(plugin.BridgeStopped))
+		})
+
+		It("PID returns 0 after Stop", func() {
+			bridge := plugin.NewNodeBridge("/project")
+			err := bridge.Start()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(bridge.PID()).To(BeNumerically(">", 0))
+
+			err = bridge.Stop()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(bridge.PID()).To(Equal(0),
+				"PID should be 0 after process is stopped")
 		})
 	})
 })

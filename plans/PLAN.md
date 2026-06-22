@@ -219,7 +219,7 @@ content/patterns/card/
 
 `.md` files always require front matter — they are always content. A markdown file without front matter delimiters is a build error.
 
-During content discovery, `DiscoverWithPassthrough` collects two lists: content pages (matching formats) and passthrough files (everything else). Excluded from passthrough: `_data.yaml`/`_data.yml` (cascade data), dot-prefixed files (`.DS_Store`, `.gitkeep`, etc.), and directories. The pipeline copies passthrough files to the output directory during Phase 3 (output writing), alongside static and passthrough-config files. In dev mode, passthrough files in `content/` are served directly from source (no copy needed).
+During content discovery, `DiscoverWithPassthrough` collects two lists: content pages (matching formats) and passthrough files (everything else). Excluded from passthrough: `_data.yaml`/`_data.yml` (cascade data), dot-prefixed files (`.DS_Store`, `.gitkeep`, etc.), and directories. The pipeline copies passthrough files to the output directory during Phase 3 (output writing), alongside static and passthrough-config files. All modes (dev, serve, build) write to `_site/` and serve from there.
 
 **Data files** (`data/`, `_data.*`) — detected by file extension:
 - `.yaml`, `.yml`
@@ -936,14 +936,10 @@ passthrough:
 **Build mode (`alloy build`):**
 - Static and passthrough files are **copied** to `_site/`
 
-**Dev mode (`alloy dev`):**
-- Static and passthrough files are **served directly** from their source locations
-- The Go HTTP server maps URL paths to source directories — no copy at all
-- File changes are reflected instantly (no rebuild, no copy needed — but the watcher still triggers a browser reload)
-
-**Serve mode (`alloy serve`):**
-- Static and passthrough files are **copied** to `_site/` (same as build)
-- Passthrough `from:` directories must be watched for changes. On change, only the modified file is recopied to `_site/<to>/<relative-path>` — not the entire passthrough directory. A browser reload is triggered after the recopy.
+**Both dev and serve modes:**
+- Static, asset, and passthrough files are **copied** to `_site/` during the initial build
+- On file change, the modified file is recopied to `_site/` and a browser reload is triggered
+- Passthrough recopy is targeted — only the changed file is recopied to `_site/<to>/<relative-path>`, not the entire directory
 
 **Passthrough file watching** — `WatchDirs()` must include all passthrough `from:` directories from config. Passthrough sources are directory trees — the watcher must recursively watch subdirectories, including subdirectories created after the server starts. Changes to passthrough files are classified as `PassthroughChange` and trigger a targeted file recopy instead of a full pipeline rebuild.
 
@@ -1266,6 +1262,8 @@ In dev mode, after the initial full build, the file watcher triggers incremental
 - `BuildResult.PagesSkipped` reports how many pages were skipped via cache
 
 **Shared data changes** — When global data files (`data/`), directory data (`_data.yaml`), or collections change, all pages that could be affected are rebuilt. Per-page content-hash detection still prevents unnecessary work for pages whose own content hasn't changed.
+
+**Data file changes and PipelineState (issue #717)** — In dev mode, `PipelineState` is created once at server startup and reused across all `BuildIncremental` calls. `PipelineState.SiteData` is loaded from `cfg.Structure.Data` at creation time. When data files change on disk during a dev session, `BuildIncremental` must re-load site data from disk and update `PipelineState.SiteData` before `processPagination` runs. Without this, paginated virtual pages that reference `site.data.*` use stale data — new items are invisible, modified values don't appear, and removed items persist as ghost pages. Data file changes must also invalidate all paginated pages whose `pagination.data` references the changed data source, forcing re-rendering even when the source template's content hash is unchanged.
 
 **Template invalidation** — Template changes invalidate pages that use that specific template (tracked via the layout resolution step), not all pages in a stage.
 
@@ -2698,7 +2696,7 @@ The `url` filter resolves paths relative to `baseURL`.
 
 ## 8. Dev Server — Two Modes
 
-Alloy's server has two modes. Both use the same built-in Go HTTP server and watch for changes. `alloy serve` writes to and serves from `_site/`, while `alloy dev` serves rendered pages from memory and static/passthrough files directly from source. The difference is what gets written and how updates reach the browser.
+Alloy's server has two modes. Both use the same built-in Go HTTP server, write to `_site/`, serve from `_site/`, and watch for changes. The difference is which pipeline phases run and how updates reach the browser.
 
 ### `alloy dev` — Dev Mode
 
@@ -2745,11 +2743,11 @@ Without an `ssr:` config block, `alloy serve` still works — it just serves Pha
   - `ContentChange`, `LayoutChange`, `DataChange` → pipeline rebuild (incremental in dev, full in serve)
   - `AssetChange` → recopy assets to `_site/`
   - `StaticChange` → recopy static files to `_site/`
-  - `PassthroughChange` → targeted recopy: determine which passthrough mapping the file belongs to, compute relative path within `from:`, copy only that file to `_site/<to>/<relative-path>`. In dev mode, no recopy needed (served from source) — just browser reload.
+  - `PassthroughChange` → targeted recopy: determine which passthrough mapping the file belongs to, compute relative path within `from:`, copy only that file to `_site/<to>/<relative-path>`. Applies to both dev and serve modes.
   - `ComponentChange` → SSR re-render of affected pages
   - All change types trigger a browser reload via WebSocket after the rebuild/recopy completes.
 - **Passthrough targeted recopy** — `RecopyPassthroughFile(changedPath, cfg)` finds the matching passthrough mapping, computes the output path, and copies only the changed file. Does not re-run the pipeline or recopy the entire passthrough directory.
-- **Dev mode (`alloy dev`)**: Rendered pages are held in an in-memory map — no `_site/` output written to disk, lower latency, no SSD wear. Source files (content, layouts, data, assets, static) are still read from disk normally. Static and passthrough files are served directly from their source locations (no copy). Content-colocated non-content files (SVGs, images, JS, etc. in `content/`) are also served directly from `content/` — the dev server's request handler falls back to the content directory for URLs that don't match a rendered page in memory. This ensures relative references like `<img src="./photo.png">` work without writing to `_site/`.
+- **Dev mode (`alloy dev`)**: Writes to `_site/` and serves from there, same as serve mode. The difference is dev mode runs Phase 1 only (no SSR), includes drafts, and uses incremental rebuilds for faster iteration. Static, asset, and passthrough files are copied to `_site/` during the initial build and recopied on change. Content-colocated non-content files (SVGs, images, JS in `content/`) are also copied to `_site/` during the build, ensuring relative references like `<img src="./photo.png">` resolve correctly.
 - **Serve mode (`alloy serve`)**: Writes to `_site/` and serves from disk. Production-like output including SSR. Must have the same file watcher setup as `alloy dev` — watches all directories, dispatches rebuilds by change type, triggers browser reload.
 - **Build mode (`alloy build`)**: Always writes to `_site/`.
 - **Port auto-increment**: If the requested port is occupied, the server tries up to 10 consecutive ports (e.g., 3000 → 3001 → … → 3009) before giving up with an error. A warning is logged for each skipped port (e.g., `[alloy] WARN Port 3000 in use, using 3001`). The startup message always shows the actual port. This matches the behavior of modern dev servers (Vite, Next.js) and reduces friction when multiple projects run simultaneously.
