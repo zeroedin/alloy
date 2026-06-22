@@ -802,11 +802,23 @@ Key points:
 
 #### `cmd/init.go` (issue #26)
 
-`RunInit` needs 4 fixes:
-1. **Create target directory** if it doesn't exist (`os.MkdirAll(dir, 0755)` before writing).
-2. **Generated config must include `baseURL`** — current config is just `title: My Alloy Site` which fails `config.Validate`. Minimum: `title` + `baseURL: "http://localhost:3000"`.
-3. **Print success message** after writing: `fmt.Println("Created alloy.config.yaml")`.
-4. **Don't swallow "already exists" error** — the `RunE` wrapper catches the error, prints it, then returns `nil`. It must return the error so Cobra exits non-zero.
+`RunInit` needs a full rewrite — the current implementation only creates a bare config file and errors on existing projects. The new behavior scaffolds a complete starter project:
+
+1. **Detect existing config** — Use `config.DetectConfigFile(dir)` to check all four extensions (`.yaml`, `.yml`, `.toml`, `.json`). If a config exists, print a message containing `"already exists"` via `cmd.PrintOut()` and return `nil` (no-op, not an error).
+2. **Create target directory** if it doesn't exist (`os.MkdirAll(dir, 0755)`).
+3. **Register five Cobra flags** on the init command: `--content`, `--layouts`, `--assets`, `--static`, `--data` (all string, default empty). These override the corresponding `StructureConfig` directory names.
+4. **Create six project directories**: the five structure paths (using flag values if set, defaults if not) plus `plugins/`. Use `os.MkdirAll` for each.
+5. **Generate `alloy.config.yaml`**: Must include `title` + `baseURL` (passes `config.Validate`). If any structure flag is non-default, include a `structure:` block with only the non-default values. If all flags are defaults, omit the `structure:` block entirely.
+6. **Create starter files**:
+   - `<layouts>/default.liquid` — HTML5 shell with `<!DOCTYPE html>`, `{{ page.title }}` in `<head>`, `{{ content }}` in `<body>`, link to `/style.css`.
+   - `<content>/index.md` — YAML frontmatter with `title:` and `layout: default`.
+   - `<static>/style.css` — Non-empty CSS with minimal reset and readable styling.
+7. **Print success message** after scaffolding.
+
+**Test coverage** (18 tests in `cmd/cmd_test.go`):
+- Fresh project: config creation, 6 directories, default.liquid HTML5 content, index.md frontmatter, style.css non-empty, config validation, no structure: block with defaults, nested dir creation
+- Custom flags: --content=pages, --layouts=templates, --static=public, all 5 flags combined, structure: block in config, only non-default values in structure: block, config validation with custom flags
+- Existing project: DescribeTable for 4 config extensions returns nil, no directories created, prints "already exists"
 
 #### `cmd/build.go` (issue #27)
 

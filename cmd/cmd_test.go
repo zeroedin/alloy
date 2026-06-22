@@ -10,7 +10,17 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/zeroedin/alloy/cmd"
+	"github.com/zeroedin/alloy/internal/config"
 )
+
+// runInitCmd executes alloy init via cobra and returns any error.
+func runInitCmd(dir string, flags ...string) error {
+	root := cmd.NewRootCommand()
+	root.SilenceErrors = true
+	root.SilenceUsage = true
+	root.SetArgs(append([]string{"init", dir}, flags...))
+	return root.Execute()
+}
 
 var _ = Describe("CLI Commands", func() {
 
@@ -50,20 +60,17 @@ var _ = Describe("CLI Commands", func() {
 		})
 
 		It("init command executes successfully", func() {
-			// Clean up CWD artifact from init (no directory arg defaults to ".")
-			DeferCleanup(func() {
-				os.Remove("alloy.config.yaml")
-			})
-			// Remove any leftover from a previous run so this test is idempotent
-			os.Remove("alloy.config.yaml")
+			tmpDir, err := os.MkdirTemp("", "alloy-init-smoke-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
 
 			root := cmd.NewRootCommand()
 			root.SilenceErrors = true
 			root.SilenceUsage = true
-			root.SetArgs([]string{"init"})
-			err := root.Execute()
+			root.SetArgs([]string{"init", tmpDir})
+			err = root.Execute()
 			Expect(err).NotTo(HaveOccurred(),
-				"alloy init must create default config without error")
+				"alloy init must scaffold a project without error")
 		})
 
 		It("version command executes and prints version", func() {
@@ -439,96 +446,383 @@ taxonomies:
 		})
 	})
 
-	// ── alloy init behavior ──────────────────────────────────────────
+	// ── alloy init scaffolding ───────────────────────────────────────
 
 	Describe("alloy init", func() {
-		It("creates alloy.config.yaml in the target directory", func() {
-			tmpDir, err := os.MkdirTemp("", "alloy-init-*")
-			Expect(err).NotTo(HaveOccurred())
-			defer os.RemoveAll(tmpDir)
 
-			err = cmd.RunInit(tmpDir)
-			Expect(err).NotTo(HaveOccurred(),
-				"RunInit must succeed when no config exists")
+		// ── Fresh project (no config exists) ─────────────────────────
 
-			configPath := filepath.Join(tmpDir, "alloy.config.yaml")
-			_, err = os.Stat(configPath)
-			Expect(err).NotTo(HaveOccurred(),
-				"alloy.config.yaml must be created in target directory")
+		Context("fresh project (no config exists)", func() {
+			It("creates alloy.config.yaml in the target directory", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir)).To(Succeed())
+
+				_, err = os.Stat(filepath.Join(tmpDir, "alloy.config.yaml"))
+				Expect(err).NotTo(HaveOccurred(),
+					"alloy.config.yaml must be created in target directory")
+			})
+
+			It("creates all six project directories", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir)).To(Succeed())
+
+				for _, name := range []string{"content", "layouts", "assets", "static", "data", "plugins"} {
+					info, err := os.Stat(filepath.Join(tmpDir, name))
+					Expect(err).NotTo(HaveOccurred(),
+						"%s/ directory must be created by init", name)
+					Expect(info.IsDir()).To(BeTrue(),
+						"%s must be a directory", name)
+				}
+			})
+
+			It("creates layouts/default.liquid with HTML5 shell", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir)).To(Succeed())
+
+				content, err := os.ReadFile(filepath.Join(tmpDir, "layouts", "default.liquid"))
+				Expect(err).NotTo(HaveOccurred(),
+					"layouts/default.liquid must be created by init")
+				s := string(content)
+				Expect(s).To(ContainSubstring("<!DOCTYPE html>"),
+					"default layout must be a valid HTML5 document")
+				Expect(s).To(ContainSubstring("{{ page.title }}"),
+					"default layout must reference {{ page.title }} in the <head>")
+				Expect(s).To(ContainSubstring("{{ content }}"),
+					"default layout must inject page content via {{ content }}")
+				Expect(s).To(ContainSubstring("/style.css"),
+					"default layout must link to /style.css")
+			})
+
+			It("creates content/index.md with title and layout frontmatter", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir)).To(Succeed())
+
+				content, err := os.ReadFile(filepath.Join(tmpDir, "content", "index.md"))
+				Expect(err).NotTo(HaveOccurred(),
+					"content/index.md must be created by init")
+				s := string(content)
+				Expect(s).To(HavePrefix("---"),
+					"index.md must start with YAML frontmatter delimiters")
+				Expect(s).To(ContainSubstring("title:"),
+					"index.md frontmatter must include a title")
+				Expect(s).To(ContainSubstring("layout: default"),
+					"index.md must reference layout: default to use the starter layout")
+			})
+
+			It("creates static/style.css with content", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir)).To(Succeed())
+
+				content, err := os.ReadFile(filepath.Join(tmpDir, "static", "style.css"))
+				Expect(err).NotTo(HaveOccurred(),
+					"static/style.css must be created by init")
+				Expect(content).NotTo(BeEmpty(),
+					"style.css must contain CSS — minimal reset and readable styling "+
+						"so the starter page is not completely unstyled")
+			})
+
+			It("generated config passes config.Validate()", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir)).To(Succeed())
+
+				cfg, err := config.LoadWithDefaults(filepath.Join(tmpDir, "alloy.config.yaml"))
+				Expect(err).NotTo(HaveOccurred(),
+					"generated config must be parseable")
+				Expect(config.Validate(cfg)).To(Succeed(),
+					"generated config must pass validation — "+
+						"requires at minimum title and a valid baseURL")
+			})
+
+			It("does not write structure: block when all directories are defaults", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir)).To(Succeed())
+
+				configBytes, err := os.ReadFile(filepath.Join(tmpDir, "alloy.config.yaml"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(string(configBytes)).NotTo(ContainSubstring("structure:"),
+					"config with all-default directory names must not include a structure: block — "+
+						"the pipeline defaults handle it")
+			})
+
+			It("creates target directory if it does not exist", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				nestedDir := filepath.Join(tmpDir, "new-project", "subdir")
+				Expect(runInitCmd(nestedDir)).To(Succeed(),
+					"init must create the target directory tree if it does not exist")
+
+				_, err = os.Stat(filepath.Join(nestedDir, "alloy.config.yaml"))
+				Expect(err).NotTo(HaveOccurred(),
+					"alloy.config.yaml must exist in the created directory")
+			})
 		})
 
-		It("returns error mentioning 'already exists' when config is present", func() {
-			tmpDir, err := os.MkdirTemp("", "alloy-init-*")
-			Expect(err).NotTo(HaveOccurred())
-			defer os.RemoveAll(tmpDir)
+		// ── Custom structure flags ───────────────────────────────────
 
-			// Pre-create config
-			err = os.WriteFile(
-				filepath.Join(tmpDir, "alloy.config.yaml"),
-				[]byte("title: Existing Site"),
-				0644,
+		Context("custom structure flags", func() {
+			It("--content=pages creates pages/ and places index.md there", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir, "--content=pages")).To(Succeed())
+
+				_, err = os.Stat(filepath.Join(tmpDir, "pages", "index.md"))
+				Expect(err).NotTo(HaveOccurred(),
+					"index.md must be placed in the --content directory")
+				_, err = os.Stat(filepath.Join(tmpDir, "content"))
+				Expect(os.IsNotExist(err)).To(BeTrue(),
+					"default content/ must not be created when --content overrides it")
+			})
+
+			It("--layouts=templates creates templates/ and places default.liquid there", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir, "--layouts=templates")).To(Succeed())
+
+				_, err = os.Stat(filepath.Join(tmpDir, "templates", "default.liquid"))
+				Expect(err).NotTo(HaveOccurred(),
+					"default.liquid must be placed in the --layouts directory")
+				_, err = os.Stat(filepath.Join(tmpDir, "layouts"))
+				Expect(os.IsNotExist(err)).To(BeTrue(),
+					"default layouts/ must not be created when --layouts overrides it")
+			})
+
+			It("--static=public creates public/ and places style.css there", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir, "--static=public")).To(Succeed())
+
+				_, err = os.Stat(filepath.Join(tmpDir, "public", "style.css"))
+				Expect(err).NotTo(HaveOccurred(),
+					"style.css must be placed in the --static directory")
+				_, err = os.Stat(filepath.Join(tmpDir, "static"))
+				Expect(os.IsNotExist(err)).To(BeTrue(),
+					"default static/ must not be created when --static overrides it")
+			})
+
+			It("--assets=resources creates resources/ instead of assets/", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir, "--assets=resources")).To(Succeed())
+
+				info, err := os.Stat(filepath.Join(tmpDir, "resources"))
+				Expect(err).NotTo(HaveOccurred(),
+					"resources/ directory must be created by --assets flag")
+				Expect(info.IsDir()).To(BeTrue())
+				_, err = os.Stat(filepath.Join(tmpDir, "assets"))
+				Expect(os.IsNotExist(err)).To(BeTrue(),
+					"default assets/ must not be created when --assets overrides it")
+			})
+
+			It("--data=datasets creates datasets/ instead of data/", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir, "--data=datasets")).To(Succeed())
+
+				info, err := os.Stat(filepath.Join(tmpDir, "datasets"))
+				Expect(err).NotTo(HaveOccurred(),
+					"datasets/ directory must be created by --data flag")
+				Expect(info.IsDir()).To(BeTrue())
+				_, err = os.Stat(filepath.Join(tmpDir, "data"))
+				Expect(os.IsNotExist(err)).To(BeTrue(),
+					"default data/ must not be created when --data overrides it")
+			})
+
+			It("all five flags rename their directories correctly", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir,
+					"--content=pages",
+					"--layouts=templates",
+					"--assets=resources",
+					"--static=public",
+					"--data=datasets",
+				)).To(Succeed())
+
+				for _, name := range []string{"pages", "templates", "resources", "public", "datasets", "plugins"} {
+					info, err := os.Stat(filepath.Join(tmpDir, name))
+					Expect(err).NotTo(HaveOccurred(),
+						"%s/ directory must be created", name)
+					Expect(info.IsDir()).To(BeTrue())
+				}
+				for _, name := range []string{"content", "layouts", "assets", "static", "data"} {
+					_, err := os.Stat(filepath.Join(tmpDir, name))
+					Expect(os.IsNotExist(err)).To(BeTrue(),
+						"default %s/ must not be created when overridden by flag", name)
+				}
+			})
+
+			It("custom flags write structure: block to config", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir, "--content=pages", "--layouts=templates")).To(Succeed())
+
+				cfg, err := config.Load(filepath.Join(tmpDir, "alloy.config.yaml"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(cfg.Structure.Content).To(Equal("pages"),
+					"structure.content must reflect the --content flag value")
+				Expect(cfg.Structure.Layouts).To(Equal("templates"),
+					"structure.layouts must reflect the --layouts flag value")
+			})
+
+			It("only non-default values appear in structure: block", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir, "--content=pages")).To(Succeed())
+
+				cfg, err := config.Load(filepath.Join(tmpDir, "alloy.config.yaml"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(cfg.Structure.Content).To(Equal("pages"),
+					"custom content path must be written to config")
+				Expect(cfg.Structure.Layouts).To(BeEmpty(),
+					"default layouts value must not be written to config — "+
+						"only non-default structure values should appear")
+				Expect(cfg.Structure.Assets).To(BeEmpty(),
+					"default assets value must not be written to config")
+				Expect(cfg.Structure.Static).To(BeEmpty(),
+					"default static value must not be written to config")
+				Expect(cfg.Structure.Data).To(BeEmpty(),
+					"default data value must not be written to config")
+			})
+
+			It("generated config with custom flags passes config.Validate()", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir, "--content=pages", "--static=public")).To(Succeed())
+
+				cfg, err := config.LoadWithDefaults(filepath.Join(tmpDir, "alloy.config.yaml"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(config.Validate(cfg)).To(Succeed(),
+					"generated config with custom structure must still pass validation")
+			})
+		})
+
+		// ── Existing project (no-op) ─────────────────────────────────
+
+		Context("existing project (config already exists)", func() {
+			DescribeTable("returns nil for all config extensions",
+				func(ext string, content string) {
+					tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+					Expect(err).NotTo(HaveOccurred())
+					defer os.RemoveAll(tmpDir)
+
+					configFile := filepath.Join(tmpDir, "alloy.config"+ext)
+					Expect(os.WriteFile(configFile, []byte(content), 0644)).To(Succeed())
+
+					Expect(runInitCmd(tmpDir)).To(Succeed(),
+						"init must be a no-op (not an error) when a config file already exists — "+
+							"use config.DetectConfigFile to check all four extensions")
+				},
+				Entry(".yaml", ".yaml", "title: Existing\n"),
+				Entry(".yml", ".yml", "title: Existing\n"),
+				Entry(".toml", ".toml", "title = \"Existing\"\n"),
+				Entry(".json", ".json", "{\"title\": \"Existing\"}\n"),
 			)
-			Expect(err).NotTo(HaveOccurred())
 
-			err = cmd.RunInit(tmpDir)
-			Expect(err).To(HaveOccurred(),
-				"RunInit must fail when config already exists")
-			Expect(err.Error()).To(ContainSubstring("already exists"),
-				"error must explain that config already exists")
-		})
+			It("does not create directories or starter files when config exists", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
 
-		It("creates target directory if it does not exist", func() {
-			tmpDir, err := os.MkdirTemp("", "alloy-init-*")
-			Expect(err).NotTo(HaveOccurred())
-			defer os.RemoveAll(tmpDir)
+				Expect(os.WriteFile(
+					filepath.Join(tmpDir, "alloy.config.yaml"),
+					[]byte("title: Existing\nbaseURL: \"http://localhost:3000\"\n"),
+					0644,
+				)).To(Succeed())
 
-			nestedDir := filepath.Join(tmpDir, "new-project", "subdir")
-			err = cmd.RunInit(nestedDir)
-			Expect(err).NotTo(HaveOccurred(),
-				"RunInit must create target directory if it does not exist")
+				Expect(runInitCmd(tmpDir)).To(Succeed())
 
-			configPath := filepath.Join(nestedDir, "alloy.config.yaml")
-			_, err = os.Stat(configPath)
-			Expect(err).NotTo(HaveOccurred(),
-				"alloy.config.yaml must exist in the created directory")
-		})
+				for _, name := range []string{"content", "layouts", "assets", "static", "data", "plugins"} {
+					_, err := os.Stat(filepath.Join(tmpDir, name))
+					Expect(os.IsNotExist(err)).To(BeTrue(),
+						"%s/ must not be created when a config file already exists", name)
+				}
+				_, err = os.Stat(filepath.Join(tmpDir, "layouts", "default.liquid"))
+				Expect(os.IsNotExist(err)).To(BeTrue(),
+					"starter files must not be created when a config file already exists")
+			})
 
-		It("generated config includes baseURL so it passes validation", func() {
-			tmpDir, err := os.MkdirTemp("", "alloy-init-*")
-			Expect(err).NotTo(HaveOccurred())
-			defer os.RemoveAll(tmpDir)
+			It("preserves existing config file content unchanged", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
 
-			err = cmd.RunInit(tmpDir)
-			Expect(err).NotTo(HaveOccurred())
+				originalContent := "title: My Custom Site\nbaseURL: \"https://example.com\"\nlanguage: \"en\"\n"
+				configPath := filepath.Join(tmpDir, "alloy.config.yaml")
+				Expect(os.WriteFile(configPath, []byte(originalContent), 0644)).To(Succeed())
 
-			configPath := filepath.Join(tmpDir, "alloy.config.yaml")
-			configBytes, err := os.ReadFile(configPath)
-			Expect(err).NotTo(HaveOccurred())
-			configStr := string(configBytes)
-			Expect(configStr).To(ContainSubstring("baseURL"),
-				"generated config must include baseURL for config.Validate to pass")
-		})
+				Expect(runInitCmd(tmpDir)).To(Succeed())
 
-		It("init command returns error (not exit 0) when config already exists", func() {
-			tmpDir, err := os.MkdirTemp("", "alloy-init-*")
-			Expect(err).NotTo(HaveOccurred())
-			defer os.RemoveAll(tmpDir)
+				afterContent, err := os.ReadFile(configPath)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(string(afterContent)).To(Equal(originalContent),
+					"init must not modify an existing config file — "+
+						"the no-op path must leave the file byte-for-byte identical")
+			})
 
-			// Pre-create config
-			err = os.WriteFile(
-				filepath.Join(tmpDir, "alloy.config.yaml"),
-				[]byte("title: Existing Site"),
-				0644,
-			)
-			Expect(err).NotTo(HaveOccurred())
+			It("prints message containing 'already exists'", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
 
-			root := cmd.NewRootCommand()
-			root.SilenceErrors = true
-			root.SilenceUsage = true
-			root.SetArgs([]string{"init", tmpDir})
-			err = root.Execute()
-			Expect(err).To(HaveOccurred(),
-				"init command must return error when config exists — not swallow it and exit 0")
+				Expect(os.WriteFile(
+					filepath.Join(tmpDir, "alloy.config.yaml"),
+					[]byte("title: Existing\nbaseURL: \"http://localhost:3000\"\n"),
+					0644,
+				)).To(Succeed())
+
+				var buf bytes.Buffer
+				root := cmd.NewRootCommand()
+				root.SilenceErrors = true
+				root.SilenceUsage = true
+				root.SetOut(&buf)
+				root.SetArgs([]string{"init", tmpDir})
+				Expect(root.Execute()).To(Succeed())
+
+				Expect(buf.String()).To(ContainSubstring("already exists"),
+					"init must print a message like 'alloy project already exists in <dir>' — "+
+						"the user needs to know init detected an existing project and did nothing")
+			})
 		})
 	})
 
