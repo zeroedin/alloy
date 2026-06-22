@@ -307,15 +307,6 @@ alloy version               Print version
 --profile-dir      Profile output directory (default: .alloy/profiles)
 ```
 
-## Performance Targets
-
-| Scenario | Target |
-|----------|--------|
-| 1,000 pages (no SSR) | < 5 seconds |
-| 1,000 pages (with SSR) | < 10 seconds |
-| Incremental rebuild (dev) | < 200ms |
-| Cold start to first serve | < 3 seconds |
-
 ## Dependencies
 
 | Package | Purpose | License |
