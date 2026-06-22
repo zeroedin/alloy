@@ -9,11 +9,10 @@ Build a working blog with Alloy in 5 minutes. By the end, you will have a site w
 ## 1. Create the project
 
 ```bash
-mkdir my-blog && cd my-blog
-alloy init
+alloy init my-blog && cd my-blog
 ```
 
-This creates `alloy.config.yaml` with default settings. Open it and set your site title:
+This scaffolds a complete starter project with a config file, directories, a default layout, an index page, and a stylesheet. Open `alloy.config.yaml` and update the title, then add a taxonomies block for tags:
 
 ```yaml
 # alloy.config.yaml
@@ -24,13 +23,9 @@ taxonomies:
   tags:
 ```
 
-## 2. Create a layout
+## 2. Customize the layout
 
-Alloy uses Liquid templates by default. Create a `layouts/` directory with a `default.liquid` file -- this is the fallback layout for all pages:
-
-```bash
-mkdir -p layouts/partials
-```
+`alloy init` creates a `layouts/default.liquid` with a minimal HTML5 boilerplate. Open it and replace it with a layout that includes a header and navigation:
 
 ```liquid
 <!-- layouts/default.liquid -->

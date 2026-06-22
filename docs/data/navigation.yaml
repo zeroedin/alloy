@@ -63,6 +63,17 @@ sections:
         path: "/hooks/"
       - title: "Scoping"
         path: "/hooks/scoping/"
+  - title: "Assets"
+    path: "/assets/"
+    items:
+      - title: "Overview"
+        path: "/assets/"
+      - title: "Static Files"
+        path: "/assets/static/"
+      - title: "Passthrough Copy"
+        path: "/assets/passthrough/"
+      - title: "Colocated Assets"
+        path: "/assets/colocated/"
   - title: "Advanced"
     path: "/advanced/"
     items:
@@ -72,8 +83,6 @@ sections:
         path: "/advanced/ssr/"
       - title: "i18n"
         path: "/advanced/i18n/"
-      - title: "Static Files"
-        path: "/advanced/static/"
   - title: "CLI"
     path: "/cli/"
     items:

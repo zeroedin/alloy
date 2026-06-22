@@ -286,7 +286,7 @@ Both commands include WebSocket live reload, file watching with 50ms debounce, p
 ## CLI
 
 ```
-alloy init                  Create a new project config
+alloy init                  Scaffold a new project
 alloy build                 Full clean build to _site/ (always rebuilds all pages)
 alloy dev                   Dev server with live reload (incremental rebuilds, drafts visible)
 alloy serve                 Production server (same pipeline as build, served locally)

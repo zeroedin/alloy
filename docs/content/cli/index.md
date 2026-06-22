@@ -8,7 +8,7 @@ Alloy ships as a single binary. All commands follow standard Unix conventions: e
 
 ```bash
 alloy build
-# [alloy] Built 480 pages in 1.2s
+# [alloy] Built 34 pages in 53ms
 ```
 
 ## Commands
@@ -40,7 +40,6 @@ alloy dev --no-drafts
 ```
 
 ```
-[alloy] Built 420 pages in 1.8s
 Serving at http://localhost:3000
 ```
 
@@ -48,7 +47,6 @@ Key behaviors:
 
 - **Drafts are visible by default.** Pages with `draft: true` appear in the dev server so authors can preview work in progress. Use `--no-drafts` to hide them.
 - **Incremental rebuilds.** After the initial build, file changes trigger incremental rebuilds -- only changed and invalidated pages are re-rendered. Template changes invalidate pages that use that specific template, not all pages.
-- **In-memory rendering.** Rendered pages are held in memory, not written to `_site/`. Static and passthrough files are served directly from their source locations.
 - **SSR is skipped.** The dev server runs Phase 1 only. Web Components render client-side.
 - **Port auto-increment.** If the default port (3000) is occupied, Alloy tries up to 10 consecutive ports before failing.
 
@@ -72,18 +70,45 @@ Key behaviors:
 
 ### `alloy init`
 
-Creates a default `alloy.config.yaml` in the target directory.
+Scaffolds a complete starter project with a config file, directory structure, default layout, index page, and stylesheet.
 
 ```bash
 alloy init
 alloy init my-new-site
+alloy init --content pages --layouts templates
 ```
 
-Fails with exit 1 if `alloy.config.yaml` already exists. The generated config contains a valid `title` and `baseURL`:
+If an Alloy config file already exists in the target directory, the command prints a message and exits without modifying anything.
+
+The generated project structure:
+
+```
+my-new-site/
+├── alloy.config.yaml
+├── content/
+│   └── index.md
+├── layouts/
+│   └── default.liquid
+├── assets/
+├── static/
+│   └── style.css
+├── data/
+└── plugins/
+```
+
+Use the `--content`, `--layouts`, `--assets`, `--static`, and `--data` flags to customize directory names. Custom names are written to the `structure:` block in the generated config:
+
+```bash
+alloy init --content pages --layouts templates
+```
 
 ```yaml
+# alloy.config.yaml
 title: "My Alloy Site"
 baseURL: "http://localhost:3000"
+structure:
+  content: "pages"
+  layouts: "templates"
 ```
 
 ### `alloy version`
@@ -108,6 +133,11 @@ Prints usage information for all commands and flags.
 | `--refetch` | | Bypass source cache TTL, fetch fresh data | dev, serve |
 | `--profile` | | Enable per-stage timing and pprof profiling | build |
 | `--profile-dir` | | Directory for profile output (default: `.alloy/profiles`) | build |
+| `--content` | | Content directory name (default: `content`) | init |
+| `--layouts` | | Layouts directory name (default: `layouts`) | init |
+| `--assets` | | Assets directory name (default: `assets`) | init |
+| `--static` | | Static directory name (default: `static`) | init |
+| `--data` | | Data directory name (default: `data`) | init |
 
 ### `--root` flag
 
@@ -122,42 +152,35 @@ alloy build --config deploy/production.yaml --root .
 
 ### `--verbose` flag
 
-Replaces the progress bar with per-file output showing the pipeline stage, file path, and per-file timing:
+Shows per-file output with the pipeline stage, file path, and timing:
 
 ```
-[alloy] render content/index.md (12ms)
-[alloy] render content/blog/first-post.md (8ms)
-[alloy] ssr    content/components/card.md (45ms)
-[alloy] write  _site/index.html
-[alloy] Built 420 pages in 1.8s
+[alloy] discovering 34 pages found
+[alloy] rendering content/index.md (128µs)
+[alloy] rendering content/blog/first-post.md (169µs)
+[alloy] Built 34 pages in 53ms
 ```
 
 ### `--quiet` flag
 
-Suppresses all output except errors. No progress bar, no summary line. Exit code communicates success or failure.
+Suppresses all output except errors. Exit code communicates success or failure.
 
-## Build progress
+## Build output
 
 **Interactive terminal (TTY):** A progress bar showing the current pipeline stage, percentage, and page count:
 
 ```
-[alloy] Discovering content... 480 pages found
-[alloy] Rendering    [=========================] 100% (480/480)
-[alloy] Layouts      [=========================] 100% (480/480)
-[alloy] Writing      [=========================] 100% (480/480)
-[alloy] Built 480 pages in 12.3s
+[alloy] Discovering... 33 pages found
+[alloy] Rendering    ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰ 100% (33/33)
+[alloy] Layouts      ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰ 100% (33/33)
+[alloy] Writing      ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰ 100% (33/33)
+[alloy] Built 33 pages in 52ms
 ```
 
-**Piped output (CI/CD):** Only the final summary line, keeping logs clean:
+**Non-TTY (CI/CD):** Only the summary line:
 
 ```
-[alloy] Built 420 pages in 1.8s
-```
-
-**Incremental rebuilds (dev mode):** A single summary line with timestamp:
-
-```
-[alloy] 12:34:58 Rebuilt 3 pages in 47ms (417 cached)
+[alloy] Built 33 pages in 52ms
 ```
 
 ## Exit codes
@@ -169,11 +192,11 @@ Suppresses all output except errors. No progress bar, no summary line. Exit code
 
 | Feature | `alloy build` | `alloy serve` | `alloy dev` |
 |---|---|---|---|
-| Writes to `_site/` | yes | yes | no (in-memory) |
-| Runs SSR (Phase 2) | yes (if configured) | yes (if configured) | no |
+| Writes to `_site/` | yes | yes | yes |
 | Shows drafts | no | no | yes (default) |
 | File watching | no | yes (full rebuild) | yes (incremental) |
 | Server | no | yes | yes |
 | Use case | CI/CD, deploy | Local production preview | Active development |
+| [Config-driven SSR](/experimental/ssr/) | yes (if configured) | yes (if configured) | no |
 
 See also [Getting Started](/getting-started/) for installation and [Project Structure](/getting-started/project-structure/) for directory layout.

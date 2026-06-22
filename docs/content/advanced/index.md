@@ -4,7 +4,7 @@ title: Advanced Features
 nav_weight: 10
 ---
 
-Alloy includes several advanced features for complex site architectures. This section covers capabilities beyond the core content-to-HTML pipeline.
+This section covers capabilities beyond the core content-to-HTML pipeline.
 
 ## Internationalization
 
@@ -24,19 +24,6 @@ languages:
 
 Each language gets its own content directory and output prefix. Layouts are shared. See [Internationalization](/advanced/i18n/) for the full guide.
 
-## Static Files and Passthrough
+## Server-Side Rendering
 
-Control how non-content files reach the output directory. Static files are copied as-is. Passthrough mappings bring in files from outside your project (monorepo packages, shared assets). Glob patterns and exclude filters control what gets copied.
-
-```yaml
-# alloy.config.yaml
-passthrough:
-  - from: "../design-system/dist/elements"
-    to: "elements"
-  - from: "../shared-assets/fonts/**/*.woff2"
-    to: "assets/fonts"
-    exclude:
-      - "*.map"
-```
-
-See [Static Files and Passthrough](/advanced/static/) for details.
+Web components can be server-rendered into Declarative Shadow DOM at build time using Alloy's plugin system. See [SSR](/advanced/ssr/) for details.

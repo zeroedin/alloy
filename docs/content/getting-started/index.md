@@ -53,7 +53,7 @@ alloy init
 alloy build
 ```
 
-`alloy init` creates a default `alloy.config.yaml` with a title and base URL. `alloy build` runs the pipeline and writes output to `_site/`. A project with no content produces a successful zero-page build.
+`alloy init` scaffolds a complete starter project -- config file, directories, a default layout, an index page, and a stylesheet. `alloy build` runs the pipeline and writes output to `_site/`.
 
 ## What's next
 
