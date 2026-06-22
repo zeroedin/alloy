@@ -20,7 +20,6 @@ Static site generators tend to make you choose between speed and extensibility. 
 - **Multiple output formats** — HTML, JSON, XML, or anything else from a single content file
 - **i18n** — Opt-in multilingual support with per-language content trees and shared layouts
 - **Incremental rebuilds (dev mode)** — Content-hash change detection in `alloy dev` for fast rebuilds on file changes. `alloy build` always does a full clean rebuild for CI/CD reliability.
-- **Web Component SSR (experimental)** — Server-render Lit components into Declarative Shadow DOM at build time via hooks
 - **Tiered plugin system** — Built-in Go filters (ns), in-process JS/WASM plugins (us), Node subprocess plugins (ms)
 - **Dev server** — File watching, WebSocket live reload, error reporting
 
