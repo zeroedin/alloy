@@ -22,13 +22,13 @@ Static site generators tend to make you choose between speed and extensibility. 
 - **Incremental rebuilds (dev mode)** — Content-hash change detection in `alloy dev` for fast rebuilds on file changes. `alloy build` always does a full clean rebuild for CI/CD reliability.
 - **Web Component SSR (experimental)** — Server-render Lit components into Declarative Shadow DOM at build time via hooks
 - **Tiered plugin system** — Built-in Go filters (ns), in-process JS/WASM plugins (us), Node subprocess plugins (ms)
-- **Dev server** — File watching, WebSocket live reload, in-memory rendering, error reporting
+- **Dev server** — File watching, WebSocket live reload, error reporting
 
 ## Quick Start
 
 ```bash
-# Initialize a new project
-alloy init
+# Scaffold a new project
+alloy init my-site && cd my-site
 
 # Start the dev server
 alloy dev
@@ -56,114 +56,23 @@ my-site/
 └── plugins/               # JS, WASM, or Node plugins
 ```
 
+See [Project Structure](https://alloyssg.dev/getting-started/project-structure/) for details.
+
 ## Configuration
 
-```yaml
-# alloy.config.yaml
-title: "My Site"
-baseURL: "https://example.com"
-language: "en"                       # Default language code
-
-# Build output settings
-build:
-  output: "_site"                    # Output directory
-  clean: true                        # Remove output dir before build
-
-# Content file discovery
-content:
-  formats: ["md", "html"]           # File extensions treated as content
-
-# Template engine selection
-templates:
-  engine: "liquid"                   # "liquid" (default) or "gotemplate"
-
-# Taxonomy groupings — keys become collection types
-taxonomies:
-  tags:
-  categories:
-
-# Pagination URL segment — e.g. "p" produces /products/p/2/ instead of /products/page/2/
-pagination:
-  path: "page"
-
-# Override default source directory names
-structure:
-  content: "content"
-  layouts: "layouts"
-  assets: "assets"
-  static: "static"
-  data: "data"
-
-# Copy external directories into output without processing
-passthrough:
-  - from: "node_modules/bootstrap/dist"
-    to: "vendor/bootstrap"
-
-# Plugin runtime settings
-plugins:
-  timeout: 5000                      # Max plugin execution time (ms)
-```
-
-All directory paths are configurable via the `structure:` block. External directories can be mapped into the output with `passthrough:`.
+All site settings live in `alloy.config.yaml` (TOML and JSON also supported). Directory paths, build output, template engine, taxonomies, pagination, and passthrough mappings are all configurable. See [Configuration](https://alloyssg.dev/getting-started/) for the full reference.
 
 ## Content
 
-Content files live in `content/` and require front matter (YAML `---`, TOML `+++`, or JSON `{`):
-
-```markdown
----
-title: "My First Post"
-date: 2026-04-10
-tags: ["go", "static-sites"]
-draft: false
----
-
-# Hello World
-
-Published on {{ page.date | date: "%B %d, %Y" }}.
-```
-
-Template tags (`{{ }}` and `{% %}`) work directly in Markdown — no special syntax needed. Two goldmark extensions handle them: inline tags are preserved as-is, and block shortcodes (`{% tag %}...{% endtag %}` on their own lines) are treated as block-level boundaries so they don't get wrapped in `<p>` tags.
+Content files live in `content/` with YAML, TOML, or JSON front matter. Template tags (`{{ }}` and `{% %}`) work directly in Markdown. See [Content](https://alloyssg.dev/content/) for details.
 
 ## Templates
 
-Alloy supports two built-in template engines (project-wide setting):
-
-**Liquid** (default):
-```liquid
-{% include "partials/header" %}
-<h1>{{ page.title }}</h1>
-{{ content }}
-```
-
-**Go** (`html/template`):
-```html
-{{ template "partials/header" . }}
-<h1>{{ .page.title }}</h1>
-{{ .content }}
-```
-
-Set the engine in config:
-
-```yaml
-templates:
-  engine: "liquid"   # default — or "go" for html/template
-```
-
-Both engines share the same layout lookup order, data context, and built-in filters.
+Alloy supports Liquid (default) and Go `html/template` as built-in engines. Both share the same layout lookup order, data context, and built-in filters. See [Templates](https://alloyssg.dev/templates/) for details.
 
 ## Data Cascade
 
-Six levels, last wins:
-
-1. Global data (`data/*.yaml`, `data/*.json`)
-2. Directory data (`content/blog/_data.yaml` — cascades into subdirs)
-3. Front matter (per-file)
-4. Pre-taxonomy computed data (`onPagesReady` plugins — before taxonomy collection, before Markdown)
-5. Per-page transform (`onContentTransformed` plugins — after Markdown rendering, per-page)
-6. Batch mutation (`onContentLoaded` plugins — after Markdown rendering, batch-level; wins for `frontMatter`)
-
-Objects deep-merge. Arrays replace. Shared data is loaded once and referenced by pointer — no deep copies per page.
+Six levels of data merge predictably (last wins): global data, directory data, front matter, and three plugin hook stages. See [Data Cascade](https://alloyssg.dev/content/data-cascade/) for the full merge order.
 
 ## Plugins
 
@@ -175,137 +84,23 @@ Three tiers, matched to what the plugin needs:
 | 2 | JS (QuickJS) or WASM via wazero | ~us | Custom filters, shortcodes, data transforms |
 | 3 | Node subprocess | ~ms | PostCSS, Sharp, Lit SSR, npm packages |
 
-Drop a `.js` file in `plugins/` and it runs on embedded QuickJS. Export `runtime: "node"` for Node. Drop a `.wasm` file for compiled plugins. No config needed.
-
-```javascript
-// plugins/word-count.js
-export default function(alloy) {
-  alloy.filter("wordCount", (content) => {
-    return content.split(/\s+/).filter(w => w.length > 0).length;
-  });
-
-  alloy.shortcode("youtube", (args) => {
-    return `<iframe src="https://www.youtube.com/embed/${args[0]}"></iframe>`;
-  });
-
-  alloy.hook("onContentTransformed", (page) => {
-    // page.html, page.toc, page.path, page.url, page.frontMatter
-    page.html = page.html.replace(/<img /g, '<img loading="lazy" ');
-    return page;
-  });
-}
-```
-
-Plugins can register filters (`{{ value | filterName }}`), shortcodes (`{% shortcodeName "arg" %}`), and lifecycle hooks. Plugin filters override built-in filters with the same name — last loaded wins.
-
-## External Data Sources
-
-Fetch data from APIs at build time. Fetched data merges into `site.data.*` — templates can't tell the difference between local files and fetched data.
-
-```yaml
-sources:
-  posts:
-    type: "rest"
-    url: "https://api.example.com/posts.json"
-    cache: 3600
-    as: "posts"          # Available as {{ site.data.posts }}
-
-  products:
-    type: "graphql"
-    endpoint: "https://api.example.com/graphql"
-    query: "{ products { id, name, price, slug } }"
-    cache: 1800
-    as: "products"
-
-  blog:
-    type: "plugin"       # Plugin owns auth, pagination, everything
-    plugin: "cms-posts"
-    cache: 3600
-    as: "blog"
-```
-
-Cached to `.alloy/fetch-cache/` on disk. Use `--refetch` to bypass the cache.
+Drop a `.js` file in `plugins/` and it runs on embedded QuickJS. Export `runtime: "node"` for Node. Drop a `.wasm` file for compiled plugins. No config needed. See [Plugins](https://alloyssg.dev/plugins/) for details.
 
 ## Lifecycle Hooks
 
-Plugins can hook into 13 lifecycle events. Hooks chain in alphabetical filename order — each receives the previous hook's output.
-
-| Hook | When | Receives |
-|------|------|----------|
-| `onConfig` | After config load | `{ title, baseURL, build, ... }` |
-| `onBeforeValidation` | Before output path conflict check | `{ paths: ["/about/", ...] }` |
-| `onAfterValidation` | After validation passes | `{ paths, cascade }` (cascade mutable) |
-| `onDataFetched` | After external data fetch | `{ <sourceName>: <data>, ... }` |
-| `onDataCascadeReady` | Cascade fully resolved | `[{ path, data }]` per page |
-| `onPagesReady` | Before taxonomy collection | `{ pages, siteData }` — inject virtual pages |
-| `onContentLoaded` | After content rendering (batch) | `[{ path, url, frontMatter, content, html }]` |
-| `onContentTransformed` | After Markdown rendering (per page) | `{ html, toc, path, url, frontMatter }` |
-| `onPageRendered` | After layout rendering (per page) | HTML string |
-| `onAssetProcess` | Per-asset processing | `{ path, content }` |
-| `onBuildComplete` | Build finished | notification |
-| `onDevServerStart` | Dev server ready | notification |
-| `onFileChanged` | File changed in watch mode | notification |
-
-## Web Component SSR (Experimental)
-
-Alloy can server-render custom elements into Declarative Shadow DOM at build time. SSR is config-driven — add an `ssr:` block and Alloy pipes rendered HTML through the specified command:
-
-```yaml
-# alloy.config.yaml
-ssr:
-  command: "node ssr-worker.js"
-  mode: "exec"       # "exec" (new process per page) or "stream" (persistent subprocess)
-  timeout: 10000     # ms per page
-```
-
-Alloy scans Phase 1 output for custom element tags (any tag with a hyphen). Pages containing them are piped through the SSR command via stdin/stdout. Pages without custom elements skip SSR entirely.
-
-```js
-// ssr-worker.js — minimal Node.js example
-import { render } from '@lit-labs/ssr';
-
-let input = '';
-process.stdin.on('data', (chunk) => { input += chunk; });
-process.stdin.on('end', async () => {
-  const result = await render(input);
-  process.stdout.write(result);
-});
-```
-
-The SSR command can be any executable that reads HTML from stdin and writes transformed HTML to stdout. Two engines are tested: **golit** (Go-native, recommended) and **lit-ssr-wasm**. Phase 2 output is content-hashed — unchanged pages skip SSR on incremental rebuilds.
-
-## Dev Server
-
-Two commands, same infrastructure:
-
-- **`alloy dev`** — Dev mode. Phase 1 only (Liquid + Markdown), components render client-side. Changed pages are written to disk on incremental rebuilds. Drafts visible. On file changes, only affected pages are rebuilt (incremental via content-hash cache).
-- **`alloy serve`** — Production server. Full production pipeline (Phase 1 + Phase 2 SSR if configured). Writes to `_site/` and serves from disk. Drafts excluded. Same output as `alloy build`.
-
-Both commands include WebSocket live reload, file watching with 50ms debounce, port auto-increment (tries up to 10 ports), custom 404 page support, and error overlay in the browser. Layout changes invalidate all pages using that layout. Config changes trigger a full rebuild.
+Plugins can hook into 13 lifecycle events covering config, content rendering, asset processing, and build completion. Hooks chain in alphabetical filename order. See [Lifecycle Events](https://alloyssg.dev/hooks/) for the full list and payloads.
 
 ## CLI
 
 ```
 alloy init                  Scaffold a new project
-alloy build                 Full clean build to _site/ (always rebuilds all pages)
+alloy build                 Full clean build to _site/
 alloy dev                   Dev server with live reload (incremental rebuilds, drafts visible)
 alloy serve                 Production server (same pipeline as build, served locally)
 alloy version               Print version
 ```
 
-**Flags:**
-```
---config, -c       Config file path (default: alloy.config.yaml)
---root, -r         Project root directory (default: config file's directory)
---output, -o       Output directory (default: _site)
---port, -p         Server port (default: 3000, auto-increments if occupied)
---verbose, -v      Verbose logging
---quiet, -q        Suppress output
---no-drafts        Hide drafts in dev mode (alloy dev only)
---refetch          Bypass external data cache
---profile          Per-stage timing + pprof profiling (alloy build only)
---profile-dir      Profile output directory (default: .alloy/profiles)
-```
+See [CLI Reference](https://alloyssg.dev/cli/) for all flags and build modes.
 
 ## Dependencies
 
@@ -357,7 +152,7 @@ go test ./test/integration/...
 go test ./... -v
 ```
 
-Tests use [Ginkgo](https://onsi.github.io/ginkgo/) + [Gomega](https://onsi.github.io/gomega/). 
+Tests use [Ginkgo](https://onsi.github.io/ginkgo/) + [Gomega](https://onsi.github.io/gomega/). Tests are spec-derived and immutable — they define expected behavior. If a test fails, the implementation must change, not the test.
 
 ### Project Layout
 
@@ -393,6 +188,12 @@ plans/
   PLAN.md               Specification
   IMPLEMENTATION.md     Implementation guide
 ```
+
+### Architecture
+
+The spec lives in `plans/PLAN.md`. The implementation guide is `plans/IMPLEMENTATION.md`. Both are the source of truth — tests encode the spec, implementation must conform to tests.
+
+**Workflow**: Spec changes → tests → implementation. Tests are written first (red), implementation makes them green. Tests are never modified to pass.
 
 ## License
 
