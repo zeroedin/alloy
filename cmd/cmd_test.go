@@ -628,6 +628,38 @@ taxonomies:
 					"default static/ must not be created when --static overrides it")
 			})
 
+			It("--assets=resources creates resources/ instead of assets/", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir, "--assets=resources")).To(Succeed())
+
+				info, err := os.Stat(filepath.Join(tmpDir, "resources"))
+				Expect(err).NotTo(HaveOccurred(),
+					"resources/ directory must be created by --assets flag")
+				Expect(info.IsDir()).To(BeTrue())
+				_, err = os.Stat(filepath.Join(tmpDir, "assets"))
+				Expect(os.IsNotExist(err)).To(BeTrue(),
+					"default assets/ must not be created when --assets overrides it")
+			})
+
+			It("--data=datasets creates datasets/ instead of data/", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir, "--data=datasets")).To(Succeed())
+
+				info, err := os.Stat(filepath.Join(tmpDir, "datasets"))
+				Expect(err).NotTo(HaveOccurred(),
+					"datasets/ directory must be created by --data flag")
+				Expect(info.IsDir()).To(BeTrue())
+				_, err = os.Stat(filepath.Join(tmpDir, "data"))
+				Expect(os.IsNotExist(err)).To(BeTrue(),
+					"default data/ must not be created when --data overrides it")
+			})
+
 			It("all five flags rename their directories correctly", func() {
 				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
 				Expect(err).NotTo(HaveOccurred())
@@ -727,7 +759,7 @@ taxonomies:
 				Entry(".json", ".json", "{\"title\": \"Existing\"}\n"),
 			)
 
-			It("does not create directories when config exists", func() {
+			It("does not create directories or starter files when config exists", func() {
 				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
 				Expect(err).NotTo(HaveOccurred())
 				defer os.RemoveAll(tmpDir)
@@ -740,10 +772,32 @@ taxonomies:
 
 				Expect(runInitCmd(tmpDir)).To(Succeed())
 
-				_, err = os.Stat(filepath.Join(tmpDir, "content"))
+				for _, name := range []string{"content", "layouts", "assets", "static", "data", "plugins"} {
+					_, err := os.Stat(filepath.Join(tmpDir, name))
+					Expect(os.IsNotExist(err)).To(BeTrue(),
+						"%s/ must not be created when a config file already exists", name)
+				}
+				_, err = os.Stat(filepath.Join(tmpDir, "layouts", "default.liquid"))
 				Expect(os.IsNotExist(err)).To(BeTrue(),
-					"init must not create any project directories when a config file already exists — "+
-						"it should detect the existing config and exit as a no-op")
+					"starter files must not be created when a config file already exists")
+			})
+
+			It("preserves existing config file content unchanged", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				originalContent := "title: My Custom Site\nbaseURL: \"https://example.com\"\nlanguage: \"en\"\n"
+				configPath := filepath.Join(tmpDir, "alloy.config.yaml")
+				Expect(os.WriteFile(configPath, []byte(originalContent), 0644)).To(Succeed())
+
+				Expect(runInitCmd(tmpDir)).To(Succeed())
+
+				afterContent, err := os.ReadFile(configPath)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(string(afterContent)).To(Equal(originalContent),
+					"init must not modify an existing config file — "+
+						"the no-op path must leave the file byte-for-byte identical")
 			})
 
 			It("prints message containing 'already exists'", func() {
