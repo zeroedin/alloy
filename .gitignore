@@ -8,3 +8,6 @@ _site/
 # Test artifact: cmd tests create this in CWD
 cmd/alloy.config.yaml
 .worktrees
+
+# GoReleaser / release build output
+dist/
