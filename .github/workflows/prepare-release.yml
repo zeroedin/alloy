@@ -1,0 +1,117 @@
+name: Prepare Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for changesets
+        id: check
+        run: |
+          CHANGESETS=$(find .changeset -name '*.md' ! -name 'README.md' 2>/dev/null | wc -l | tr -d ' ')
+          echo "count=$CHANGESETS" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release
+        if: steps.check.outputs.count != '0'
+        run: |
+          set -euo pipefail
+
+          # Parse changesets: determine bump type and collect descriptions
+          BUMP="patch"
+          DESCRIPTIONS=""
+
+          for file in .changeset/*.md; do
+            [ "$(basename "$file")" = "README.md" ] && continue
+
+            # Extract type from frontmatter
+            TYPE=$(sed -n '/^---$/,/^---$/{ /^type:/{ s/^type: *//; p; } }' "$file")
+
+            # Determine highest bump
+            case "$TYPE" in
+              major) BUMP="major" ;;
+              minor) [ "$BUMP" != "major" ] && BUMP="minor" ;;
+            esac
+
+            # Extract description (everything after second ---)
+            DESC=$(sed '1,/^---$/d; 1,/^---$/d' "$file" | sed '/^$/d')
+            DESCRIPTIONS="${DESCRIPTIONS}- ${DESC}"$'\n'
+          done
+
+          # Read current version from cmd/version.go
+          CURRENT=$(grep -oP 'Version = "\K[0-9]+\.[0-9]+\.[0-9]+' cmd/version.go)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          # Calculate next version
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+          VERSION="${MAJOR}.${MINOR}.${PATCH}"
+
+          echo "Bump: $BUMP | $CURRENT -> $VERSION"
+
+          # Update CHANGELOG.md
+          DATE=$(date +%Y-%m-%d)
+          ENTRY="## v${VERSION} (${DATE})"$'\n\n'"${DESCRIPTIONS}"
+
+          if [ -f CHANGELOG.md ]; then
+            echo -e "${ENTRY}\n$(cat CHANGELOG.md)" > CHANGELOG.md
+          else
+            echo "$ENTRY" > CHANGELOG.md
+          fi
+
+          # Update version in cmd/version.go
+          sed -i "s/Version = \"${CURRENT}\"/Version = \"${VERSION}\"/" cmd/version.go
+
+          # Delete consumed changesets
+          find .changeset -name '*.md' ! -name 'README.md' -delete
+
+          # Store for PR body
+          echo "$DESCRIPTIONS" > /tmp/release-notes.md
+          echo "$VERSION" > /tmp/release-version.txt
+
+      - name: Create release branch and PR
+        if: steps.check.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          VERSION=$(cat /tmp/release-version.txt)
+          NOTES=$(cat /tmp/release-notes.md)
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout -B release/next
+          git add -A
+          git commit -m "chore: prepare release v${VERSION}"
+          git push origin release/next --force
+
+          PR_BODY="## v${VERSION}"$'\n\n'"${NOTES}"
+
+          # Create or update PR
+          EXISTING=$(gh pr list --head release/next --state open --json number --jq '.[0].number')
+          if [ -n "$EXISTING" ]; then
+            gh pr edit "$EXISTING" \
+              --title "chore: prepare release v${VERSION}" \
+              --body "$PR_BODY"
+          else
+            gh pr create \
+              --base main \
+              --head release/next \
+              --title "chore: prepare release v${VERSION}" \
+              --body "$PR_BODY"
+          fi
