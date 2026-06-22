@@ -1,4 +1,4 @@
-.claude/settings.local.json
+.claude/
 alloy
 
 # Build output and cache (created by pipeline during builds/tests)

@@ -1,5 +1,5 @@
-<img src="docs/static/alloy.svg" alt="Alloy" width="120">
-
+<img src="docs/static/images/alloy-logo.svg" alt="Alloy" width="120">
+  
 # Alloy
 
 A fast, extensible static site generator. Built in Go, ships as a single binary.
