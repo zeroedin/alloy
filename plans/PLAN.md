@@ -2798,7 +2798,7 @@ Scripts and CI pipelines rely on exit codes. The error return from `cmd.Execute(
 ### Commands
 
 ```
-alloy init               # Create default alloy.config.yaml (fails if one already exists)
+alloy init               # Scaffold a new project (no-op if config already exists)
 alloy build              # Run pipeline (Phase 1 + Phase 2 if SSR configured), write _site/, exit
 alloy dev                # Dev mode: Phase 1, full page reload, client-side components, drafts visible
 alloy serve              # Production server: same pipeline as build, served locally, full reload
@@ -2808,16 +2808,30 @@ alloy help               # Help text
 
 #### `alloy init [directory]`
 
-Creates a default `alloy.config.yaml` in the target directory (default: current directory).
+Scaffolds a complete starter project in the target directory (default: current directory).
 
 - **Creates target directory** if it does not exist (`os.MkdirAll`).
-- **Fails with exit 1** if `alloy.config.yaml` already exists. Error message must contain `"already exists"`.
-- **Prints success message** on creation: `Created alloy.config.yaml` (or `Created <dir>/alloy.config.yaml` when a directory argument is given).
-- **Generated config** must be valid for `config.Validate` — at minimum `title` and `baseURL`:
+- **No-op when a config file already exists.** Use `config.DetectConfigFile` to check all four extensions (`.yaml`, `.yml`, `.toml`, `.json`). Return `nil` (not an error) and print a message containing `"already exists"`. Do not create any directories or files.
+- **Creates `alloy.config.yaml`** with at minimum `title` and `baseURL` (must pass `config.Validate`). When all structure directories are defaults, do not include a `structure:` block — the pipeline defaults handle it.
+- **Creates six project directories**: the five `StructureConfig` paths (content, layouts, assets, static, data) plus `plugins/`. Uses the configured names if overridden via flags, otherwise the defaults.
+- **Creates starter files**:
+  - `layouts/default.liquid` — HTML5 shell (`<!DOCTYPE html>`) referencing `{{ page.title }}` in the `<head>`, injecting `{{ content }}` in the `<body>`, and linking to `/style.css`.
+  - `content/index.md` — YAML frontmatter (`---` delimiters) with `title:` and `layout: default`.
+  - `static/style.css` — non-empty CSS with minimal reset and readable styling.
+- **Custom structure flags** (`--content`, `--layouts`, `--assets`, `--static`, `--data`): override the default directory names. Starter files are placed in the custom directories (e.g., `--content=pages` puts `index.md` in `pages/`). A `structure:` block is written to the config containing only non-default values — fields left at their default are omitted.
+- **Nested directory creation**: `alloy init path/to/new-project/subdir` creates the entire directory tree.
 
 ```yaml
+# Generated config (defaults — no structure: block)
 title: "My Alloy Site"
 baseURL: "http://localhost:3000"
+
+# Generated config (with --content=pages --layouts=templates)
+title: "My Alloy Site"
+baseURL: "http://localhost:3000"
+structure:
+  content: "pages"
+  layouts: "templates"
 ```
 
 #### `alloy build`
@@ -3313,9 +3327,9 @@ A validation-only command that reuses Phase 0 logic without running a full build
 
 Resolved in #256: split into `alloy dev` (development) and `alloy serve` (production). The `--preview` flag is removed.
 
-### `alloy init` Scaffolding
+### ~~`alloy init` Scaffolding~~ (Resolved)
 
-Extend `alloy init` beyond creating a bare `alloy.config.yaml` to optionally scaffold directory structure, starter templates, and `.gitignore`. Could use Go's `//go:embed` to bundle starter files in the binary (no network needed). Deferred because users have their own opinions about directory naming and structure — less is more for v1.
+Resolved: `alloy init` now scaffolds a complete starter project — config, six directories, starter layout, content, and stylesheet. Custom structure flags (`--content`, `--layouts`, `--assets`, `--static`, `--data`) let users override directory names. Existing projects (any config extension detected) get a no-op instead of an error. See `alloy init [directory]` in the Commands section.
 
 ### Asset Exclude Globs
 
