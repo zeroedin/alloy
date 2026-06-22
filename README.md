@@ -357,7 +357,7 @@ go test ./test/integration/...
 go test ./... -v
 ```
 
-Tests use [Ginkgo](https://onsi.github.io/ginkgo/) + [Gomega](https://onsi.github.io/gomega/). Tests are spec-derived — they define expected behavior. If a test fails, the implementation must change, not the test.
+Tests use [Ginkgo](https://onsi.github.io/ginkgo/) + [Gomega](https://onsi.github.io/gomega/). 
 
 ### Project Layout
 
@@ -393,12 +393,6 @@ plans/
   PLAN.md               Specification
   IMPLEMENTATION.md     Implementation guide
 ```
-
-### Architecture
-
-The spec lives in `plans/PLAN.md`. The implementation guide is `plans/IMPLEMENTATION.md`. Both are the source of truth — tests encode the spec, implementation must conform to tests.
-
-**Workflow**: Spec changes → tests → implementation. Tests are written first (red), implementation makes them green. Tests are never modified to pass.
 
 ## License
 
