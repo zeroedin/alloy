@@ -1003,6 +1003,15 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 				}
 			})
 
+			It("unsupported element type in hooks array returns error", func() {
+				rt := plugin.NewWASMRuntime()
+				err := rt.LoadModule(filepath.Join(testdataDir(), "single-files", "wasm-bad-element-type-hooks.wasm"))
+				Expect(err).To(HaveOccurred(),
+					"LoadModule must return an error when a hooks() array element is "+
+						"neither a string nor an object — numbers, booleans, and nulls "+
+						"are not valid hook registrations (issue #742)")
+			})
+
 			It("WASM priority survives full LoadPlugins bridge path", func() {
 				tmpDir := GinkgoT().TempDir()
 				src, err := os.ReadFile(filepath.Join(testdataDir(), "single-files", "wasm-priority-only-hooks.wasm"))
@@ -1021,6 +1030,15 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 						"HookRegistry — a WASM module registering onContentTransformed "+
 						"with priority 25 via hooks() object format must result in a "+
 						"registered hook in the HookRegistry (issue #742)")
+
+				priorities := plugin.HookPriorities(hookRegistry, plugin.OnContentTransformed)
+				Expect(priorities).To(HaveLen(1),
+					"exactly one hook should be registered for onContentTransformed (issue #742)")
+				Expect(priorities[0]).To(Equal(25),
+					"the registered hook priority must be 25, not the default 50 — "+
+						"verifies that per-hook priority from hooks() object format "+
+						"survives the full path: discoverHooks → RegisteredHookDetails → "+
+						"registerRuntime → RegisterWithPriority (issue #742)")
 			})
 		})
 

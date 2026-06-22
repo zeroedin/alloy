@@ -12,3 +12,13 @@ func AppendHook(r *NodeRuntime, name string) {
 func RegisterRuntime(reg *Registry, rt PluginFilterRuntime, name string, hooks *HookRegistry) {
 	reg.registerRuntime(rt, name, hooks)
 }
+
+// HookPriorities returns the priorities of all registered hooks for a given event.
+func HookPriorities(r *HookRegistry, event HookName) []int {
+	hooks := r.hooks[event]
+	priorities := make([]int, len(hooks))
+	for i, h := range hooks {
+		priorities[i] = h.priority
+	}
+	return priorities
+}
