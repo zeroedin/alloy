@@ -2,7 +2,7 @@
   
 # Alloy
 
-A fast, extensible static site generator. Built in Go, ships as a single binary.
+A fast, extensible static site generator. Built in Go.
 
 ## Why Alloy?
 
