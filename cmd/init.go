@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/zeroedin/alloy/internal/config"
@@ -44,6 +45,18 @@ func runInitE(cmd *cobra.Command, args []string) error {
 	assetsDir, _ := cmd.Flags().GetString("assets")
 	staticDir, _ := cmd.Flags().GetString("static")
 	dataDir, _ := cmd.Flags().GetString("data")
+
+	for _, pair := range []struct{ flag, val string }{
+		{"--content", contentDir},
+		{"--layouts", layoutsDir},
+		{"--assets", assetsDir},
+		{"--static", staticDir},
+		{"--data", dataDir},
+	} {
+		if err := validateDirFlag(pair.flag, pair.val); err != nil {
+			return err
+		}
+	}
 
 	for _, d := range []string{contentDir, layoutsDir, assetsDir, staticDir, dataDir, "plugins"} {
 		if err := os.MkdirAll(filepath.Join(dir, d), 0755); err != nil {
@@ -128,5 +141,18 @@ body {
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Created new Alloy project in %s\n", dir)
+	return nil
+}
+
+func validateDirFlag(flag, val string) error {
+	if val == "" {
+		return fmt.Errorf("%s must not be empty", flag)
+	}
+	if filepath.IsAbs(val) {
+		return fmt.Errorf("%s must be a relative path, got %q", flag, val)
+	}
+	if strings.Contains(val, "..") {
+		return fmt.Errorf("%s must not contain path traversal, got %q", flag, val)
+	}
 	return nil
 }
