@@ -1,0 +1,4 @@
+body_class: docs-page
+nav_section: "Content"
+nav_section_weight: 2
+nav_weight: 10

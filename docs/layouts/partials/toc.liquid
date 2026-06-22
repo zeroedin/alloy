@@ -1,0 +1,15 @@
+{% if page.toc.size > 0 %}
+<nav class="toc-nav" aria-label="On this page">
+  <h3>On this page</h3>
+  <ul>
+    {% for entry in page.toc %}
+      <li><a href="#{{ entry.id }}">{{ entry.text }}</a></li>
+      {% if entry.children.size > 0 %}
+        {% for child in entry.children %}
+          <li class="toc-child"><a href="#{{ child.id }}">{{ child.text }}</a></li>
+        {% endfor %}
+      {% endif %}
+    {% endfor %}
+  </ul>
+</nav>
+{% endif %}

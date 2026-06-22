@@ -1,3 +1,5 @@
+<img src="docs/static/alloy.svg" alt="Alloy" width="120">
+
 # Alloy
 
 A fast, extensible static site generator. Built in Go, ships as a single binary.
@@ -246,35 +248,37 @@ Plugins can hook into 13 lifecycle events. Hooks chain in alphabetical filename 
 
 ## Web Component SSR (Experimental)
 
-Alloy can server-render Lit components into Declarative Shadow DOM at build time using the `onPageRendered` hook. A Node plugin wraps `@lit-labs/ssr` to transform custom elements in your rendered HTML:
+Alloy can server-render custom elements into Declarative Shadow DOM at build time. SSR is config-driven — add an `ssr:` block and Alloy pipes rendered HTML through the specified command:
 
-```javascript
-// plugins/lit-ssr.js
-export const runtime = "node";
-
-export default function(alloy) {
-  alloy.hook("onPageRendered", async (html) => {
-    const { render } = await import("@lit-labs/ssr");
-    const { collectResult } = await import("@lit-labs/ssr/lib/render-result.js");
-    return collectResult(render(html));
-  });
-}
+```yaml
+# alloy.config.yaml
+ssr:
+  command: "node ssr-worker.js"
+  mode: "exec"       # "exec" (new process per page) or "stream" (persistent subprocess)
+  timeout: 10000     # ms per page
 ```
 
-Use Lit components directly in your templates — the plugin handles the rest:
+Alloy scans Phase 1 output for custom element tags (any tag with a hyphen). Pages containing them are piped through the SSR command via stdin/stdout. Pages without custom elements skip SSR entirely.
 
-```html
-<my-header site-name="{{ site.title }}"></my-header>
-{{ content }}
+```js
+// ssr-worker.js — minimal Node.js example
+import { render } from '@lit-labs/ssr';
+
+let input = '';
+process.stdin.on('data', (chunk) => { input += chunk; });
+process.stdin.on('end', async () => {
+  const result = await render(input);
+  process.stdout.write(result);
+});
 ```
 
-This is experimental. The hook-based approach means SSR is just a plugin, not a core dependency — swap in any rendering library that accepts HTML strings.
+The SSR command can be any executable that reads HTML from stdin and writes transformed HTML to stdout. Two engines are tested: **golit** (Go-native, recommended) and **lit-ssr-wasm**. Phase 2 output is content-hashed — unchanged pages skip SSR on incremental rebuilds.
 
 ## Dev Server
 
 Two commands, same infrastructure:
 
-- **`alloy dev`** — Dev mode. Phase 1 only (Liquid + Markdown), components render client-side. Pages held in memory, no disk writes. Static files served from source. Drafts visible. On file changes, only affected pages are rebuilt (incremental via content-hash cache).
+- **`alloy dev`** — Dev mode. Phase 1 only (Liquid + Markdown), components render client-side. Changed pages are written to disk on incremental rebuilds. Drafts visible. On file changes, only affected pages are rebuilt (incremental via content-hash cache).
 - **`alloy serve`** — Production server. Full production pipeline (Phase 1 + Phase 2 SSR if configured). Writes to `_site/` and serves from disk. Drafts excluded. Same output as `alloy build`.
 
 Both commands include WebSocket live reload, file watching with 50ms debounce, port auto-increment (tries up to 10 ports), custom 404 page support, and error overlay in the browser. Layout changes invalidate all pages using that layout. Config changes trigger a full rebuild.
@@ -322,6 +326,11 @@ alloy version               Print version
 | [fsnotify](https://github.com/fsnotify/fsnotify) | File watching | BSD-3 |
 | [wazero](https://github.com/tetratelabs/wazero) | WASM runtime (plugins) | Apache-2.0 |
 | [gorilla/websocket](https://github.com/gorilla/websocket) | Live reload | BSD-3 |
+| [sonic](https://github.com/bytedance/sonic) | High-performance JSON | Apache-2.0 |
+| [qjs](https://github.com/nicholasgasior/goquickjs) | QuickJS binding (Tier 2 JS plugins) | MIT |
+| [toml](https://github.com/BurntSushi/toml) | TOML config/front matter parsing | MIT |
+| [doublestar](https://github.com/bmatcuk/doublestar) | Glob pattern matching | MIT |
+| [strftime](https://github.com/lestrrat-go/strftime) | Date formatting | MIT |
 
 ## Development
 
@@ -362,14 +371,20 @@ Tests use [Ginkgo](https://onsi.github.io/ginkgo/) + [Gomega](https://onsi.githu
 ### Project Layout
 
 ```
-cmd/                    CLI commands (init, build, serve)
+cmd/                    CLI commands (init, build, dev, serve)
 internal/
+  assets/               Asset processing hooks
   cache/                Build cache for incremental rebuilds
-  cascade/              Data cascade (5-level merge)
+  cascade/              Data cascade (6-level merge)
   collection/           Collections and taxonomies
   config/               Config loading (YAML, TOML, JSON)
   content/              Content discovery, front matter, markdown
+  data/                 Data file loading (YAML, JSON, TOML, CSV)
+  fetch/                External data source fetching (REST, GraphQL)
+  fileutil/             File utility helpers
   i18n/                 Multilingual support
+  jsonutil/             JSON utilities (sonic-backed)
+  ordered/              Ordered map for key-order preservation
   output/               Output writing, sitemap, feeds
   pagination/           Pagination and virtual pages
   permalink/            URL generation
@@ -379,6 +394,7 @@ internal/
   ssr/                  Web Component SSR (Phase 2)
   static/               Static file and passthrough copy
   template/             Liquid + Go template engines, filters
+  validation/           Output path conflict detection
 test/
   fixtures/             Test site fixtures
   integration/          Cross-package integration tests

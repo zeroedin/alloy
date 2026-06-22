@@ -1,0 +1,40 @@
+---
+layout: base
+---
+<div class="docs-layout">
+  <aside class="sidebar">
+    {% include "partials/sidebar" %}
+  </aside>
+  <main class="content">
+    <article>
+      <h1>{{ page.title }}</h1>
+      {{ content }}
+    </article>
+  </main>
+  {% if page.toc.size > 0 %}
+  <aside class="toc-sidebar">
+    {% include "partials/toc" %}
+  </aside>
+  {% endif %}
+</div>
+{% if page.toc.size > 0 %}
+<script>
+(function(){
+  var links = document.querySelectorAll('.toc-nav a');
+  if (!links.length) return;
+  var observer = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if (e.isIntersecting) {
+        links.forEach(function(a){ a.classList.remove('active'); });
+        var match = document.querySelector('.toc-nav a[href="#' + e.target.id + '"]');
+        if (match) match.classList.add('active');
+      }
+    });
+  }, { rootMargin: '0px 0px -70% 0px', threshold: 0 });
+  document.querySelectorAll('.toc-nav a').forEach(function(a){
+    var el = document.getElementById(a.getAttribute('href').slice(1));
+    if (el) observer.observe(el);
+  });
+})();
+</script>
+{% endif %}

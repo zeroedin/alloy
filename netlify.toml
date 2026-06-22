@@ -1,0 +1,19 @@
+[build]
+  command = "go build -o alloy . && ./alloy build"
+  publish = "_site"
+
+[build.environment]
+  GO_VERSION = "1.25.4"
+
+[context.deploy-preview]
+  command = "go build -o alloy . && ./alloy build"
+
+[context.branch-deploy]
+  command = "go build -o alloy . && ./alloy build"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
