@@ -93,3 +93,11 @@ jobs:
           gh release create "v${VERSION}" dist/* \
             --title "v${VERSION}" \
             --notes-file /tmp/release-notes.md
+
+      - name: Update Homebrew tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          gh workflow run update-formula.yml \
+            --repo zeroedin/homebrew-alloy-ssg \
+            --field version="${{ steps.version.outputs.version }}"
