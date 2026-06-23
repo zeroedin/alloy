@@ -53,5 +53,5 @@ brew tap zeroedin/alloy-ssg
 brew install alloy-ssg
 ```
 
-  <p>macOS and Linux. See the <a href="/getting-started/">installation guide</a> for Windows, Go install, and other options.</p>
+  <p>macOS, Linux, and Windows WSL. See the <a href="/getting-started/">installation guide</a> for other options.</p>
 </div>
