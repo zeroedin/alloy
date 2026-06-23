@@ -22,36 +22,34 @@ jobs:
           CHANGESETS=$(find .changeset -name '*.md' ! -name 'README.md' 2>/dev/null | wc -l | tr -d ' ')
           echo "count=$CHANGESETS" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare release
+      - name: Prepare and publish release branch
         if: steps.check.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          # Parse changesets: determine bump type and collect descriptions
+          # Parse changesets: determine bump type and collect descriptions to file
           BUMP="patch"
           > /tmp/descriptions.md
 
           for file in .changeset/*.md; do
             [ "$(basename "$file")" = "README.md" ] && continue
 
-            # Extract type from frontmatter
             TYPE=$(sed -n '/^---$/,/^---$/{ /^type:/{ s/^type: *//; p; } }' "$file")
 
-            # Determine highest bump
             case "$TYPE" in
               major) BUMP="major" ;;
               minor) [ "$BUMP" != "major" ] && BUMP="minor" ;;
             esac
 
-            # Extract description (everything after second ---) directly to file
             sed '1,/^---$/d; 1,/^---$/d' "$file" >> /tmp/descriptions.md
           done
 
-          # Read current version from cmd/version.go
+          # Read current version
           CURRENT=$(grep -oP 'Version = "\K[0-9]+\.[0-9]+\.[0-9]+' cmd/version.go)
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
 
-          # Calculate next version
           case "$BUMP" in
             major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
             minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
@@ -61,7 +59,13 @@ jobs:
 
           echo "Bump: $BUMP | $CURRENT -> $VERSION"
 
-          # Build CHANGELOG.md
+          # Switch to release branch and reset to triggering commit
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B release/next
+          git reset --hard "$GITHUB_SHA"
+
+          # Now modify files on a clean working tree matching main
           DATE=$(date +%Y-%m-%d)
           {
             echo "## v${VERSION} (${DATE})"
@@ -76,29 +80,11 @@ jobs:
             cp /tmp/changelog-entry.md CHANGELOG.md
           fi
 
-          # Update version in cmd/version.go
           sed -i "s/Version = \"${CURRENT}\"/Version = \"${VERSION}\"/" cmd/version.go
 
-          # Delete consumed changesets
           find .changeset -name '*.md' ! -name 'README.md' -delete
 
-          # Store for PR body
-          cp /tmp/descriptions.md /tmp/release-notes.md
-          echo "$VERSION" > /tmp/release-version.txt
-
-      - name: Create release branch and PR
-        if: steps.check.outputs.count != '0'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          VERSION=$(cat /tmp/release-version.txt)
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git checkout -B release/next
+          # Commit and push
           git add -A
           git commit -m "chore: prepare release v${VERSION}"
           git push origin release/next --force
@@ -107,7 +93,7 @@ jobs:
           {
             echo "## v${VERSION}"
             echo ""
-            cat /tmp/release-notes.md
+            cat /tmp/descriptions.md
           } > /tmp/pr-body.md
 
           # Create or update PR
