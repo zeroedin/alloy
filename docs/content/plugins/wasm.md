@@ -290,6 +290,8 @@ Only `name` is required in registration objects. All other fields are optional:
 
 Scope filtering reduces the data serialized across the WASM memory boundary, which matters on large sites.
 
+Taxonomy filtering (`{"taxonomy": ["terms"]}`) is only available on hooks that fire after taxonomy indices are built. Hooks like `onPagesReady` that fire before indexing reject taxonomy scope with an error — use `"pages": "blog/**"` instead. See [Lifecycle Events](/hooks/) for hook execution order.
+
 ### Rust Example
 
 ```rust
