@@ -53,7 +53,7 @@ last_error() -> (ptr i32, len i32)
 ```
 
 - **`shortcode`**: Input is a JSON object `{ "name": "youtube", "args": ["abc123"], "content": "" }`. Output is a UTF-8 HTML string.
-- **`hooks`**: Called once at module load, no input. Returns a JSON array of hook name strings (e.g., `["onContentTransformed"]`).
+- **`hooks`**: Called once at module load, no input. Returns a JSON array of hook names (strings) or registration objects (see [Hook Priority and Scope](#hook-priority-and-scope)).
 - **`hook`**: Input is a JSON payload with an `"event"` key. Output is the modified JSON payload.
 - **`last_error`**: Called when any export returns `(0, 0)`. Returns an error message string.
 
@@ -72,7 +72,7 @@ For every call from Alloy to a WASM export:
 
 If any export returns `(0, 0)`, Alloy treats it as an error. If the module exports `last_error()`, Alloy reads and surfaces the error message. No silent fallback to the original input.
 
-If `hooks()` returns invalid JSON (not an array of strings), module loading fails. If `hook()` returns non-JSON bytes, the hook call returns an error.
+If `hooks()` returns invalid JSON (not an array of strings/objects), module loading fails. If `hook()` returns non-JSON bytes, the hook call returns an error.
 
 ## Rust Example
 
@@ -260,7 +260,60 @@ pub extern "C" fn hook(ptr: i32, len: i32) -> u64 {
 }
 ```
 
-WASM hooks always run at default priority 50. There is no mechanism for per-hook priority in the WASM ABI.
+## Hook Priority and Scope
+
+The `hooks()` export can return a mix of strings and registration objects. Strings default to priority 50 with no scope filtering. Objects let you control execution order and limit the data payload.
+
+### Format
+
+```json
+[
+  "onBuildComplete",
+  {
+    "name": "onContentTransformed",
+    "priority": 10,
+    "pages": "blog/**",
+    "data": ["navigation", "team"],
+    "pageFields": ["title", "url", "tags"]
+  }
+]
+```
+
+Only `name` is required in registration objects. All other fields are optional:
+
+| Field | Default | Description |
+|---|---|---|
+| `priority` | 50 | Lower runs first. Controls order relative to other plugins. |
+| `pages` | all pages | `true` (all), `false` (none), glob string, or `{"taxonomy": ["terms"]}` |
+| `data` | all site data | Array of site data keys to include |
+| `pageFields` | all fields | Array of per-page fields to include |
+
+Scope filtering reduces the data serialized across the WASM memory boundary, which matters on large sites.
+
+### Rust Example
+
+```rust
+#[no_mangle]
+pub extern "C" fn hooks() -> u64 {
+    let hooks = serde_json::json!([
+        "onBuildComplete",
+        {
+            "name": "onContentTransformed",
+            "priority": 10,
+            "pages": "blog/**",
+            "data": ["navigation"]
+        }
+    ]);
+    let bytes = hooks.to_string().into_bytes();
+    let ptr = alloc(bytes.len() as i32);
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            bytes.as_ptr(), ptr as *mut u8, bytes.len()
+        );
+    }
+    ((ptr as u64) << 32) | (bytes.len() as u64)
+}
+```
 
 ## Compilation Cache
 

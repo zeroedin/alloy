@@ -446,15 +446,16 @@ func (r *QuickJSRuntime) Close() {
 
 // WASMRuntime wraps a wazero WASM module for Tier 2 compiled plugins.
 type WASMRuntime struct {
-	modulePath  string
-	moduleName  string
-	exports     map[string]bool
-	hookNames   []string
-	rt          wazero.Runtime
-	mod         api.Module
-	cacheDir    string                  // issue #391: wazero compilation cache directory
-	cache       wazero.CompilationCache // owned by this runtime (closed in Close)
-	sharedCache wazero.CompilationCache // owned by Registry (not closed here)
+	modulePath        string
+	moduleName        string
+	exports           map[string]bool
+	hookNames         []string
+	hookRegistrations []HookRegistration
+	rt                wazero.Runtime
+	mod               api.Module
+	cacheDir          string                  // issue #391: wazero compilation cache directory
+	cache             wazero.CompilationCache // owned by this runtime (closed in Close)
+	sharedCache       wazero.CompilationCache // owned by Registry (not closed here)
 }
 
 // SetCacheDir configures a persistent compilation cache directory.
@@ -774,17 +775,9 @@ func (r *WASMRuntime) RegisteredHooks() []string {
 	return r.hookNames
 }
 
-// RegisteredHookDetails returns hook registrations with default priority 50.
-// The WASM ABI has no mechanism for per-hook priority or scope metadata.
+// RegisteredHookDetails returns hook registrations with per-hook priority and scope.
 func (r *WASMRuntime) RegisteredHookDetails() []HookRegistration {
-	details := make([]HookRegistration, 0, len(r.hookNames))
-	for _, name := range r.hookNames {
-		details = append(details, HookRegistration{
-			Name:     name,
-			Priority: 50,
-		})
-	}
-	return details
+	return r.hookRegistrations
 }
 
 // CallHook marshals a JSON envelope and dispatches to the hook(ptr, len) export.
@@ -827,6 +820,7 @@ func (r *WASMRuntime) CallHook(name string, payload interface{}) (interface{}, e
 // and deduplicates.
 func (r *WASMRuntime) discoverHooks(ctx context.Context) error {
 	r.hookNames = nil
+	r.hookRegistrations = nil
 	hooksFn := r.mod.ExportedFunction("hooks")
 	if hooksFn == nil {
 		return nil
@@ -867,26 +861,65 @@ func (r *WASMRuntime) discoverHooks(ctx context.Context) error {
 		return fmt.Errorf("hooks() memory read failed at offset %d len %d", ptr, length)
 	}
 
-	var names []string
-	if err := jsonCodec.Unmarshal(data, &names); err != nil {
-		return fmt.Errorf("hooks() export returned invalid JSON (expected array of strings): %w", err)
+	var raw []interface{}
+	if err := jsonCodec.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("hooks() export returned invalid JSON (expected array): %w", err)
 	}
 
-	seen := make(map[string]bool, len(names))
-	filtered := make([]string, 0, len(names))
-	for _, name := range names {
-		if name == "" || seen[name] {
+	seen := make(map[string]bool, len(raw))
+	var names []string
+	var regs []HookRegistration
+	for i, elem := range raw {
+		var reg HookRegistration
+		switch v := elem.(type) {
+		case string:
+			reg = HookRegistration{Name: v, Priority: 50}
+		case map[string]interface{}:
+			nameVal, exists := v["name"]
+			if !exists {
+				return fmt.Errorf("hooks()[%d]: registration object missing required \"name\" field", i)
+			}
+			name, ok := nameVal.(string)
+			if !ok {
+				return fmt.Errorf("hooks()[%d]: \"name\" must be a string, got %T", i, nameVal)
+			}
+			reg.Name = name
+			reg.Priority = 50
+			if p, ok := v["priority"]; ok {
+				if pf, ok := p.(float64); ok {
+					reg.Priority = int(pf)
+				}
+			}
+			scopeFields := make(map[string]interface{})
+			for _, key := range []string{"pages", "data", "pageFields"} {
+				if val, ok := v[key]; ok {
+					scopeFields[key] = val
+				}
+			}
+			if len(scopeFields) > 0 {
+				scope, err := parseScopeMap(scopeFields)
+				if err != nil {
+					return fmt.Errorf("hooks()[%d] scope: %w", i, err)
+				}
+				reg.Scope = scope
+			}
+		default:
+			return fmt.Errorf("hooks()[%d]: expected string or object, got %T", i, elem)
+		}
+		if reg.Name == "" || seen[reg.Name] {
 			continue
 		}
-		seen[name] = true
-		filtered = append(filtered, name)
+		seen[reg.Name] = true
+		names = append(names, reg.Name)
+		regs = append(regs, reg)
 	}
 
-	if len(filtered) > 0 && r.mod.ExportedFunction("hook") == nil {
-		return fmt.Errorf("hooks() declares %d hooks but module has no hook() export", len(filtered))
+	if len(names) > 0 && r.mod.ExportedFunction("hook") == nil {
+		return fmt.Errorf("hooks() declares %d hooks but module has no hook() export", len(names))
 	}
 
-	r.hookNames = filtered
+	r.hookNames = names
+	r.hookRegistrations = regs
 	return nil
 }
 
