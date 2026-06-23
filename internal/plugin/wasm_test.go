@@ -783,6 +783,265 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			})
 		})
 
+		// ── Issue #742: WASM per-hook priority and scope metadata ─────
+		// The hooks() export must accept mixed-type JSON arrays: plain
+		// strings (backward compat, priority 50, nil scope) and objects
+		// with name, priority, and scope fields. discoverHooks() must
+		// type-switch each element and store full HookRegistration data
+		// so RegisteredHookDetails() returns real values instead of
+		// hardcoded priority 50 / nil scope.
+
+		Context("WASM per-hook priority and scope metadata (issue #742)", func() {
+			It("mixed-type hooks array parses strings and objects correctly", func() {
+				rt := plugin.NewWASMRuntime()
+				Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "wasm-mixed-hooks.wasm"))).To(Succeed(),
+					"LoadModule must succeed when hooks() returns a mixed JSON array "+
+						"containing both plain strings and registration objects — "+
+						"discoverHooks() must unmarshal into []interface{} and type-switch "+
+						"each element (issue #742)")
+
+				hooks := rt.RegisteredHooks()
+				Expect(hooks).To(ContainElement("onBuildComplete"),
+					"plain string entries in the mixed array must appear in RegisteredHooks — "+
+						"backward-compatible string parsing must survive the switch to "+
+						"[]interface{} unmarshaling (issue #742)")
+				Expect(hooks).To(ContainElement("onContentTransformed"),
+					"object entries with a name field must appear in RegisteredHooks — "+
+						"discoverHooks must extract the name from registration objects "+
+						"and include it in the hook names list (issue #742)")
+
+				var iface interface{} = rt
+				detailer, ok := iface.(plugin.HookDetailer)
+				Expect(ok).To(BeTrue(), "WASMRuntime must implement HookDetailer (issue #742)")
+				details := detailer.RegisteredHookDetails()
+				Expect(details).To(HaveLen(2),
+					"mixed array with one string and one object must produce exactly "+
+						"two hook registrations (issue #742)")
+
+				var stringReg, objectReg plugin.HookRegistration
+				for _, reg := range details {
+					switch reg.Name {
+					case "onBuildComplete":
+						stringReg = reg
+					case "onContentTransformed":
+						objectReg = reg
+					}
+				}
+
+				Expect(stringReg.Name).To(Equal("onBuildComplete"),
+					"string entry must be present in hook details (issue #742)")
+				Expect(stringReg.Priority).To(Equal(50),
+					"plain string entries must default to priority 50 — "+
+						"backward compatibility with the pure-string format (issue #742)")
+				Expect(stringReg.Scope).To(BeNil(),
+					"plain string entries must have nil scope — "+
+						"no scope metadata in string format (issue #742)")
+
+				Expect(objectReg.Name).To(Equal("onContentTransformed"),
+					"object entry name field must be extracted correctly (issue #742)")
+				Expect(objectReg.Priority).To(Equal(10),
+					"object entry priority field must be extracted — "+
+						"discoverHooks must parse the priority from the registration "+
+						"object and store it in the HookRegistration (issue #742)")
+				Expect(objectReg.Scope).NotTo(BeNil(),
+					"object entry with scope fields must produce a non-nil HookScope — "+
+						"discoverHooks must pass scope fields to parseScopeMap (issue #742)")
+				Expect(objectReg.Scope.Pages.Mode).To(Equal(plugin.PagesScopeGlob),
+					"pages: \"blog/**\" must produce PagesScopeGlob — "+
+						"scope fields in the registration object must be parsed "+
+						"identically to QuickJS/Node scope handling (issue #742)")
+				Expect(objectReg.Scope.Pages.Glob).To(Equal("blog/**"),
+					"glob pattern must be preserved in scope (issue #742)")
+				Expect(objectReg.Scope.Data).To(Equal([]string{"navigation", "team"}),
+					"data array must be extracted from scope fields — "+
+						"limits site data serialized across the WASM memory boundary (issue #742)")
+				Expect(objectReg.Scope.PageFields).To(Equal([]string{"title", "url", "tags"}),
+					"pageFields array must be extracted from scope fields — "+
+						"limits per-page field serialization across the WASM memory "+
+						"boundary (issue #742)")
+			})
+
+			It("object with only name defaults to priority 50 and nil scope", func() {
+				rt := plugin.NewWASMRuntime()
+				Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "wasm-name-only-hooks.wasm"))).To(Succeed(),
+					"LoadModule must succeed when hooks() returns an object with only "+
+						"a name field — priority and scope fields are optional (issue #742)")
+
+				var iface interface{} = rt
+				detailer, ok := iface.(plugin.HookDetailer)
+				Expect(ok).To(BeTrue(), "WASMRuntime must implement HookDetailer (issue #742)")
+				details := detailer.RegisteredHookDetails()
+				Expect(details).To(HaveLen(1))
+
+				reg := details[0]
+				Expect(reg.Name).To(Equal("onContentTransformed"))
+				Expect(reg.Priority).To(Equal(50),
+					"omitted priority must default to 50 — same default as plain "+
+						"string entries, consistent with QuickJS/Node behavior (issue #742)")
+				Expect(reg.Scope).To(BeNil(),
+					"omitted scope fields must produce nil scope — "+
+						"no scope metadata means full payload (issue #742)")
+			})
+
+			It("object with priority uses provided value", func() {
+				rt := plugin.NewWASMRuntime()
+				Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "wasm-priority-only-hooks.wasm"))).To(Succeed(),
+					"LoadModule must succeed when hooks() returns an object with "+
+						"name and priority but no scope fields (issue #742)")
+
+				var iface interface{} = rt
+				detailer, ok := iface.(plugin.HookDetailer)
+				Expect(ok).To(BeTrue(), "WASMRuntime must implement HookDetailer (issue #742)")
+				details := detailer.RegisteredHookDetails()
+				Expect(details).To(HaveLen(1))
+
+				reg := details[0]
+				Expect(reg.Name).To(Equal("onContentTransformed"))
+				Expect(reg.Priority).To(Equal(25),
+					"priority field must be extracted from the registration object — "+
+						"WASM plugins must be able to control execution order relative "+
+						"to other plugins via per-hook priority (issue #742)")
+				Expect(reg.Scope).To(BeNil(),
+					"omitted scope fields must produce nil scope even when priority "+
+						"is provided (issue #742)")
+			})
+
+			It("object missing name field returns error", func() {
+				rt := plugin.NewWASMRuntime()
+				err := rt.LoadModule(filepath.Join(testdataDir(), "single-files", "wasm-missing-name-hooks.wasm"))
+				Expect(err).To(HaveOccurred(),
+					"LoadModule must return an error when a hooks() registration object "+
+						"is missing the required name field — the name identifies which "+
+						"hook event to register for (issue #742)")
+				Expect(err.Error()).To(ContainSubstring("name"),
+					"error message must mention the missing name field so plugin "+
+						"authors can diagnose the malformed hooks() return value (issue #742)")
+			})
+
+			It("object with non-string name returns error", func() {
+				rt := plugin.NewWASMRuntime()
+				err := rt.LoadModule(filepath.Join(testdataDir(), "single-files", "wasm-bad-name-type-hooks.wasm"))
+				Expect(err).To(HaveOccurred(),
+					"LoadModule must return an error when a hooks() registration object "+
+						"has a non-string name field — name must be a string identifying "+
+						"the hook event (issue #742)")
+				Expect(err.Error()).To(ContainSubstring("name"),
+					"error message must mention the name field type mismatch so plugin "+
+						"authors can diagnose the malformed hooks() return value (issue #742)")
+			})
+
+			It("scope with pages: false parses to PagesScopeNone", func() {
+				rt := plugin.NewWASMRuntime()
+				Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "wasm-scope-pages-false.wasm"))).To(Succeed(),
+					"LoadModule must succeed when hooks() returns an object with "+
+						"pages: false scope — parseScopeMap handles boolean pages (issue #742)")
+
+				var iface interface{} = rt
+				detailer, ok := iface.(plugin.HookDetailer)
+				Expect(ok).To(BeTrue(), "WASMRuntime must implement HookDetailer (issue #742)")
+				details := detailer.RegisteredHookDetails()
+				Expect(details).To(HaveLen(1))
+
+				reg := details[0]
+				Expect(reg.Scope).NotTo(BeNil(),
+					"pages: false must produce a non-nil HookScope — "+
+						"PagesScopeNone is an active opt-out, not the absence of scope (issue #742)")
+				Expect(reg.Scope.Pages.Mode).To(Equal(plugin.PagesScopeNone),
+					"pages: false must produce PagesScopeNone — hooks with this "+
+						"scope skip page dispatch entirely, reducing unnecessary "+
+						"serialization across the WASM memory boundary (issue #742)")
+			})
+
+			It("scope with taxonomy pages parses to PagesScopeTaxonomy", func() {
+				rt := plugin.NewWASMRuntime()
+				Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "wasm-scope-taxonomy.wasm"))).To(Succeed(),
+					"LoadModule must succeed when hooks() returns an object with "+
+						"taxonomy scope — parseScopeMap handles map-valued pages (issue #742)")
+
+				var iface interface{} = rt
+				detailer, ok := iface.(plugin.HookDetailer)
+				Expect(ok).To(BeTrue(), "WASMRuntime must implement HookDetailer (issue #742)")
+				details := detailer.RegisteredHookDetails()
+				Expect(details).To(HaveLen(1))
+
+				reg := details[0]
+				Expect(reg.Scope).NotTo(BeNil(),
+					"taxonomy scope must produce a non-nil HookScope (issue #742)")
+				Expect(reg.Scope.Pages.Mode).To(Equal(plugin.PagesScopeTaxonomy),
+					"pages: {\"tags\": [\"go\", \"wasm\"]} must produce PagesScopeTaxonomy — "+
+						"WASM plugins must be able to filter to pages matching specific "+
+						"taxonomy terms (issue #742)")
+				Expect(reg.Scope.Pages.Taxonomies).To(HaveKeyWithValue("tags", []string{"go", "wasm"}),
+					"taxonomy terms must be parsed correctly from the registration "+
+						"object — parseScopeMap must handle the polymorphic pages field "+
+						"identically for WASM and QuickJS/Node plugins (issue #742)")
+			})
+
+			It("pure string array still works after mixed-type support (backward compat)", func() {
+				rt := plugin.NewWASMRuntime()
+				Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed(),
+					"existing WASM modules returning pure [\"hookName\"] arrays must "+
+						"continue to load successfully — the switch from []string to "+
+						"[]interface{} unmarshaling must not break existing modules (issue #742)")
+
+				hooks := rt.RegisteredHooks()
+				Expect(hooks).To(ContainElement("onContentTransformed"),
+					"hook names from pure string arrays must still be discovered (issue #742)")
+
+				var iface interface{} = rt
+				detailer, ok := iface.(plugin.HookDetailer)
+				Expect(ok).To(BeTrue(), "WASMRuntime must implement HookDetailer (issue #742)")
+				details := detailer.RegisteredHookDetails()
+				Expect(details).NotTo(BeEmpty())
+				for _, reg := range details {
+					Expect(reg.Priority).To(Equal(50),
+						"pure string entries must default to priority 50 — "+
+							"the mixed-type parsing must preserve backward-compatible "+
+							"defaults for string elements (issue #742)")
+					Expect(reg.Scope).To(BeNil(),
+						"pure string entries must have nil scope (issue #742)")
+				}
+			})
+
+			It("unsupported element type in hooks array returns error", func() {
+				rt := plugin.NewWASMRuntime()
+				err := rt.LoadModule(filepath.Join(testdataDir(), "single-files", "wasm-bad-element-type-hooks.wasm"))
+				Expect(err).To(HaveOccurred(),
+					"LoadModule must return an error when a hooks() array element is "+
+						"neither a string nor an object — numbers, booleans, and nulls "+
+						"are not valid hook registrations (issue #742)")
+			})
+
+			It("WASM priority survives full LoadPlugins bridge path", func() {
+				tmpDir := GinkgoT().TempDir()
+				src, err := os.ReadFile(filepath.Join(testdataDir(), "single-files", "wasm-priority-only-hooks.wasm"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(os.WriteFile(filepath.Join(tmpDir, "wasm-priority-plugin.wasm"), src, 0644)).To(Succeed())
+
+				registry := plugin.NewRegistry(tmpDir)
+				Expect(registry.DiscoverPlugins()).To(Succeed())
+
+				hookRegistry := plugin.NewHookRegistry()
+				registry.LoadPlugins(hookRegistry)
+				DeferCleanup(registry.Close)
+
+				Expect(hookRegistry.HasHooks(plugin.OnContentTransformed)).To(BeTrue(),
+					"LoadPlugins must bridge WASM hooks with per-hook priority to "+
+						"HookRegistry — a WASM module registering onContentTransformed "+
+						"with priority 25 via hooks() object format must result in a "+
+						"registered hook in the HookRegistry (issue #742)")
+
+				priorities := plugin.HookPriorities(hookRegistry, plugin.OnContentTransformed)
+				Expect(priorities).To(HaveLen(1),
+					"exactly one hook should be registered for onContentTransformed (issue #742)")
+				Expect(priorities[0]).To(Equal(25),
+					"the registered hook priority must be 25, not the default 50 — "+
+						"verifies that per-hook priority from hooks() object format "+
+						"survives the full path: discoverHooks → RegisteredHookDetails → "+
+						"registerRuntime → RegisterWithPriority (issue #742)")
+			})
+		})
+
 		It("NodeRuntime implements the Runtime interface", func() {
 			// NodeRuntime must exist and implement the same interface as
 			// QuickJSRuntime and WASMRuntime. The pipeline bridging loop
