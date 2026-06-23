@@ -11,7 +11,7 @@ meta_title: Alloy — Fast, Extensible Static Site Generator
     <path d="m318.93 344.72-48.81-160.47-48.81 160.47 48.81 24.2zm-35.24-74.61-13.58 6.73-13.58-6.73 13.58-44.63zM253 281.75l17.12 8.49 17.12-8.49 17.26 56.73-34.37 17.04-34.37-17.04 17.26-56.73Zm17.11 152.45-66.07-32.76-24.34 80.01 90.4 44.83 90.4-44.83-24.34-80.01-66.07 32.76Zm0 78.68-75.96-37.67 17.26-56.73 58.71 29.11 58.71-29.11 17.26 56.73-75.96 37.67Z"/>
   </svg>
   <h1>Alloy</h1>
-  <p class="hero-subtitle">A Go-powered static site generator built for speed and extensibility. Liquid templates, a tiered plugin system, and builds that finish in seconds — not minutes.</p>
+  <p class="hero-subtitle">A Go-powered static site generator built for speed and extensibility. Liquid templates, a flexible plugin system, and builds that finish in seconds — not minutes.</p>
   <div class="hero-actions">
     <a href="/getting-started/" class="btn btn-primary">Get Started</a>
     <a href="https://github.com/zeroedin/alloy" class="btn btn-secondary" target="_blank" rel="noopener">GitHub</a>
@@ -28,8 +28,8 @@ meta_title: Alloy — Fast, Extensible Static Site Generator
     <p>Industry-standard template language with full support for includes, filters, and whitespace control.</p>
   </div>
   <div class="feature">
-    <h3>Tiered Plugins</h3>
-    <p>Three tiers of extensibility: embedded QuickJS, compiled WASM (Rust, TinyGo), and Node.js via IPC bridge.</p>
+    <h3>Flexible Plugins</h3>
+    <p>Three approaches to extensibility: embedded QuickJS for simplicity, compiled WASM for performance, and Node.js for full ecosystem access.</p>
   </div>
   <div class="feature">
     <h3>Output Formats</h3>
@@ -37,7 +37,7 @@ meta_title: Alloy — Fast, Extensible Static Site Generator
   </div>
   <div class="feature">
     <h3>Data Cascade</h3>
-    <p>Six-level data merge from global to directory to front matter. Shared data is pointer-backed for zero-copy efficiency.</p>
+    <p>Six-level data merge from global config down to front matter. Directory-level defaults, plugin transforms, and per-page overrides — all composable.</p>
   </div>
   <div class="feature">
     <h3>Taxonomies</h3>
@@ -49,8 +49,9 @@ meta_title: Alloy — Fast, Extensible Static Site Generator
   <h2>Quick Install</h2>
 
 ```bash
-go install github.com/zeroedin/alloy@latest
+brew tap zeroedin/alloy-ssg
+brew install alloy-ssg
 ```
 
-  <p>Requires Go 1.21 or later. See the <a href="/getting-started/">installation guide</a> for more options.</p>
+  <p>macOS and Linux. See the <a href="/getting-started/">installation guide</a> for Windows, Go install, and other options.</p>
 </div>
