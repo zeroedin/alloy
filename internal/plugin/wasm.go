@@ -485,6 +485,7 @@ func (r *WASMRuntime) LoadModule(path string) error {
 	r.Close()
 	r.exports = make(map[string]bool)
 	r.hookNames = nil
+	r.hookRegistrations = nil
 
 	wasmBytes, err := os.ReadFile(path)
 	if err != nil {
@@ -777,7 +778,9 @@ func (r *WASMRuntime) RegisteredHooks() []string {
 
 // RegisteredHookDetails returns hook registrations with per-hook priority and scope.
 func (r *WASMRuntime) RegisteredHookDetails() []HookRegistration {
-	return r.hookRegistrations
+	out := make([]HookRegistration, len(r.hookRegistrations))
+	copy(out, r.hookRegistrations)
+	return out
 }
 
 // CallHook marshals a JSON envelope and dispatches to the hook(ptr, len) export.
@@ -886,9 +889,11 @@ func (r *WASMRuntime) discoverHooks(ctx context.Context) error {
 			reg.Name = name
 			reg.Priority = 50
 			if p, ok := v["priority"]; ok {
-				if pf, ok := p.(float64); ok {
-					reg.Priority = int(pf)
+				pf, ok := p.(float64)
+				if !ok {
+					return fmt.Errorf("hooks()[%d]: \"priority\" must be a number, got %T", i, p)
 				}
+				reg.Priority = int(pf)
 			}
 			scopeFields := make(map[string]interface{})
 			for _, key := range []string{"pages", "data", "pageFields"} {
@@ -938,6 +943,7 @@ func (r *WASMRuntime) HasExport(name string) bool {
 func (r *WASMRuntime) Close() {
 	ctx := context.Background()
 	r.hookNames = nil
+	r.hookRegistrations = nil
 	if r.mod != nil {
 		r.mod.Close(ctx)
 		r.mod = nil
