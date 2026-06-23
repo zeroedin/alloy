@@ -47,7 +47,7 @@ Key behaviors:
 
 - **Drafts are visible by default.** Pages with `draft: true` appear in the dev server so authors can preview work in progress. Use `--no-drafts` to hide them.
 - **Incremental rebuilds.** After the initial build, file changes trigger incremental rebuilds -- only changed and invalidated pages are re-rendered. Template changes invalidate pages that use that specific template, not all pages.
-- **SSR is skipped.** The dev server runs Phase 1 only. Web Components render client-side.
+- **SSR is skipped.** The dev server runs Phase 1 only. Web Components render client-side. This applies when [experimental config-driven SSR](/experimental/ssr/) is enabled -- plugin-based SSR using `ssr.render()` is unaffected.
 - **Port auto-increment.** If the default port (3000) is occupied, Alloy tries up to 10 consecutive ports before failing.
 
 ### `alloy serve`
