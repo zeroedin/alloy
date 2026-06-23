@@ -44,8 +44,8 @@ jobs:
             esac
 
             # Extract description (everything after second ---)
-            DESC=$(sed '1,/^---$/d; 1,/^---$/d' "$file" | sed '/^$/d')
-            DESCRIPTIONS="${DESCRIPTIONS}- ${DESC}"$'\n'
+            DESC=$(sed '1,/^---$/d; 1,/^---$/d' "$file")
+            DESCRIPTIONS="${DESCRIPTIONS}${DESC}"$'\n'
           done
 
           # Read current version from cmd/version.go
@@ -67,9 +67,9 @@ jobs:
           ENTRY="## v${VERSION} (${DATE})"$'\n\n'"${DESCRIPTIONS}"
 
           if [ -f CHANGELOG.md ]; then
-            echo -e "${ENTRY}\n$(cat CHANGELOG.md)" > CHANGELOG.md
+            printf '%s\n\n%s\n' "$ENTRY" "$(cat CHANGELOG.md)" > CHANGELOG.md
           else
-            echo "$ENTRY" > CHANGELOG.md
+            printf '%s\n' "$ENTRY" > CHANGELOG.md
           fi
 
           # Update version in cmd/version.go
