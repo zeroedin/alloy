@@ -4,26 +4,44 @@ title: Installation
 nav_weight: 10
 ---
 
-Install Alloy with a single `go install` command:
+## Homebrew (recommended)
 
 ```bash
-go install github.com/zeroedin/alloy@latest
+brew tap zeroedin/alloy-ssg
+brew install alloy-ssg
 ```
 
-This downloads, compiles, and installs the `alloy` binary to your `$GOPATH/bin` directory. Verify the installation:
+This installs a prebuilt binary for macOS (Apple Silicon and Intel) or Linux (amd64 and arm64). Verify the installation:
 
 ```bash
 alloy version
 ```
 
-## Prerequisites
+Upgrades work the normal Homebrew way:
 
-- **Go 1.21 or later.** Alloy uses modern Go features and module dependencies that require 1.21+. Check your version with `go version`.
-- **Node.js (optional).** Only required if your project uses Tier 3 plugins (Node subprocess plugins). The core binary has zero runtime dependencies.
+```bash
+brew upgrade alloy-ssg
+```
+
+## Windows
+
+On Windows, use [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) and install via Homebrew inside your Linux environment. Alternatively, download a prebuilt binary from the [GitHub releases page](https://github.com/zeroedin/alloy/releases):
+
+1. Download `alloy-windows-amd64.zip` (or `alloy-windows-arm64.zip` for ARM)
+2. Extract the zip
+3. Move `alloy.exe` to a directory on your `PATH`
+
+## Go install
+
+If you already have a Go toolchain, you can install from source:
+
+```bash
+go install github.com/zeroedin/alloy@latest
+```
+
+This compiles and installs the `alloy` binary to your `$GOPATH/bin` directory. Requires Go 1.25 or later.
 
 ## Build from source
-
-Clone the repository and build directly:
 
 ```bash
 git clone https://github.com/zeroedin/alloy.git
@@ -37,19 +55,14 @@ Move the binary to a directory on your `PATH`:
 mv alloy /usr/local/bin/
 ```
 
-Or install it directly into your `$GOPATH/bin`:
+## Prerequisites
 
-```bash
-go install .
-```
+- **Node.js (optional).** Only required if your project uses Tier 3 plugins (Node subprocess plugins). The core binary has zero runtime dependencies.
 
 ## Verify your installation
 
-Create a minimal site and run a build:
-
 ```bash
-mkdir my-site && cd my-site
-alloy init
+alloy init my-site && cd my-site
 alloy build
 ```
 

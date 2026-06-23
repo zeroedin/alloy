@@ -26,6 +26,10 @@ Static site generators tend to make you choose between speed and extensibility. 
 ## Quick Start
 
 ```bash
+# Install via Homebrew (macOS / Linux)
+brew tap zeroedin/alloy-ssg
+brew install alloy-ssg
+
 # Scaffold a new project
 alloy init my-site && cd my-site
 
