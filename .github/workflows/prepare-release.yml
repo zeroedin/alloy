@@ -29,7 +29,7 @@ jobs:
 
           # Parse changesets: determine bump type and collect descriptions
           BUMP="patch"
-          DESCRIPTIONS=""
+          > /tmp/descriptions.md
 
           for file in .changeset/*.md; do
             [ "$(basename "$file")" = "README.md" ] && continue
@@ -43,9 +43,8 @@ jobs:
               minor) [ "$BUMP" != "major" ] && BUMP="minor" ;;
             esac
 
-            # Extract description (everything after second ---)
-            DESC=$(sed '1,/^---$/d; 1,/^---$/d' "$file")
-            DESCRIPTIONS="${DESCRIPTIONS}${DESC}"$'\n'
+            # Extract description (everything after second ---) directly to file
+            sed '1,/^---$/d; 1,/^---$/d' "$file" >> /tmp/descriptions.md
           done
 
           # Read current version from cmd/version.go
@@ -62,14 +61,19 @@ jobs:
 
           echo "Bump: $BUMP | $CURRENT -> $VERSION"
 
-          # Update CHANGELOG.md
+          # Build CHANGELOG.md
           DATE=$(date +%Y-%m-%d)
-          ENTRY="## v${VERSION} (${DATE})"$'\n\n'"${DESCRIPTIONS}"
+          {
+            echo "## v${VERSION} (${DATE})"
+            echo ""
+            cat /tmp/descriptions.md
+          } > /tmp/changelog-entry.md
 
           if [ -f CHANGELOG.md ]; then
-            printf '%s\n\n%s\n' "$ENTRY" "$(cat CHANGELOG.md)" > CHANGELOG.md
+            { cat /tmp/changelog-entry.md; echo ""; cat CHANGELOG.md; } > /tmp/changelog-full.md
+            mv /tmp/changelog-full.md CHANGELOG.md
           else
-            printf '%s\n' "$ENTRY" > CHANGELOG.md
+            cp /tmp/changelog-entry.md CHANGELOG.md
           fi
 
           # Update version in cmd/version.go
@@ -79,7 +83,7 @@ jobs:
           find .changeset -name '*.md' ! -name 'README.md' -delete
 
           # Store for PR body
-          echo "$DESCRIPTIONS" > /tmp/release-notes.md
+          cp /tmp/descriptions.md /tmp/release-notes.md
           echo "$VERSION" > /tmp/release-version.txt
 
       - name: Create release branch and PR
@@ -90,7 +94,6 @@ jobs:
           set -euo pipefail
 
           VERSION=$(cat /tmp/release-version.txt)
-          NOTES=$(cat /tmp/release-notes.md)
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -100,18 +103,23 @@ jobs:
           git commit -m "chore: prepare release v${VERSION}"
           git push origin release/next --force
 
-          PR_BODY="## v${VERSION}"$'\n\n'"${NOTES}"
+          # Build PR body from file
+          {
+            echo "## v${VERSION}"
+            echo ""
+            cat /tmp/release-notes.md
+          } > /tmp/pr-body.md
 
           # Create or update PR
           EXISTING=$(gh pr list --head release/next --state open --json number --jq '.[0].number')
           if [ -n "$EXISTING" ]; then
             gh pr edit "$EXISTING" \
               --title "chore: prepare release v${VERSION}" \
-              --body "$PR_BODY"
+              --body-file /tmp/pr-body.md
           else
             gh pr create \
               --base main \
               --head release/next \
               --title "chore: prepare release v${VERSION}" \
-              --body "$PR_BODY"
+              --body-file /tmp/pr-body.md
           fi
