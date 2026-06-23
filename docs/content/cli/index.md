@@ -25,7 +25,7 @@ alloy build --verbose
 alloy build --profile
 ```
 
-The pipeline runs Phase 1 (content rendering) and Phase 2 (SSR, if `ssr:` is configured). Every page is rendered, every file is written. No incremental shortcuts -- the output is deterministic and complete. Any page failure aborts the entire build with no partial output.
+The pipeline runs Phase 1 (content rendering) and Phase 2 ([config-driven SSR](/experimental/ssr/), if configured). Every page is rendered, every file is written. No incremental shortcuts -- the output is deterministic and complete. Any page failure aborts the entire build with no partial output.
 
 When `--profile` is passed, Alloy records per-stage wall-clock timings and writes `cpu.prof` and `mem.prof` to `.alloy/profiles` (or the directory specified by `--profile-dir`).
 
@@ -62,7 +62,7 @@ alloy serve --refetch
 
 Key behaviors:
 
-- **Full pipeline.** Runs the same Phase 1 + Phase 2 pipeline as `alloy build`. SSR runs if configured.
+- **Full pipeline.** Runs the same pipeline as `alloy build`, including [config-driven SSR](/experimental/ssr/) if configured.
 - **Excludes drafts.** Draft content is hidden, matching production behavior.
 - **Writes to `_site/`.** Output is written to disk and served from there.
 - **Full rebuilds on change.** File changes trigger a complete pipeline rebuild (no incremental mode in serve).
