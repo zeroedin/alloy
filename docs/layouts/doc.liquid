@@ -3,8 +3,10 @@ layout: base
 ---
 <div class="docs-layout">
   <aside class="sidebar">
+    <button class="sidebar-close" aria-label="Close navigation">&times;</button>
     {% include "partials/sidebar" %}
   </aside>
+  <div class="sidebar-backdrop"></div>
   <main class="content">
     <article>
       <h1>{{ page.title }}</h1>
@@ -17,6 +19,7 @@ layout: base
   </aside>
   {% endif %}
 </div>
+<script src="/js/sidebar.js" defer></script>
 {% if page.toc.size > 0 %}
 <script>
 (function(){

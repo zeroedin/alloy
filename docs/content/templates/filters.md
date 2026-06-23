@@ -34,7 +34,7 @@ Filters chain left to right. Each filter receives the output of the previous exp
 | `append` | Append a string | `{{ page.slug | append: ".html" }}` |
 | `prepend` | Prepend a string | `{{ page.slug | prepend: "/blog/" }}` |
 | `newline_to_br` | Convert newlines to `<br>` | `{{ page.bio | newline_to_br }}` |
-| `contains` | Check if string contains substring | `{% if page.title | contains: "Guide" %}` |
+| `contains` | Check if string contains substring | `{{ page.title \| contains: "Guide" }}` → `true` |
 
 ### slugify
 
