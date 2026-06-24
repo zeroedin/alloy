@@ -1,6 +1,7 @@
 package plugin_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -214,18 +215,25 @@ var _ = Describe("Registry", func() {
 	// plugins.
 
 	Describe("Race safety (issue #768)", func() {
-		It("InitRuntimes does not race on results slice with mixed plugin types", func() {
+		It("InitRuntimes accounts for every discovered plugin in its results", func() {
 			// InitRuntimes processes Node plugins sequentially on the main
 			// goroutine and QuickJS/WASM plugins in concurrent goroutines.
 			// Both paths append to a shared `results` slice. The goroutines
 			// synchronize via mu.Lock (registry.go:421-422), but the main
 			// goroutine appends without holding mu (registry.go:384,389).
+			// When the concurrent append races, entries are silently lost
+			// and the returned runtimes+warnings won't account for every
+			// discovered plugin.
 			//
 			// Fix direction: acquire mu before appending in the Node path,
 			// or collect Node results separately and merge after wg.Wait().
 			tmpDir := GinkgoT().TempDir()
 
-			for _, name := range []string{"alpha", "bravo", "charlie"} {
+			// Create many QuickJS plugins to maximize goroutine overlap
+			// with the main goroutine's unsynchronized append.
+			qjsCount := 15
+			for i := 0; i < qjsCount; i++ {
+				name := fmt.Sprintf("plugin-%02d", i)
 				Expect(os.WriteFile(
 					filepath.Join(tmpDir, name+".js"),
 					[]byte(`export default function(alloy) { alloy.filter('`+name+`', (v) => v); }`),
@@ -233,42 +241,35 @@ var _ = Describe("Registry", func() {
 				)).To(Succeed())
 			}
 
-			// Node plugin — processed sequentially on main goroutine.
-			// Named "zulu" so it sorts after the QuickJS plugins (Tier 2
-			// before Tier 3), ensuring goroutines are already running
-			// when the main goroutine appends the Node result.
-			Expect(os.WriteFile(
-				filepath.Join(tmpDir, "zulu.js"),
-				[]byte("export const runtime = \"node\";\nexport default function(alloy) {}"),
-				0644,
-			)).To(Succeed())
+			// Node plugins — processed sequentially on main goroutine.
+			// Sort after QuickJS plugins (Tier 2 before Tier 3), so
+			// goroutines are already running when the main goroutine
+			// appends these results without holding the mutex.
+			nodeCount := 5
+			for i := 0; i < nodeCount; i++ {
+				name := fmt.Sprintf("zulu-node-%02d", i)
+				Expect(os.WriteFile(
+					filepath.Join(tmpDir, name+".js"),
+					[]byte("export const runtime = \"node\";\nexport default function(alloy) {}"),
+					0644,
+				)).To(Succeed())
+			}
 
-			for i := 0; i < 10; i++ {
+			totalPlugins := qjsCount + nodeCount
+
+			for iter := 0; iter < 20; iter++ {
 				registry := plugin.NewRegistry(tmpDir)
 				Expect(registry.DiscoverPlugins()).To(Succeed())
+				Expect(registry.Plugins()).To(HaveLen(totalPlugins))
 
-				plugins := registry.Plugins()
-				hasInProcess := false
-				hasNode := false
-				for _, p := range plugins {
-					if p.Tier == plugin.TierInProcess {
-						hasInProcess = true
-					}
-					if p.Tier == plugin.TierNode {
-						hasNode = true
-					}
-				}
-				Expect(hasInProcess).To(BeTrue(),
-					"fixture must include in-process plugins to spawn goroutines")
-				Expect(hasNode).To(BeTrue(),
-					"fixture must include a Node plugin to exercise "+
-						"the unsynchronized main-goroutine append path")
-
-				runtimes, _ := registry.InitRuntimes()
-				Expect(len(runtimes)).To(BeNumerically("<=", len(plugins)),
-					"InitRuntimes cannot return more runtimes than "+
-						"discovered plugins — a corrupted results slice from "+
-						"concurrent appends could produce duplicate or phantom entries")
+				runtimes, warnings := registry.InitRuntimes()
+				accounted := len(runtimes) + len(warnings)
+				Expect(accounted).To(Equal(totalPlugins),
+					fmt.Sprintf("iteration %d: every discovered plugin must appear "+
+						"in either runtimes or warnings — got %d of %d; "+
+						"if entries are missing, the unsynchronized append in "+
+						"the Node path lost results during concurrent access",
+						iter, accounted, totalPlugins))
 				registry.Close()
 			}
 		})

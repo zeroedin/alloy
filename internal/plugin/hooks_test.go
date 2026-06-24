@@ -2,6 +2,7 @@ package plugin_test
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -472,20 +473,28 @@ var _ = Describe("Hooks", func() {
 	})
 
 	// ── Race safety (issue #768) ─────────────────────────────────────
-	// The race detector (`go test -race`) must not flag concurrent
-	// access between the main goroutine and spawned worker goroutines
-	// during batch hook execution with timeouts.
+	// RunBatchWithProgress has unsynchronized shared state between its
+	// spawned worker goroutine and the main goroutine. When multiple
+	// callers exercise the timeout path concurrently, the unsynchronized
+	// writes to HookRegistry fields (e.g. warnings) corrupt state.
+	//
+	// The root cause is in the batch timeout path: the goroutine
+	// captures `current` by closure (hooks.go:402) while the main
+	// goroutine writes `current = preHook` (hooks.go:419). The same
+	// unsynchronized pattern extends to any shared HookRegistry state
+	// mutated during concurrent batch execution.
 
 	Describe("Race safety (issue #768)", func() {
-		It("batch timeout path does not race on current slice with worker goroutine", func() {
-			// RunBatchWithProgress spawns a goroutine that captures the
-			// `current` slice variable via closure. On batch timeout, the
-			// main goroutine reassigns `current = preHook` (hooks.go:419)
-			// while the worker goroutine may concurrently read `current`
-			// (hooks.go:402). This is a data race on the slice header.
+		It("concurrent batch timeout calls must not lose warnings", func() {
+			// Launch N goroutines that each call RunBatchWithProgress
+			// with a batch hook that always times out. Each call should
+			// append exactly one warning. If the unsynchronized writes
+			// race on the shared warnings slice, entries are lost.
 			//
-			// Fix direction: pass `current` as a goroutine parameter
-			// instead of capturing it by closure reference.
+			// Fix direction: synchronize writes to shared HookRegistry
+			// state, and pass `current` as a goroutine parameter instead
+			// of capturing it by closure reference.
+			const concurrency = 20
 			registry := plugin.NewHookRegistry()
 			registry.SetTimeout(1) // 1ms per item — forces timeout path
 
@@ -498,20 +507,23 @@ var _ = Describe("Hooks", func() {
 			}
 			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchFn, 50)
 
-			for i := 0; i < 50; i++ {
-				results, err := registry.RunBatchWithProgress(
-					plugin.OnPageRendered, []interface{}{"a"}, nil)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(results).To(HaveLen(1),
-					"timeout must preserve original payload count — "+
-						"corrupted slice header from concurrent access "+
-						"would produce wrong length")
+			var wg sync.WaitGroup
+			wg.Add(concurrency)
+			for i := 0; i < concurrency; i++ {
+				go func() {
+					defer wg.Done()
+					results, err := registry.RunBatchWithProgress(
+						plugin.OnPageRendered, []interface{}{"a"}, nil)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(results).To(HaveLen(1))
+				}()
 			}
+			wg.Wait()
 
-			Expect(registry.Warnings()).NotTo(BeEmpty(),
-				"batch timeout must produce warnings — if empty, "+
-					"the timeout path was never exercised and the race "+
-					"is untested")
+			Expect(registry.Warnings()).To(HaveLen(concurrency),
+				"each timed-out batch call must produce exactly one "+
+					"warning — if fewer are present, concurrent writes "+
+					"to the shared warnings slice lost entries")
 		})
 	})
 
