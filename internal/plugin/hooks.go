@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -84,6 +85,7 @@ type priorityHook struct {
 type HookRegistry struct {
 	hooks    map[HookName][]priorityHook
 	timeout  int // per-hook timeout in milliseconds (default 5000)
+	mu       sync.Mutex
 	warnings []string
 	nextIdx  int // monotonic counter for registration order
 }
@@ -108,7 +110,17 @@ func (r *HookRegistry) Timeout() int {
 
 // Warnings returns warnings from hook execution (e.g., timeouts) and plugin loading (e.g., duplicate registrations).
 func (r *HookRegistry) Warnings() []string {
-	return r.warnings
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, len(r.warnings))
+	copy(out, r.warnings)
+	return out
+}
+
+func (r *HookRegistry) addWarning(msg string) {
+	r.mu.Lock()
+	r.warnings = append(r.warnings, msg)
+	r.mu.Unlock()
 }
 
 // HasHooks returns true if any hooks are registered for the given event.
@@ -358,7 +370,7 @@ func (r *HookRegistry) RunWithTimeout(event HookName, payload interface{}) (inte
 		case <-ctx.Done():
 			cancel()
 			current = preHook
-			r.warnings = append(r.warnings, fmt.Sprintf("hook timeout: %s exceeded %dms", string(event), r.timeout))
+			r.addWarning(fmt.Sprintf("hook timeout: %s exceeded %dms", string(event), r.timeout))
 		}
 	}
 	return current, nil
@@ -398,10 +410,10 @@ func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface
 				err error
 			}
 			ch := make(chan batchResult, 1)
-			go func() {
-				result, err := h.batchFn(ctx, current, itemProgress)
+			go func(input []interface{}) {
+				result, err := h.batchFn(ctx, input, itemProgress)
 				ch <- batchResult{result, err}
-			}()
+			}(current)
 
 			select {
 			case res := <-ch:
@@ -417,7 +429,7 @@ func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface
 			case <-ctx.Done():
 				cancel()
 				current = preHook
-				r.warnings = append(r.warnings, fmt.Sprintf("batch hook timeout: %s exceeded %dms for %d items",
+				r.addWarning(fmt.Sprintf("batch hook timeout: %s exceeded %dms for %d items",
 					string(event), effectiveTimeout, itemCount))
 			}
 		} else {
@@ -449,7 +461,7 @@ func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface
 				case <-ctx.Done():
 					cancel()
 					current[j] = preItem
-					r.warnings = append(r.warnings, fmt.Sprintf("hook timeout: %s item %d exceeded %dms",
+					r.addWarning(fmt.Sprintf("hook timeout: %s item %d exceeded %dms",
 						string(event), j, r.timeout))
 					if onProgress != nil {
 						onProgress(j+1, len(current))

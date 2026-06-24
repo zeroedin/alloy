@@ -381,12 +381,16 @@ func (r *Registry) InitRuntimes() ([]PluginFilterRuntime, []string) {
 	for i, p := range r.plugins {
 		if p.Runtime == RuntimeNode {
 			if nodeAvailableErr != nil {
+				mu.Lock()
 				results = append(results, result{idx: i, warning: fmt.Sprintf("plugin %s: %v", p.Name, nodeAvailableErr)})
+				mu.Unlock()
 				continue
 			}
 			rt := NewNodeRuntime()
 			rt.SetProjectRoot(filepath.Dir(filepath.Clean(r.pluginsDir)))
+			mu.Lock()
 			results = append(results, result{idx: i, plugin: initializedPlugin{info: p, runtime: rt}})
+			mu.Unlock()
 			continue
 		}
 
