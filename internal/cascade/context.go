@@ -6,12 +6,10 @@ type PageContext struct {
 	Global      *map[string]interface{}
 	Directory   *map[string]interface{}
 	FrontMatter map[string]interface{}
-	Computed    map[string]interface{}
-	PluginData  map[string]interface{}
 }
 
 // Get looks up a key through the cascade levels.
-// Priority order (highest first): PluginData > Computed > FrontMatter > Directory > Global.
+// Priority order (highest first): FrontMatter > Directory > Global.
 // When multiple levels have maps for the same key, they are deep-merged with
 // higher priority levels winning on conflicts.
 func (pc *PageContext) Get(key string) interface{} {
@@ -30,16 +28,6 @@ func (pc *PageContext) Get(key string) interface{} {
 	}
 	if pc.FrontMatter != nil {
 		if v, ok := pc.FrontMatter[key]; ok {
-			values = append(values, v)
-		}
-	}
-	if pc.Computed != nil {
-		if v, ok := pc.Computed[key]; ok {
-			values = append(values, v)
-		}
-	}
-	if pc.PluginData != nil {
-		if v, ok := pc.PluginData[key]; ok {
 			values = append(values, v)
 		}
 	}
@@ -73,8 +61,8 @@ func (pc *PageContext) Get(key string) interface{} {
 }
 
 // ToMap flattens all cascade levels into a single map using Get() for each key.
-// The result reflects the full cascade priority (PluginData > Computed >
-// FrontMatter > Directory > Global) with lazy deep-merge for nested maps.
+// The result reflects the full cascade priority (FrontMatter > Directory > Global)
+// with lazy deep-merge for nested maps.
 func (pc *PageContext) ToMap() map[string]interface{} {
 	keys := make(map[string]struct{})
 	if pc.Global != nil {
@@ -88,12 +76,6 @@ func (pc *PageContext) ToMap() map[string]interface{} {
 		}
 	}
 	for k := range pc.FrontMatter {
-		keys[k] = struct{}{}
-	}
-	for k := range pc.Computed {
-		keys[k] = struct{}{}
-	}
-	for k := range pc.PluginData {
 		keys[k] = struct{}{}
 	}
 
@@ -110,21 +92,5 @@ func BuildContext(global, directory, frontMatter map[string]interface{}) *PageCo
 		Global:      &global,
 		Directory:   &directory,
 		FrontMatter: frontMatter,
-	}
-}
-
-// BuildContextFull creates a PageContext with all 5 cascade levels:
-//  1. Global data (data/ directory files)
-//  2. Directory _data.yaml
-//  3. Front matter
-//  4. Computed data (post-render)
-//  5. Plugin-injected data (onContentTransformed hooks)
-func BuildContextFull(global, directory, frontMatter, computed, pluginData map[string]interface{}) *PageContext {
-	return &PageContext{
-		Global:      &global,
-		Directory:   &directory,
-		FrontMatter: frontMatter,
-		Computed:    computed,
-		PluginData:  pluginData,
 	}
 }
