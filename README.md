@@ -6,7 +6,7 @@ A fast, extensible static site generator. Built in Go.
 
 ## Why Alloy?
 
-Static site generators tend to make you choose between speed and extensibility. Alloy doesn't. It compiles thousands of pages in seconds, uses Liquid templates for a familiar developer experience, and supports a tiered plugin system — from in-process WASM to a full Node.js bridge — without sacrificing build performance.
+Static site generators tend to make you choose between speed and extensibility. Alloy doesn't. It compiles thousands of pages in seconds, uses Liquid templates for a familiar developer experience, and supports a flexible plugin system — embedded QuickJS for simplicity, compiled WASM for performance, and Node.js for full ecosystem access — without sacrificing build performance.
 
 ## Features
 
@@ -20,7 +20,7 @@ Static site generators tend to make you choose between speed and extensibility. 
 - **Multiple output formats** — HTML, JSON, XML, or anything else from a single content file
 - **i18n** — Opt-in multilingual support with per-language content trees and shared layouts
 - **Incremental rebuilds (dev mode)** — Content-hash change detection in `alloy dev` for fast rebuilds on file changes. `alloy build` always does a full clean rebuild for CI/CD reliability.
-- **Tiered plugin system** — Built-in Go filters (ns), in-process JS/WASM plugins (us), Node subprocess plugins (ms)
+- **Flexible plugin system** — Built-in Go filters (ns), in-process JS/WASM plugins (us), Node subprocess plugins (ms)
 - **Dev server** — File watching, WebSocket live reload, error reporting
 
 ## Quick Start
@@ -79,7 +79,7 @@ Six levels of data merge predictably (last wins): global data, directory data, f
 
 ## Plugins
 
-Three tiers, matched to what the plugin needs:
+Three approaches, matched to what the plugin needs:
 
 | Tier | Runtime | Latency | Use case |
 |------|---------|---------|----------|
