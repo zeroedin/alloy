@@ -23,13 +23,22 @@ Static site generators tend to make you choose between speed and extensibility. 
 - **Flexible plugin system** — Built-in Go filters (ns), in-process JS/WASM plugins (us), Node subprocess plugins (ms)
 - **Dev server** — File watching, WebSocket live reload, error reporting
 
-## Quick Start
+## Installation
 
 ```bash
-# Install via Homebrew (macOS / Linux)
+# Homebrew (macOS / Linux, recommended)
 brew tap zeroedin/alloy-ssg
 brew install alloy-ssg
 
+# Go install (from source, requires Go 1.25+)
+go install github.com/zeroedin/alloy@latest
+```
+
+Windows: use [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) and install via Homebrew inside your Linux environment, or download a prebuilt binary from the [releases page](https://github.com/zeroedin/alloy/releases). See [Installation](https://alloyssg.dev/getting-started/) for all options, including building from source.
+
+## Quick Start
+
+```bash
 # Scaffold a new project
 alloy init my-site && cd my-site
 
