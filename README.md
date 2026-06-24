@@ -12,7 +12,7 @@ Static site generators tend to make you choose between speed and extensibility. 
 
 - **Fast builds** — Go-powered concurrent pipeline targeting < 5s for 1,000 pages
 - **Liquid templates** — Familiar syntax with Go `html/template` as an alternative
-- **Data cascade** — Global data, directory-level `_data.yaml`, and front matter merge predictably (6 levels, last wins)
+- **Data cascade** — Global data, directory-level `_data.yaml`, and front matter deep-merge predictably (front matter wins)
 - **Collections and taxonomies** — Date-based section collections, cross-cutting taxonomy groups, auto-generated term pages
 - **Pagination** — Paginated lists and virtual page generation from data
 - **Content lifecycle** — Draft/future/expired content with sensible defaults
@@ -84,7 +84,7 @@ Alloy supports Liquid (default) and Go `html/template` as built-in engines. Both
 
 ## Data Cascade
 
-Six levels of data merge predictably (last wins): global data, directory data, front matter, and three plugin hook stages. See [Data Cascade](https://alloyssg.dev/content/data-cascade/) for the full merge order.
+Global data, directory data, and front matter deep-merge in a defined order (front matter wins). Plugin hooks can mutate page data at key points during the build. See [Data Cascade](https://alloyssg.dev/content/data-cascade/) for details.
 
 ## Plugins
 
@@ -173,7 +173,7 @@ cmd/                    CLI commands (init, build, dev, serve)
 internal/
   assets/               Asset processing hooks
   cache/                Build cache for incremental rebuilds
-  cascade/              Data cascade (6-level merge)
+  cascade/              Data cascade (merge engine)
   collection/           Collections and taxonomies
   config/               Config loading (YAML, TOML, JSON)
   content/              Content discovery, front matter, markdown

@@ -4,18 +4,17 @@ title: Data Cascade
 nav_weight: 30
 ---
 
-The data cascade is how Alloy assembles the data available to each page. Six levels of data merge together in a defined order, with later levels overriding earlier ones.
+The data cascade is how Alloy assembles the data available to each page. Three levels of data merge together using deep-merge, with later levels overriding earlier ones:
 
 ```
-1. Global data              (data/*.yaml, data/*.json)
-2. Directory data            (_data.yaml -- cascades into subdirectories)
-3. Front matter              (per-file YAML/TOML/JSON block)
-4. Pre-taxonomy plugins      (onPagesReady hooks)
-5. Per-page transform        (onContentTransformed hooks)
-6. Batch mutation             (onContentLoaded hooks)
+1. Global data       (data/*.yaml, data/*.json)
+2. Directory data    (_data.yaml -- cascades into subdirectories)
+3. Front matter      (per-file YAML/TOML/JSON block)
 ```
 
-For most sites without plugins, the effective priority is: **global data < directory data < front matter**. Front matter always wins.
+**Front matter always wins** over directory data, which always wins over global data.
+
+Plugins can also mutate page data at specific hook points during the build. See [Plugin hooks](#plugin-hooks) below.
 
 ## Quick example
 
@@ -125,15 +124,15 @@ Global and directory data are loaded once and shared by pointer across all pages
 
 For a site with 3,000 pages and 50KB of shared data, memory usage is approximately 50KB (shared) + 1.5MB (front matter), not 150MB from deep copies.
 
-## Plugin data levels
+## Plugin hooks
 
-Plugins can inject or modify data at three points in the cascade. These are advanced use cases -- most sites only use levels 1-3.
+Plugins can mutate page data at three points during the build. Unlike the cascade levels above, hooks do not deep-merge -- they replace the page's front matter with whatever the plugin returns. These are advanced use cases; most sites only need the three cascade levels.
 
-**Level 4 -- `onPagesReady`**: Fires before taxonomy collection. Plugins can inject virtual pages with front matter. Data set here participates in taxonomy grouping.
+**`onPagesReady`**: Fires before taxonomy collection. Plugins can inject virtual pages or modify front matter. Data set here participates in taxonomy grouping.
 
-**Level 5 -- `onContentTransformed`**: Fires after Markdown rendering, per-page. Plugins can modify a page's front matter, rendered HTML, and TOC data.
+**`onContentTransformed`**: Fires after Markdown rendering, per-page. Plugins can modify a page's front matter, rendered HTML, and TOC data.
 
-**Level 6 -- `onContentLoaded`**: Fires after all content rendering, batch-level. Plugins can modify `frontMatter` and `html` across all pages. This is the highest priority level -- it wins over everything else.
+**`onContentLoaded`**: Fires after all content rendering, batch-level. Plugins can modify `frontMatter` and `html` across all pages. Changes here win over everything else since they run last.
 
 ## Using cascade data in templates
 

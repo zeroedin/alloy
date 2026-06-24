@@ -37,7 +37,7 @@ meta_title: Alloy — Fast, Extensible Static Site Generator
   </div>
   <div class="feature">
     <h3>Data Cascade</h3>
-    <p>Six-level data merge from global config down to front matter. Directory-level defaults, plugin transforms, and per-page overrides — all composable.</p>
+    <p>Global defaults, directory-level overrides, and per-page front matter merge predictably. Plugin hooks can transform page data at key points in the build lifecycle.</p>
   </div>
   <div class="feature">
     <h3>Taxonomies</h3>
