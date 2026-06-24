@@ -1273,16 +1273,15 @@ In dev mode, after the initial full build, the file watcher triggers incremental
 
 ## 3. Data Cascade
 
-Simplified from 11ty's model. **6 levels, last wins:**
+Simplified from 11ty's model. **3 levels, last wins:**
 
 ```
 1. Global data              (data/*.yaml, data/*.json)
 2. Directory data            (content/blog/_data.yaml — cascades into subdirs)
 3. Front matter              (per-file YAML/TOML block)
-4. Pre-taxonomy computed data (onPagesReady plugins — before taxonomy collection, before Markdown)
-5. Per-page transform        (onContentTransformed plugins — after Markdown→HTML, per-page; fires at step 13)
-6. Batch mutation             (onContentLoaded plugins — after Markdown→HTML, batch-level; fires at step 14, wins for frontMatter and html)
 ```
+
+Plugin hooks (onPagesReady, onContentTransformed, onContentLoaded) mutate page data imperatively through hook chaining — each plugin sees cumulative state from prior hooks. They are not cascade levels.
 
 ### Directory Data Cascading
 
@@ -1311,7 +1310,6 @@ A page at `content/blog/2024/march/post.md` inherits from the nearest ancestor `
   # To include both, list all values in the front matter array.
   ```
 - Front matter always wins over directory data, which wins over global data
-- Computed data (from plugins) has highest priority
 
 ### Performance: Layered Lookup, Not Deep Copy
 
@@ -1319,9 +1317,9 @@ Global and directory data are loaded once and **shared by pointer** across all p
 
 ```go
 type PageContext struct {
-    global      *map[string]any   // shared across ALL pages
-    directory   *map[string]any   // shared across directory
-    frontMatter map[string]any    // per-page only
+    Global      *map[string]any   // shared across ALL pages
+    Directory   *map[string]any   // shared across directory
+    FrontMatter map[string]any    // per-page only
 }
 ```
 

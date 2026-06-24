@@ -93,57 +93,6 @@ var _ = Describe("PageContext", func() {
 		})
 	})
 
-	// ── Computed data ──────────────────────────────────────────────────
-
-	Context("Computed data", func() {
-		It("computed data takes highest priority over front matter", func() {
-			global := map[string]interface{}{"url": "/global/"}
-			directory := map[string]interface{}{"url": "/section/"}
-			frontMatter := map[string]interface{}{"url": "/page/"}
-
-			ctx := cascade.BuildContext(global, directory, frontMatter)
-			Expect(ctx).NotTo(BeNil())
-
-			// Set computed data -- highest priority
-			ctx.Computed = map[string]interface{}{"url": "/computed/final/"}
-			Expect(ctx.Get("url")).To(Equal("/computed/final/"))
-		})
-	})
-
-	// ── 5-level layered lookup ────────────────────────────────────────
-
-	Context("5-level layered lookup", func() {
-		It("plugin data (Level 5) takes priority over computed data (Level 4)", func() {
-			global := map[string]interface{}{"url": "/global/"}
-			directory := map[string]interface{}{"url": "/dir/"}
-			frontMatter := map[string]interface{}{"url": "/fm/"}
-			computed := map[string]interface{}{"url": "/computed/"}
-			pluginData := map[string]interface{}{"url": "/plugin/"}
-
-			ctx := cascade.BuildContextFull(global, directory, frontMatter, computed, pluginData)
-			Expect(ctx).NotTo(BeNil())
-			Expect(ctx.Get("url")).To(Equal("/plugin/"),
-				"plugin-injected data (Level 5) must override all other levels")
-		})
-
-		It("each level falls through to the next when key is absent", func() {
-			global := map[string]interface{}{"site_name": "My Site"}
-			directory := map[string]interface{}{"section_title": "Blog"}
-			frontMatter := map[string]interface{}{"title": "Post"}
-			computed := map[string]interface{}{"word_count": 250}
-			pluginData := map[string]interface{}{"seo_title": "SEO Post Title"}
-
-			ctx := cascade.BuildContextFull(global, directory, frontMatter, computed, pluginData)
-			Expect(ctx).NotTo(BeNil())
-			// Each key only exists at one level
-			Expect(ctx.Get("seo_title")).To(Equal("SEO Post Title"))
-			Expect(ctx.Get("word_count")).To(Equal(250))
-			Expect(ctx.Get("title")).To(Equal("Post"))
-			Expect(ctx.Get("section_title")).To(Equal("Blog"))
-			Expect(ctx.Get("site_name")).To(Equal("My Site"))
-		})
-	})
-
 	// ── Lazy deep merge ──────────────────────────────────────────────
 
 	Context("Lazy deep merge", func() {
