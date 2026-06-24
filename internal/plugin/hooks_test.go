@@ -471,6 +471,50 @@ var _ = Describe("Hooks", func() {
 		})
 	})
 
+	// ── Race safety (issue #768) ─────────────────────────────────────
+	// The race detector (`go test -race`) must not flag concurrent
+	// access between the main goroutine and spawned worker goroutines
+	// during batch hook execution with timeouts.
+
+	Describe("Race safety (issue #768)", func() {
+		It("batch timeout path does not race on current slice with worker goroutine", func() {
+			// RunBatchWithProgress spawns a goroutine that captures the
+			// `current` slice variable via closure. On batch timeout, the
+			// main goroutine reassigns `current = preHook` (hooks.go:419)
+			// while the worker goroutine may concurrently read `current`
+			// (hooks.go:402). This is a data race on the slice header.
+			//
+			// Fix direction: pass `current` as a goroutine parameter
+			// instead of capturing it by closure reference.
+			registry := plugin.NewHookRegistry()
+			registry.SetTimeout(1) // 1ms per item — forces timeout path
+
+			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+			batchFn := func(ctx context.Context, ps []interface{}, _ plugin.BatchProgressFunc) ([]interface{}, error) {
+				<-ctx.Done()
+				return ps, nil
+			}
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchFn, 50)
+
+			for i := 0; i < 50; i++ {
+				results, err := registry.RunBatchWithProgress(
+					plugin.OnPageRendered, []interface{}{"a"}, nil)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(results).To(HaveLen(1),
+					"timeout must preserve original payload count — "+
+						"corrupted slice header from concurrent access "+
+						"would produce wrong length")
+			}
+
+			Expect(registry.Warnings()).NotTo(BeEmpty(),
+				"batch timeout must produce warnings — if empty, "+
+					"the timeout path was never exercised and the race "+
+					"is untested")
+		})
+	})
+
 	// ── Batch progress callback (issue #686) ─────────────────────────
 	// RunBatchWithProgress threads a per-item progress callback through
 	// to the batch function so the build pipeline can report progress

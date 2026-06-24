@@ -1,6 +1,7 @@
 package plugin_test
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 
@@ -203,6 +204,72 @@ var _ = Describe("Registry", func() {
 			for _, p := range plugins {
 				Expect(p.Name).NotTo(Equal("readme"),
 					".md files should not be discovered as plugins")
+			}
+		})
+	})
+
+	// ── Race safety (issue #768) ─────────────────────────────────────
+	// InitRuntimes must not race on its internal results slice when
+	// processing a mix of Node (sequential) and in-process (concurrent)
+	// plugins.
+
+	Describe("Race safety (issue #768)", func() {
+		It("InitRuntimes does not race on results slice with mixed plugin types", func() {
+			// InitRuntimes processes Node plugins sequentially on the main
+			// goroutine and QuickJS/WASM plugins in concurrent goroutines.
+			// Both paths append to a shared `results` slice. The goroutines
+			// synchronize via mu.Lock (registry.go:421-422), but the main
+			// goroutine appends without holding mu (registry.go:384,389).
+			//
+			// Fix direction: acquire mu before appending in the Node path,
+			// or collect Node results separately and merge after wg.Wait().
+			tmpDir := GinkgoT().TempDir()
+
+			for _, name := range []string{"alpha", "bravo", "charlie"} {
+				Expect(os.WriteFile(
+					filepath.Join(tmpDir, name+".js"),
+					[]byte(`export default function(alloy) { alloy.filter('`+name+`', (v) => v); }`),
+					0644,
+				)).To(Succeed())
+			}
+
+			// Node plugin — processed sequentially on main goroutine.
+			// Named "zulu" so it sorts after the QuickJS plugins (Tier 2
+			// before Tier 3), ensuring goroutines are already running
+			// when the main goroutine appends the Node result.
+			Expect(os.WriteFile(
+				filepath.Join(tmpDir, "zulu.js"),
+				[]byte("export const runtime = \"node\";\nexport default function(alloy) {}"),
+				0644,
+			)).To(Succeed())
+
+			for i := 0; i < 10; i++ {
+				registry := plugin.NewRegistry(tmpDir)
+				Expect(registry.DiscoverPlugins()).To(Succeed())
+
+				plugins := registry.Plugins()
+				hasInProcess := false
+				hasNode := false
+				for _, p := range plugins {
+					if p.Tier == plugin.TierInProcess {
+						hasInProcess = true
+					}
+					if p.Tier == plugin.TierNode {
+						hasNode = true
+					}
+				}
+				Expect(hasInProcess).To(BeTrue(),
+					"fixture must include in-process plugins to spawn goroutines")
+				Expect(hasNode).To(BeTrue(),
+					"fixture must include a Node plugin to exercise "+
+						"the unsynchronized main-goroutine append path")
+
+				runtimes, _ := registry.InitRuntimes()
+				Expect(len(runtimes)).To(BeNumerically("<=", len(plugins)),
+					"InitRuntimes cannot return more runtimes than "+
+						"discovered plugins — a corrupted results slice from "+
+						"concurrent appends could produce duplicate or phantom entries")
+				registry.Close()
 			}
 		})
 	})
