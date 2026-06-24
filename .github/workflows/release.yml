@@ -62,6 +62,12 @@ jobs:
               go build -ldflags="$LDFLAGS" -o "$OUTPUT" .
           done
 
+      - name: Collect third-party licenses
+        run: |
+          go install github.com/google/go-licenses@latest
+          go-licenses save ./... --save_path=dist/THIRD_PARTY_LICENSES
+          cp LICENSE dist/LICENSE
+
       - name: Package archives
         run: |
           set -euo pipefail
@@ -73,16 +79,17 @@ jobs:
 
             case "$bin" in
               *.exe)
-                zip "${name}.zip" "$bin"
+                zip -r "${name}.zip" "$bin" LICENSE THIRD_PARTY_LICENSES
                 rm "$bin"
                 ;;
               *)
-                tar czf "${name}.tar.gz" "$bin"
+                tar czf "${name}.tar.gz" "$bin" LICENSE THIRD_PARTY_LICENSES
                 rm "$bin"
                 ;;
             esac
           done
 
+          rm -rf LICENSE THIRD_PARTY_LICENSES
           sha256sum * > checksums.txt
 
       - name: Create GitHub Release
