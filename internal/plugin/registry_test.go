@@ -219,8 +219,8 @@ var _ = Describe("Registry", func() {
 			// InitRuntimes processes Node plugins sequentially on the main
 			// goroutine and QuickJS/WASM plugins in concurrent goroutines.
 			// Both paths append to a shared `results` slice. The goroutines
-			// synchronize via mu.Lock (registry.go:421-422), but the main
-			// goroutine appends without holding mu (registry.go:384,389).
+			// synchronize via mu.Lock in InitRuntimes, but the main
+			// goroutine (Node path) appends without holding mu.
 			// When the concurrent append races, entries are silently lost
 			// and the returned runtimes+warnings won't account for every
 			// discovered plugin.
@@ -262,15 +262,17 @@ var _ = Describe("Registry", func() {
 				Expect(registry.DiscoverPlugins()).To(Succeed())
 				Expect(registry.Plugins()).To(HaveLen(totalPlugins))
 
-				runtimes, warnings := registry.InitRuntimes()
-				accounted := len(runtimes) + len(warnings)
-				Expect(accounted).To(Equal(totalPlugins),
-					fmt.Sprintf("iteration %d: every discovered plugin must appear "+
-						"in either runtimes or warnings — got %d of %d; "+
-						"if entries are missing, the unsynchronized append in "+
-						"the Node path lost results during concurrent access",
-						iter, accounted, totalPlugins))
-				registry.Close()
+				func() {
+					defer registry.Close()
+					runtimes, warnings := registry.InitRuntimes()
+					accounted := len(runtimes) + len(warnings)
+					Expect(accounted).To(Equal(totalPlugins),
+						fmt.Sprintf("iteration %d: every discovered plugin must appear "+
+							"in either runtimes or warnings — got %d of %d; "+
+							"if entries are missing, the unsynchronized append in "+
+							"the Node path lost results during concurrent access",
+							iter, accounted, totalPlugins))
+				}()
 			}
 		})
 	})

@@ -473,16 +473,11 @@ var _ = Describe("Hooks", func() {
 	})
 
 	// ── Race safety (issue #768) ─────────────────────────────────────
-	// RunBatchWithProgress has unsynchronized shared state between its
-	// spawned worker goroutine and the main goroutine. When multiple
-	// callers exercise the timeout path concurrently, the unsynchronized
-	// writes to HookRegistry fields (e.g. warnings) corrupt state.
-	//
-	// The root cause is in the batch timeout path: the goroutine
-	// captures `current` by closure (hooks.go:402) while the main
-	// goroutine writes `current = preHook` (hooks.go:419). The same
-	// unsynchronized pattern extends to any shared HookRegistry state
-	// mutated during concurrent batch execution.
+	// RunBatchWithProgress appends to the shared HookRegistry.warnings
+	// slice without synchronization (in the batch timeout path). When
+	// multiple callers exercise that path concurrently, the unsynchronized
+	// `r.warnings = append(...)` loses entries because concurrent slice
+	// appends corrupt the slice header.
 
 	Describe("Race safety (issue #768)", func() {
 		It("concurrent batch timeout calls must not lose warnings", func() {
@@ -492,8 +487,7 @@ var _ = Describe("Hooks", func() {
 			// race on the shared warnings slice, entries are lost.
 			//
 			// Fix direction: synchronize writes to shared HookRegistry
-			// state, and pass `current` as a goroutine parameter instead
-			// of capturing it by closure reference.
+			// state (e.g. protect r.warnings with a mutex).
 			const concurrency = 20
 			registry := plugin.NewHookRegistry()
 			registry.SetTimeout(1) // 1ms per item — forces timeout path
@@ -511,6 +505,7 @@ var _ = Describe("Hooks", func() {
 			wg.Add(concurrency)
 			for i := 0; i < concurrency; i++ {
 				go func() {
+					defer GinkgoRecover()
 					defer wg.Done()
 					results, err := registry.RunBatchWithProgress(
 						plugin.OnPageRendered, []interface{}{"a"}, nil)
