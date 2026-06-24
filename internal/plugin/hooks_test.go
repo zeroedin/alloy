@@ -2,6 +2,7 @@ package plugin_test
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -468,6 +469,56 @@ var _ = Describe("Hooks", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(results).To(Equal([]interface{}{"a-fast", "b-fast"}),
 				"timeout must revert to pre-hook state (after fast hook), not original input")
+		})
+	})
+
+	// ── Race safety (issue #768) ─────────────────────────────────────
+	// RunBatchWithProgress appends to the shared HookRegistry.warnings
+	// slice without synchronization (in the batch timeout path). When
+	// multiple callers exercise that path concurrently, the unsynchronized
+	// `r.warnings = append(...)` loses entries because concurrent slice
+	// appends corrupt the slice header.
+
+	Describe("Race safety (issue #768)", func() {
+		It("concurrent batch timeout calls must not lose warnings", func() {
+			// Launch N goroutines that each call RunBatchWithProgress
+			// with a batch hook that always times out. Each call should
+			// append exactly one warning. If the unsynchronized writes
+			// race on the shared warnings slice, entries are lost.
+			//
+			// Fix direction: synchronize writes to shared HookRegistry
+			// state (e.g. protect r.warnings with a mutex).
+			const concurrency = 20
+			registry := plugin.NewHookRegistry()
+			registry.SetTimeout(1) // 1ms per item — forces timeout path
+
+			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+			batchFn := func(ctx context.Context, ps []interface{}, _ plugin.BatchProgressFunc) ([]interface{}, error) {
+				<-ctx.Done()
+				return ps, nil
+			}
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchFn, 50)
+
+			var wg sync.WaitGroup
+			wg.Add(concurrency)
+			for i := 0; i < concurrency; i++ {
+				go func() {
+					defer GinkgoRecover()
+					defer wg.Done()
+					results, err := registry.RunBatchWithProgress(
+						plugin.OnPageRendered, []interface{}{"a"}, nil)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(results).To(HaveLen(1))
+				}()
+			}
+			wg.Wait()
+
+			Expect(registry.Warnings()).To(HaveLen(concurrency),
+				"each timed-out batch call must produce exactly one "+
+					"warning — if fewer are present, concurrent writes "+
+					"to the shared warnings slice lost entries")
 		})
 	})
 
