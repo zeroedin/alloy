@@ -255,6 +255,7 @@ var _ = Describe("NodeBridge", func() {
 			var err error
 			tmpDir, err = os.MkdirTemp("", "alloy-pidfile-test-*")
 			Expect(err).NotTo(HaveOccurred())
+			plugin.ResetStalePIDCleanup(tmpDir)
 		})
 
 		AfterEach(func() {
@@ -319,11 +320,21 @@ var _ = Describe("NodeBridge", func() {
 			sleeper := exec.Command("sleep", "300")
 			sleeper.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 			Expect(sleeper.Start()).To(Succeed())
+			stalePID := sleeper.Process.Pid
+
+			// Reap the child in a goroutine so it doesn't linger as a
+			// zombie after cleanStalePIDs sends SIGTERM.  Kill(pid, 0)
+			// returns nil for zombies, which caused the Eventually to
+			// time out.
+			reaped := make(chan struct{})
+			go func() {
+				_, _ = sleeper.Process.Wait()
+				close(reaped)
+			}()
 			DeferCleanup(func() {
 				_ = sleeper.Process.Kill()
-				_, _ = sleeper.Process.Wait()
+				<-reaped
 			})
-			stalePID := sleeper.Process.Pid
 
 			alloyDir := filepath.Join(tmpDir, ".alloy")
 			Expect(os.MkdirAll(alloyDir, 0755)).To(Succeed())
@@ -337,7 +348,7 @@ var _ = Describe("NodeBridge", func() {
 
 			Eventually(func() error {
 				return syscall.Kill(stalePID, 0)
-			}, "5s", "100ms").Should(HaveOccurred(),
+			}, "10s", "100ms").Should(HaveOccurred(),
 				"stale process should be killed during startup cleanup")
 		})
 
@@ -368,6 +379,7 @@ var _ = Describe("NodeBridge", func() {
 			var err error
 			tmpDir, err = os.MkdirTemp("", "alloy-concurrent-pid-test-*")
 			Expect(err).NotTo(HaveOccurred())
+			plugin.ResetStalePIDCleanup(tmpDir)
 		})
 
 		AfterEach(func() {

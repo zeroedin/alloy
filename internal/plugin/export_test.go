@@ -1,7 +1,18 @@
 package plugin
 
+import "path/filepath"
+
 var ParseScopeJSON = parseScopeJSON
 var ParseScopeMap = parseScopeMap
+
+// ResetStalePIDCleanup clears the once-per-root guard so each test
+// gets a fresh cleanup pass regardless of execution order.
+func ResetStalePIDCleanup(projectRoot string) {
+	key := filepath.Clean(projectRoot)
+	stalePIDCleanupMu.Lock()
+	defer stalePIDCleanupMu.Unlock()
+	delete(stalePIDCleanupRoots, key)
+}
 
 // AppendHook appends a hook name to a NodeRuntime's internal hooks slice for testing.
 func AppendHook(r *NodeRuntime, name string) {
