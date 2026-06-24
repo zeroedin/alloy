@@ -70,14 +70,14 @@ Used by `LoadFile` and `LoadExternalFiles` for `.json` files only. Front matter,
 - `LoadCSV`: `encoding/csv`, first row = headers, subsequent rows = `[]map[string]string`
 - **External data files (issue #271)**: `loadSiteData` in `build.go` must also load files from `cfg.Data.Files` (a `map[string]string` of key → path). For each entry, resolve the path relative to `cfg.ProjectRoot`, call `data.LoadFile`, and add the result to `siteData[key]`. Check for collisions with `data/` directory keys. File not found is a build error. Add `DataConfig` struct to `config.go` with `Files map[string]string` field.
 
-### 1C: `internal/cascade` — 28 tests
+### 1C: `internal/cascade` — 36 tests
 **Files**: `internal/cascade/merge.go`, `internal/cascade/context.go`
 
 - `DeepMerge`: Recursive map merge, arrays replaced (not concatenated)
 - `LoadDirectoryCascade`: Walk content dir for `_data.yaml` files, merge parent->child. Only creates entries for directories that contain `_data.yaml`.
 - `FindCascadeData(cascadeData, contentBase, relPath)`: Nearest-match lookup (issue #219). Given a page's `relPath`, walks up the directory tree and returns the nearest ancestor entry from `LoadDirectoryCascade`. Returns `nil` when no ancestor has data. Since `LoadDirectoryCascade` already accumulates ancestor data into each entry via `DeepMerge(parentData, data)`, the nearest match contains the full chain — no re-merge needed. The pipeline must use this instead of exact key lookup — otherwise pages in directories without `_data.yaml` miss ancestor inheritance (spec §3 requires cascade to flow to all descendants).
-- `BuildContext`/`BuildContextFull`: Allocate `PageContext` with shared pointers
-- `Get`: Lookup order: Computed > FrontMatter > Directory > Global. May need `PluginData` field added.
+- `BuildContext`: Allocate `PageContext` with shared pointers (3-level: Global, Directory, FrontMatter)
+- `Get`: Lookup order: FrontMatter > Directory > Global
 
 ### 1D: `internal/validation` — 16 tests
 **File**: `internal/validation/conflicts.go`
@@ -656,14 +656,12 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
 
 #### Cascade wiring (PR #55)
 
-The pipeline uses `cascade.PageContext` per spec §3 for proper 5-level cascade:
+The pipeline uses `cascade.PageContext` per spec §3 for proper 3-level cascade:
 
 1. `cascade.LoadDirectoryCascade(contentDir)` — loads all `_data.yaml` files with parent→child merge
 2. `cascade.FindCascadeData(cascadeData, contentBase, page.RelPath)` — walks up the directory tree to find the nearest ancestor with cascade data (handles directories without their own `_data.yaml`)
 3. `cascade.BuildContext(siteData, dirData, page.FrontMatter)` — creates a `PageContext` with shared pointers for Global (level 1) and Directory (level 2), per-page FrontMatter (level 3)
 4. `pctx.ToMap()` — flattens via `PageContext.Get()` (lazy deep-merge only for conflicting nested keys) into `page.FrontMatter` so downstream consumers (taxonomy building, collection sorting) see effective values
-
-Levels 4/5 (Computed/PluginData) are nil until plugin hooks populate them — `PageContext` is ready for plugins with no pipeline changes needed.
 
 ### WALKING SKELETON MILESTONE
 At this point, `alloy build` works end-to-end on test fixtures.
