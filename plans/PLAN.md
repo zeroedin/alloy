@@ -1317,9 +1317,9 @@ Global and directory data are loaded once and **shared by pointer** across all p
 
 ```go
 type PageContext struct {
-    global      *map[string]any   // shared across ALL pages
-    directory   *map[string]any   // shared across directory
-    frontMatter map[string]any    // per-page only
+    Global      *map[string]any   // shared across ALL pages
+    Directory   *map[string]any   // shared across directory
+    FrontMatter map[string]any    // per-page only
 }
 ```
 
