@@ -1,5 +1,7 @@
 ## v0.2.0 (2026-06-25)
 
+### Minor Changes
+
 Sections listed in the `collections:` config now declare collection membership without requiring date-token permalink patterns. Non-blog sections like releases or changelogs can participate in `collections.*` pagination and template loops.
 
 ```yaml
@@ -20,6 +22,9 @@ permalink: "/releases/:title/"
   <a href="{{ release.url }}">{{ release.title }}</a>
 {% endfor %}
 ```
+
+### Patch Changes
+
 Fix race conditions in concurrent plugin hook execution and runtime initialization.
 
 ## v0.1.1 (2026-06-24)
