@@ -22,14 +22,14 @@ type Collection struct {
 // OR it is listed in collectionNames. collectionNames may be nil.
 // Draft pages are excluded.
 func BuildCollections(pages []*content.Page, permalinkCfg map[string]string, collectionNames []string) map[string]*Collection {
-	dateSections := collectableSections(permalinkCfg, collectionNames)
+	sections := collectableSections(permalinkCfg, collectionNames)
 
 	collections := make(map[string]*Collection)
 	for _, page := range pages {
 		if page.Draft {
 			continue
 		}
-		if !dateSections[page.Section] {
+		if !sections[page.Section] {
 			continue
 		}
 		if isSectionIndex(page.RelPath, page.Section) {
@@ -51,6 +51,8 @@ func BuildCollections(pages []*content.Page, permalinkCfg map[string]string, col
 func collectableSections(permalinkCfg map[string]string, collectionNames []string) map[string]bool {
 	sections := make(map[string]bool)
 	for section, pattern := range permalinkCfg {
+		// "default" is the fallback permalink pattern, not a real section name.
+		// collectionNames does not need this guard — those are literal section names from config.
 		if section == "default" {
 			continue
 		}
@@ -229,11 +231,11 @@ func BuildCollectionsWithMode(pages []*content.Page, permalinkCfg map[string]str
 // Unlike BuildCollections, this does not re-filter drafts since lifecycle filtering
 // has already been applied.
 func buildCollectionsIncludeAll(pages []*content.Page, permalinkCfg map[string]string, collectionNames []string) map[string]*Collection {
-	dateSections := collectableSections(permalinkCfg, collectionNames)
+	sections := collectableSections(permalinkCfg, collectionNames)
 
 	collections := make(map[string]*Collection)
 	for _, page := range pages {
-		if !dateSections[page.Section] {
+		if !sections[page.Section] {
 			continue
 		}
 		if isSectionIndex(page.RelPath, page.Section) {
