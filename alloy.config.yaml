@@ -15,6 +15,11 @@ content:
 templates:
   engine: "liquid"
 
+collections:
+  releases:
+    sortBy: "date"
+    order: "desc"
+
 structure:
   content: "docs/content"
   layouts: "docs/layouts"
