@@ -242,11 +242,11 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
 - `ResolveForSection`: Front matter > section pattern > default pattern > file path. **Index file override (issue #39)**: Before applying section or default patterns (steps 2-3), check if the page is an index file (`isIndexFile(page.RelPath)`). If so, skip directly to `DefaultFromPath` (step 4). This prevents `default: "/:slug/"` from turning `index.md` (title: "Home") into `/home/` instead of `/`. Front matter `permalink:` (step 1) still overrides — allows configuring index path for subdirectory deployments.
 - `ResolveAliases`: Return page's Aliases slice
 
-### 3B: `internal/collection` — 27 tests
+### 3B: `internal/collection` — 38 tests
 **Files**: `collection.go`, `taxonomy.go`
 
 - `BuildCollections(pages, permalinkCfg, collectionNames []string)`: Group pages by section. A section becomes a collection if it has date-based permalink tokens `:year`/`:month`/`:day` **or** is listed in `collectionNames` (extracted from `cfg.Collections` keys). Both sources seed a single membership map; a section qualifying via both mechanisms produces one collection (no duplication). `collectionNames` may be nil (backward-compatible, date-tokens-only behavior).
-- `BuildCollectionsWithMode(pages, permalinkCfg, collectionNames []string, devMode bool)`: Lifecycle-aware wrapper — filters drafts (via `content.FilterByLifecycle`) before calling `buildCollectionsIncludeAll`. `devMode=true` includes drafts; `devMode=false` excludes them.
+- `BuildCollectionsWithMode(pages, permalinkCfg, collectionNames []string, devMode bool)`: Lifecycle-aware wrapper — applies lifecycle filtering (drafts, future `publishDate`, past `expiryDate`) via `content.FilterByLifecycle` before calling `buildCollectionsIncludeAll`. `devMode=true` includes drafts; `devMode=false` excludes them. Future/expired pages are always excluded.
 - `SortPages`/`SortByFrontMatter`: Stable sort, dateless pages sort after dated ones
 - `Freeze`/`IsFrozen`/`AddPage`: Add `frozen bool` field, error if frozen
 - `BuildTaxonomies`: Group pages by declared taxonomy keys from front matter
