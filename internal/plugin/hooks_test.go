@@ -2,6 +2,8 @@ package plugin_test
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -468,6 +470,111 @@ var _ = Describe("Hooks", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(results).To(Equal([]interface{}{"a-fast", "b-fast"}),
 				"timeout must revert to pre-hook state (after fast hook), not original input")
+		})
+	})
+
+	// ── Race safety (issue #768) ─────────────────────────────────────
+	// RunBatchWithProgress appends to the shared HookRegistry.warnings
+	// slice without synchronization (in the batch timeout path). When
+	// multiple callers exercise that path concurrently, the unsynchronized
+	// `r.warnings = append(...)` loses entries because concurrent slice
+	// appends corrupt the slice header.
+
+	Describe("Race safety (issue #768)", func() {
+		It("concurrent batch timeout calls must not lose warnings", func() {
+			// Launch N goroutines that each call RunBatchWithProgress
+			// with a batch hook that always times out. Each call should
+			// append exactly one warning. If the unsynchronized writes
+			// race on the shared warnings slice, entries are lost.
+			//
+			// Fix direction: synchronize writes to shared HookRegistry
+			// state (e.g. protect r.warnings with a mutex).
+			const concurrency = 20
+			registry := plugin.NewHookRegistry()
+			registry.SetTimeout(1) // 1ms per item — forces timeout path
+
+			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+			batchFn := func(ctx context.Context, ps []interface{}, _ plugin.BatchProgressFunc) ([]interface{}, error) {
+				<-ctx.Done()
+				return ps, nil
+			}
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchFn, 50)
+
+			var wg sync.WaitGroup
+			wg.Add(concurrency)
+			for i := 0; i < concurrency; i++ {
+				go func() {
+					defer GinkgoRecover()
+					defer wg.Done()
+					results, err := registry.RunBatchWithProgress(
+						plugin.OnPageRendered, []interface{}{"a"}, nil)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(results).To(HaveLen(1))
+				}()
+			}
+			wg.Wait()
+
+			Expect(registry.Warnings()).To(HaveLen(concurrency),
+				"each timed-out batch call must produce exactly one "+
+					"warning — if fewer are present, concurrent writes "+
+					"to the shared warnings slice lost entries")
+		})
+		It("batch goroutine receives a stable input snapshot independent of timeout reassignment", func() {
+			// The batch goroutine must operate on the value of `current`
+			// at spawn time, not a closure-captured variable that the
+			// timeout path can reassign. Reverting the goroutine parameter
+			// fix (go func(input){}(current) → go func(){}()) would
+			// trigger a data race on the `current` slice header.
+			//
+			// This race is unobservable without -race because preHook
+			// is always a copy of current (identical data). The test
+			// serves as a regression guard under `go test -race`.
+			const iterations = 100
+			registry := plugin.NewHookRegistry()
+			registry.SetTimeout(1)
+
+			type capture struct {
+				input []interface{}
+			}
+			var mu sync.Mutex
+			var captures []capture
+
+			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+			batchFn := func(ctx context.Context, ps []interface{}, _ plugin.BatchProgressFunc) ([]interface{}, error) {
+				snap := make([]interface{}, len(ps))
+				copy(snap, ps)
+				mu.Lock()
+				captures = append(captures, capture{input: snap})
+				mu.Unlock()
+				<-ctx.Done()
+				return ps, nil
+			}
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchFn, 50)
+
+			for i := 0; i < iterations; i++ {
+				input := []interface{}{fmt.Sprintf("item-%d", i)}
+				results, err := registry.RunBatchWithProgress(
+					plugin.OnPageRendered, input, nil)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(results).To(HaveLen(1))
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			Expect(captures).To(HaveLen(iterations),
+				"batchFn should be invoked once per call")
+			for i, c := range captures {
+				Expect(c.input).To(HaveLen(1),
+					fmt.Sprintf("iteration %d: batchFn received wrong-length "+
+						"input — possible torn slice header from closure-capture race", i))
+				Expect(c.input[0]).To(Equal(fmt.Sprintf("item-%d", i)),
+					fmt.Sprintf("iteration %d: batchFn received wrong input — "+
+						"goroutine may have captured a stale variable", i))
+			}
 		})
 	})
 

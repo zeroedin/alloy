@@ -1,6 +1,8 @@
 package plugin_test
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 
@@ -203,6 +205,74 @@ var _ = Describe("Registry", func() {
 			for _, p := range plugins {
 				Expect(p.Name).NotTo(Equal("readme"),
 					".md files should not be discovered as plugins")
+			}
+		})
+	})
+
+	// ── Race safety (issue #768) ─────────────────────────────────────
+	// InitRuntimes must not race on its internal results slice when
+	// processing a mix of Node (sequential) and in-process (concurrent)
+	// plugins.
+
+	Describe("Race safety (issue #768)", func() {
+		It("InitRuntimes accounts for every discovered plugin in its results", func() {
+			// InitRuntimes processes Node plugins sequentially on the main
+			// goroutine and QuickJS/WASM plugins in concurrent goroutines.
+			// Both paths append to a shared `results` slice. The goroutines
+			// synchronize via mu.Lock in InitRuntimes, but the main
+			// goroutine (Node path) appends without holding mu.
+			// When the concurrent append races, entries are silently lost
+			// and the returned runtimes+warnings won't account for every
+			// discovered plugin.
+			//
+			// Fix direction: acquire mu before appending in the Node path,
+			// or collect Node results separately and merge after wg.Wait().
+			tmpDir := GinkgoT().TempDir()
+
+			// Create many QuickJS plugins to maximize goroutine overlap
+			// with the main goroutine's unsynchronized append.
+			qjsCount := 15
+			for i := 0; i < qjsCount; i++ {
+				name := fmt.Sprintf("plugin-%02d", i)
+				Expect(os.WriteFile(
+					filepath.Join(tmpDir, name+".js"),
+					[]byte(`export default function(alloy) { alloy.filter('`+name+`', (v) => v); }`),
+					0644,
+				)).To(Succeed())
+			}
+
+			// Node plugins — processed sequentially on main goroutine.
+			// Sort after QuickJS plugins (Tier 2 before Tier 3), so
+			// goroutines are already running when the main goroutine
+			// appends these results without holding the mutex.
+			nodeCount := 5
+			for i := 0; i < nodeCount; i++ {
+				name := fmt.Sprintf("zulu-node-%02d", i)
+				Expect(os.WriteFile(
+					filepath.Join(tmpDir, name+".js"),
+					[]byte("export const runtime = \"node\";\nexport default function(alloy) {}"),
+					0644,
+				)).To(Succeed())
+			}
+
+			totalPlugins := qjsCount + nodeCount
+
+			for iter := 0; iter < 20; iter++ {
+				registry := plugin.NewRegistry(tmpDir)
+				Expect(registry.DiscoverPlugins()).To(Succeed())
+				Expect(registry.Plugins()).To(HaveLen(totalPlugins))
+
+				func() {
+					defer registry.Close()
+					runtimes, warnings := registry.InitRuntimes()
+					accounted := len(runtimes) + len(warnings)
+					Expect(accounted).To(Equal(totalPlugins),
+						fmt.Sprintf("iteration %d: every discovered plugin must appear "+
+							"in either runtimes or warnings — got %d of %d; "+
+							"if entries are missing, the unsynchronized append in "+
+							"the Node path lost results during concurrent access",
+							iter, accounted, totalPlugins))
+				}()
 			}
 		})
 	})
