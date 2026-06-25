@@ -160,6 +160,53 @@ func parseChangeset(content string) (changeset, error) {
 	return changeset{bumpType: bumpType, summary: summary}, nil
 }
 
+func buildDescriptions(changesets []changeset) string {
+	levels := make(map[string]bool)
+	for _, cs := range changesets {
+		levels[cs.bumpType] = true
+	}
+
+	var b strings.Builder
+
+	if len(levels) <= 1 {
+		for _, cs := range changesets {
+			b.WriteString(cs.summary)
+			b.WriteString("\n")
+		}
+		return b.String()
+	}
+
+	order := []struct {
+		level  string
+		header string
+	}{
+		{"major", "### Major Changes"},
+		{"minor", "### Minor Changes"},
+		{"patch", "### Patch Changes"},
+	}
+
+	first := true
+	for _, o := range order {
+		if !levels[o.level] {
+			continue
+		}
+		if !first {
+			b.WriteString("\n")
+		}
+		b.WriteString(o.header)
+		b.WriteString("\n\n")
+		for _, cs := range changesets {
+			if cs.bumpType == o.level {
+				b.WriteString(cs.summary)
+				b.WriteString("\n")
+			}
+		}
+		first = false
+	}
+
+	return b.String()
+}
+
 var bumpPriority = map[string]int{
 	"patch": 1,
 	"minor": 2,
@@ -297,15 +344,10 @@ func runVersion() error {
 
 	fmt.Printf("Bump: %s | %s -> %s\n", bump, currentVersion, newVersion)
 
-	// Collect all descriptions
-	var descriptions strings.Builder
-	for _, cs := range changesets {
-		descriptions.WriteString(cs.summary)
-		descriptions.WriteString("\n")
-	}
+	descriptions := buildDescriptions(changesets)
 
 	// Write CHANGELOG.md
-	if err := writeChangelog(newVersion, descriptions.String()); err != nil {
+	if err := writeChangelog(newVersion, descriptions); err != nil {
 		return err
 	}
 
@@ -325,7 +367,7 @@ func runVersion() error {
 	if err := os.WriteFile("/tmp/release-version.txt", []byte(newVersion), 0o644); err != nil {
 		return fmt.Errorf("writing version output: %w", err)
 	}
-	if err := os.WriteFile("/tmp/release-notes.md", []byte(descriptions.String()), 0o644); err != nil {
+	if err := os.WriteFile("/tmp/release-notes.md", []byte(descriptions), 0o644); err != nil {
 		return fmt.Errorf("writing release notes output: %w", err)
 	}
 
