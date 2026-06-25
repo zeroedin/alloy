@@ -62,12 +62,12 @@ func loadSiteData(cfg *config.Config) (map[string]interface{}, error) {
 // buildCollectionsContext builds section collections (directory-based),
 // returning them as a template-friendly map. Taxonomies are handled
 // separately via buildTaxonomiesContext.
-func buildCollectionsContext(pages []*content.Page, permalinkCfg map[string]string) map[string]interface{} {
+func buildCollectionsContext(pages []*content.Page, permalinkCfg map[string]string, collectionNames []string) map[string]interface{} {
 	result := make(map[string]interface{})
 
 	// Section collections — convert pages to template-friendly maps so
 	// Liquid can access fields like {{ post.title }} and {{ post.url }}.
-	colls := collection.BuildCollections(pages, permalinkCfg)
+	colls := collection.BuildCollections(pages, permalinkCfg, collectionNames)
 	for name, coll := range colls {
 		items := make([]interface{}, len(coll.Pages))
 		for i, p := range coll.Pages {
@@ -80,6 +80,19 @@ func buildCollectionsContext(pages []*content.Page, permalinkCfg map[string]stri
 		return nil
 	}
 	return result
+}
+
+// collectionNames extracts section names from cfg.Collections for explicit
+// collection membership. Returns nil when no collections are configured.
+func collectionNames(cfg *config.Config) []string {
+	if len(cfg.Collections) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(cfg.Collections))
+	for name := range cfg.Collections {
+		names = append(names, name)
+	}
+	return names
 }
 
 // buildTaxonomiesContext converts taxonomy collections into a template-friendly
