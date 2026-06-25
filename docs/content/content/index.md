@@ -73,12 +73,14 @@ content:
     goldmark:
       unsafe: true          # Allow raw HTML in Markdown (default: false)
       typographer: true      # Smart quotes and dashes
-      templateTags: true     # Preserve {{ }} and {% %} through Markdown (default: true)
+      templateTags: true     # Treat {{ }} and {% %} as template syntax in Markdown (default: true; false = literal text)
     autoHeadingID: true      # Add id attributes to headings (default: true)
     toc: true                # Generate page.toc data (default: true)
 ```
 
 With `templateTags: true` (the default), Liquid and Go template syntax passes through the Markdown parser untouched. You can mix Markdown and template logic in the same file without escaping.
+
+Set `templateTags: false` to disable template syntax recognition in Markdown files. `{{ }}` and `{% %}` in body text render as literal characters instead of being evaluated as Liquid. Use this for sites whose content discusses other template languages (Mustache, Handlebars, Go templates) and does not need Liquid processing in content files. Template syntax inside fenced code blocks and inline code is always escaped for display regardless of this setting.
 
 ## HTML content files
 

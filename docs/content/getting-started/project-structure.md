@@ -50,7 +50,7 @@ content:
     goldmark:
       unsafe: true
       typographer: true
-      templateTags: true
+      templateTags: true     # false = treat {{ }} and {% %} as literal text
 
 templates:
   engine: "liquid"
