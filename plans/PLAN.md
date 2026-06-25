@@ -1331,13 +1331,15 @@ Deep merging happens **lazily** — only when a nested key is accessed at multip
 
 ### Collections
 
-Not every subdirectory is a collection. Collections are created in two ways:
+Not every subdirectory is a collection. Collections are created in three ways:
 
 **Blog collections** — A section with a date-based permalink pattern (containing `:year`, `:month`, or `:day` tokens in `_data.yaml`) automatically collects its children into a section collection. The permalink declaration is what creates the collection; the date in each post's front matter drives URL structure and default sort order. For example, `content/blog/_data.yaml` with `permalink: "/:year/:month/:day/:slug/"` produces `collections.blog` containing all posts in that directory.
 
+**Explicit collections** — A section listed in the `collections:` config becomes a collection regardless of its permalink pattern. This allows non-blog sections (e.g., `releases/`, `changelog/`, `projects/`) to participate in pagination and template loops without requiring date-based URL structure. If a section qualifies both via date tokens and explicit config, it produces a single collection (no duplication). Explicit collections follow all the same rules as date-token collections: section index files are excluded, and standard lifecycle filtering applies (drafts excluded in build mode, included in dev mode; future publishDate and past expiryDate pages always excluded).
+
 **Taxonomy collections** — Cross-cutting groups created by front matter tags, categories, or other declared taxonomy keys. A blog post and a docs page can both be tagged "javascript" and appear in the same taxonomy collection. Tags can be applied to all pages in a directory via `_data.yaml` without repeating the tag in every file's front matter. See the Taxonomies section below.
 
-Regular directories without date-based permalink patterns are just pages — not collections. To group non-blog pages, use taxonomy tags.
+Regular directories without date-based permalink patterns or explicit `collections:` config entries are just pages — not collections. To group non-blog pages, either add an entry to `collections:` config or use taxonomy tags.
 
 Collections are built once during content discovery, then frozen as read-only data:
 - Collections are materialized eagerly — no lazy loading

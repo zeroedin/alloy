@@ -31,19 +31,19 @@ var _ = Describe("Collection", func() {
 
 	Describe("Blog collection creation", func() {
 		It("creates collection for section with date-based permalink pattern (key contains :year)", func() {
-			collections := collection.BuildCollections(pages, permalinkCfg)
+			collections := collection.BuildCollections(pages, permalinkCfg, nil)
 			Expect(collections).NotTo(BeNil())
 			Expect(collections).To(HaveKey("blog"))
 		})
 
 		It("does not create collection for section without date tokens", func() {
-			collections := collection.BuildCollections(pages, permalinkCfg)
+			collections := collection.BuildCollections(pages, permalinkCfg, nil)
 			Expect(collections).NotTo(BeNil())
 			Expect(collections).NotTo(HaveKey("docs"))
 		})
 
 		It("collects all child pages into the section collection", func() {
-			collections := collection.BuildCollections(pages, permalinkCfg)
+			collections := collection.BuildCollections(pages, permalinkCfg, nil)
 			Expect(collections).NotTo(BeNil())
 			Expect(collections).To(HaveKey("blog"))
 			// Non-draft blog pages: Post 1 and Post 2
@@ -99,7 +99,7 @@ var _ = Describe("Collection", func() {
 
 	Describe("Collection data", func() {
 		It("draft pages are excluded from collections", func() {
-			collections := collection.BuildCollections(pages, permalinkCfg)
+			collections := collection.BuildCollections(pages, permalinkCfg, nil)
 			Expect(collections).NotTo(BeNil())
 			Expect(collections).To(HaveKey("blog"))
 			for _, p := range collections["blog"].Pages {
@@ -232,7 +232,7 @@ var _ = Describe("Collection", func() {
 				{Section: "blog", Draft: true, FrontMatter: map[string]interface{}{"title": "Draft Post"}},
 				{Section: "blog", Draft: false, FrontMatter: map[string]interface{}{"title": "Published Post"}},
 			}
-			collections := collection.BuildCollectionsWithMode(draftPages, map[string]string{"blog": "/:year/:month/:slug/"}, true)
+			collections := collection.BuildCollectionsWithMode(draftPages, map[string]string{"blog": "/:year/:month/:slug/"}, nil, true)
 			Expect(collections).NotTo(BeNil())
 			Expect(collections).To(HaveKey("blog"))
 			Expect(collections["blog"].Pages).To(HaveLen(2),
@@ -246,13 +246,13 @@ var _ = Describe("Collection", func() {
 				{Section: "blog", FrontMatter: map[string]interface{}{"title": "Normal Post"}},
 			}
 			// Build mode
-			buildCollections := collection.BuildCollectionsWithMode(futurePages, map[string]string{"blog": "/:year/:month/:slug/"}, false)
+			buildCollections := collection.BuildCollectionsWithMode(futurePages, map[string]string{"blog": "/:year/:month/:slug/"}, nil, false)
 			Expect(buildCollections).To(HaveKey("blog"))
 			Expect(buildCollections["blog"].Pages).To(HaveLen(1),
 				"future publishDate must be excluded from collections in build mode")
 
 			// Serve mode
-			serveCollections := collection.BuildCollectionsWithMode(futurePages, map[string]string{"blog": "/:year/:month/:slug/"}, true)
+			serveCollections := collection.BuildCollectionsWithMode(futurePages, map[string]string{"blog": "/:year/:month/:slug/"}, nil, true)
 			Expect(serveCollections).To(HaveKey("blog"))
 			Expect(serveCollections["blog"].Pages).To(HaveLen(1),
 				"future publishDate must be excluded from collections in serve mode too")
@@ -266,10 +266,105 @@ var _ = Describe("Collection", func() {
 				{Section: "blog", FrontMatter: map[string]interface{}{"title": "Active 1"}},
 				{Section: "blog", FrontMatter: map[string]interface{}{"title": "Active 2"}},
 			}
-			collections := collection.BuildCollectionsWithMode(allPages, map[string]string{"blog": "/:year/:month/:slug/"}, false)
+			collections := collection.BuildCollectionsWithMode(allPages, map[string]string{"blog": "/:year/:month/:slug/"}, nil, false)
 			Expect(collections).To(HaveKey("blog"))
 			Expect(collections["blog"].Pages).To(HaveLen(2),
 				"collection used for pagination must only contain lifecycle-filtered pages")
+		})
+	})
+
+	// ── Explicit collection membership (issue #766) ──────────────────
+
+	Describe("Explicit collection membership", func() {
+		It("creates collection for section listed in collectionNames even without date tokens", func() {
+			pages := []*content.Page{
+				{Section: "releases", RelPath: "releases/v1.md", FrontMatter: map[string]interface{}{"title": "v1.0"}},
+				{Section: "releases", RelPath: "releases/v2.md", FrontMatter: map[string]interface{}{"title": "v2.0"}},
+				{Section: "docs", RelPath: "docs/intro.md", FrontMatter: map[string]interface{}{"title": "Intro"}},
+			}
+			permalinkCfg := map[string]string{"default": "/:slug/"}
+			collectionNames := []string{"releases"}
+
+			collections := collection.BuildCollections(pages, permalinkCfg, collectionNames)
+
+			Expect(collections).To(HaveKey("releases"),
+				"section listed in collectionNames must become a collection even without date tokens in permalink")
+			Expect(collections["releases"].Pages).To(HaveLen(2))
+			Expect(collections).NotTo(HaveKey("docs"),
+				"section not in collectionNames and without date tokens must not become a collection")
+		})
+
+		It("creates collection from date tokens when collectionNames is nil", func() {
+			pages := []*content.Page{
+				{Section: "blog", RelPath: "blog/post.md", FrontMatter: map[string]interface{}{"title": "Post"}},
+			}
+			permalinkCfg := map[string]string{"blog": "/:year/:month/:slug/"}
+
+			collections := collection.BuildCollections(pages, permalinkCfg, nil)
+
+			Expect(collections).To(HaveKey("blog"),
+				"date-token-based collection must still work when collectionNames is nil")
+		})
+
+		It("combines date-token and explicit membership without duplicating pages", func() {
+			pages := []*content.Page{
+				{Section: "blog", RelPath: "blog/post1.md", Date: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), FrontMatter: map[string]interface{}{"title": "Post 1"}},
+				{Section: "blog", RelPath: "blog/post2.md", Date: time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC), FrontMatter: map[string]interface{}{"title": "Post 2"}},
+			}
+			permalinkCfg := map[string]string{"blog": "/:year/:month/:slug/"}
+			collectionNames := []string{"blog"}
+
+			collections := collection.BuildCollections(pages, permalinkCfg, collectionNames)
+
+			Expect(collections).To(HaveKey("blog"))
+			Expect(collections["blog"].Pages).To(HaveLen(2),
+				"section qualifying via both mechanisms must not duplicate pages")
+		})
+
+		It("excludes drafts from explicitly-defined collections", func() {
+			pages := []*content.Page{
+				{Section: "releases", RelPath: "releases/v1.md", FrontMatter: map[string]interface{}{"title": "v1.0"}},
+				{Section: "releases", RelPath: "releases/v2.md", Draft: true, FrontMatter: map[string]interface{}{"title": "v2.0-draft"}},
+			}
+			permalinkCfg := map[string]string{"default": "/:slug/"}
+			collectionNames := []string{"releases"}
+
+			collections := collection.BuildCollections(pages, permalinkCfg, collectionNames)
+
+			Expect(collections).To(HaveKey("releases"))
+			Expect(collections["releases"].Pages).To(HaveLen(1),
+				"drafts must be excluded from explicitly-defined collections")
+		})
+
+		It("excludes section index from explicitly-defined collections", func() {
+			pages := []*content.Page{
+				{Section: "releases", RelPath: "releases/index.md", FrontMatter: map[string]interface{}{"title": "Releases Index"}},
+				{Section: "releases", RelPath: "releases/v1.md", FrontMatter: map[string]interface{}{"title": "v1.0"}},
+			}
+			permalinkCfg := map[string]string{"default": "/:slug/"}
+			collectionNames := []string{"releases"}
+
+			collections := collection.BuildCollections(pages, permalinkCfg, collectionNames)
+
+			Expect(collections).To(HaveKey("releases"))
+			Expect(collections["releases"].Pages).To(HaveLen(1),
+				"section index must not be included as a collection member")
+			Expect(collections["releases"].Pages[0].FrontMatter["title"]).To(Equal("v1.0"))
+		})
+
+		It("includes drafts in explicitly-defined collections in serve mode", func() {
+			pages := []*content.Page{
+				{Section: "releases", RelPath: "releases/v1.md", FrontMatter: map[string]interface{}{"title": "v1.0"}},
+				{Section: "releases", RelPath: "releases/v2.md", Draft: true, FrontMatter: map[string]interface{}{"title": "v2.0-draft"}},
+			}
+			permalinkCfg := map[string]string{"default": "/:slug/"}
+			collectionNames := []string{"releases"}
+
+			collections := collection.BuildCollectionsWithMode(pages, permalinkCfg, collectionNames, true)
+
+			Expect(collections).To(HaveKey("releases"))
+			Expect(collections["releases"].Pages).To(HaveLen(2),
+				"serve mode must include drafts in explicitly-defined collections")
 		})
 	})
 })
