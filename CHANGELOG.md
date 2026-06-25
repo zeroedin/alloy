@@ -1,3 +1,27 @@
+## v0.2.0 (2026-06-25)
+
+Sections listed in the `collections:` config now declare collection membership without requiring date-token permalink patterns. Non-blog sections like releases or changelogs can participate in `collections.*` pagination and template loops.
+
+```yaml
+# alloy.config.yaml
+collections:
+  releases:             # declares releases/ as a collection — no date tokens needed
+    sortBy: date
+    order: desc
+```
+
+```yaml
+# content/releases/_data.yaml
+permalink: "/releases/:title/"
+```
+
+```liquid
+{% for release in collections.releases %}
+  <a href="{{ release.url }}">{{ release.title }}</a>
+{% endfor %}
+```
+Fix race conditions in concurrent plugin hook execution and runtime initialization.
+
 ## v0.1.1 (2026-06-24)
 
 Reduce internal memory footprint by removing unused cascade data layers.
