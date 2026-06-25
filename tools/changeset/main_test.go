@@ -99,6 +99,68 @@ var _ = Describe("Changeset Tool", func() {
 		})
 	})
 
+	Describe("buildDescriptions", func() {
+		It("returns flat output with no headers for a single bump level", func() {
+			result := buildDescriptions([]changeset{
+				{bumpType: "patch", summary: "Fixed bug A."},
+				{bumpType: "patch", summary: "Fixed bug B."},
+			})
+			Expect(result).NotTo(ContainSubstring("###"))
+			Expect(result).To(ContainSubstring("Fixed bug A."))
+			Expect(result).To(ContainSubstring("Fixed bug B."))
+		})
+
+		It("groups under headers when multiple bump levels are present", func() {
+			result := buildDescriptions([]changeset{
+				{bumpType: "patch", summary: "Fixed a bug."},
+				{bumpType: "minor", summary: "Added a feature."},
+			})
+			Expect(result).To(ContainSubstring("### Minor Changes"))
+			Expect(result).To(ContainSubstring("### Patch Changes"))
+			Expect(result).NotTo(ContainSubstring("### Major Changes"))
+		})
+
+		It("orders headers major then minor then patch", func() {
+			result := buildDescriptions([]changeset{
+				{bumpType: "patch", summary: "Fix."},
+				{bumpType: "major", summary: "Breaking."},
+				{bumpType: "minor", summary: "Feature."},
+			})
+			majorIdx := strings.Index(result, "### Major Changes")
+			minorIdx := strings.Index(result, "### Minor Changes")
+			patchIdx := strings.Index(result, "### Patch Changes")
+			Expect(majorIdx).To(BeNumerically("<", minorIdx))
+			Expect(minorIdx).To(BeNumerically("<", patchIdx))
+		})
+
+		It("places each description under its correct header", func() {
+			result := buildDescriptions([]changeset{
+				{bumpType: "minor", summary: "Added feature X."},
+				{bumpType: "patch", summary: "Fixed bug Y."},
+			})
+			minorIdx := strings.Index(result, "### Minor Changes")
+			patchIdx := strings.Index(result, "### Patch Changes")
+			featureIdx := strings.Index(result, "Added feature X.")
+			bugIdx := strings.Index(result, "Fixed bug Y.")
+			Expect(featureIdx).To(BeNumerically(">", minorIdx))
+			Expect(featureIdx).To(BeNumerically("<", patchIdx))
+			Expect(bugIdx).To(BeNumerically(">", patchIdx))
+		})
+
+		It("includes multiple entries under the same header", func() {
+			result := buildDescriptions([]changeset{
+				{bumpType: "minor", summary: "Feature A."},
+				{bumpType: "patch", summary: "Fix A."},
+				{bumpType: "patch", summary: "Fix B."},
+			})
+			patchIdx := strings.Index(result, "### Patch Changes")
+			fixAIdx := strings.Index(result, "Fix A.")
+			fixBIdx := strings.Index(result, "Fix B.")
+			Expect(fixAIdx).To(BeNumerically(">", patchIdx))
+			Expect(fixBIdx).To(BeNumerically(">", patchIdx))
+		})
+	})
+
 	Describe("bumpVersion", func() {
 		DescribeTable("calculates the next version",
 			func(current, bump, expected string) {
