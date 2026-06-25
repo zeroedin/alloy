@@ -358,6 +358,33 @@
     }
   }
 
+  @media (max-width: 379px) {
+    .nav-text-link {
+      display: none;
+    }
+  }
+
+  .github-link {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+  }
+
+  .latest-release {
+    display: none;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.1em 0.5em;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+  }
+
+  @media (min-width: 480px) {
+    .latest-release {
+      display: inline;
+    }
+  }
+
   /* Sidebar close button (mobile only) */
   .sidebar-close {
     display: flex;
