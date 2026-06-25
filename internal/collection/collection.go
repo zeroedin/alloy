@@ -17,20 +17,12 @@ type Collection struct {
 	frozen bool
 }
 
-// BuildCollections creates section collections from pages with date-based permalink patterns.
-// Only sections whose permalink pattern contains date tokens (:year, :month, :day)
-// produce collections. Draft pages are excluded.
-func BuildCollections(pages []*content.Page, permalinkCfg map[string]string) map[string]*Collection {
-	// Determine which sections have date-based patterns
-	dateSections := make(map[string]bool)
-	for section, pattern := range permalinkCfg {
-		if section == "default" {
-			continue
-		}
-		if containsDateToken(pattern) {
-			dateSections[section] = true
-		}
-	}
+// BuildCollections creates section collections from pages. A section becomes a
+// collection if its permalink pattern contains date tokens (:year, :month, :day)
+// OR it is listed in collectionNames. collectionNames may be nil.
+// Draft pages are excluded.
+func BuildCollections(pages []*content.Page, permalinkCfg map[string]string, collectionNames []string) map[string]*Collection {
+	dateSections := collectableSections(permalinkCfg, collectionNames)
 
 	collections := make(map[string]*Collection)
 	for _, page := range pages {
@@ -52,6 +44,24 @@ func BuildCollections(pages []*content.Page, permalinkCfg map[string]string) map
 	}
 
 	return collections
+}
+
+// collectableSections returns the set of section names that qualify as collections,
+// combining date-token permalink discovery with explicit collectionNames config.
+func collectableSections(permalinkCfg map[string]string, collectionNames []string) map[string]bool {
+	sections := make(map[string]bool)
+	for section, pattern := range permalinkCfg {
+		if section == "default" {
+			continue
+		}
+		if containsDateToken(pattern) {
+			sections[section] = true
+		}
+	}
+	for _, name := range collectionNames {
+		sections[name] = true
+	}
+	return sections
 }
 
 // isSectionIndex returns true if the page is a section-level index file
@@ -208,25 +218,18 @@ func (c *Collection) AddPage(page *content.Page) error {
 
 // BuildCollectionsWithMode builds collections with lifecycle filtering based on mode.
 // devMode=true includes drafts; devMode=false excludes them.
-func BuildCollectionsWithMode(pages []*content.Page, permalinkCfg map[string]string, devMode bool) map[string]*Collection {
+// collectionNames lists sections that are explicitly declared as collections.
+func BuildCollectionsWithMode(pages []*content.Page, permalinkCfg map[string]string, collectionNames []string, devMode bool) map[string]*Collection {
 	now := time.Now()
 	filtered := content.FilterByLifecycle(pages, now, devMode)
-	return buildCollectionsIncludeAll(filtered, permalinkCfg)
+	return buildCollectionsIncludeAll(filtered, permalinkCfg, collectionNames)
 }
 
 // buildCollectionsIncludeAll creates section collections from pre-filtered pages.
 // Unlike BuildCollections, this does not re-filter drafts since lifecycle filtering
 // has already been applied.
-func buildCollectionsIncludeAll(pages []*content.Page, permalinkCfg map[string]string) map[string]*Collection {
-	dateSections := make(map[string]bool)
-	for section, pattern := range permalinkCfg {
-		if section == "default" {
-			continue
-		}
-		if containsDateToken(pattern) {
-			dateSections[section] = true
-		}
-	}
+func buildCollectionsIncludeAll(pages []*content.Page, permalinkCfg map[string]string, collectionNames []string) map[string]*Collection {
+	dateSections := collectableSections(permalinkCfg, collectionNames)
 
 	collections := make(map[string]*Collection)
 	for _, page := range pages {
