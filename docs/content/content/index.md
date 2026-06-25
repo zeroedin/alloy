@@ -2,6 +2,7 @@
 layout: doc
 title: Content Overview
 nav_weight: 10
+description: "An overview of how Alloy turns files in content/ into pages: front matter, the data cascade, rendering, and output."
 ---
 
 Content in Alloy lives in the `content/` directory. Each file with a supported extension (`.md`, `.html` by default) becomes a page on your site. Alloy reads the front matter, applies the data cascade, renders the body, wraps it in a layout, and writes the result to `_site/`.

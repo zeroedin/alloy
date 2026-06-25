@@ -2,6 +2,7 @@
 layout: doc
 title: Quickstart
 nav_weight: 20
+description: "Build a working blog with a homepage, two posts, and a live dev server in five minutes."
 ---
 
 Build a working blog with Alloy in 5 minutes. By the end, you will have a site with a homepage, two blog posts, a shared layout, and a local dev server.

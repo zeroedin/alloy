@@ -2,6 +2,7 @@
 layout: doc
 title: Content Lifecycle
 nav_weight: 60
+description: "Control whether content appears in the build output using draft, future, and expiry fields in front matter."
 ---
 
 Every content file has a lifecycle state that determines whether it appears in the build output. By default, all pages are published immediately. You opt into hiding content using front matter fields.

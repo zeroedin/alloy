@@ -2,6 +2,7 @@
 layout: doc
 title: Hook Scoping
 nav_weight: 20
+description: "Reduce hook dispatch cost on large sites by declaring exactly which data and pages a hook needs."
 ---
 
 Hook scoping controls what subset of site data and pages a hook receives. By declaring what your hook needs at registration time, you reduce the serialization cost of each hook dispatch -- especially important for large sites with thousands of pages.

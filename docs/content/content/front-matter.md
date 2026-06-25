@@ -2,6 +2,7 @@
 layout: doc
 title: Front Matter
 nav_weight: 20
+description: "Front matter reference: the YAML, TOML, or JSON metadata block that controls a page's title, URL, layout, and lifecycle."
 ---
 
 Front matter is the metadata block at the top of every content file. Alloy uses it to determine the page title, URL, layout, taxonomy membership, and lifecycle state.

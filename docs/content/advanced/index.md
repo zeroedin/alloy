@@ -2,6 +2,7 @@
 layout: doc
 title: Advanced Features
 nav_weight: 10
+description: "An overview of Alloy's advanced features: internationalization, server-side rendering, and other capabilities beyond the core pipeline."
 ---
 
 This section covers capabilities beyond the core content-to-HTML pipeline.

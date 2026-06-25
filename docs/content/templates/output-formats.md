@@ -2,6 +2,7 @@
 layout: doc
 title: Output Formats
 nav_weight: 50
+description: "Render a single content page into multiple output formats: HTML, JSON, XML, or any text-based format."
 ---
 
 Alloy can render a single content page into multiple output formats. Liquid is format-agnostic -- templates can produce HTML, JSON, XML, plain text, or any other text-based format.

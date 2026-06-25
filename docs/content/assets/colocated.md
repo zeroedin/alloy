@@ -2,6 +2,7 @@
 layout: doc
 title: Colocated Assets
 nav_weight: 40
+description: "Non-content files placed alongside Markdown and HTML pages are copied to the output automatically, preserving their path."
 ---
 
 Files in the `content/` directory whose extension does not match `content.formats` (default: `md`, `html`) are automatically copied to the output, preserving their path:

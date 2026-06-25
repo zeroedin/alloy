@@ -1,6 +1,7 @@
 ---
 layout: doc
 title: Server-Side Rendering
+description: "Server-render Web Components into Declarative Shadow DOM at build time using Alloy's plugin-based SSR hook."
 ---
 
 Web components can be server-rendered into Declarative Shadow DOM at build time using Alloy's plugin system. The `onPageRendered` hook gives plugins access to each page's final HTML, making it possible to transform custom elements before they're written to disk.

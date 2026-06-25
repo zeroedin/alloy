@@ -2,6 +2,7 @@
 layout: doc
 title: Assets
 nav_weight: 10
+description: "How Alloy moves non-content files into your build output: static assets, passthrough copies, and colocated files."
 ---
 
 Alloy provides several mechanisms for getting non-content files into your output directory. This section covers static files, passthrough mappings, and content-colocated assets.

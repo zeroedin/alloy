@@ -2,6 +2,7 @@
 layout: doc
 title: Permalinks
 nav_weight: 40
+description: "How Alloy resolves output URLs through a three-level priority chain: front matter, directory data, then file path."
 ---
 
 Permalinks control the output URL for each page. Alloy resolves URLs through a three-level priority chain: front matter first, then the `_data.yaml` cascade, then the file path.

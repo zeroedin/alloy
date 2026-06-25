@@ -2,6 +2,7 @@
 layout: doc
 title: Shortcodes
 nav_weight: 40
+description: "Reusable content snippets that accept arguments and output HTML, embeddable directly in Markdown."
 ---
 
 Shortcodes are reusable content snippets that accept arguments and output HTML. They let you embed rich elements in Markdown content without writing raw HTML.

@@ -2,6 +2,7 @@
 layout: doc
 title: Project Structure
 nav_weight: 30
+description: "The standard directory layout for an Alloy project: config, content, layouts, assets, static, and data."
 ---
 
 A standard Alloy project follows this directory layout:

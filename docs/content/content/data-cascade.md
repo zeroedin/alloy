@@ -2,6 +2,7 @@
 layout: doc
 title: Data Cascade
 nav_weight: 30
+description: "How Alloy merges global data, directory data, front matter, and plugin hooks into the data available on every page."
 ---
 
 The data cascade is how Alloy assembles the data available to each page. Three levels of data merge together using deep-merge, with later levels overriding earlier ones:

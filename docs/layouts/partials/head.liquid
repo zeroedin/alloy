@@ -1,9 +1,25 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {% if page.meta_title %}
-  <title>{{ page.meta_title }}</title>
+  {% assign page_title = page.meta_title %}
 {% else %}
-  <title>{{ page.title }} — Alloy</title>
+  {% assign page_title = page.title | append: " — Alloy" %}
 {% endif %}
-<meta name="description" content="{{ page.description | default: 'Alloy is a fast, extensible static site generator built in Go.' }}">
+{% assign page_description = page.description | default: "Alloy is a fast, extensible static site generator built in Go." %}
+{% assign canonical_url = site.baseURL | append: page.url %}
+<title>{{ page_title }}</title>
+<meta name="description" content="{{ page_description }}">
+<link rel="canonical" href="{{ canonical_url }}">
+<link rel="icon" type="image/svg+xml" href="/images/alloy-logo.svg">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Alloy">
+<meta property="og:title" content="{{ page_title }}">
+<meta property="og:description" content="{{ page_description }}">
+<meta property="og:url" content="{{ canonical_url }}">
+
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="{{ page_title }}">
+<meta name="twitter:description" content="{{ page_description }}">
+
 <link rel="stylesheet" href="/css/main.css">

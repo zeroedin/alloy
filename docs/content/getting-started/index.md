@@ -2,6 +2,7 @@
 layout: doc
 title: Installation
 nav_weight: 10
+description: "Install Alloy via Homebrew, Go install, or from source on macOS, Linux, and Windows, then scaffold your first project."
 ---
 
 ## Homebrew (recommended)

@@ -2,6 +2,7 @@
 layout: doc
 title: Static Files
 nav_weight: 20
+description: "Files in the static/ directory are copied to the output root as-is, ideal for favicons, robots.txt, and verification files."
 ---
 
 Files in `static/` are copied to the output root as-is. No template rendering, no fingerprinting, no transformation.
