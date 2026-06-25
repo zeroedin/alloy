@@ -242,11 +242,11 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
 - `ResolveForSection`: Front matter > section pattern > default pattern > file path. **Index file override (issue #39)**: Before applying section or default patterns (steps 2-3), check if the page is an index file (`isIndexFile(page.RelPath)`). If so, skip directly to `DefaultFromPath` (step 4). This prevents `default: "/:slug/"` from turning `index.md` (title: "Home") into `/home/` instead of `/`. Front matter `permalink:` (step 1) still overrides — allows configuring index path for subdirectory deployments.
 - `ResolveAliases`: Return page's Aliases slice
 
-### 3B: `internal/collection` — 21 tests
+### 3B: `internal/collection` — 27 tests
 **Files**: `collection.go`, `taxonomy.go`
 
-- `BuildCollections`: Group pages by section with date-based permalink patterns
-- `BuildCollectionsWithMode(pages, permalinkCfg, devMode bool)`: Lifecycle-aware wrapper — filters drafts (via `content.FilterByLifecycle`) before calling `BuildCollections`. `devMode=true` includes drafts; `devMode=false` excludes them.
+- `BuildCollections(pages, permalinkCfg, collectionNames []string)`: Group pages by section. A section becomes a collection if it has date-based permalink tokens `:year`/`:month`/`:day` **or** is listed in `collectionNames` (extracted from `cfg.Collections` keys). Both sources seed a single membership map; a section qualifying via both mechanisms produces one collection (no duplication). `collectionNames` may be nil (backward-compatible, date-tokens-only behavior).
+- `BuildCollectionsWithMode(pages, permalinkCfg, collectionNames []string, devMode bool)`: Lifecycle-aware wrapper — filters drafts (via `content.FilterByLifecycle`) before calling `buildCollectionsIncludeAll`. `devMode=true` includes drafts; `devMode=false` excludes them.
 - `SortPages`/`SortByFrontMatter`: Stable sort, dateless pages sort after dated ones
 - `Freeze`/`IsFrozen`/`AddPage`: Add `frozen bool` field, error if frozen
 - `BuildTaxonomies`: Group pages by declared taxonomy keys from front matter
@@ -421,9 +421,11 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
     Remove `ResolveForSection` — replaced by `ResolveFromCascade`.
     Update all callers in build.go (batch loop, i18n prefix logic).
  7. data.LoadDirectory(dataDir) → siteData                ✅ done
- 8. collection.BuildCollections(pages, cascadeData)       ← CHANGED (issue #302)
+ 8. collection.BuildCollections(pages, cascadeData, collectionNames)  ← CHANGED (issues #302, #766)
     Date-based section detection reads permalink from each section's
     _data.yaml cascade instead of cfg.Permalinks map.
+    `collectionNames` extracted from cfg.Collections keys — sections listed
+    there become collections regardless of permalink pattern (issue #766).
     `isDateBasedSection` in layout.go also needs cascade data.
  9. collection.BuildTaxonomies(pages, taxonomies)         ✅ done
  9a. validation.ValidatePermalinkAliases(pages)            ✅ done — **must run before rendering (issue #690)**
