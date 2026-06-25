@@ -3,6 +3,7 @@ layout: landing
 body_class: landing-page
 title: Fast, Extensible Static Site Generator
 meta_title: Alloy — Fast, Extensible Static Site Generator
+description: "A Go-powered static site generator built for speed and extensibility. Liquid templates, a flexible plugin system, and builds that finish in seconds."
 ---
 
 <div class="hero">

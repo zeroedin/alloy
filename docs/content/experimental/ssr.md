@@ -2,6 +2,7 @@
 layout: doc
 title: "Config-Driven SSR"
 nav_weight: 20
+description: "Pipe rendered HTML through an external SSR command via a config-driven ssr: block, an experimental alternative to plugin-based SSR."
 ---
 
 <aside>

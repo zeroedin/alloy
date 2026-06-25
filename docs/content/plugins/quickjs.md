@@ -2,6 +2,7 @@
 layout: doc
 title: QuickJS Plugins
 nav_weight: 20
+description: "Write plain JavaScript plugins that run on an embedded QuickJS engine, no Node.js dependency and no build step."
 ---
 
 QuickJS plugins are plain JavaScript files that run on an embedded QuickJS engine inside the Alloy process. No Node.js dependency, no build step -- drop a `.js` file in `plugins/` and it works immediately.

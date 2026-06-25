@@ -2,6 +2,7 @@
 layout: doc
 title: Layouts
 nav_weight: 20
+description: "How layouts wrap page content in shared HTML structure using the {{ content }} placeholder."
 ---
 
 Layouts wrap your page content in shared HTML structure. Every content page is rendered into a layout, which injects the page body via `{{ content }}`.

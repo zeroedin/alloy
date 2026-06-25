@@ -2,6 +2,7 @@
 layout: doc
 title: CLI Reference
 nav_weight: 40
+description: "The full Alloy CLI reference: build, dev, serve, init, and version commands with all flags and build modes."
 ---
 
 Alloy ships as a single binary. All commands follow standard Unix conventions: exit 0 on success, exit 1 on failure.

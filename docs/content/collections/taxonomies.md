@@ -2,6 +2,7 @@
 layout: doc
 title: Taxonomies
 nav_weight: 20
+description: "Cross-cutting taxonomies group content by front matter values like tags, with auto-generated index and term pages."
 ---
 
 Taxonomies create cross-cutting groups from front matter values. A blog post and a docs page can both be tagged "javascript" and appear in the same taxonomy collection. Alloy auto-generates index and per-term pages from your taxonomy declarations.

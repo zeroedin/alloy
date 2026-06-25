@@ -2,6 +2,7 @@
 layout: doc
 title: Templates Overview
 nav_weight: 10
+description: "An overview of Alloy's Liquid and Go html/template engines, layout lookup, and the data available during rendering."
 ---
 
 Alloy uses the [Liquid](https://liquidmarkup.org/) template language by default. Templates live in the `layouts/` directory, are parsed once at startup, and rendered per page with full access to the site's data cascade.

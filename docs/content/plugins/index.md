@@ -2,6 +2,7 @@
 layout: doc
 title: Plugin System
 nav_weight: 10
+description: "Alloy's tiered plugin system: Go built-in filters, in-process QuickJS/WASM, and Node subprocess plugins for full ecosystem access."
 ---
 
 Alloy's plugin system lets you extend the build pipeline with custom filters, shortcodes, and lifecycle hooks. Plugins are loaded automatically from the `plugins/` directory -- drop a file in and it is active.

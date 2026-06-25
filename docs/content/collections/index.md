@@ -2,6 +2,7 @@
 layout: doc
 title: Collections
 nav_weight: 10
+description: "How Alloy automatically groups content into collections from your directory structure, with no manual registration required."
 ---
 
 Collections group related content pages so templates can iterate, sort, and filter them. Alloy creates collections automatically from your content structure -- no manual registration required.

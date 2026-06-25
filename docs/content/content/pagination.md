@@ -2,6 +2,7 @@
 layout: doc
 title: Pagination
 nav_weight: 50
+description: "Generate paginated list pages and virtual pages from data using Alloy's pagination configuration."
 ---
 
 Pagination in Alloy serves two purposes with one mechanism: generating paginated list pages and creating virtual pages from data. The difference is `perPage`.

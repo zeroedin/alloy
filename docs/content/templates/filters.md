@@ -2,6 +2,7 @@
 layout: doc
 title: Filters
 nav_weight: 30
+description: "Reference for Alloy's 50+ built-in template filters covering strings, dates, arrays, URLs, math, and content processing."
 ---
 
 Filters transform values in template expressions. Alloy ships with 50+ built-in filters covering strings, dates, arrays, URLs, math, and content processing. Filters are registered in both the Liquid and Go template engines at startup.

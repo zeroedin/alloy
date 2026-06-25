@@ -2,6 +2,7 @@
 layout: doc
 title: Passthrough Copy
 nav_weight: 30
+description: "Copy directories and files into the output directory unprocessed using passthrough mappings in your Alloy config."
 ---
 
 Passthrough mappings copy directories and files into the output directory without processing them:

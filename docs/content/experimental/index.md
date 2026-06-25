@@ -2,6 +2,7 @@
 layout: doc
 title: Experimental Features
 nav_weight: 10
+description: "Functional but evolving features in Alloy, including config-driven SSR, with APIs that may change between releases."
 ---
 
 These features are functional but their APIs may change in future releases. Use them in production with the understanding that configuration keys, CLI flags, or behavior details could shift between versions.

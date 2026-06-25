@@ -2,6 +2,7 @@
 layout: doc
 title: Lifecycle Events
 nav_weight: 10
+description: "Reference for Alloy's lifecycle hooks, the events plugins use to modify content, inject pages, and observe builds."
 ---
 
 Lifecycle hooks let plugins run code at specific points in the build pipeline. Register a hook with `alloy.hook()` or `alloy.on()` to modify content, inject pages, transform data, or observe build events.

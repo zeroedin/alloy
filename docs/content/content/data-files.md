@@ -2,6 +2,7 @@
 layout: doc
 title: Data Files
 nav_weight: 70
+description: "Load YAML, JSON, TOML, or CSV files from the data/ directory and access them globally in templates via site.data."
 ---
 
 Data files provide structured data that is available to every template on your site. Place YAML, JSON, TOML, or CSV files in the `data/` directory and access them through `site.data.*`.

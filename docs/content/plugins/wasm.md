@@ -2,6 +2,7 @@
 layout: doc
 title: WASM Plugins
 nav_weight: 30
+description: "Compile WASM plugins from Rust, TinyGo, or AssemblyScript for filters that run 5-10x faster than QuickJS."
 ---
 
 WASM plugins are compiled binaries that run native WebAssembly instructions inside the Alloy process. They execute 5-10x faster than QuickJS plugins, making them ideal for filters and transforms called on every page.

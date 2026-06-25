@@ -2,6 +2,7 @@
 layout: doc
 title: Node Plugins
 nav_weight: 40
+description: "Run plugins in a Node.js subprocess with full access to npm packages, the filesystem, and native addons."
 ---
 
 Node plugins run in a subprocess with full access to the Node.js runtime, npm packages, and native addons. Use them when your plugin needs capabilities beyond pure computation -- filesystem access, network requests, or npm dependencies.
