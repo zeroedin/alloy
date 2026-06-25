@@ -119,8 +119,8 @@ func (r *HookRegistry) Warnings() []string {
 
 func (r *HookRegistry) addWarning(msg string) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.warnings = append(r.warnings, msg)
-	r.mu.Unlock()
 }
 
 // HasHooks returns true if any hooks are registered for the given event.
@@ -443,10 +443,10 @@ func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface
 					err error
 				}
 				ch := make(chan hookResult, 1)
-				go func() {
-					result, err := h.fn(ctx, payload)
+				go func(input interface{}) {
+					result, err := h.fn(ctx, input)
 					ch <- hookResult{result, err}
-				}()
+				}(payload)
 
 				select {
 				case res := <-ch:

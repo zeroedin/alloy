@@ -291,7 +291,7 @@ func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, ho
 				}
 				if reg.Scope != nil {
 					if err := ValidateScope(HookName(name), *reg.Scope); err != nil {
-						hooks.warnings = append(hooks.warnings, fmt.Sprintf("plugin %s: hook %s: %v", pluginName, name, err))
+						hooks.addWarning(fmt.Sprintf("plugin %s: hook %s: %v", pluginName, name, err))
 					}
 					if hasBatch {
 						batchFn := func(ctx context.Context, payloads []interface{}, onProgress BatchProgressFunc) ([]interface{}, error) {
@@ -343,7 +343,7 @@ func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, ho
 	}
 	if warner, ok := rt.(EvalWarner); ok {
 		for _, w := range warner.EvalWarnings() {
-			hooks.warnings = append(hooks.warnings, fmt.Sprintf("plugin %s: %s", pluginName, w))
+			hooks.addWarning(fmt.Sprintf("plugin %s: %s", pluginName, w))
 		}
 	}
 	r.runtimes = append(r.runtimes, rt)
