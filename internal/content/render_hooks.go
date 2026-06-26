@@ -81,7 +81,7 @@ func (r *hookNodeRenderer) renderFencedCodeBlock(
 	ctx := map[string]interface{}{
 		"markup": map[string]interface{}{
 			"language": language,
-			"inner":    codeBuf.String(),
+			"inner":    escapeLiquidDelimiters(codeBuf.String()),
 		},
 	}
 	rendered, err := r.renderHookTemplate(hookTemplate, ctx)
@@ -241,6 +241,16 @@ func slugifyHeading(text string) string {
 	}, s)
 	s = nonAlphanumRe.ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
+	return s
+}
+
+// escapeLiquidDelimiters entity-encodes Liquid delimiters so the hook
+// template engine does not interpret code content as Liquid syntax.
+func escapeLiquidDelimiters(s string) string {
+	s = strings.ReplaceAll(s, "{{", "&#123;&#123;")
+	s = strings.ReplaceAll(s, "}}", "&#125;&#125;")
+	s = strings.ReplaceAll(s, "{%", "&#123;%")
+	s = strings.ReplaceAll(s, "%}", "%&#125;")
 	return s
 }
 
