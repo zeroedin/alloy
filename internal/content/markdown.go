@@ -246,26 +246,32 @@ func (p *customElementBlockParser) Open(parent ast.Node, reader text.Reader, pc 
 	node := ast.NewHTMLBlock(ast.HTMLBlockType1)
 	node.Lines().Append(seg)
 
+	opener := []byte("<" + tagName)
 	closer := []byte("</" + tagName)
-	if bytes.Contains(line, closer) {
+	openerCount := countTagOccurrences(line, opener)
+	closerCount := countTagOccurrences(line, closer)
+	if closerCount >= openerCount {
 		return node, parser.NoChildren
 	}
 
 	pc.Set(customElementTagKey, []byte(tagName))
-	pc.Set(customElementDepthKey, 1)
+	pc.Set(customElementDepthKey, openerCount-closerCount)
 	return node, parser.NoChildren
 }
 
 func (p *customElementBlockParser) Continue(node ast.Node, reader text.Reader, pc parser.Context) parser.State {
 	line, seg := reader.PeekLine()
 
-	tagNameRaw := pc.Get(customElementTagKey)
-	if tagNameRaw == nil {
+	tagNameRaw, ok := pc.Get(customElementTagKey).([]byte)
+	if !ok || tagNameRaw == nil {
 		return parser.Close
 	}
-	tagName := string(tagNameRaw.([]byte))
+	tagName := string(tagNameRaw)
 
-	depth := pc.Get(customElementDepthKey).(int)
+	depth, ok := pc.Get(customElementDepthKey).(int)
+	if !ok {
+		return parser.Close
+	}
 
 	opener := []byte("<" + tagName)
 	closer := []byte("</" + tagName)
