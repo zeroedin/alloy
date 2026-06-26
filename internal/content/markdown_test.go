@@ -880,6 +880,64 @@ var _ = Describe("RenderMarkdown", func() {
 				"generic codeblock hook must not be used when language-specific exists")
 		})
 
+		It("escapes Liquid delimiters in markup.inner for codeblock hooks", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"codeblock": `<alloy-code lang="{{ markup.language }}">{{ markup.inner }}</alloy-code>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "```liquid\n{% for post in collections.blog %}\n  {{ post.title }}\n{% endfor %}\n```"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<alloy-code"),
+				"render hook must produce custom element")
+			Expect(html).NotTo(ContainSubstring("{%"),
+				"Liquid control tags in code content must be escaped before reaching the hook template")
+			Expect(html).NotTo(ContainSubstring("{{"),
+				"Liquid expression tags in code content must be escaped before reaching the hook template")
+			Expect(html).To(ContainSubstring("&#123;%"),
+				"Liquid control tags must be entity-encoded in markup.inner")
+			Expect(html).To(ContainSubstring("&#123;&#123;"),
+				"Liquid expression tags must be entity-encoded in markup.inner")
+		})
+
+		It("escapes Liquid delimiters in markup.inner for language-specific codeblock hooks", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"codeblock-liquid": `<div class="liquid-example">{{ markup.inner }}</div>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "```liquid\n{{ page.title }}\n```"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`class="liquid-example"`),
+				"language-specific hook must be used")
+			Expect(html).NotTo(ContainSubstring("{{ page"),
+				"Liquid expressions must not survive unescaped into language-specific hook output")
+		})
+
+		It("does not alter code content without Liquid syntax in codeblock hooks", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"codeblock": `<rh-code-block>{{ markup.inner }}</rh-code-block>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "```go\nfmt.Println(\"hello\")\n```"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("fmt.Println"),
+				"code without Liquid syntax must pass through unmodified")
+		})
+
 		It("falls back to default rendering when no hook exists", func() {
 			opts := content.MarkdownOptions{
 				Unsafe: true, Typographer: true, TemplateTags: true,

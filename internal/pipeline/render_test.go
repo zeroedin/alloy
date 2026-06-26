@@ -305,6 +305,31 @@ var _ = Describe("Build Pipeline", func() {
 				"template tags inside inline code in .md files must be escaped — "+
 					"inline code should display template syntax literally")
 		})
+
+		It("Liquid syntax in code fences survives render hook replacement", func() {
+			cfg := &config.Config{
+				Title:   "Render Hook Escape Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/example.md":                      "---\ntitle: Example\nlayout: default\n---\n```liquid\n{% for item in collections.blog %}\n  {{ item.title }}\n{% endfor %}\n```",
+				"layouts/_markup/render-codeblock.liquid":  `<alloy-code lang="{{ markup.language }}">{{ markup.inner }}</alloy-code>`,
+				"layouts/default.liquid":                   "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["example.md"]
+			Expect(html).To(ContainSubstring("<alloy-code"),
+				"render hook must produce custom element, not default <pre><code>")
+			Expect(html).To(ContainSubstring("&#123;%"),
+				"Liquid control tags in code fences must be entity-encoded when "+
+					"render hook replaces <code> element — without escaping, the "+
+					"Liquid engine silently consumes the code content instead of "+
+					"displaying it")
+		})
 	})
 
 	// ── {% inline %} pipeline wiring (issue #295) ──────────────────
