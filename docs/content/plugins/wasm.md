@@ -26,7 +26,9 @@ For one-off or low-frequency operations, [QuickJS plugins](/plugins/quickjs/) ar
 
 ## ABI Contract
 
-WASM modules communicate with Alloy through linear memory using a pointer/length convention. Your module must export specific functions that Alloy calls during the build.
+WASM plugins run in an isolated sandbox — they can't call Alloy functions directly, and Alloy can't reach into the plugin's internals. The ABI (Application Binary Interface) is the contract both sides agree on to exchange data. It defines which functions the plugin must export, which functions the host provides, and how data is passed between them through shared memory. Think of it as the narrow doorway in the sandbox wall — everything flows through it in a predictable format.
+
+In practice, this means Alloy and your plugin communicate through linear memory using a pointer/length convention. Your module must export specific functions that Alloy calls during the build.
 
 ### Required Export
 
