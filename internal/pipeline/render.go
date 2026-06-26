@@ -25,10 +25,11 @@ import (
 func renderPages(pages []*content.Page, rc *RenderContext, reporter ProgressReporter) ([]string, error) {
 	cfg := rc.Cfg
 	mdOpts := content.MarkdownOptions{
-		Unsafe:        cfg.Content.Markdown.Goldmark.UnsafeValue(),
-		Typographer:   cfg.Content.Markdown.Goldmark.Typographer,
-		TemplateTags:  cfg.Content.Markdown.Goldmark.TemplateTagsValue(),
-		AutoHeadingID: cfg.Content.Markdown.Goldmark.AutoHeadingIDValue(),
+		Unsafe:         cfg.Content.Markdown.Goldmark.UnsafeValue(),
+		Typographer:    cfg.Content.Markdown.Goldmark.Typographer,
+		TemplateTags:   cfg.Content.Markdown.Goldmark.TemplateTagsValue(),
+		AutoHeadingID:  cfg.Content.Markdown.Goldmark.AutoHeadingIDValue(),
+		CustomElements: cfg.Content.Markdown.Goldmark.CustomElementsValue(),
 	}
 
 	layoutsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts)

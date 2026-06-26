@@ -28,10 +28,11 @@ func BuildPhase1(cfg *config.Config) (map[string]string, error) {
 	result := make(map[string]string, len(pages))
 
 	mdOpts := content.MarkdownOptions{
-		Unsafe:        cfg.Content.Markdown.Goldmark.UnsafeValue(),
-		Typographer:   cfg.Content.Markdown.Goldmark.Typographer,
-		TemplateTags:  cfg.Content.Markdown.Goldmark.TemplateTagsValue(),
-		AutoHeadingID: cfg.Content.Markdown.Goldmark.AutoHeadingIDValue(),
+		Unsafe:         cfg.Content.Markdown.Goldmark.UnsafeValue(),
+		Typographer:    cfg.Content.Markdown.Goldmark.Typographer,
+		TemplateTags:   cfg.Content.Markdown.Goldmark.TemplateTagsValue(),
+		AutoHeadingID:  cfg.Content.Markdown.Goldmark.AutoHeadingIDValue(),
+		CustomElements: cfg.Content.Markdown.Goldmark.CustomElementsValue(),
 	}
 	md := content.CreateGoldmark(mdOpts)
 

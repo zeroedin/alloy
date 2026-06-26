@@ -81,10 +81,11 @@ type MarkdownConfig struct {
 // Boolean fields that default to true use *bool so ApplyDefaults
 // can distinguish "not set" (nil → true) from "explicitly false".
 type GoldmarkConfig struct {
-	Unsafe        *bool `yaml:"unsafe" toml:"unsafe" json:"unsafe"`
-	Typographer   bool  `yaml:"typographer" toml:"typographer" json:"typographer"`
-	TemplateTags  *bool `yaml:"templateTags" toml:"templateTags" json:"templateTags"`
-	AutoHeadingID *bool `yaml:"autoHeadingID" toml:"autoHeadingID" json:"autoHeadingID"`
+	Unsafe         *bool `yaml:"unsafe" toml:"unsafe" json:"unsafe"`
+	Typographer    bool  `yaml:"typographer" toml:"typographer" json:"typographer"`
+	TemplateTags   *bool `yaml:"templateTags" toml:"templateTags" json:"templateTags"`
+	AutoHeadingID  *bool `yaml:"autoHeadingID" toml:"autoHeadingID" json:"autoHeadingID"`
+	CustomElements *bool `yaml:"customElements" toml:"customElements" json:"customElements"`
 }
 
 // UnsafeValue returns the effective Unsafe setting.
@@ -103,6 +104,12 @@ func (g *GoldmarkConfig) TemplateTagsValue() bool {
 // nil (omitted) defaults to true; only explicit false disables.
 func (g *GoldmarkConfig) AutoHeadingIDValue() bool {
 	return g.AutoHeadingID == nil || *g.AutoHeadingID
+}
+
+// CustomElementsValue returns the effective CustomElements setting.
+// nil (omitted) defaults to true; only explicit false disables.
+func (g *GoldmarkConfig) CustomElementsValue() bool {
+	return g.CustomElements == nil || *g.CustomElements
 }
 
 // TemplatesConfig holds the template engine selection.

@@ -90,9 +90,10 @@ func createEngine(cfg *config.Config) (tmpl.TemplateEngine, error) {
 		engine = tmpl.NewLiquidEngine()
 	}
 	tmpl.InitMarkdownify(content.MarkdownOptions{
-		Unsafe:        cfg.Content.Markdown.Goldmark.UnsafeValue(),
-		Typographer:   cfg.Content.Markdown.Goldmark.Typographer,
-		AutoHeadingID: cfg.Content.Markdown.Goldmark.AutoHeadingIDValue(),
+		Unsafe:         cfg.Content.Markdown.Goldmark.UnsafeValue(),
+		Typographer:    cfg.Content.Markdown.Goldmark.Typographer,
+		AutoHeadingID:  cfg.Content.Markdown.Goldmark.AutoHeadingIDValue(),
+		CustomElements: cfg.Content.Markdown.Goldmark.CustomElementsValue(),
 	})
 	if err := tmpl.RegisterBuiltinFilters(engine); err != nil {
 		return nil, fmt.Errorf("registering template filters: %w", err)
