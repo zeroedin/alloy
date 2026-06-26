@@ -11,3 +11,6 @@ cmd/alloy.config.yaml
 
 # GoReleaser / release build output
 dist/
+
+# npm
+node_modules/
