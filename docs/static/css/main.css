@@ -522,6 +522,23 @@
     }
   }
 
+  wa-tab-group {
+    --indicator-color: var(--color-primary);
+    --track-color: transparent;
+  }
+
+  wa-tab-group::part(tabs) {
+    border-bottom: none;
+  }
+
+  wa-tab::part(base) {
+    color: var(--color-text-muted);
+  }
+
+  wa-tab[active]::part(base) {
+    color: var(--color-primary);
+  }
+
   .btn-secondary {
     border: 1px solid var(--color-border-strong);
     color: var(--color-text);
