@@ -138,6 +138,111 @@ var _ = Describe("RenderMarkdown", func() {
 		})
 	})
 
+	// ── Custom element block parsing (issue #784) ─────────────────────
+
+	Describe("Custom element block parsing", func() {
+		It("treats a custom element on its own line as a block-level element", func() {
+			opts := content.MarkdownOptions{Unsafe: true, CustomElements: true}
+			md := "<alloy-code>\nsome code\n</alloy-code>\n"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<alloy-code>"))
+			Expect(html).To(ContainSubstring("</alloy-code>"))
+			Expect(html).NotTo(ContainSubstring("<p>"),
+				"custom elements must be treated as block-level HTML, not wrapped in <p>")
+		})
+
+		It("does not terminate the block at blank lines inside custom elements", func() {
+			opts := content.MarkdownOptions{Unsafe: true, CustomElements: true}
+			md := "<my-widget>\nfirst paragraph\n\nsecond paragraph\n</my-widget>\n"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("first paragraph"))
+			Expect(html).To(ContainSubstring("second paragraph"))
+			Expect(html).NotTo(ContainSubstring("<p>"),
+				"blank lines inside custom elements must not trigger paragraph "+
+					"wrapping — content must be preserved verbatim like <pre>")
+		})
+
+		It("preserves content verbatim inside custom elements (no smart quotes)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, CustomElements: true,
+			}
+			md := "<my-component>\n\"quoted\" -- dashes\n</my-component>\n"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`"quoted" -- dashes`),
+				"typographer must not process content inside custom elements — "+
+					"smart quotes and em-dashes must not be applied")
+			Expect(html).NotTo(ContainSubstring("&ldquo;"),
+				"smart quotes must not appear inside custom element content")
+		})
+
+		It("terminates the block at the matching closing tag", func() {
+			opts := content.MarkdownOptions{Unsafe: true, CustomElements: true}
+			md := "<my-component>\ninner content\n</my-component>\n\n**bold after**\n"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<my-component>"))
+			Expect(html).To(ContainSubstring("inner content"))
+			Expect(html).To(ContainSubstring("</my-component>"))
+			Expect(html).To(ContainSubstring("<strong>bold after</strong>"),
+				"markdown content after the closing tag must be processed normally")
+		})
+
+		It("preserves attributes on the custom element opening tag", func() {
+			opts := content.MarkdownOptions{Unsafe: true, CustomElements: true}
+			md := "<alloy-code lang=\"go\" theme=\"dark\">\nfunc main() {}\n</alloy-code>\n"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`lang="go"`),
+				"attributes on the opening tag must be preserved")
+			Expect(html).To(ContainSubstring(`theme="dark"`),
+				"multiple attributes must be preserved")
+		})
+
+		It("handles nested custom elements without premature closure", func() {
+			opts := content.MarkdownOptions{Unsafe: true, CustomElements: true}
+			md := "<wa-tab-group>\n<wa-tab panel=\"one\">Tab 1</wa-tab>\n\n<wa-tab-panel name=\"one\">\nPanel content\n</wa-tab-panel>\n</wa-tab-group>\n"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<wa-tab-group>"))
+			Expect(html).To(ContainSubstring("</wa-tab-group>"))
+			Expect(html).To(ContainSubstring("<wa-tab-panel name=\"one\">"))
+			Expect(html).NotTo(ContainSubstring("<p>"),
+				"nested custom elements must not cause paragraph wrapping — "+
+					"inner closing tags like </wa-tab> must not terminate the outer block")
+		})
+
+		It("does not change behavior for standard HTML elements", func() {
+			opts := content.MarkdownOptions{Unsafe: true, CustomElements: true}
+			md := "<div>\nfirst\n\nsecond\n</div>\n"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<p>second</p>"),
+				"standard HTML elements must retain default Goldmark behavior — "+
+					"custom element block parsing must not affect tags without hyphens")
+		})
+
+		It("falls back to default handling when customElements is disabled", func() {
+			opts := content.MarkdownOptions{Unsafe: true, CustomElements: false}
+			md := "<my-widget>\nfirst\n\nsecond\n</my-widget>\n"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<p>"),
+				"with customElements disabled, blank lines inside custom elements "+
+					"must terminate the HTML block (standard Goldmark behavior)")
+		})
+	})
+
 	// ── Template tag preservation ──────────────────────────────────────
 
 	Context("Template tag preservation", func() {
