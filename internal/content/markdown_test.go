@@ -900,8 +900,16 @@ var _ = Describe("RenderMarkdown", func() {
 				"Liquid expression tags in code content must be escaped before reaching the hook template")
 			Expect(html).To(ContainSubstring("&#123;%"),
 				"Liquid control tags must be entity-encoded in markup.inner")
+			Expect(html).NotTo(ContainSubstring("%}"),
+				"Liquid control closing tags in code content must be escaped before reaching the hook template")
+			Expect(html).To(ContainSubstring("%&#125;"),
+				"Liquid control closing tags must be entity-encoded in markup.inner")
 			Expect(html).To(ContainSubstring("&#123;&#123;"),
 				"Liquid expression tags must be entity-encoded in markup.inner")
+			Expect(html).NotTo(ContainSubstring("}}"),
+				"Liquid expression closing tags in code content must be escaped before reaching the hook template")
+			Expect(html).To(ContainSubstring("&#125;&#125;"),
+				"Liquid expression closing tags must be entity-encoded in markup.inner")
 		})
 
 		It("escapes Liquid delimiters in markup.inner for language-specific codeblock hooks", func() {
@@ -920,6 +928,8 @@ var _ = Describe("RenderMarkdown", func() {
 				"language-specific hook must be used")
 			Expect(html).NotTo(ContainSubstring("{{ page"),
 				"Liquid expressions must not survive unescaped into language-specific hook output")
+			Expect(html).To(ContainSubstring("&#123;&#123;"),
+				"Liquid expressions must be entity-encoded in language-specific hook output")
 		})
 
 		It("does not alter code content without Liquid syntax in codeblock hooks", func() {

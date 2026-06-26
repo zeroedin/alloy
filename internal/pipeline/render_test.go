@@ -329,6 +329,9 @@ var _ = Describe("Build Pipeline", func() {
 					"render hook replaces <code> element — without escaping, the "+
 					"Liquid engine silently consumes the code content instead of "+
 					"displaying it")
+			Expect(html).To(ContainSubstring("&#123;&#123;"),
+				"Liquid expression tags in code fences must be entity-encoded when "+
+					"render hook replaces <code> element")
 		})
 	})
 
