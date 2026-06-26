@@ -242,6 +242,9 @@ var _ = Describe("RenderMarkdown", func() {
 				"</my-list-item> on the opener line must not close the <my-list> block — "+
 					"countTagOccurrences boundary checking must reject '</my-list-' "+
 					"because the char after the tag name is '-', not '>' or whitespace")
+			Expect(html).NotTo(ContainSubstring("<p>second line</p>"),
+				"second line must remain inside the custom element block, not be "+
+					"ejected into a paragraph by premature block closure")
 			Expect(html).To(ContainSubstring("</my-list>"),
 				"the actual </my-list> closing tag must be present in the block output")
 			Expect(html).To(ContainSubstring("<strong>after</strong>"),
@@ -258,6 +261,9 @@ var _ = Describe("RenderMarkdown", func() {
 			Expect(html).To(ContainSubstring("still inside"),
 				"two <my-el> openers on line one must set depth to 2 — "+
 					"the first </my-el> decrements to 1 and must not close the block")
+			Expect(html).NotTo(ContainSubstring("<p>still inside</p>"),
+				"still inside must remain inside the custom element block, not be "+
+					"rendered as a paragraph after premature block closure")
 			Expect(html).To(ContainSubstring("<strong>after</strong>"),
 				"markdown after the second </my-el> must be processed normally, "+
 					"confirming the block closes only when depth reaches 0")
