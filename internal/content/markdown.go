@@ -23,12 +23,13 @@ type HookRenderer func(source string, ctx map[string]interface{}) (string, error
 
 // MarkdownOptions controls goldmark rendering behavior.
 type MarkdownOptions struct {
-	Unsafe        bool
-	Typographer   bool
-	TemplateTags  bool
-	AutoHeadingID bool
-	Hooks         map[string]string
-	HookRenderer  HookRenderer
+	Unsafe         bool
+	Typographer    bool
+	TemplateTags   bool
+	AutoHeadingID  bool
+	CustomElements bool
+	Hooks          map[string]string
+	HookRenderer   HookRenderer
 }
 
 // ── Custom AST node types for template tags ───────────────────────────
@@ -223,6 +224,125 @@ func (r *templateTagEscapingRenderer) renderBlock(w util.BufWriter, source []byt
 	return ast.WalkContinue, nil
 }
 
+// ── Custom element block parser ─────────────────────────────────────
+
+type customElementBlockParser struct{}
+
+func (p *customElementBlockParser) Trigger() []byte {
+	return []byte{'<'}
+}
+
+func (p *customElementBlockParser) Open(parent ast.Node, reader text.Reader, pc parser.Context) (ast.Node, parser.State) {
+	line, seg := reader.PeekLine()
+	if len(line) == 0 || line[0] != '<' {
+		return nil, parser.NoChildren
+	}
+
+	tagName := extractCustomElementTag(line)
+	if tagName == "" {
+		return nil, parser.NoChildren
+	}
+
+	node := ast.NewHTMLBlock(ast.HTMLBlockType1)
+	node.Lines().Append(seg)
+
+	opener := []byte("<" + tagName)
+	closer := []byte("</" + tagName)
+	openerCount := countTagOccurrences(line, opener)
+	closerCount := countTagOccurrences(line, closer)
+	if closerCount >= openerCount {
+		return node, parser.NoChildren
+	}
+
+	pc.Set(customElementTagKey, []byte(tagName))
+	pc.Set(customElementDepthKey, openerCount-closerCount)
+	return node, parser.NoChildren
+}
+
+func (p *customElementBlockParser) Continue(node ast.Node, reader text.Reader, pc parser.Context) parser.State {
+	line, seg := reader.PeekLine()
+
+	tagNameRaw, ok := pc.Get(customElementTagKey).([]byte)
+	if !ok || tagNameRaw == nil {
+		return parser.Close
+	}
+	tagName := string(tagNameRaw)
+
+	depth, ok := pc.Get(customElementDepthKey).(int)
+	if !ok {
+		return parser.Close
+	}
+
+	opener := []byte("<" + tagName)
+	closer := []byte("</" + tagName)
+
+	depth += countTagOccurrences(line, opener)
+	depth -= countTagOccurrences(line, closer)
+
+	node.Lines().Append(seg)
+
+	if depth <= 0 {
+		pc.Set(customElementTagKey, nil)
+		pc.Set(customElementDepthKey, nil)
+		return parser.Close
+	}
+
+	pc.Set(customElementDepthKey, depth)
+	return parser.Continue | parser.NoChildren
+}
+
+func (p *customElementBlockParser) Close(node ast.Node, reader text.Reader, pc parser.Context) {
+	pc.Set(customElementTagKey, nil)
+	pc.Set(customElementDepthKey, nil)
+}
+
+func (p *customElementBlockParser) CanInterruptParagraph() bool { return true }
+
+func (p *customElementBlockParser) CanAcceptIndentedLine() bool { return false }
+
+var customElementTagKey = parser.NewContextKey()
+var customElementDepthKey = parser.NewContextKey()
+
+func extractCustomElementTag(line []byte) string {
+	if len(line) < 3 || line[0] != '<' {
+		return ""
+	}
+
+	i := 1
+	for i < len(line) && (line[i] >= 'a' && line[i] <= 'z' || line[i] >= 'A' && line[i] <= 'Z' || line[i] >= '0' && line[i] <= '9' || line[i] == '-') {
+		i++
+	}
+	if i == 1 {
+		return ""
+	}
+	if i < len(line) && line[i] != '>' && line[i] != ' ' && line[i] != '\t' && line[i] != '\n' && line[i] != '\r' && line[i] != '/' {
+		return ""
+	}
+
+	tagName := string(line[1:i])
+	if !strings.Contains(tagName, "-") {
+		return ""
+	}
+	return tagName
+}
+
+func countTagOccurrences(line []byte, tag []byte) int {
+	count := 0
+	offset := 0
+	for {
+		idx := bytes.Index(line[offset:], tag)
+		if idx == -1 {
+			break
+		}
+		pos := offset + idx + len(tag)
+		if pos >= len(line) || line[pos] == '>' || line[pos] == ' ' || line[pos] == '\t' || line[pos] == '\n' || line[pos] == '\r' || line[pos] == '/' {
+			count++
+		}
+		offset = pos
+	}
+	return count
+}
+
 // ── Extensions ───────────────────────────────────────────────────────
 
 type templateTagsExtension struct{}
@@ -261,6 +381,16 @@ func (e *templateTagEscapingExtension) Extend(m goldmark.Markdown) {
 	)
 }
 
+type customElementsExtension struct{}
+
+func (e *customElementsExtension) Extend(m goldmark.Markdown) {
+	m.Parser().AddOptions(
+		parser.WithBlockParsers(
+			util.Prioritized(&customElementBlockParser{}, 800),
+		),
+	)
+}
+
 // ── Goldmark configuration ───────────────────────────────────────────
 
 // CreateGoldmark builds a configured goldmark instance from options.
@@ -280,6 +410,9 @@ func CreateGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) gold
 		extensions = append(extensions, &templateTagsExtension{})
 	} else {
 		extensions = append(extensions, &templateTagEscapingExtension{})
+	}
+	if opts.CustomElements {
+		extensions = append(extensions, &customElementsExtension{})
 	}
 
 	rendererOpts := []renderer.Option{}

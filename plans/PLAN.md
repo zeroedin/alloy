@@ -97,6 +97,7 @@ content:
       unsafe: true             # Required: pass through raw HTML blocks
       typographer: true
       templateTags: true       # Auto-detect and preserve {{ }}/{% %} in Markdown (default: true)
+      customElements: true     # Treat custom elements (tags with hyphens) as block-level HTML (default: true)
 
 templates:
   engine: "liquid"             # "liquid" (default) or "go" (Go html/template)
@@ -2466,6 +2467,22 @@ When the tag is embedded in a line with other text, the inline TemplateTags exte
 - **Liquid engine:** wrap in `{% raw %}...{% endraw %}`
 - **Go engine:** use `{{ "{{" }}` to output a literal `{{` (standard Go template escaping)
 - **Both engines:** goldmark's inline code (backticks) and fenced code blocks protect their contents from the auto-detection extension — goldmark's parsers take precedence.
+
+### Custom Element Block Parsing (issue #784)
+
+Custom elements — any HTML tag containing a hyphen in the tag name (`<alloy-code>`, `<wa-tab-group>`, `<my-widget>`) — are treated as **HTML block type 1** (like `<pre>` and `<script>`). This means:
+
+- Content inside is preserved **verbatim** — no markdown processing, no smart quotes, no `<p>` wrapping
+- Blank lines inside the element do **not** terminate the block (unlike type 6/7 HTML blocks for `<div>`, `<nav>`, etc.)
+- The block ends only at the matching `</tag-name>` closing tag
+- Nested custom elements are handled correctly — an inner `</wa-tab>` does not close an outer `</wa-tab-group>`
+- Standard HTML elements without hyphens are **unaffected** — `<div>` retains its default type 6 behavior
+
+This is required for any SSG supporting web components (Lit, Web Awesome, Shoelace, etc.). Without it, a blank line inside `<wa-tab-group>` causes Goldmark to resume markdown processing, wrapping subsequent content in `<p>` tags and applying smart quotes.
+
+Configurable via `content.markdown.goldmark.customElements` (default: `true`). Set to `false` to revert to standard Goldmark behavior where custom elements are treated as inline HTML or type 7 HTML blocks.
+
+The custom element block parser triggers on `<`, detects tags with a hyphen in the tag name (custom elements per the HTML spec), and registers at parser priority 800 — after template tag parsing (priority 50) but before the default HTML block parser (priority 900).
 
 ### Markdown Render Hooks
 
