@@ -30,21 +30,122 @@ WASM plugins run in an isolated sandbox — they can't call Alloy functions dire
 
 In practice, this means Alloy and your plugin communicate through linear memory using a pointer/length convention. Your module must export specific functions that Alloy calls during the build.
 
-### Required Export
+### Required Export: `alloc`
+
+Your module must export an `alloc` function that returns a pointer to a block of memory. Alloy calls this to write input data into your module's linear memory before invoking any other export.
+
+<wa-tab-group>
+<wa-tab slot="nav" panel="alloc-wat" active>WAT</wa-tab>
+<wa-tab slot="nav" panel="alloc-rust">Rust</wa-tab>
+<wa-tab slot="nav" panel="alloc-tinygo">TinyGo</wa-tab>
+<wa-tab slot="nav" panel="alloc-as">AssemblyScript</wa-tab>
+
+<wa-tab-panel name="alloc-wat" active>
 
 ```
 alloc(size i32) -> ptr i32
 ```
 
-Alloc returns a pointer to a block of `size` bytes in the module's linear memory. Alloy uses this to write input data before calling filter, shortcode, or hook exports. This avoids writing at hardcoded offsets that could collide with the module's data section, stack, or heap.
+</wa-tab-panel>
+<wa-tab-panel name="alloc-rust">
 
-### Filter Export
+```rust
+#[no_mangle]
+pub extern "C" fn alloc(size: i32) -> i32 {
+    let layout = std::alloc::Layout::from_size_align(size as usize, 1).unwrap();
+    unsafe { std::alloc::alloc(layout) as i32 }
+}
+```
+
+</wa-tab-panel>
+<wa-tab-panel name="alloc-tinygo">
+
+```go
+//export alloc
+func alloc(size int32) int32 {
+	buf := make([]byte, size)
+	return int32(uintptr(unsafe.Pointer(&buf[0])))
+}
+```
+
+</wa-tab-panel>
+<wa-tab-panel name="alloc-as">
+
+```typescript
+export function alloc(size: i32): i32 {
+  return heap.alloc(size) as i32;
+}
+```
+
+</wa-tab-panel>
+</wa-tab-group>
+
+### Filter Export: `filter`
+
+Receives a UTF-8 string at the given pointer/length. Returns a pointer/length pair for the result string. Input and output are raw UTF-8 — the filter transforms the value and returns the transformed value.
+
+<wa-tab-group>
+<wa-tab slot="nav" panel="filter-wat" active>WAT</wa-tab>
+<wa-tab slot="nav" panel="filter-rust">Rust</wa-tab>
+<wa-tab slot="nav" panel="filter-tinygo">TinyGo</wa-tab>
+<wa-tab slot="nav" panel="filter-as">AssemblyScript</wa-tab>
+
+<wa-tab-panel name="filter-wat" active>
 
 ```
 filter(ptr i32, len i32) -> (ptr i32, len i32)
 ```
 
-Receives a UTF-8 string at the given pointer/length. Returns a pointer/length pair for the result string. Input and output are raw UTF-8 -- the filter transforms the value and returns the transformed value.
+</wa-tab-panel>
+<wa-tab-panel name="filter-rust">
+
+```rust
+#[no_mangle]
+pub extern "C" fn filter(ptr: i32, len: i32) -> u64 {
+    let input = unsafe {
+        std::str::from_utf8_unchecked(
+            std::slice::from_raw_parts(ptr as *const u8, len as usize)
+        )
+    };
+    let result = input.to_uppercase();
+    let result_ptr = alloc(result.len() as i32);
+    unsafe {
+        std::ptr::copy_nonoverlapping(result.as_ptr(), result_ptr as *mut u8, result.len());
+    }
+    ((result_ptr as u64) << 32) | (result.len() as u64)
+}
+```
+
+</wa-tab-panel>
+<wa-tab-panel name="filter-tinygo">
+
+```go
+//export filter
+func filter(ptr, length int32) uint64 {
+	input := ptrToString(ptr, length)
+	result := strings.ToUpper(input)
+	resultPtr := alloc(int32(len(result)))
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(uintptr(resultPtr))), len(result)), result)
+	return uint64(resultPtr)<<32 | uint64(len(result))
+}
+```
+
+</wa-tab-panel>
+<wa-tab-panel name="filter-as">
+
+```typescript
+export function filter(ptr: i32, len: i32): u64 {
+  const input = String.UTF8.decodeUnsafe(ptr, len);
+  const result = input.toUpperCase();
+  const resultBuf = String.UTF8.encode(result);
+  const resultPtr = alloc(resultBuf.byteLength);
+  memory.copy(resultPtr, changetype<usize>(resultBuf), resultBuf.byteLength);
+  return (u64(resultPtr) << 32) | u64(resultBuf.byteLength);
+}
+```
+
+</wa-tab-panel>
+</wa-tab-group>
 
 ### Optional Exports
 
