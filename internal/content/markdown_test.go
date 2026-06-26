@@ -220,6 +220,18 @@ var _ = Describe("RenderMarkdown", func() {
 					"inner closing tags like </wa-tab> must not terminate the outer block")
 		})
 
+		It("handles same-name nested custom elements correctly", func() {
+			opts := content.MarkdownOptions{Unsafe: true, CustomElements: true}
+			md := "<my-list>\n<my-list>\ninner\n</my-list>\nouter\n</my-list>\n\n**after**\n"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("outer"))
+			Expect(html).To(ContainSubstring("<strong>after</strong>"),
+				"same-name nesting requires depth tracking — the first </my-list> "+
+					"must not terminate the outer block")
+		})
+
 		It("does not change behavior for standard HTML elements", func() {
 			opts := content.MarkdownOptions{Unsafe: true, CustomElements: true}
 			md := "<div>\nfirst\n\nsecond\n</div>\n"
