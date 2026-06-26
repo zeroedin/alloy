@@ -335,6 +335,43 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Custom element block parsing (issue #784) ─────────────────
+	// Custom elements (tags with hyphens) must be treated as HTML block type 1
+	// so blank lines don't terminate the block and content is preserved verbatim.
+
+	Describe("Custom element block parsing", func() {
+		It("custom element content with blank lines survives the build pipeline", func() {
+			cfg := &config.Config{
+				Title:   "Custom Element Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/example.md": "---\ntitle: Example\nlayout: default\n---\n" +
+					"<wa-tab-group>\n<wa-tab panel=\"one\">Tab 1</wa-tab>\n\n" +
+					"<wa-tab-panel name=\"one\">\n\n" +
+					"This content has \"quotes\" and blank lines.\n\n" +
+					"</wa-tab-panel>\n</wa-tab-group>\n\n## After the component\n",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["example.md"]
+			Expect(html).To(ContainSubstring("<wa-tab-group>"),
+				"custom element opening tag must survive the build pipeline")
+			Expect(html).To(ContainSubstring("</wa-tab-group>"),
+				"custom element closing tag must survive the build pipeline")
+			Expect(html).NotTo(ContainSubstring("<p>This content"),
+				"content inside custom elements must not be paragraph-wrapped — "+
+					"blank lines inside must not terminate the HTML block")
+			Expect(html).To(ContainSubstring("<h2"),
+				"markdown content after the custom element closing tag must be "+
+					"processed normally — the block parser must not consume the rest of the document")
+		})
+	})
+
 	// ── {% inline %} pipeline wiring (issue #295) ──────────────────
 	// RegisterInlineTag must be called in createEngine() so the tag
 	// works in actual builds, not just unit tests.
