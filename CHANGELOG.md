@@ -1,3 +1,36 @@
+## v0.3.0 (2026-06-27)
+
+### Minor Changes
+
+Custom elements (HTML tags with hyphens like `<alloy-code>`, `<wa-tab-group>`) are now treated as block-level HTML in Goldmark. Content inside is preserved verbatim — no markdown processing, no smart quotes, no `<p>` wrapping — and blank lines do not terminate the block.
+
+Configurable via `content.markdown.goldmark.customElements` (default: `true`).
+
+```yaml
+# alloy.config.yaml
+content:
+  markdown:
+    goldmark:
+      customElements: true     # treat custom elements as block-level HTML (default: true)
+```
+
+```markdown
+<!-- content/example.md -->
+<wa-tab-group>
+<wa-tab panel="one">Tab 1</wa-tab>
+
+<wa-tab-panel name="one">
+Panel content with "quotes" and blank lines — all preserved verbatim.
+</wa-tab-panel>
+</wa-tab-group>
+```
+
+### Patch Changes
+
+Fix Liquid delimiters in code blocks being interpreted as template syntax when render hooks replace the default `<code>` element. Delimiters are now entity-encoded in `markup.inner` before reaching the hook template.
+Fix `alloy dev` not rebuilding pages when layout partials change. Editing files like `layouts/partials/header.liquid` now correctly triggers a full rebuild instead of silently skipping all pages.
+Fix spurious warnings during `alloy dev` and `alloy serve` when atomic-write editors create temp files that vanish before the debounced watcher copy runs. Transient `os.ErrNotExist` errors are now silently skipped.
+
 ## v0.2.0 (2026-06-25)
 
 ### Minor Changes
