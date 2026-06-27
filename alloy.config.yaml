@@ -84,4 +84,3 @@ structure:
   layouts: "docs/layouts"
   static: "docs/static"
   data: "docs/data"
-  plugins: "docs/plugins"
