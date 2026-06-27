@@ -73,6 +73,11 @@ passthrough:
     exclude:
       - "*.map"
       - "*.d.ts"
+  - from: "docs/elements"
+    to: "lib/alloy-elements"
+    exclude:
+      - "*.ts"
+      - "*.map"
 
 structure:
   content: "docs/content"

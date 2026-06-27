@@ -41,42 +41,26 @@ Your module must export an `alloc` function that returns a pointer to a block of
 <wa-tab slot="nav" panel="alloc-as">AssemblyScript</wa-tab>
 
 <wa-tab-panel name="alloc-wat" active>
-
-```
-alloc(size i32) -> ptr i32
-```
-
+<alloy-code lang="wasm">alloc(size i32) -> ptr i32</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="alloc-rust">
-
-```rust
-#[no_mangle]
+<alloy-code lang="rust">#[no_mangle]
 pub extern "C" fn alloc(size: i32) -> i32 {
     let layout = std::alloc::Layout::from_size_align(size as usize, 1).unwrap();
     unsafe { std::alloc::alloc(layout) as i32 }
-}
-```
-
+}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="alloc-tinygo">
-
-```go
-//export alloc
+<alloy-code lang="go">//export alloc
 func alloc(size int32) int32 {
 	buf := make([]byte, size)
 	return int32(uintptr(unsafe.Pointer(&buf[0])))
-}
-```
-
+}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="alloc-as">
-
-```typescript
-export function alloc(size: i32): i32 {
+<alloy-code lang="typescript">export function alloc(size: i32): i32 {
   return heap.alloc(size) as i32;
-}
-```
-
+}</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>
 
@@ -91,16 +75,10 @@ Receives a UTF-8 string at the given pointer/length. Returns a pointer/length pa
 <wa-tab slot="nav" panel="filter-as">AssemblyScript</wa-tab>
 
 <wa-tab-panel name="filter-wat" active>
-
-```
-filter(ptr i32, len i32) -> (ptr i32, len i32)
-```
-
+<alloy-code lang="wasm">filter(ptr i32, len i32) -> (ptr i32, len i32)</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="filter-rust">
-
-```rust
-#[no_mangle]
+<alloy-code lang="rust">#[no_mangle]
 pub extern "C" fn filter(ptr: i32, len: i32) -> u64 {
     let input = unsafe {
         std::str::from_utf8_unchecked(
@@ -113,43 +91,33 @@ pub extern "C" fn filter(ptr: i32, len: i32) -> u64 {
         std::ptr::copy_nonoverlapping(result.as_ptr(), result_ptr as *mut u8, result.len());
     }
     ((result_ptr as u64) << 32) | (result.len() as u64)
-}
-```
-
+}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="filter-tinygo">
-
-```go
-//export filter
+<alloy-code lang="go">//export filter
 func filter(ptr, length int32) uint64 {
 	input := ptrToString(ptr, length)
 	result := strings.ToUpper(input)
 	resultPtr := alloc(int32(len(result)))
 	copy(unsafe.Slice((*byte)(unsafe.Pointer(uintptr(resultPtr))), len(result)), result)
-	return uint64(resultPtr)<<32 | uint64(len(result))
-}
-```
-
+	return uint64(resultPtr)&lt;&lt;32 | uint64(len(result))
+}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="filter-as">
-
-```typescript
-export function filter(ptr: i32, len: i32): u64 {
+<alloy-code lang="typescript">export function filter(ptr: i32, len: i32): u64 {
   const input = String.UTF8.decodeUnsafe(ptr, len);
   const result = input.toUpperCase();
   const resultBuf = String.UTF8.encode(result);
   const resultPtr = alloc(resultBuf.byteLength);
-  memory.copy(resultPtr, changetype<usize>(resultBuf), resultBuf.byteLength);
-  return (u64(resultPtr) << 32) | u64(resultBuf.byteLength);
-}
-```
-
+  memory.copy(resultPtr, changetype&lt;usize&gt;(resultBuf), resultBuf.byteLength);
+  return (u64(resultPtr) &lt;&lt; 32) | u64(resultBuf.byteLength);
+}</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>
 
 ### Optional Exports
 
-```
+```wasm
 shortcode(ptr i32, len i32) -> (ptr i32, len i32)
 hooks() -> (ptr i32, len i32)
 hook(ptr i32, len i32) -> (ptr i32, len i32)
