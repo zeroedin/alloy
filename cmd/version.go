@@ -7,7 +7,7 @@ import (
 )
 
 // Version is set at build time via ldflags.
-var Version = "0.3.0"
+var Version = "0.3.1"
 
 func newVersionCommand() *cobra.Command {
 	return &cobra.Command{
