@@ -941,6 +941,7 @@ passthrough:
 - Static, asset, and passthrough files are **copied** to `_site/` during the initial build
 - On file change, the modified file is recopied to `_site/` and a browser reload is triggered
 - Passthrough recopy is targeted — only the changed file is recopied to `_site/<to>/<relative-path>`, not the entire directory
+- **Transient file handling (issue #782)**: When a file change event fires but the source file no longer exists by the time the debounced copy runs (e.g., atomic-write `.tmp` files), the copy error is silently skipped. The rename target will trigger its own event. This prevents spurious warnings for normal editor save patterns.
 
 **Passthrough file watching** — `WatchDirs()` must include all passthrough `from:` directories from config. Passthrough sources are directory trees — the watcher must recursively watch subdirectories, including subdirectories created after the server starts. Changes to passthrough files are classified as `PassthroughChange` and trigger a targeted file recopy instead of a full pipeline rebuild.
 

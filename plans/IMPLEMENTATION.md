@@ -349,6 +349,11 @@ Key points:
   
   Register both in `goEngine.AddFilter` or directly in the FuncMap during engine creation. The `*ordered.Map` in `siteData` is never mutated. Liquid uses it directly via `Each` and `LiquidMethodMissing`.
 
+### 4B: `internal/fileutil` — 3 tests (issue #782)
+**File**: `internal/fileutil/copy.go`
+
+- `CopyFile(src, dst string) error`: Copies a file from `src` to `dst`, preserving the source file's permissions. Creates parent directories of `dst` via `os.MkdirAll`. Propagates `os.ErrNotExist` from `os.Stat` when the source file does not exist — callers must check `os.IsNotExist(err)` if a missing source is expected (e.g., transient files in the dev server watcher).
+
 ### 4C: `internal/static` — 10 tests + 12 passthrough filtering tests (issue #547)
 **File**: `internal/static/copy.go`
 
@@ -854,7 +859,7 @@ Dev server command (`alloy dev`). Uses `ModeDev` — Phase 1 only, in-memory, dr
 5. Call `server.NewWithMode(cfg, server.ModeDev)` and `server.Start()`.
 6. **Start file watcher (issue #371)** — call `server.WatchDirs(cfg)`, `addRecursiveWatch` on each directory, fsnotify event loop with `ClassifyChange` and debouncer. On file change, dispatch by `ChangeType`:
    - `ContentChange`/`LayoutChange`/`DataChange` → extract `changedFiles` from debounced events, call `pipeline.BuildIncremental(cfg, nil, previousCache, changedFiles, pipeline.BuildOptions{SkipSSR: true, PipelineState: ps})`. `previousCache` is kept in memory — initialized from the initial `Build()` result's `BuildResult.Cache` and updated from each `BuildIncremental` result's `BuildResult.Cache` (no disk round-trip). When `contentMap` is nil, `BuildIncremental` discovers content from the filesystem. Bulk changes (10+ files) trigger a full `Build()` instead. **Stale PipelineState.SiteData (issue #717)**: `ps` is created once at startup (line 135) and reused for all incremental rebuilds. When data files change, `BuildIncremental` must detect data file paths in `changedFiles` and re-load `ps.SiteData` from disk before `processPagination` runs — otherwise paginated virtual pages referencing `site.data.*` use stale data. After refreshing `ps.SiteData`, plugin runtimes that cache site data (e.g., QuickJS `alloy.data` via `rt.SetSiteData`) must also be updated — otherwise plugin filters/hooks still see stale data even though `ps.SiteData` is fresh.
-   - `AssetChange`/`StaticChange` → **recopy changed files to `_site/` (issue #737)**. Dev mode serves from `_site/`, not source directories. Call `static.CopyStatic(staticDir, outputDir)` for `StaticChange` and `assets.CopyAssets(assetsDir, outputDir)` for `AssetChange`. For efficiency, a targeted single-file copy is preferred over recopying all files in the directory — but correctness (full recopy) is acceptable as a first implementation.
+   - `AssetChange`/`StaticChange` → **recopy changed files to `_site/` (issue #737)**. Dev mode serves from `_site/`, not source directories. Call `static.CopyStatic(staticDir, outputDir)` for `StaticChange` and `assets.CopyAssets(assetsDir, outputDir)` for `AssetChange`. For efficiency, a targeted single-file copy is preferred over recopying all files in the directory — but correctness (full recopy) is acceptable as a first implementation. **Transient file handling (issue #782)**: `fileutil.CopyFile` errors where `os.IsNotExist(err)` is true are silently skipped — atomic-write editors create `.tmp` files that vanish before the debounced copy runs; the rename target triggers its own event.
    - `PassthroughChange` → **recopy changed file to `_site/<to>/<relative-path>` (issue #737)**. Use `server.RecopyPassthroughFile(changedPath, cfg)` for targeted single-file copy, or `static.CopyPassthroughWithValidation(...)` for full passthrough recopy.
    - `ComponentChange` → full rebuild via `pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})`.
    - All types → `srv.BroadcastReload()` after rebuild.
