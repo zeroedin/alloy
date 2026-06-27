@@ -116,35 +116,44 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 
 		// Find pages invalidated by layout changes
 		layoutInvalidated := make(map[string]bool)
+		untrackedPartial := false
 		for _, layoutPath := range layoutChanges {
-			for _, p := range previousCache.InvalidatedPages(layoutPath) {
+			pages := previousCache.InvalidatedPages(layoutPath)
+			if pages == nil {
+				untrackedPartial = true
+			}
+			for _, p := range pages {
 				layoutInvalidated[p] = true
 			}
 		}
 
-		for _, page := range allPages {
-			// Page invalidated by layout change?
-			if layoutInvalidated[page.RelPath] {
-				pagesToRender = append(pagesToRender, page)
-				continue
-			}
-			// Content changed?
-			var contentBytes []byte
-			if fsMode {
-				contentBytes = page.Content
-			} else {
-				contentPrefix := cfg.Structure.Content
-				if contentPrefix == "" {
-					contentPrefix = "content"
+		if untrackedPartial {
+			pagesToRender = allPages
+		} else {
+			for _, page := range allPages {
+				// Page invalidated by layout change?
+				if layoutInvalidated[page.RelPath] {
+					pagesToRender = append(pagesToRender, page)
+					continue
 				}
-				contentBytes = []byte(contentMap[filepath.ToSlash(filepath.Join(contentPrefix, page.RelPath))])
+				// Content changed?
+				var contentBytes []byte
+				if fsMode {
+					contentBytes = page.Content
+				} else {
+					contentPrefix := cfg.Structure.Content
+					if contentPrefix == "" {
+						contentPrefix = "content"
+					}
+					contentBytes = []byte(contentMap[filepath.ToSlash(filepath.Join(contentPrefix, page.RelPath))])
+				}
+				if !previousCache.ShouldSkipFile(page.RelPath, contentBytes) {
+					pagesToRender = append(pagesToRender, page)
+					continue
+				}
+				// Unchanged — skip
+				skipped++
 			}
-			if !previousCache.ShouldSkipFile(page.RelPath, contentBytes) {
-				pagesToRender = append(pagesToRender, page)
-				continue
-			}
-			// Unchanged — skip
-			skipped++
 		}
 	}
 

@@ -1269,6 +1269,8 @@ In dev mode, after the initial full build, the file watcher triggers incremental
 
 **Template invalidation** — Template changes invalidate pages that use that specific template (tracked via the layout resolution step), not all pages in a stage.
 
+**Untracked layout partials (issue #781)** — When a changed file under `layouts/` is not tracked as a direct layout for any page (`InvalidatedPages()` returns nil), treat it as a partial and rebuild all pages. The cache only tracks direct `page → layout` dependencies; `{% include %}` / `{% render %}` partials are resolved by the Liquid engine at render time without Alloy's knowledge. The conservative full-rebuild fallback is correct (no false negatives) and matches the `ComponentChange` pattern. Precise partial dependency tracking is a future refinement.
+
 **Component invalidation** — Handled entirely in Phase 2. A component definition change triggers re-SSR of all pages using that component (tracked via `componentToPages` in `.alloy/components.json`). Phase 1 is untouched. See Section 6.
 
 ---
