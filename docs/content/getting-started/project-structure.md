@@ -182,6 +182,7 @@ structure:
   assets: "./docs/assets/"
   static: "./docs/static/"
   data: "./data/"
+  plugins: "./tools/plugins/"
 ```
 
 The pipeline, file watcher, and dev server all use the configured paths. When a key is omitted, it defaults to its standard name.
