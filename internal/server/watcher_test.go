@@ -335,8 +335,8 @@ var _ = Describe("File Watcher", func() {
 		It("ClassifyChange identifies plugin file change as PluginChange", func() {
 			cfg := &config.Config{Title: "Plugin Site"}
 			changeType := server.ClassifyChange("plugins/my-filter.js", cfg)
-			Expect(changeType).NotTo(Equal(server.ContentChange),
-				"plugin file changes must NOT fall through to ContentChange — "+
+			Expect(changeType).To(Equal(server.PluginChange),
+				"plugin file changes must be classified as PluginChange — "+
 					"they need distinct handling for full rebuild (issue #802)")
 		})
 
@@ -348,9 +348,16 @@ var _ = Describe("File Watcher", func() {
 				},
 			}
 			changeType := server.ClassifyChange("tools/plugins/my-filter.js", cfg)
-			Expect(changeType).NotTo(Equal(server.ContentChange),
-				"plugin files in custom path must be classified correctly — "+
-					"not as ContentChange (issue #802)")
+			Expect(changeType).To(Equal(server.PluginChange),
+				"plugin files in custom path must be classified as PluginChange (issue #802)")
+		})
+
+		It("ClassifyChange does not match prefix-overlapping path as PluginChange", func() {
+			cfg := &config.Config{Title: "Plugin Site"}
+			changeType := server.ClassifyChange("pluginsextra/file.js", cfg)
+			Expect(changeType).NotTo(Equal(server.PluginChange),
+				"pluginsextra/ must not match plugins/ prefix — "+
+					"classification must respect directory boundaries (issue #802)")
 		})
 
 		It("PluginChange triggers RebuildPipeline", func() {
