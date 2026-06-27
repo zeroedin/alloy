@@ -30,9 +30,10 @@ type PipelineState struct {
 func DiscoverPlugins(cfg *config.Config) (*plugin.Registry, *plugin.HookRegistry, []string) {
 	hooks := plugin.NewHookRegistry()
 	hooks.SetTimeout(cfg.Plugins.Timeout)
-	pluginsDir := resolveDir(cfg.ProjectRoot, "plugins")
+	pluginsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Plugins)
 	registry := plugin.NewRegistry(pluginsDir)
 	if cfg.ProjectRoot != "" {
+		registry.SetProjectRoot(cfg.ProjectRoot)
 		registry.SetWASMCacheDir(resolveDir(cfg.ProjectRoot, ".alloy/wasm-cache"))
 	}
 	var warnings []string

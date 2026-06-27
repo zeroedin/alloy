@@ -64,6 +64,7 @@ type StructureConfig struct {
 	Assets  string `yaml:"assets" toml:"assets" json:"assets"`    // default: "assets"
 	Static  string `yaml:"static" toml:"static" json:"static"`    // default: "static"
 	Data    string `yaml:"data" toml:"data" json:"data"`          // default: "data"
+	Plugins string `yaml:"plugins" toml:"plugins" json:"plugins"` // default: "plugins"
 }
 
 // ContentConfig holds content format and Markdown settings.
@@ -282,6 +283,9 @@ func ApplyDefaults(cfg *Config) {
 	if cfg.Structure.Data == "" {
 		cfg.Structure.Data = "data"
 	}
+	if cfg.Structure.Plugins == "" {
+		cfg.Structure.Plugins = "plugins"
+	}
 	// Replace nil TaxonomyConfig entries with zero-value structs.
 	// YAML `tags:` with no value produces a nil *TaxonomyConfig pointer;
 	// downstream code (GenerateTaxonomyPages, ResolveTaxonomyLayout)
@@ -374,6 +378,7 @@ func Validate(cfg *Config) error {
 		structDir(cfg.Structure.Data, "data"):       true,
 		structDir(cfg.Structure.Assets, "assets"):   true,
 		structDir(cfg.Structure.Static, "static"):   true,
+		structDir(cfg.Structure.Plugins, "plugins"): true,
 	}
 	seen := make(map[string]bool)
 	for i := range cfg.Watch {

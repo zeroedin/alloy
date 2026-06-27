@@ -77,6 +77,7 @@ type initializedPlugin struct {
 // Registry manages plugin discovery and loading.
 type Registry struct {
 	pluginsDir      string
+	projectRoot     string
 	plugins         []PluginInfo
 	filterRegistry  map[string]string       // filter name → source
 	conflictWarns   []string
@@ -93,6 +94,11 @@ func NewRegistry(pluginsDir string) *Registry {
 		pluginsDir:     pluginsDir,
 		filterRegistry: make(map[string]string),
 	}
+}
+
+// SetProjectRoot sets the project root directory for plugin runtimes.
+func (r *Registry) SetProjectRoot(root string) {
+	r.projectRoot = root
 }
 
 // SetWASMCacheDir configures a persistent compilation cache directory
@@ -274,7 +280,7 @@ func hasNodeRuntimeExport(src string) bool {
 // it to the registry's runtime list. Shared by both loading paths.
 func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, hooks *HookRegistry) {
 	for _, fname := range rt.RegisteredFilters() {
-		r.RegisterFilter(fname, "plugins/"+pluginName)
+		r.RegisterFilter(fname, r.pluginsDir+"/"+pluginName)
 	}
 	if caller, ok := rt.(interface {
 		CallHook(string, interface{}) (interface{}, error)
@@ -387,7 +393,7 @@ func (r *Registry) InitRuntimes() ([]PluginFilterRuntime, []string) {
 				continue
 			}
 			rt := NewNodeRuntime()
-			rt.SetProjectRoot(filepath.Dir(filepath.Clean(r.pluginsDir)))
+			rt.SetProjectRoot(r.projectRoot)
 			mu.Lock()
 			results = append(results, result{idx: i, plugin: initializedPlugin{info: p, runtime: rt}})
 			mu.Unlock()
@@ -529,7 +535,7 @@ func (r *Registry) loadSequential(hooks *HookRegistry) []string {
 				continue
 			}
 			rt := NewNodeRuntime()
-			rt.SetProjectRoot(filepath.Dir(filepath.Clean(r.pluginsDir)))
+			rt.SetProjectRoot(r.projectRoot)
 			if err := rt.EvalFile(p.Path); err != nil {
 				closeRuntime(rt)
 				warnings = append(warnings, fmt.Sprintf("plugin %s: eval failed: %v", p.Name, err))

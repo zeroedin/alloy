@@ -29,6 +29,8 @@ const (
 	ComponentChange
 	// PassthroughChange means a file in a passthrough from: directory was modified.
 	PassthroughChange
+	// PluginChange means a file in the plugins directory was modified.
+	PluginChange
 )
 
 // ChangeEvent represents a single file change detected by the watcher.
@@ -70,6 +72,7 @@ func WatchDirs(cfg *config.Config) []string {
 		structureDir(cfg.Structure.Data, "data"),
 		structureDir(cfg.Structure.Assets, "assets"),
 		structureDir(cfg.Structure.Static, "static"),
+		structureDir(cfg.Structure.Plugins, "plugins"),
 	}
 	if cfg.SSR != nil {
 		dirs = append(dirs, "components")
@@ -99,6 +102,7 @@ func ClassifyChange(path string, cfg *config.Config) ChangeType {
 	dataDir := structureDir(cfg.Structure.Data, "data")
 	assetsDir := structureDir(cfg.Structure.Assets, "assets")
 	staticDir := structureDir(cfg.Structure.Static, "static")
+	pluginsDir := structureDir(cfg.Structure.Plugins, "plugins")
 
 	switch {
 	case hasPathPrefix(path, contentDir):
@@ -113,6 +117,8 @@ func ClassifyChange(path string, cfg *config.Config) ChangeType {
 		return StaticChange
 	case hasPathPrefix(path, "components"):
 		return ComponentChange
+	case hasPathPrefix(path, pluginsDir):
+		return PluginChange
 	default:
 		for _, w := range cfg.Watch {
 			dir := strings.TrimRight(w.From, "/\\")
