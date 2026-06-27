@@ -32,6 +32,7 @@ func DiscoverPlugins(cfg *config.Config) (*plugin.Registry, *plugin.HookRegistry
 	hooks.SetTimeout(cfg.Plugins.Timeout)
 	pluginsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Plugins)
 	registry := plugin.NewRegistry(pluginsDir)
+	registry.SetPluginsDirRel(cfg.Structure.Plugins)
 	if cfg.ProjectRoot != "" {
 		registry.SetProjectRoot(cfg.ProjectRoot)
 		registry.SetWASMCacheDir(resolveDir(cfg.ProjectRoot, ".alloy/wasm-cache"))

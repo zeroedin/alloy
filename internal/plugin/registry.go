@@ -77,6 +77,7 @@ type initializedPlugin struct {
 // Registry manages plugin discovery and loading.
 type Registry struct {
 	pluginsDir      string
+	pluginsDirRel   string // config-relative path for source attribution
 	projectRoot     string
 	plugins         []PluginInfo
 	filterRegistry  map[string]string       // filter name → source
@@ -99,6 +100,12 @@ func NewRegistry(pluginsDir string) *Registry {
 // SetProjectRoot sets the project root directory for plugin runtimes.
 func (r *Registry) SetProjectRoot(root string) {
 	r.projectRoot = root
+}
+
+// SetPluginsDirRel sets the config-relative plugins directory path
+// used for filter source attribution (e.g. "plugins" or "tools/plugins").
+func (r *Registry) SetPluginsDirRel(rel string) {
+	r.pluginsDirRel = rel
 }
 
 // SetWASMCacheDir configures a persistent compilation cache directory
@@ -280,7 +287,11 @@ func hasNodeRuntimeExport(src string) bool {
 // it to the registry's runtime list. Shared by both loading paths.
 func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, hooks *HookRegistry) {
 	for _, fname := range rt.RegisteredFilters() {
-		r.RegisterFilter(fname, r.pluginsDir+"/"+pluginName)
+		source := r.pluginsDirRel
+		if source == "" {
+			source = filepath.Base(r.pluginsDir)
+		}
+		r.RegisterFilter(fname, filepath.Join(source, pluginName))
 	}
 	if caller, ok := rt.(interface {
 		CallHook(string, interface{}) (interface{}, error)
@@ -393,7 +404,9 @@ func (r *Registry) InitRuntimes() ([]PluginFilterRuntime, []string) {
 				continue
 			}
 			rt := NewNodeRuntime()
-			rt.SetProjectRoot(r.projectRoot)
+			if r.projectRoot != "" {
+				rt.SetProjectRoot(r.projectRoot)
+			}
 			mu.Lock()
 			results = append(results, result{idx: i, plugin: initializedPlugin{info: p, runtime: rt}})
 			mu.Unlock()
@@ -535,7 +548,9 @@ func (r *Registry) loadSequential(hooks *HookRegistry) []string {
 				continue
 			}
 			rt := NewNodeRuntime()
-			rt.SetProjectRoot(r.projectRoot)
+			if r.projectRoot != "" {
+				rt.SetProjectRoot(r.projectRoot)
+			}
 			if err := rt.EvalFile(p.Path); err != nil {
 				closeRuntime(rt)
 				warnings = append(warnings, fmt.Sprintf("plugin %s: eval failed: %v", p.Name, err))

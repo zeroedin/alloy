@@ -116,7 +116,7 @@ func newServeCommand() *cobra.Command {
 				needsRebuild := false
 				for _, ev := range events {
 					switch ev.ChangeType {
-					case server.ContentChange, server.LayoutChange, server.DataChange, server.ComponentChange:
+					case server.ContentChange, server.LayoutChange, server.DataChange, server.ComponentChange, server.PluginChange:
 						needsRebuild = true
 					case server.AssetChange, server.StaticChange:
 						copyChangedFileToOutput(ev.Path, cfg)
