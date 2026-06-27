@@ -14,3 +14,6 @@ dist/
 
 # npm
 node_modules/
+
+# Transpiled element artifacts (built by esbuild)
+docs/elements/*.js
