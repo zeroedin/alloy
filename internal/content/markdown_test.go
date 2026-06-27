@@ -232,6 +232,43 @@ var _ = Describe("RenderMarkdown", func() {
 					"must not terminate the outer block")
 		})
 
+		It("does not falsely match prefix-overlapping closing tags on the first line", func() {
+			opts := content.MarkdownOptions{Unsafe: true, CustomElements: true}
+			md := "<my-list><my-list-item>inline item</my-list-item>\nsecond line\n</my-list>\n\n**after**\n"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("second line"),
+				"</my-list-item> on the opener line must not close the <my-list> block — "+
+					"countTagOccurrences boundary checking must reject '</my-list-' "+
+					"because the char after the tag name is '-', not '>' or whitespace")
+			Expect(html).NotTo(ContainSubstring("<p>second line</p>"),
+				"second line must remain inside the custom element block, not be "+
+					"ejected into a paragraph by premature block closure")
+			Expect(html).To(ContainSubstring("</my-list>"),
+				"the actual </my-list> closing tag must be present in the block output")
+			Expect(html).To(ContainSubstring("<strong>after</strong>"),
+				"markdown after the block must be processed normally, confirming "+
+					"the block was not prematurely closed by the prefix-matching tag")
+		})
+
+		It("tracks depth correctly when multiple same-name openers appear on a single line", func() {
+			opts := content.MarkdownOptions{Unsafe: true, CustomElements: true}
+			md := "<my-el><my-el>\ninner\n</my-el>\nstill inside\n</my-el>\n\n**after**\n"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("still inside"),
+				"two <my-el> openers on line one must set depth to 2 — "+
+					"the first </my-el> decrements to 1 and must not close the block")
+			Expect(html).NotTo(ContainSubstring("<p>still inside</p>"),
+				"still inside must remain inside the custom element block, not be "+
+					"rendered as a paragraph after premature block closure")
+			Expect(html).To(ContainSubstring("<strong>after</strong>"),
+				"markdown after the second </my-el> must be processed normally, "+
+					"confirming the block closes only when depth reaches 0")
+		})
+
 		It("does not change behavior for standard HTML elements", func() {
 			opts := content.MarkdownOptions{Unsafe: true, CustomElements: true}
 			md := "<div>\nfirst\n\nsecond\n</div>\n"
