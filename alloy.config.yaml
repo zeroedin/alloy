@@ -73,6 +73,47 @@ passthrough:
     exclude:
       - "*.map"
       - "*.d.ts"
+  - from: "node_modules/nanoid"
+    to: "lib/nm/nanoid"
+    exclude:
+      - "*.d.ts"
+      - "bin/"
+      - "non-secure/"
+      - "async/"
+  - from: "node_modules/@floating-ui/dom/dist"
+    to: "lib/nm/@floating-ui/dom/dist"
+    exclude:
+      - "*.d.ts"
+      - "*.d.mts"
+      - "*.umd.*"
+      - "*.min.*"
+      - "*.browser.*"
+  - from: "node_modules/@floating-ui/core/dist"
+    to: "lib/nm/@floating-ui/core/dist"
+    exclude:
+      - "*.d.ts"
+      - "*.d.mts"
+      - "*.umd.*"
+      - "*.min.*"
+  - from: "node_modules/@floating-ui/utils/dist"
+    to: "lib/nm/@floating-ui/utils/dist"
+    exclude:
+      - "*.d.ts"
+      - "*.d.mts"
+      - "*.umd.*"
+      - "*.min.*"
+  - from: "node_modules/@floating-ui/utils/dom"
+    to: "lib/nm/@floating-ui/utils/dom"
+    exclude:
+      - "*.d.ts"
+      - "*.umd.*"
+  - from: "node_modules/composed-offset-position/dist"
+    to: "lib/nm/composed-offset-position/dist"
+    exclude:
+      - "*.d.ts"
+      - "*.umd.*"
+      - "*.min.*"
+      - "*.browser.*"
   - from: "docs/elements"
     to: "lib/alloy-elements"
     exclude:
