@@ -25,7 +25,7 @@ export class AlloyCode extends LitElement {
       padding: 0.4rem 1rem;
       background: var(--alloy-code-header-bg, rgba(255, 255, 255, 0.05));
       border-radius: var(--radius-lg, 6px) var(--radius-lg, 6px) 0 0;
-      border-bottom: 1px solid var(--alloy-code-border, rgba(255, 255, 255, 0.1));
+      border-bottom: 1px solid var(--alloy-code-border, rgba(0, 0, 0, 0.1));
     }
 
     .filename {
@@ -44,8 +44,8 @@ export class AlloyCode extends LitElement {
       border-radius: var(--radius-lg, 6px);
       line-height: 1.5;
       font-size: 0.85rem;
-      background: var(--alloy-code-bg, #24292e);
-      color: var(--alloy-code-color, #e1e4e8);
+      background: var(--alloy-code-bg, #0d1117);
+      color: var(--alloy-code-color, #e4e4e7);
     }
 
     :host([filename]) ::slotted(pre) {
