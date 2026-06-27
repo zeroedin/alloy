@@ -24,22 +24,26 @@ export default function(alloy) {
       });
     }
 
+    await import('../docs/elements/alloy-code.js');
     await import('@awesome.me/webawesome/dist/ssr/all.js');
     const mod = await import('@awesome.me/webawesome/dist/ssr/render-string.js');
     renderString = mod.renderString;
   }
 
-  alloy.hook("onPageRendered", { pages: true, pageFields: ["html"] }, async (html) => {
+  alloy.hook("onPageRendered", { priority: 50, pages: true, pageFields: ["html"] }, async (html) => {
     if (typeof html !== 'string') return html;
-    if (!/<wa-/.test(html)) return html;
-    await ensureLoaded();
-    try {
-      return renderString(html);
-    } catch (e) {
-      const m = html.match(/<title>([^<]*)<\/title>/);
-      const page = m ? m[1].trim() : '(unknown page)';
-      console.error(`[lit-ssr] SSR failed on "${page}": ${e.message}`);
-      return html;
+
+    if (/<wa-/.test(html) || /<alloy-code/.test(html)) {
+      await ensureLoaded();
+      try {
+        html = renderString(html);
+      } catch (e) {
+        const m = html.match(/<title>([^<]*)<\/title>/);
+        const page = m ? m[1].trim() : '(unknown page)';
+        console.error(`[lit-ssr] SSR failed on "${page}": ${e.message}`);
+      }
     }
+
+    return html;
   });
 }

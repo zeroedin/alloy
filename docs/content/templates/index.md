@@ -121,6 +121,7 @@ structure:
 ## Next steps
 
 - [Layouts](/templates/layouts/) -- layout chaining, resolution order, partials
+- [Render Hooks](/templates/render-hooks/) -- customize Markdown element rendering
 - [Filters](/templates/filters/) -- built-in and custom filter reference
 - [Shortcodes](/templates/shortcodes/) -- reusable content snippets with parameters
 - [Output Formats](/templates/output-formats/) -- multi-format rendering (HTML, JSON, XML)
