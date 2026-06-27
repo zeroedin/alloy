@@ -26,6 +26,7 @@ export default function(alloy) {
 
     await import('../elements/alloy-code.js');
     await import('@awesome.me/webawesome/dist/ssr/all.js');
+    await import('@awesome.me/webawesome/dist/components/copy-button/copy-button.js');
     const mod = await import('@awesome.me/webawesome/dist/ssr/render-string.js');
     renderString = mod.renderString;
   }

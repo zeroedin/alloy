@@ -4,10 +4,12 @@ export class AlloyCode extends LitElement {
   static properties = {
     lang: { type: String },
     filename: { type: String },
+    _codeText: { state: true },
   };
 
   declare lang: string;
   declare filename: string;
+  declare _codeText: string;
 
   static styles = css`
     :host {
@@ -32,23 +34,6 @@ export class AlloyCode extends LitElement {
       color: var(--color-text-muted, #a1a1aa);
     }
 
-    .copy-btn {
-      appearance: none;
-      border: none;
-      background: transparent;
-      color: var(--color-text-muted, #a1a1aa);
-      cursor: pointer;
-      padding: 0.25rem;
-      border-radius: var(--radius-sm, 3px);
-      display: flex;
-      align-items: center;
-      transition: color 0.15s ease;
-
-      &:hover {
-        color: var(--color-text, #e4e4e7);
-      }
-    }
-
     .code-container {
       overflow-x: auto;
     }
@@ -70,30 +55,23 @@ export class AlloyCode extends LitElement {
     ::slotted(pre) code {
       font-family: var(--font-mono, monospace);
     }
-
-    .copied {
-      color: var(--color-primary, #60a5fa);
-    }
   `;
 
   constructor() {
     super();
     this.lang = '';
     this.filename = '';
+    this._codeText = '';
   }
 
-  private async copy(): Promise<void> {
+  private _syncCodeText(): void {
     const slot = this.shadowRoot?.querySelector('slot');
     const nodes = slot?.assignedNodes({ flatten: true }) ?? [];
-    const text = nodes.map(n => n.textContent).join('').trim();
-    await navigator.clipboard.writeText(text);
-    const btn = this.shadowRoot?.querySelector('.copy-btn');
-    btn?.classList.add('copied');
-    setTimeout(() => btn?.classList.remove('copied'), 1500);
+    this._codeText = nodes.map(n => n.textContent).join('').trim();
   }
 
-  private copyIcon() {
-    return html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+  protected firstUpdated(): void {
+    this._syncCodeText();
   }
 
   protected render() {
@@ -101,17 +79,13 @@ export class AlloyCode extends LitElement {
       ${this.filename ? html`
         <div class="header">
           <span class="filename">${this.filename}</span>
-          <button class="copy-btn" @click=${this.copy} aria-label="Copy code">
-            ${this.copyIcon()}
-          </button>
+          <wa-copy-button .value=${this._codeText} copy-label="Copy" success-label="Copied!"></wa-copy-button>
         </div>
       ` : html`
-        <button class="copy-btn" style="position:absolute;top:0.5rem;right:0.5rem;z-index:1" @click=${this.copy} aria-label="Copy code">
-          ${this.copyIcon()}
-        </button>
+        <wa-copy-button .value=${this._codeText} copy-label="Copy" success-label="Copied!" style="position:absolute;top:0.5rem;right:0.5rem;z-index:1"></wa-copy-button>
       `}
       <div class="code-container">
-        <slot></slot>
+        <slot @slotchange=${this._syncCodeText}></slot>
       </div>
     `;
   }

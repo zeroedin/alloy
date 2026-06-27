@@ -13,6 +13,11 @@
     "shiki": "^4.3.0"
   },
   "devDependencies": {
-    "esbuild": "^0.28.1"
+    "esbuild": "^0.28.1",
+    "lightningcss": "^1.32.0",
+    "rehype-format": "^5.0.1",
+    "rehype-parse": "^9.0.1",
+    "rehype-stringify": "^10.0.1",
+    "unified": "^11.0.5"
   }
 }
