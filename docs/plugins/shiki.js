@@ -7,7 +7,7 @@ export default function(alloy) {
     if (highlighter) return;
     const shiki = await import('shiki');
     highlighter = await shiki.createHighlighter({
-      themes: ['github-dark'],
+      themes: ['github-dark', 'github-light'],
       langs: ['rust', 'go', 'typescript', 'javascript', 'html', 'css',
               'yaml', 'toml', 'json', 'bash', 'shell', 'markdown'],
     });
@@ -43,7 +43,11 @@ export default function(alloy) {
           if (!loadedLangs.includes(lang)) {
             await highlighter.loadLanguage(lang);
           }
-          const highlighted = highlighter.codeToHtml(raw, { lang, theme: 'github-dark' });
+          let highlighted = highlighter.codeToHtml(raw, {
+            lang,
+            themes: { light: 'github-light', dark: 'github-dark' },
+            defaultColor: false,
+          });
           html = html.replace(full, `<alloy-code${attrs}>${highlighted}</alloy-code>`);
           continue;
         } catch {
