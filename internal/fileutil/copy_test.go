@@ -24,7 +24,7 @@ var _ = Describe("CopyFile", func() {
 	})
 
 	It("returns os.ErrNotExist when the source file does not exist", func() {
-		err := fileutil.CopyFile("/nonexistent/path/file.txt", filepath.Join(tmpDir, "dest.txt"))
+		err := fileutil.CopyFile(filepath.Join(tmpDir, "no-such-file.txt"), filepath.Join(tmpDir, "dest.txt"))
 		Expect(err).To(HaveOccurred())
 		Expect(os.IsNotExist(err)).To(BeTrue(),
 			"CopyFile must return an error wrapping os.ErrNotExist when the source "+
@@ -43,8 +43,10 @@ var _ = Describe("CopyFile", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(content)).To(Equal("hello"))
 
-		srcInfo, _ := os.Stat(srcPath)
-		dstInfo, _ := os.Stat(dstPath)
+		srcInfo, err := os.Stat(srcPath)
+		Expect(err).NotTo(HaveOccurred())
+		dstInfo, err := os.Stat(dstPath)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(dstInfo.Mode()).To(Equal(srcInfo.Mode()),
 			"CopyFile must preserve the source file's permissions")
 	})
@@ -58,7 +60,8 @@ var _ = Describe("CopyFile", func() {
 		err := fileutil.CopyFile(srcPath, dstPath)
 		Expect(err).To(HaveOccurred())
 		Expect(os.IsNotExist(err)).To(BeTrue(),
-			"CopyFile must return os.ErrNotExist when the source file vanishes — "+
-				"the dev server watcher relies on this to silently skip transient files")
+			"CopyFile must return os.ErrNotExist for a previously-existing source "+
+				"that was deleted — exercises the same os.Stat contract as test 1 "+
+				"from a different setup state (issue #782)")
 	})
 })
