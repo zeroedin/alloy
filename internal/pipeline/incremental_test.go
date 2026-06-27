@@ -100,6 +100,75 @@ var _ = Describe("Build Pipeline", func() {
 				"pages using a different layout (blog) must be skipped")
 		})
 
+		It("rebuilds all pages when an untracked layout partial changes (issue #781)", func() {
+			cfg := &config.Config{
+				Title:   "Incremental Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+				"content/about.md": "---\ntitle: About\n---\n# About",
+				"content/blog.md":  "---\ntitle: Blog\n---\n# Blog",
+			}
+
+			previousCache := cache.New()
+			for path, body := range contentMap {
+				relPath := path[len("content/"):]
+				previousCache.SetHash(relPath, cache.HashContent([]byte(body)))
+			}
+			previousCache.TrackTemplateUsage("index.md", "layouts/default.liquid")
+			previousCache.TrackTemplateUsage("about.md", "layouts/default.liquid")
+			previousCache.TrackTemplateUsage("blog.md", "layouts/post.liquid")
+
+			// Partial changed — not tracked as a direct layout for any page
+			changedFiles := []string{"layouts/partials/header.liquid"}
+
+			result, err := pipeline.BuildIncremental(cfg, contentMap, previousCache, changedFiles)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(3),
+				"untracked partial change must rebuild ALL pages — the cache has no "+
+					"dependency graph for {% include %} partials, so the only correct "+
+					"behavior is a full rebuild (issue #781)")
+			Expect(result.PagesSkipped).To(Equal(0),
+				"no pages may be skipped when a partial changes — any page could "+
+					"transitively depend on the changed partial")
+		})
+
+		It("rebuilds all pages when a partial changes alongside a tracked layout (issue #781)", func() {
+			cfg := &config.Config{
+				Title:   "Incremental Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+				"content/about.md": "---\ntitle: About\n---\n# About",
+				"content/blog.md":  "---\ntitle: Blog\n---\n# Blog",
+			}
+
+			previousCache := cache.New()
+			for path, body := range contentMap {
+				relPath := path[len("content/"):]
+				previousCache.SetHash(relPath, cache.HashContent([]byte(body)))
+			}
+			previousCache.TrackTemplateUsage("index.md", "layouts/default.liquid")
+			previousCache.TrackTemplateUsage("about.md", "layouts/default.liquid")
+			previousCache.TrackTemplateUsage("blog.md", "layouts/post.liquid")
+
+			// Both a tracked layout AND an untracked partial changed
+			changedFiles := []string{"layouts/default.liquid", "layouts/partials/nav.liquid"}
+
+			result, err := pipeline.BuildIncremental(cfg, contentMap, previousCache, changedFiles)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(3),
+				"when any changed layout file is untracked (partial), ALL pages must "+
+					"rebuild — even if other layout changes only affect a subset")
+			Expect(result.PagesSkipped).To(Equal(0))
+		})
+
 		It("writes rendered pages to the output directory (issue #581)", func() {
 			tmpDir := GinkgoT().TempDir()
 			contentDir := filepath.Join(tmpDir, "content")
