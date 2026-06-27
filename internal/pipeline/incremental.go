@@ -119,7 +119,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		untrackedPartial := false
 		for _, layoutPath := range layoutChanges {
 			pages := previousCache.InvalidatedPages(layoutPath)
-			if len(pages) == 0 {
+			if pages == nil {
 				untrackedPartial = true
 			}
 			for _, p := range pages {
