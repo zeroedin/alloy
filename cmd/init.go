@@ -22,6 +22,7 @@ func newInitCommand() *cobra.Command {
 	initCmd.Flags().String("assets", "assets", "Assets directory name")
 	initCmd.Flags().String("static", "static", "Static files directory name")
 	initCmd.Flags().String("data", "data", "Data directory name")
+	initCmd.Flags().String("plugins", "plugins", "Plugins directory name")
 	return initCmd
 }
 
@@ -45,6 +46,7 @@ func runInitE(cmd *cobra.Command, args []string) error {
 	assetsDir, _ := cmd.Flags().GetString("assets")
 	staticDir, _ := cmd.Flags().GetString("static")
 	dataDir, _ := cmd.Flags().GetString("data")
+	pluginsDir, _ := cmd.Flags().GetString("plugins")
 
 	for _, pair := range []struct{ flag, val string }{
 		{"--content", contentDir},
@@ -52,13 +54,14 @@ func runInitE(cmd *cobra.Command, args []string) error {
 		{"--assets", assetsDir},
 		{"--static", staticDir},
 		{"--data", dataDir},
+		{"--plugins", pluginsDir},
 	} {
 		if err := validateDirFlag(pair.flag, pair.val); err != nil {
 			return err
 		}
 	}
 
-	for _, d := range []string{contentDir, layoutsDir, assetsDir, staticDir, dataDir, "plugins"} {
+	for _, d := range []string{contentDir, layoutsDir, assetsDir, staticDir, dataDir, pluginsDir} {
 		if err := os.MkdirAll(filepath.Join(dir, d), 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", d, err)
 		}
@@ -74,6 +77,7 @@ func runInitE(cmd *cobra.Command, args []string) error {
 		{"assets", "assets"},
 		{"static", "static"},
 		{"data", "data"},
+		{"plugins", "plugins"},
 	} {
 		if cmd.Flags().Changed(f.flag) {
 			v, _ := cmd.Flags().GetString(f.flag)

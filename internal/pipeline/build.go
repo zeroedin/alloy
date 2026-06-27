@@ -540,7 +540,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				cfg.Structure.Assets,
 				cfg.Structure.Static,
 				cfg.Structure.Data,
-				"plugins",
+				cfg.Structure.Plugins,
 				".alloy",
 			}
 			if err := static.CopyPassthroughWithValidation(cfg.Passthrough, cfg.ProjectRoot, outputDir, managedDirs); err != nil {
@@ -859,7 +859,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			cfg.Structure.Assets,
 			cfg.Structure.Static,
 			cfg.Structure.Data,
-			"plugins",
+			cfg.Structure.Plugins,
 			".alloy",
 		}
 		if err := static.CopyPassthroughWithValidation(cfg.Passthrough, cfg.ProjectRoot, outputDir, managedDirs); err != nil {
@@ -1092,7 +1092,7 @@ func validateOutputDir(cfg *config.Config) error {
 	managedDirs := []string{
 		cfg.Structure.Content,
 		cfg.Structure.Layouts,
-		"plugins",
+		cfg.Structure.Plugins,
 		".alloy",
 	}
 	if cfg.Structure.Assets != "" {

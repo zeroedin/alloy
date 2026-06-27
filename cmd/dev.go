@@ -220,15 +220,15 @@ func newDevCommand() *cobra.Command {
 					log.Printf("rebuilding (%d files changed)...", len(events))
 				}
 
-				hasComponentChange := false
+				hasFullRebuildChange := false
 				for _, ev := range events {
-					if ev.ChangeType == server.ComponentChange {
-						hasComponentChange = true
+					if ev.ChangeType == server.ComponentChange || ev.ChangeType == server.PluginChange {
+						hasFullRebuildChange = true
 						break
 					}
 				}
 
-				if hasComponentChange || rebuildScope == server.RebuildFull {
+				if hasFullRebuildChange || rebuildScope == server.RebuildFull {
 					if fullResult, err := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true, Reporter: reporter}); err != nil {
 						log.Printf("rebuild failed: %v", err)
 						srv.Overlay().SetErrors([]server.BuildError{
