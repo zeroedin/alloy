@@ -197,7 +197,9 @@ func newDevCommand() *cobra.Command {
 						continue
 					}
 					if err := fileutil.CopyFile(srcPath, destPath); err != nil {
-						log.Printf("warning: recopy %s: %v", ev.Path, err)
+						if !os.IsNotExist(err) {
+							log.Printf("warning: recopy %s: %v", ev.Path, err)
+						}
 					}
 				}
 
