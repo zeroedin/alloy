@@ -1491,4 +1491,162 @@ var _ = Describe("Build Pipeline", func() {
 					"from InitPipelineState with data-file keys (issue #721)")
 		})
 	})
+
+	// ── Partial invalidation edge cases (issue #799) ────────────────
+	// PR #798 review identified three untested edge cases in the
+	// untrackedPartial fallback: unused non-partial layouts, deleted
+	// partials in changedFiles, and simultaneous data + partial changes.
+
+	Describe("Partial invalidation edge cases (issue #799)", func() {
+		It("unused non-partial layout triggers full rebuild via untrackedPartial", func() {
+			cfg := &config.Config{
+				Title:   "Unused Layout Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+				"content/about.md": "---\ntitle: About\n---\n# About",
+				"content/blog.md":  "---\ntitle: Blog\n---\n# Blog",
+			}
+
+			previousCache := cache.New()
+			for path, body := range contentMap {
+				relPath := path[len("content/"):]
+				previousCache.SetHash(relPath, cache.HashContent([]byte(body)))
+			}
+			previousCache.TrackTemplateUsage("index.md", "layouts/default.liquid")
+			previousCache.TrackTemplateUsage("about.md", "layouts/default.liquid")
+			previousCache.TrackTemplateUsage("blog.md", "layouts/post.liquid")
+
+			// A top-level layout that no page has ever used — not a partial,
+			// but InvalidatedPages still returns nil for it.
+			changedFiles := []string{"layouts/admin.liquid"}
+
+			result, err := pipeline.BuildIncremental(cfg, contentMap, previousCache, changedFiles)
+			Expect(err).NotTo(HaveOccurred(),
+				"unused layout change must not cause an error (issue #799)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(3),
+				"unused layout triggers untrackedPartial — all pages must rebuild "+
+					"because the cache cannot prove no page uses it (issue #799)")
+			Expect(result.PagesSkipped).To(Equal(0),
+				"no pages may be skipped when untrackedPartial is set (issue #799)")
+		})
+
+		It("deleted partial in changedFiles completes without error", func() {
+			cfg := &config.Config{
+				Title:   "Deleted Partial Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\n# Home",
+				"content/about.md": "---\ntitle: About\n---\n# About",
+				"content/blog.md":  "---\ntitle: Blog\n---\n# Blog",
+			}
+
+			previousCache := cache.New()
+			for path, body := range contentMap {
+				relPath := path[len("content/"):]
+				previousCache.SetHash(relPath, cache.HashContent([]byte(body)))
+			}
+			previousCache.TrackTemplateUsage("index.md", "layouts/default.liquid")
+			previousCache.TrackTemplateUsage("about.md", "layouts/default.liquid")
+			previousCache.TrackTemplateUsage("blog.md", "layouts/post.liquid")
+
+			// Partial deleted from disk — watcher still reports the path.
+			// The invalidation logic never reads the file, only consults the
+			// cache, so a missing file must not cause a crash.
+			changedFiles := []string{"layouts/partials/deleted.liquid"}
+
+			result, err := pipeline.BuildIncremental(cfg, contentMap, previousCache, changedFiles)
+			Expect(err).NotTo(HaveOccurred(),
+				"deleted partial in changedFiles must not cause an error — "+
+					"invalidation only consults the cache, not the filesystem (issue #799)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(3),
+				"deleted partial triggers untrackedPartial — all pages must rebuild (issue #799)")
+			Expect(result.PagesSkipped).To(Equal(0),
+				"no pages may be skipped when a deleted partial triggers full rebuild (issue #799)")
+		})
+
+		It("simultaneous data change and untrackedPartial does not duplicate pages", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			dataDir := filepath.Join(tmpDir, "_data")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			partialsDir := filepath.Join(tmpDir, "layouts", "partials")
+			outputDir := filepath.Join(tmpDir, "_site")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(dataDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(partialsDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(dataDir, "colors.json"),
+				[]byte(`[{"name":"Red","slug":"red"},{"name":"Blue","slug":"blue"}]`),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "colors.html"),
+				[]byte("---\ntitle: \"{{ color.name }}\"\npagination:\n  data: site.data.colors\n  perPage: 1\n  as: color\npermalink: \"/colors/{{ color.slug }}/\"\n---\n<p>{{ color.name }}</p>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home\n---\n# Home"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("{{ content }}"), 0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(partialsDir, "header.liquid"),
+				[]byte("<header>Header</header>"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Data + Partial Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Data:    "_data",
+				},
+			}
+
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			// Initial build — establishes cache with template tracking
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result1.RenderedContent["/colors/red/"]).To(ContainSubstring("Red"),
+				"sanity: initial build must render Red")
+
+			initialPageCount := result1.PageCount
+
+			// Modify data file on disk
+			Expect(os.WriteFile(filepath.Join(dataDir, "colors.json"),
+				[]byte(`[{"name":"Crimson","slug":"red"},{"name":"Azure","slug":"blue"}]`),
+				0644)).To(Succeed())
+
+			// Both a partial change (untrackedPartial=true, pagesToRender=allPages)
+			// AND a data file change (appends data-paginated pages again).
+			// The implementation must not double-count pages.
+			changedFiles := []string{
+				"layouts/partials/header.liquid",
+				"_data/colors.json",
+			}
+
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				changedFiles,
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred(),
+				"simultaneous data change and partial change must not error (issue #799)")
+			Expect(result2.PageCount).To(Equal(initialPageCount),
+				"page count must not be inflated by duplicate pagesToRender entries — "+
+					"untrackedPartial sets pagesToRender=allPages, then data invalidation "+
+					"appends the same pages again; deduplication must prevent double-rendering (issue #799)")
+			Expect(result2.RenderedContent["/colors/red/"]).To(ContainSubstring("Crimson"),
+				"data-paginated pages must reflect updated data values (issue #799)")
+		})
+	})
 })
