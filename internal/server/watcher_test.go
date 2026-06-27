@@ -17,7 +17,7 @@ var _ = Describe("File Watcher", func() {
 	// ── Watch paths ───────────────────────────────────────────────────
 
 	Describe("WatchDirs", func() {
-		It("includes content/, layouts/, data/, assets/, and static/", func() {
+		It("includes content/, layouts/, data/, assets/, static/, and plugins/", func() {
 			cfg := &config.Config{Title: "Test Site"}
 			dirs := server.WatchDirs(cfg)
 			Expect(dirs).NotTo(BeNil())
@@ -27,6 +27,7 @@ var _ = Describe("File Watcher", func() {
 				"data",
 				"assets",
 				"static",
+				"plugins",
 			))
 		})
 
@@ -48,7 +49,8 @@ var _ = Describe("File Watcher", func() {
 			cfg := &config.Config{Title: "Simple Site"}
 			dirs := server.WatchDirs(cfg)
 			Expect(dirs).NotTo(BeNil())
-			Expect(dirs).To(HaveLen(5))
+			Expect(dirs).To(HaveLen(6),
+				"6 base dirs: content, layouts, data, assets, static, plugins")
 		})
 	})
 
@@ -85,8 +87,8 @@ var _ = Describe("File Watcher", func() {
 				"base directories must still be present")
 			Expect(dirs).To(ContainElement("../shared/fonts"),
 				"passthrough directories must be added alongside base directories")
-			Expect(len(dirs)).To(Equal(6),
-				"5 base dirs + 1 passthrough dir = 6 total")
+			Expect(len(dirs)).To(Equal(7),
+				"6 base dirs + 1 passthrough dir = 7 total")
 		})
 
 		It("ClassifyChange identifies passthrough file changes", func() {
@@ -147,8 +149,8 @@ var _ = Describe("File Watcher", func() {
 				"base directories must still be present (issue #530)")
 			Expect(dirs).To(ContainElement("elements"),
 				"watch directories must be added alongside base directories (issue #530)")
-			Expect(len(dirs)).To(Equal(6),
-				"5 base dirs + 1 watch dir = 6 total (issue #530)")
+			Expect(len(dirs)).To(Equal(7),
+				"6 base dirs + 1 watch dir = 7 total (issue #530)")
 		})
 
 		It("WatchDirs handles watch from: with glob pattern", func() {
@@ -298,6 +300,71 @@ var _ = Describe("File Watcher", func() {
 		It("classifies static file change as StaticChange", func() {
 			changeType := server.ClassifyChange("static/robots.txt", cfg)
 			Expect(changeType).To(Equal(server.StaticChange))
+		})
+	})
+
+	// ── Plugin directory watching (issue #802) ──────────────────────
+	// The plugins directory must be configurable via structure.plugins
+	// and watched for changes during dev mode. Plugin file changes must
+	// trigger a full rebuild (re-discovery), not an incremental one.
+
+	Describe("Plugin directory watching (issue #802)", func() {
+		It("WatchDirs includes default plugins directory", func() {
+			cfg := &config.Config{Title: "Plugin Site"}
+			dirs := server.WatchDirs(cfg)
+			Expect(dirs).To(ContainElement("plugins"),
+				"plugins directory must be included in WatchDirs — "+
+					"without this, plugin file changes are never detected (issue #802)")
+		})
+
+		It("WatchDirs uses configured plugins directory", func() {
+			cfg := &config.Config{
+				Title: "Custom Plugin Site",
+				Structure: config.StructureConfig{
+					Plugins: "tools/plugins",
+				},
+			}
+			dirs := server.WatchDirs(cfg)
+			Expect(dirs).To(ContainElement("tools/plugins"),
+				"WatchDirs must use cfg.Structure.Plugins — "+
+					"not the hardcoded default (issue #802)")
+			Expect(dirs).NotTo(ContainElement("plugins"),
+				"default plugins/ must not appear when overridden by config (issue #802)")
+		})
+
+		It("ClassifyChange identifies plugin file change as PluginChange", func() {
+			cfg := &config.Config{Title: "Plugin Site"}
+			changeType := server.ClassifyChange("plugins/my-filter.js", cfg)
+			Expect(changeType).To(Equal(server.PluginChange),
+				"plugin file changes must be classified as PluginChange — "+
+					"they need distinct handling for full rebuild (issue #802)")
+		})
+
+		It("ClassifyChange uses configured plugins path for classification", func() {
+			cfg := &config.Config{
+				Title: "Custom Plugin Site",
+				Structure: config.StructureConfig{
+					Plugins: "tools/plugins",
+				},
+			}
+			changeType := server.ClassifyChange("tools/plugins/my-filter.js", cfg)
+			Expect(changeType).To(Equal(server.PluginChange),
+				"plugin files in custom path must be classified as PluginChange (issue #802)")
+		})
+
+		It("ClassifyChange does not match prefix-overlapping path as PluginChange", func() {
+			cfg := &config.Config{Title: "Plugin Site"}
+			changeType := server.ClassifyChange("pluginsextra/file.js", cfg)
+			Expect(changeType).NotTo(Equal(server.PluginChange),
+				"pluginsextra/ must not match plugins/ prefix — "+
+					"classification must respect directory boundaries (issue #802)")
+		})
+
+		It("PluginChange triggers RebuildPipeline", func() {
+			scope := server.RebuildScopeForChangeType(server.PluginChange)
+			Expect(scope).To(Equal(server.RebuildPipeline),
+				"PluginChange must trigger a pipeline rebuild — "+
+					"plugins need re-discovery, not just a file recopy (issue #802)")
 		})
 	})
 

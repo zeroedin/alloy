@@ -346,6 +346,13 @@ var _ = Describe("Config", func() {
 			Expect(cfg.Structure.Content).To(Equal("content"),
 				"structure.content must default to 'content'")
 		})
+
+		It("defaults structure.plugins to plugins (issue #802)", func() {
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Structure.Plugins).To(Equal("plugins"),
+				"structure.plugins must default to 'plugins' — "+
+					"same pattern as all other structure fields (issue #802)")
+		})
 	})
 
 	// ── ApplyDefaults nil taxonomy handling (issue #65) ─────────────
@@ -614,6 +621,46 @@ var _ = Describe("Config", func() {
 			err := config.Validate(cfg)
 			Expect(err).NotTo(HaveOccurred(),
 				"config with zero taxonomies must be valid")
+		})
+	})
+
+	// ── Configurable plugins directory (issue #802) ────────────────────
+	// The plugins directory must be configurable via structure.plugins,
+	// following the same pattern as content, layouts, assets, static, data.
+
+	Describe("Structure.Plugins config (issue #802)", func() {
+		It("parses structure.plugins from YAML config", func() {
+			dir := GinkgoT().TempDir()
+			configContent := `title: "Plugin Config Test"
+baseURL: "https://example.com"
+structure:
+  plugins: "tools/plugins"
+`
+			Expect(os.WriteFile(filepath.Join(dir, "alloy.config.yaml"), []byte(configContent), 0644)).To(Succeed())
+
+			cfg, err := config.Load(filepath.Join(dir, "alloy.config.yaml"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Structure.Plugins).To(Equal("tools/plugins"),
+				"structure.plugins must parse custom directory path from config (issue #802)")
+		})
+
+		It("rejects watch from: that overlaps configured plugins directory", func() {
+			cfg := &config.Config{
+				Title:   "Test",
+				BaseURL: "https://example.com",
+				Structure: config.StructureConfig{
+					Plugins: "tools/plugins",
+				},
+				Watch: []config.WatchMapping{
+					{From: "tools/plugins", Type: "content"},
+				},
+			}
+			err := config.Validate(cfg)
+			Expect(err).To(HaveOccurred(),
+				"watch from: matching configured plugins directory must fail validation — "+
+					"plugins is a managed directory and cannot be watched separately (issue #802)")
+			Expect(err.Error()).To(ContainSubstring("tools/plugins"),
+				"error must name the conflicting directory (issue #802)")
 		})
 	})
 

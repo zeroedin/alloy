@@ -686,6 +686,35 @@ taxonomies:
 				}
 			})
 
+			It("--plugins=tools/plugins creates tools/plugins/ instead of plugins/ (issue #802)", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir, "--plugins=tools/plugins")).To(Succeed())
+
+				info, err := os.Stat(filepath.Join(tmpDir, "tools", "plugins"))
+				Expect(err).NotTo(HaveOccurred(),
+					"tools/plugins/ directory must be created by --plugins flag (issue #802)")
+				Expect(info.IsDir()).To(BeTrue())
+				_, err = os.Stat(filepath.Join(tmpDir, "plugins"))
+				Expect(os.IsNotExist(err)).To(BeTrue(),
+					"default plugins/ must not be created when --plugins overrides it (issue #802)")
+			})
+
+			It("--plugins=tools/plugins writes plugins to config structure block (issue #802)", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.RemoveAll(tmpDir)
+
+				Expect(runInitCmd(tmpDir, "--plugins=tools/plugins")).To(Succeed())
+
+				cfg, err := config.Load(filepath.Join(tmpDir, "alloy.config.yaml"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(cfg.Structure.Plugins).To(Equal("tools/plugins"),
+					"structure.plugins must reflect the --plugins flag value (issue #802)")
+			})
+
 			It("custom flags write structure: block to config", func() {
 				tmpDir, err := os.MkdirTemp("", "alloy-init-*")
 				Expect(err).NotTo(HaveOccurred())

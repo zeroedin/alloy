@@ -112,6 +112,7 @@ structure:                       # Override default directory paths (all relativ
   assets: "assets"               # Default: "assets"
   static: "static"               # Default: "static"
   data: "data"                   # Default: "data"
+  plugins: "plugins"             # Default: "plugins"
 
 taxonomies:
   tags:                          # auto-generates /tags/ and /tags/:slug/
@@ -129,7 +130,7 @@ passthrough:
 
 ### Custom Directory Structure
 
-The default project structure uses `content/`, `layouts/`, `assets/`, `static/`, and `data/` at the project root. The `structure:` config overrides these paths for projects with non-standard layouts:
+The default project structure uses `content/`, `layouts/`, `assets/`, `static/`, `data/`, and `plugins/` at the project root. The `structure:` config overrides these paths for projects with non-standard layouts:
 
 ```yaml
 # alloy.config.yaml — monorepo example
@@ -139,6 +140,7 @@ structure:
   assets: "./docs/assets/"
   static: "./docs/static/"
   data: "./data/"
+  plugins: "./tools/plugins/"
 
 passthrough:
   - from: "./elements/dist/"
