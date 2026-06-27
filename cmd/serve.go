@@ -216,7 +216,7 @@ func copyFileToPath(src, dest string, cfg *config.Config) {
 	}
 	srcFile, err := os.Open(src)
 	if err != nil {
-		if !os.IsNotExist(err) {
+		if !errors.Is(err, fs.ErrNotExist) {
 			log.Printf("warning: opening %s: %v", src, err)
 		}
 		return
