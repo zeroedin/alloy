@@ -8,14 +8,16 @@ description: "Alloy release notes and changelog"
 ---
 
 {% assign releases = collections.releases | reverse %}
-{% assign latest = releases | first %}
 
-<section class="releases-hero">
-  <span class="speed-badge">Latest release: {{ latest.title }}</span>
-  <div class="releases-hero-actions">
-    <a href="https://github.com/zeroedin/alloy" class="btn btn-secondary" target="_blank" rel="noopener">View on GitHub</a>
-    <a href="https://github.com/zeroedin/alloy/releases" class="btn btn-primary" target="_blank" rel="noopener">All Releases</a>
-  </div>
+<section class="release-tiles">
+  <a class="release-tile" href="https://github.com/zeroedin/alloy" target="_blank" rel="noopener">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+    <span class="release-tile-label">Repository</span>
+  </a>
+  <a class="release-tile" href="https://github.com/zeroedin/alloy/releases" target="_blank" rel="noopener">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+    <span class="release-tile-label">Releases on GitHub</span>
+  </a>
 </section>
 
 {% for release in releases %}
