@@ -17,6 +17,7 @@ Filters chain left to right. Each filter receives the output of the previous exp
 
 ## String filters
 
+{% raw %}
 | Filter | Description | Example |
 |---|---|---|
 | `upcase` | Convert to uppercase | `{{ "hello" | upcase }}` --> `HELLO` |
@@ -34,8 +35,9 @@ Filters chain left to right. Each filter receives the output of the previous exp
 | `strip` | Remove leading/trailing whitespace | `{{ " hello " | strip }}` --> `hello` |
 | `append` | Append a string | `{{ page.slug | append: ".html" }}` |
 | `prepend` | Prepend a string | `{{ page.slug | prepend: "/blog/" }}` |
-| `newline_to_br` | Convert newlines to `<br>` | `{{ page.bio | newline_to_br }}` |
-| `contains` | Check if string contains substring | `{{ page.title \| contains: "Guide" }}` → `true` |
+| `newline_to_br` | Convert newlines to `&lt;br&gt;` | `{{ page.bio | newline_to_br }}` |
+| `contains` | Check if string contains substring | `{{ page.title | contains: "Guide" }}` --> `true` |
+{% endraw %}
 
 ### slugify
 
@@ -85,6 +87,7 @@ Accepts `time.Time` objects or string input (ISO 8601, RFC 3339, `YYYY-MM-DD HH:
 
 Array filters operate on collections, taxonomy groups, and any list data.
 
+{% raw %}
 | Filter | Description | Example |
 |---|---|---|
 | `sort` | Sort by a key | `{{ collections.blog | sort: "title" }}` |
@@ -96,6 +99,7 @@ Array filters operate on collections, taxonomy groups, and any list data.
 | `uniq` | Remove duplicates | `{{ page.tags | uniq }}` |
 | `compact` | Remove nil values | `{{ pages | compact }}` |
 | `concat` | Concatenate two arrays | `{{ collections.blog | concat: collections.docs }}` |
+{% endraw %}
 
 ### where
 
@@ -155,20 +159,24 @@ The `map` filter extracts a single field from every item in an array:
 
 ## Set operation filters
 
+{% raw %}
 | Filter | Description | Example |
 |---|---|---|
 | `intersect` | Items in both arrays | `{{ page.tags | intersect: featured_tags }}` |
 | `union` | Items in either array (deduplicated) | `{{ page.tags | union: default_tags }}` |
 | `complement` | Items in first array but not second | `{{ all_tags | complement: hidden_tags }}` |
+{% endraw %}
 
 ## URL filters
 
+{% raw %}
 | Filter | Description | Example |
 |---|---|---|
 | `url` | Resolve path relative to `baseURL` | `{{ "css/main.css" | url }}` |
 | `absolute_url` | Full absolute URL with domain | `{{ page.url | absolute_url }}` |
 | `url_encode` | Percent-encode a string | `{{ page.title | url_encode }}` |
 | `url_decode` | Decode a percent-encoded string | `{{ encoded | url_decode }}` |
+{% endraw %}
 
 ```liquid
 <link rel="stylesheet" href="{{ 'css/main.css' | url }}">
@@ -177,6 +185,7 @@ The `map` filter extracts a single field from every item in an array:
 
 ## Math filters
 
+{% raw %}
 | Filter | Description | Example |
 |---|---|---|
 | `plus` | Add | `{{ 5 | plus: 3 }}` --> `8` |
@@ -188,6 +197,7 @@ The `map` filter extracts a single field from every item in an array:
 | `floor` | Round down | `{{ 4.8 | floor }}` --> `4` |
 | `round` | Round to nearest | `{{ 4.5 | round }}` --> `5` |
 | `abs` | Absolute value | `{{ -5 | abs }}` --> `5` |
+{% endraw %}
 
 ## Content filters
 
@@ -226,17 +236,21 @@ Bypasses auto-escaping for trusted HTML content. Relevant primarily for the Go t
 
 ## Regex filters
 
+{% raw %}
 | Filter | Description | Example |
 |---|---|---|
-| `findRE` | Find regex matches | `{{ page.content | findRE: "<h2>(.*?)</h2>" }}` |
+| `findRE` | Find regex matches | `{{ page.content | findRE: "&lt;h2&gt;(.*?)&lt;/h2&gt;" }}` |
 | `replaceRE` | Regex replace | `{{ page.title | replaceRE: "[^a-z]", "" }}` |
+{% endraw %}
 
 ## Data filters
 
+{% raw %}
 | Filter | Description | Example |
 |---|---|---|
 | `json` | Serialize value to JSON | `{{ site.data.config | json }}` |
 | `default` | Fallback value if nil or empty | `{{ page.author | default: "Anonymous" }}` |
+{% endraw %}
 
 ```liquid
 <script type="application/ld+json">
