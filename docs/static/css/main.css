@@ -161,8 +161,7 @@
   }
 
   table {
-    width: max-content;
-    min-width: 100%;
+    width: 100%;
     border-collapse: collapse;
     margin-bottom: var(--space-lg);
 
@@ -177,6 +176,12 @@
       background: var(--color-code-bg);
       font-weight: 600;
     }
+  }
+
+  .content article > table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
 }
 
@@ -291,7 +296,6 @@
 
     & article {
       max-width: var(--content-max-width);
-      overflow-x: auto;
 
       & h1 {
         font-size: var(--font-size-h1);
