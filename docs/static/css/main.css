@@ -946,6 +946,117 @@
     }
   }
 
+  /* ── Releases ─────────────────────────────────────── */
+
+  .release-tiles {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-md);
+    margin-bottom: var(--space-2xl);
+
+    @media (min-width: 480px) {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  .release-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-sm);
+    padding: var(--space-xl) var(--space-lg);
+    text-align: center;
+    text-decoration: none;
+    color: var(--color-text-heading);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    transition: background 0.15s ease, border-color 0.15s ease;
+
+    &:hover {
+      text-decoration: none;
+      background: var(--color-code-bg);
+      border-color: var(--color-border-strong);
+    }
+
+    & svg {
+      width: 24px;
+      height: 24px;
+      fill: none;
+      stroke: var(--color-primary);
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+  }
+
+  .release-tile-label {
+    font-weight: 600;
+    font-size: var(--font-size-lg);
+    letter-spacing: -0.01em;
+  }
+
+  .release-entry {
+    padding: var(--space-lg) 0;
+    border-bottom: 1px solid var(--color-border);
+
+    &:first-of-type {
+      padding-top: 0;
+    }
+
+    &:last-child {
+      border-bottom: none;
+    }
+
+    & h2 {
+      margin-top: 0 !important;
+      display: inline;
+      font-size: var(--font-size-h2);
+    }
+
+    & time {
+      display: block;
+      color: var(--color-text-faint);
+      font-size: var(--font-size-sm);
+      margin: var(--space-xs) 0 var(--space-sm);
+    }
+  }
+
+  .release-entry-head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+  }
+
+  .release-badge {
+    display: inline-block;
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    padding: 0.15em 0.6em;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border: 1px solid var(--color-border);
+    color: var(--color-text-muted);
+    background: var(--color-surface);
+  }
+
+  .release-badge-latest {
+    border-color: var(--color-primary-subtle);
+    color: var(--color-primary);
+    background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  }
+
+  .release-github-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    font-size: var(--font-size-sm);
+    margin-top: var(--space-xs);
+  }
+
   #hero-shader {
     position: absolute;
     inset: 0;
