@@ -164,7 +164,3 @@ Aliases are validated during the pre-build conflict detection pass. If an alias 
 ## Trailing slashes
 
 All permalinks should end with a trailing slash. Alloy writes pages as `path/index.html`, so `/about/` becomes `_site/about/index.html`. This produces clean URLs that work with any static file server.
-
-## Performance
-
-Token replacement for 3,000 pages takes approximately 1ms. Only pages with `{{ }}` in their permalink pay the template rendering cost (~50 microseconds per page).
