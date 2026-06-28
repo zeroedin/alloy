@@ -35,7 +35,7 @@ Filters chain left to right. Each filter receives the output of the previous exp
 | `strip` | Remove leading/trailing whitespace | `{{ " hello " | strip }}` --> `hello` |
 | `append` | Append a string | `{{ page.slug | append: ".html" }}` |
 | `prepend` | Prepend a string | `{{ page.slug | prepend: "/blog/" }}` |
-| `newline_to_br` | Convert newlines to `<br>` | `{{ page.bio | newline_to_br }}` |
+| `newline_to_br` | Convert newlines to `&lt;br&gt;` | `{{ page.bio | newline_to_br }}` |
 | `contains` | Check if string contains substring | `{{ page.title | contains: "Guide" }}` --> `true` |
 {% endraw %}
 
@@ -239,7 +239,7 @@ Bypasses auto-escaping for trusted HTML content. Relevant primarily for the Go t
 {% raw %}
 | Filter | Description | Example |
 |---|---|---|
-| `findRE` | Find regex matches | `{{ page.content | findRE: "<h2>(.*?)</h2>" }}` |
+| `findRE` | Find regex matches | `{{ page.content | findRE: "&lt;h2&gt;(.*?)&lt;/h2&gt;" }}` |
 | `replaceRE` | Regex replace | `{{ page.title | replaceRE: "[^a-z]", "" }}` |
 {% endraw %}
 
