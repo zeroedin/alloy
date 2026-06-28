@@ -121,6 +121,20 @@ summary: |
 
 If no `summary` is set, `{{ page.summary }}` is nil. Alloy does not auto-generate summaries.
 
+Use summaries in list templates:
+
+```liquid
+{% for article in collections.articles %}
+  <article>
+    <h2><a href="{{ article.url }}">{{ article.title }}</a></h2>
+    <p>By {{ article.author }} -- {{ article.date | date: "%B %Y" }}</p>
+    {% if article.summary %}
+      <p>{{ article.summary }}</p>
+    {% endif %}
+  </article>
+{% endfor %}
+```
+
 ### tags
 
 An array of taxonomy terms. Alloy uses tags (and other declared taxonomies) to group pages into collections.
