@@ -82,6 +82,36 @@ With `templateTags: true` (the default), Liquid and Go template syntax passes th
 
 Set `templateTags: false` to disable template syntax recognition in Markdown files. `{{ }}` and `{% %}` in body text render as literal characters instead of being evaluated as Liquid. Use this for sites whose content discusses other template languages (Mustache, Handlebars, Go templates) and does not need Liquid processing in content files. Template syntax inside fenced code blocks and inline code is always escaped for display regardless of this setting.
 
+## Table of contents
+
+Alloy extracts the heading structure from each Markdown page during rendering and exposes it as `page.toc`:
+
+```liquid
+<nav class="toc">
+  {% for item in page.toc %}
+    <a href="#{{ item.id }}">{{ item.text }}</a>
+    {% if item.children.size > 0 %}
+      <ul>
+        {% for child in item.children %}
+          <li><a href="#{{ child.id }}">{{ child.text }}</a></li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% endfor %}
+</nav>
+```
+
+Each TOC entry has:
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string | The heading's `id` attribute (auto-generated or `{#custom-id}` override) |
+| `text` | string | Plain text content of the heading |
+| `level` | int | Heading level (2--6; h1 is excluded) |
+| `children` | array | Nested headings one level deeper |
+
+TOC generation is controlled by the `toc` and `autoHeadingID` settings in the Markdown configuration above. Set `toc: false` to disable TOC extraction entirely.
+
 ## HTML content files
 
 `.html` files in `content/` are classified based on their content:
