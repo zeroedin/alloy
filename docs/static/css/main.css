@@ -178,8 +178,7 @@
     }
   }
 
-  .content article > table {
-    display: block;
+  .table-scroll {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
