@@ -946,6 +946,102 @@
     }
   }
 
+  /* ── Releases ─────────────────────────────────────── */
+
+  .releases-hero {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    padding: var(--space-lg);
+    margin-bottom: var(--space-xl);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    background: var(--color-surface);
+
+    & .speed-badge {
+      margin-bottom: 0;
+    }
+  }
+
+  .releases-hero-actions {
+    display: flex;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+  }
+
+  .release-entry {
+    padding: var(--space-lg) 0;
+    border-bottom: 1px solid var(--color-border);
+
+    &:first-of-type {
+      padding-top: 0;
+    }
+
+    &:last-child {
+      border-bottom: none;
+    }
+
+    & h2 {
+      margin-top: 0 !important;
+      display: inline;
+      font-size: var(--font-size-h2);
+    }
+
+    & time {
+      display: block;
+      color: var(--color-text-faint);
+      font-size: var(--font-size-sm);
+      margin: var(--space-xs) 0 var(--space-sm);
+    }
+  }
+
+  .release-entry-head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+  }
+
+  .release-badge {
+    display: inline-block;
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    padding: 0.15em 0.6em;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .release-badge-initial {
+    background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+    color: var(--color-primary);
+  }
+
+  .release-badge-minor {
+    background: color-mix(in srgb, #16a34a 18%, transparent);
+    color: light-dark(#15803d, #4ade80);
+  }
+
+  .release-badge-patch {
+    background: color-mix(in srgb, var(--color-slate) 18%, transparent);
+    color: var(--color-text-muted);
+  }
+
+  .release-badge-latest {
+    background: color-mix(in srgb, #f59e0b 18%, transparent);
+    color: light-dark(#b45309, #fbbf24);
+  }
+
+  .release-github-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    font-size: var(--font-size-sm);
+    margin-top: var(--space-xs);
+  }
+
   #hero-shader {
     position: absolute;
     inset: 0;
