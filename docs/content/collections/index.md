@@ -32,19 +32,59 @@ content/
 
 Regular directories without date-based permalink patterns are just pages, not collections. To group non-blog pages across sections, use [taxonomies](/collections/taxonomies/).
 
+## Config-Declared Collections
+
+A section without a date-based permalink can still become a collection by declaring it in the site config. Any section named under `collections:` collects its child pages, exactly like a date-based section:
+
+```yaml
+# alloy.config.yaml
+collections:
+  releases:
+    sortBy: "date"
+    order: "desc"
+```
+
+```
+content/
+  releases/
+    index.md        # section index (not a collection member)
+    v1.0.0.md       # -> collections.releases
+    v1.1.0.md       # -> collections.releases
+```
+
+This is how a release notes section, a changelog, or a project portfolio becomes iterable as `collections.releases` without date tokens in its URLs.
+
+In both kinds of collections, the section's own `index.md` is a container, not a member -- it does not appear in the collection. Page bundles (`releases/v1.0.0/index.md`) are members.
+
 ## Iterating Collections
 
 Loop through a collection in your templates to build index pages, feeds, or navigation:
 
-```liquid
-{% for post in collections.blog %}
-  <article>
-    <h2><a href="{{ post.url }}">{{ post.title }}</a></h2>
-    <time>{{ post.date | date: "%B %d, %Y" }}</time>
-    <p>{{ post.summary }}</p>
-  </article>
-{% endfor %}
-```
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="iterate-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="iterate-go">Go templates</wa-tab>
+
+<wa-tab-panel name="iterate-liquid" active>
+<alloy-code lang="liquid">{% for post in collections.blog %}
+  &lt;article&gt;
+    &lt;h2&gt;&lt;a href="{{ post.url }}"&gt;{{ post.title }}&lt;/a&gt;&lt;/h2&gt;
+    &lt;time&gt;{{ post.date | date: "%B %d, %Y" }}&lt;/time&gt;
+    &lt;p&gt;{{ post.summary }}&lt;/p&gt;
+  &lt;/article&gt;
+{% endfor %}</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="iterate-go">
+<alloy-code lang="html">{{ range .collections.blog }}
+  &lt;article&gt;
+    &lt;h2&gt;&lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;&lt;/h2&gt;
+    &lt;time&gt;{{ date .date "%B %d, %Y" }}&lt;/time&gt;
+    &lt;p&gt;{{ .summary }}&lt;/p&gt;
+  &lt;/article&gt;
+{{ end }}</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 Each item in the collection is a page object with all the usual properties: `url`, `title`, `date`, `summary`, and any custom front matter fields.
 

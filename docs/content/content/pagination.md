@@ -133,6 +133,8 @@ Every paginated page receives a `pagination` object in its template context:
 
 The `as` variable is an alias for `pagination.items`. Both refer to the same data.
 
+The same fields are available in the Go template engine with dot syntax: `{% raw %}{{ .pagination.pageNumber }}{% endraw %}`, `{% raw %}{{ range .pagination.items }}{% endraw %}`, and so on.
+
 ## Front matter interpolation
 
 When generating virtual pages (`perPage: 1`), string-valued front matter fields containing `{{ }}` or `{% %}` are interpolated using the pagination item context. This gives each virtual page its own title, description, and other metadata:

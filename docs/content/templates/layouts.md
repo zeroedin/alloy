@@ -7,27 +7,47 @@ description: "How layouts wrap page content in shared HTML structure using the {
 
 Layouts wrap your page content in shared HTML structure. Every content page is rendered into a layout, which injects the page body via `{{ content }}`.
 
-```liquid
-<!-- layouts/default.liquid -->
-<!DOCTYPE html>
-<html lang="{{ site.language }}">
-<head>
-  <meta charset="utf-8">
-  <title>{{ page.title }} - {{ site.title }}</title>
-</head>
-<body>
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="layout-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="layout-go">Go templates</wa-tab>
+
+<wa-tab-panel name="layout-liquid" active>
+<alloy-code lang="liquid">&lt;!-- layouts/default.liquid --&gt;
+&lt;!DOCTYPE html&gt;
+&lt;html lang="{{ site.language }}"&gt;
+&lt;head&gt;
+  &lt;meta charset="utf-8"&gt;
+  &lt;title&gt;{{ page.title }} - {{ site.title }}&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
   {% include "partials/header" %}
-  <main>{{ content }}</main>
+  &lt;main&gt;{{ content }}&lt;/main&gt;
   {% include "partials/footer" %}
-</body>
-</html>
-```
+&lt;/body&gt;
+&lt;/html&gt;</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="layout-go">
+<alloy-code lang="html">&lt;!-- layouts/default.html --&gt;
+&lt;!DOCTYPE html&gt;
+&lt;html lang="{{ .site.language }}"&gt;
+&lt;head&gt;
+  &lt;meta charset="utf-8"&gt;
+  &lt;title&gt;{{ .page.title }} - {{ .site.title }}&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;main&gt;{{ .content }}&lt;/main&gt;
+&lt;/body&gt;
+&lt;/html&gt;</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 The `{{ content }}` variable holds the fully rendered body of the current page. For Markdown files, this is already converted to HTML before the layout is applied.
 
 ## Layout resolution order
 
-Alloy resolves layouts through a predictable lookup chain. At each step, the Liquid engine checks for `.liquid` first, then falls back to the bare extension.
+Alloy resolves layouts through a predictable lookup chain. The configured engine determines the extension checked at each step: `.liquid` for the Liquid engine, `.html` for the Go template engine.
 
 ### Blog-like sections
 
@@ -140,25 +160,51 @@ Alloy scans all layout files at build start and fails the build if a cycle exist
 
 All front matter fields are available inside layouts via the `page` object:
 
-```liquid
-<article class="post">
-  <h1>{{ page.title }}</h1>
-  <time datetime="{{ page.date | date: '%Y-%m-%d' }}">
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="pagedata-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="pagedata-go">Go templates</wa-tab>
+
+<wa-tab-panel name="pagedata-liquid" active>
+<alloy-code lang="liquid">&lt;article class="post"&gt;
+  &lt;h1&gt;{{ page.title }}&lt;/h1&gt;
+  &lt;time datetime="{{ page.date | date: '%Y-%m-%d' }}"&gt;
     {{ page.date | date: "%B %d, %Y" }}
-  </time>
+  &lt;/time&gt;
   {% if page.summary %}
-    <p class="summary">{{ page.summary }}</p>
+    &lt;p class="summary"&gt;{{ page.summary }}&lt;/p&gt;
   {% endif %}
   {{ content }}
   {% if page.tags %}
-    <ul class="tags">
+    &lt;ul class="tags"&gt;
       {% for tag in page.tags %}
-        <li><a href="/tags/{{ tag | slugify }}/">{{ tag }}</a></li>
+        &lt;li&gt;&lt;a href="/tags/{{ tag | slugify }}/"&gt;{{ tag }}&lt;/a&gt;&lt;/li&gt;
       {% endfor %}
-    </ul>
+    &lt;/ul&gt;
   {% endif %}
-</article>
-```
+&lt;/article&gt;</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="pagedata-go">
+<alloy-code lang="html">&lt;article class="post"&gt;
+  &lt;h1&gt;{{ .page.title }}&lt;/h1&gt;
+  &lt;time datetime="{{ date .page.date "%Y-%m-%d" }}"&gt;
+    {{ date .page.date "%B %d, %Y" }}
+  &lt;/time&gt;
+  {{ if .page.summary }}
+    &lt;p class="summary"&gt;{{ .page.summary }}&lt;/p&gt;
+  {{ end }}
+  {{ .content }}
+  {{ if .page.tags }}
+    &lt;ul class="tags"&gt;
+      {{ range .page.tags }}
+        &lt;li&gt;&lt;a href="/tags/{{ slugify . }}/"&gt;{{ . }}&lt;/a&gt;&lt;/li&gt;
+      {{ end }}
+    &lt;/ul&gt;
+  {{ end }}
+&lt;/article&gt;</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 Custom front matter fields work the same way. If your content defines `author: "Alice"` in front matter, the layout accesses it as `{{ page.author }}`.
 
@@ -172,28 +218,35 @@ Partials are reusable template fragments stored in `layouts/partials/`. Include 
 {% render "partials/social-links" %}
 ```
 
-Both tags resolve paths relative to the `layouts/` directory. The difference: `{% include %}` shares the parent template's variable scope, while `{% render %}` creates an isolated scope (variables from the parent are not accessible unless explicitly passed).
+Both tags resolve paths relative to the `layouts/` directory, trying `name.liquid`, then `name.html`, then the bare name. The difference: `{% include %}` shares the parent template's variable scope, while `{% render %}` creates an isolated scope (variables from the parent are not accessible unless explicitly passed). Includes are Liquid-only -- see the Go template engine section below.
 
 Plugin-registered filters work inside partials -- the same filter dispatch mechanism applies to all template files.
 
 ### Go template engine
 
-With the Go template engine, layouts use Go syntax:
+With the Go template engine (`engine: "gotemplate"`), layouts are `.html` files using Go syntax. The same context is available with a leading dot: `{{ .page.title }}`, `{{ .site.title }}`, `{{ .content }}`:
 
 ```html
 <!-- layouts/default.html -->
 <!DOCTYPE html>
 <html>
-<head><title>{{ .page.title }}</title></head>
+<head><title>{{ .page.title }} - {{ .site.title }}</title></head>
 <body>
-  {{ template "partials/header" . }}
   {{ .content }}
-  {{ template "partials/footer" . }}
 </body>
 </html>
 ```
 
-Go templates use `{{ block "name" . }}` / `{{ define "name" }}` for layout inheritance and `{{ template "name" . }}` for includes.
+Layout chaining works identically in both engines -- a `layout:` directive in the layout's front matter names the parent (see [Layout chaining](#layout-chaining)). Each layout file is parsed standalone, so Go's `{{ template }}` / `{{ define }}` cross-file mechanisms are not available; there is no partials directory equivalent for the Go engine. `{% include %}`, `{% render %}`, and `{% inline %}` are Liquid-only tags.
+
+Two helper functions are registered for working with ordered map data (JSON data files preserve key order via an ordered map type that Go's index syntax cannot address):
+
+```html
+{{ oget .site.data.config "title" }}          <!-- ordered-map lookup -->
+{{ range orange .site.data.nav }}              <!-- ordered-map iteration -->
+  <a href="{{ oget .Value "url" }}">{{ .Key }}</a>
+{{ end }}
+```
 
 ## Content-relative file inlining
 
@@ -209,10 +262,10 @@ The `{% inline %}` tag reads a file relative to the current content file and ins
 This is useful for SVGs that need to respond to CSS custom properties and cannot be loaded as `<img>` tags.
 
 **Rules:**
-- Paths must start with `./` or `../` (always relative to the content file)
+- Paths are resolved relative to the content file's directory; absolute paths are rejected
 - The resolved path must stay within the content root directory
-- Only text-based file types are allowed: `.svg`, `.html`, `.htm`, `.txt`, `.css`, `.js`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`, `.md`
-- Binary files (`.png`, `.jpg`, etc.) produce a build error with guidance to use `<img>` instead
+- Binary file types (images, fonts, audio/video, archives, PDF) are rejected with a build error -- use `<img>` for images instead
+- `{% inline %}` is a Liquid tag; it is not available in the Go template engine
 
 ## Table of contents
 
@@ -234,4 +287,4 @@ Alloy extracts heading structure from Markdown pages and exposes it as `page.toc
 </nav>
 ```
 
-Each TOC entry has `id` (heading anchor), `text` (plain text), `level` (2-6), and `children` (nested headings). See [Content](/content/) for TOC configuration options.
+Each TOC entry has `id` (heading anchor), `text` (plain text), `level` (2-6), and `children` (nested headings). TOC data is always extracted; heading anchor IDs are controlled by the `goldmark.autoHeadingID` setting (see [Content](/content/)).

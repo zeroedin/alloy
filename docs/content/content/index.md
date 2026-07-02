@@ -71,12 +71,14 @@ Alloy uses goldmark for Markdown rendering. Configure it in `alloy.config.yaml`:
 content:
   markdown:
     goldmark:
-      unsafe: true          # Allow raw HTML in Markdown (default: false)
-      typographer: true      # Smart quotes and dashes
+      unsafe: true           # Allow raw HTML in Markdown (default: true; set false to escape it)
+      typographer: true      # Smart quotes and dashes (default: false)
       templateTags: true     # Treat {{ }} and {% %} as template syntax in Markdown (default: true; false = literal text)
-    autoHeadingID: true      # Add id attributes to headings (default: true)
-    toc: true                # Generate page.toc data (default: true)
+      autoHeadingID: true    # Add id attributes to headings (default: true)
+      customElements: true   # Keep multi-line custom element blocks intact (default: true)
 ```
+
+With `customElements: true` (the default), a block-level custom element (any tag containing a dash, like `<my-gallery>`) is kept intact through Markdown rendering -- including blank lines and nested elements inside it -- instead of being split at the first blank line as standard HTML blocks are.
 
 With `templateTags: true` (the default), Liquid and Go template syntax passes through the Markdown parser untouched. You can mix Markdown and template logic in the same file without escaping.
 
@@ -110,7 +112,7 @@ Each TOC entry has:
 | `level` | int | Heading level (2--6; h1 is excluded) |
 | `children` | array | Nested headings one level deeper |
 
-TOC generation is controlled by the `toc` and `autoHeadingID` settings in the Markdown configuration above. Set `toc: false` to disable TOC extraction entirely.
+TOC data is always extracted during Markdown rendering. The `goldmark.autoHeadingID` setting controls whether headings get `id` attributes in the HTML output -- without them, TOC anchor links have nothing to target.
 
 ## HTML content files
 
