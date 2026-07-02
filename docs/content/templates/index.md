@@ -43,6 +43,8 @@ templates:
 </wa-tab-group>
 {% endraw %}
 
+> The Go version has no header/footer lines because the Go engine currently has no partials mechanism -- `{% include %}` is Liquid-only. See [Layouts](/templates/layouts/#go-template-engine).
+
 Every content page is rendered through its resolved layout. The layout receives the page's rendered body as `{{ content }}` and can access all front matter fields via the `page` object.
 
 ## Template engines
@@ -100,6 +102,8 @@ Every template receives these top-level variables:
 </wa-tab-panel>
 </wa-tab-group>
 {% endraw %}
+
+> The Go version loops the whole collection: Go's `range` has no equivalent of Liquid's `limit: 5`. To cap the loop, guard on the index -- `{% raw %}{{ range $i, $post := .collections.blog }}{{ if lt $i 5 }}...{{ end }}{{ end }}{% endraw %}`.
 
 ## Template resolution
 

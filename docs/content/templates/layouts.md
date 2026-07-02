@@ -43,6 +43,8 @@ Layouts wrap your page content in shared HTML structure. Every content page is r
 </wa-tab-group>
 {% endraw %}
 
+> The Go version has no header/footer includes: `{% include %}` and `{% render %}` are Liquid-only, and the Go engine currently has no partials mechanism. Shared structure lives in parent layouts via [layout chaining](#layout-chaining) instead. See [Go template engine](#go-template-engine).
+
 The `{{ content }}` variable holds the fully rendered body of the current page. For Markdown files, this is already converted to HTML before the layout is applied.
 
 ## Layout resolution order
