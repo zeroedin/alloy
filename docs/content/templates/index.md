@@ -60,7 +60,7 @@ Both engines receive the same `map[string]any` context from the data cascade. Al
 
 The config value must be exactly `"gotemplate"` -- any other value falls back to Liquid.
 
-A third-party engine (Nunjucks, EJS, Pug) can be registered via the Node bridge as a Tier 3 plugin engine, though every page render becomes an IPC round-trip with significant performance cost.
+Plugin-provided template engines (Nunjucks, EJS, Pug via the Node bridge) are an experimental design concept and are **not implemented** -- today the `engine` setting accepts only `"liquid"` and `"gotemplate"`, and any other value falls back to Liquid.
 
 ## Template context
 
