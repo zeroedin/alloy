@@ -80,9 +80,7 @@ content:
 
 With `customElements: true` (the default), a block-level custom element (any tag containing a dash, like `<my-gallery>`) is kept intact through Markdown rendering -- including blank lines and nested elements inside it -- instead of being split at the first blank line as standard HTML blocks are.
 
-With `templateTags: true` (the default), Liquid and Go template syntax passes through the Markdown parser untouched. You can mix Markdown and template logic in the same file without escaping.
-
-Set `templateTags: false` to disable template syntax recognition in Markdown files. `{{ }}` and `{% %}` in body text render as literal characters instead of being evaluated as Liquid. Use this for sites whose content discusses other template languages (Mustache, Handlebars, Go templates) and does not need Liquid processing in content files. Template syntax inside fenced code blocks and inline code is always escaped for display regardless of this setting.
+Template tags in inline code and fenced code blocks always display as typed -- the `templateTags` setting only affects prose. Set `templateTags: false` to also show `{{ }}` and `{% %}` in prose as literal text instead of evaluating them, for sites that write *about* template syntax rather than with it. For a one-off literal tag, wrap it in `{% raw %}` instead. See [Literal template syntax](/templates/#literal-template-syntax) for the full rules.
 
 ## Table of contents
 

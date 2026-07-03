@@ -135,7 +135,55 @@ Alloy renders content in a strict order:
 2. **Template rendering** -- The configured engine evaluates Liquid or Go template syntax in the rendered output and in layouts.
 3. **Layout wrapping** -- The page body is injected into its resolved layout via `{{ content }}`. Layouts can chain to parent layouts.
 
-Template tags inside `<code>` blocks in Markdown files are automatically escaped so they display as literal text rather than being evaluated.
+Template tags inside `<code>` blocks in Markdown files are automatically escaped so they display as literal text rather than being evaluated. See the next section for the full rules.
+
+## Literal template syntax
+
+Whether `{{ }}` and `{% %}` are evaluated depends on where they appear in a Markdown file:
+
+| Where the tags appear | Default | `templateTags: false` |
+|---|---|---|
+| Prose / body text | Evaluated by the template engine | Shown as typed |
+| Inline code and fenced code blocks | Shown as typed | Shown as typed |
+
+Code is always safe -- write `` `{{ site.title }}` `` in backticks or a fenced block and it displays exactly as typed, no escaping needed.
+
+Prose is evaluated by default. This line in the page source:
+
+```markdown
+You are reading {{ page.title }}.
+```
+
+renders as:
+
+> You are reading {{ page.title }}.
+
+That quote is live -- the tag was evaluated against this page's context at build time, which is what you want when composing pages. But the same rule applies when a tag is meant as an *example*:
+
+```markdown
+The syntax {{ user.name }} inserts the author's name.
+```
+
+> The syntax {{ user.name }} inserts the author's name.
+
+Also live -- and `user.name` is empty in this page's context, so the rendered sentence has a hole where the example should be. When you want prose tags shown as typed, escalate through three tools:
+
+1. **Backticks.** If the tag can be code-formatted, put it in an inline code span. Always literal, most common case.
+2. **`{% raw %}` for a one-off.** Wrap any run of prose in `{% raw %}...{% endraw %}` and the template engine outputs it verbatim:
+
+   ```liquid
+   {% raw %}Handlebars uses {{name}} for interpolation.{% endraw %}
+   ```
+
+   `{% raw %}` is a Liquid tag. Under the Go template engine, emit literal braces with a quoted expression instead: `{{ "{{" }}name{{ "}}" }}`.
+3. **`templateTags: false` for the whole site.** If your content writes *about* template syntax everywhere and never uses tags in prose, turn prose evaluation off globally in [Markdown configuration](/content/#markdown-configuration):
+
+   ```yaml
+   content:
+     markdown:
+       goldmark:
+         templateTags: false
+   ```
 
 ## Directory structure
 
