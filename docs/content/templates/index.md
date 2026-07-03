@@ -148,13 +148,25 @@ Whether `{{ }}` and `{% %}` are evaluated depends on where they appear in a Mark
 
 Code is always safe -- write `` `{{ site.title }}` `` in backticks or a fenced block and it displays exactly as typed, no escaping needed.
 
-Prose is evaluated by default. That's what makes `You are reading {{ page.title }}.` work -- but it also means an *example* tag in a sentence gets evaluated too:
+Prose is evaluated by default. This line in the page source:
+
+```markdown
+You are reading {{ page.title }}.
+```
+
+renders as:
+
+> You are reading {{ page.title }}.
+
+That quote is live -- the tag was evaluated against this page's context at build time, which is what you want when composing pages. But the same rule applies when a tag is meant as an *example*:
 
 ```markdown
 The syntax {{ user.name }} inserts the author's name.
 ```
 
-renders as "The syntax  inserts the author's name." -- the tag was evaluated against a context where `user.name` is empty. When you want prose tags shown as typed, escalate through three tools:
+> The syntax {{ user.name }} inserts the author's name.
+
+Also live -- and `user.name` is empty in this page's context, so the rendered sentence has a hole where the example should be. When you want prose tags shown as typed, escalate through three tools:
 
 1. **Backticks.** If the tag can be code-formatted, put it in an inline code span. Always literal, most common case.
 2. **`{% raw %}` for a one-off.** Wrap any run of prose in `{% raw %}...{% endraw %}` and the template engine outputs it verbatim:
