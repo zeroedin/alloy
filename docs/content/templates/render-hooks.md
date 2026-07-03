@@ -38,14 +38,14 @@ Each render hook template receives a `markup` object with properties specific to
 
 | Template | `markup.*` properties |
 |---|---|
-| `render-blockquote` | `inner` (rendered inner HTML), `attributes` |
-| `render-codeblock` | `inner` (raw code text), `language`, `attributes` |
-| `render-heading` | `inner` (rendered inner HTML), `level` (1–6), `id` (auto-generated slug), `text` (plain text, no HTML) |
-| `render-image` | `src`, `alt`, `title`, `attributes` |
-| `render-link` | `destination`, `text` (rendered inner HTML), `title`, `is_external` (boolean) |
-| `render-table` | `inner` (rendered inner HTML), `attributes` |
+| `render-blockquote` | `inner` (rendered inner HTML) |
+| `render-codeblock` | `inner` (raw code text), `language` |
+| `render-heading` | `inner` (plain heading text), `level` (1–6), `id` (auto-generated slug) |
+| `render-image` | `src`, `alt`, `title` |
+| `render-link` | `destination`, `text` (plain link text), `is_external` (boolean) |
+| `render-table` | `inner` (rendered inner HTML) |
 
-The full `page.*` and `site.*` context is also available — render hooks can access front matter, site data, collections, and taxonomies.
+The `markup` object is the only context available inside a render hook -- `page.*` and `site.*` are not passed to hook templates. Hooks are pure element transformers.
 
 ## Engine selection
 
@@ -54,7 +54,7 @@ Render hook templates follow the configured template engine:
 | Engine | Config value | Hook file extension | Syntax |
 |---|---|---|---|
 | Liquid | `"liquid"` (default) | `.liquid` | `{{ markup.language }}` |
-| Go templates | `"go"` | `.html` | `{{ .markup.language }}` |
+| Go templates | `"gotemplate"` | `.html` | `{{ .markup.language }}` |
 
 ## Language-specific code blocks
 
@@ -83,14 +83,29 @@ Pair this with a build plugin that applies syntax highlighting to `<alloy-code>`
 
 Add `target="_blank"` and an icon to external links:
 
-```liquid
-<!-- layouts/_markup/render-link.liquid -->
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="hook-link-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="hook-link-go">Go templates</wa-tab>
+
+<wa-tab-panel name="hook-link-liquid" active>
+<alloy-code lang="liquid">&lt;!-- layouts/_markup/render-link.liquid --&gt;
 {% if markup.is_external %}
-  <a href="{{ markup.destination }}" target="_blank" rel="noopener">{{ markup.text }} ↗</a>
+  &lt;a href="{{ markup.destination }}" target="_blank" rel="noopener"&gt;{{ markup.text }} ↗&lt;/a&gt;
 {% else %}
-  <a href="{{ markup.destination }}">{{ markup.text }}</a>
-{% endif %}
-```
+  &lt;a href="{{ markup.destination }}"&gt;{{ markup.text }}&lt;/a&gt;
+{% endif %}</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="hook-link-go">
+<alloy-code lang="html">&lt;!-- layouts/_markup/render-link.html --&gt;
+{{ if .markup.is_external }}
+  &lt;a href="{{ .markup.destination }}" target="_blank" rel="noopener"&gt;{{ .markup.text }} ↗&lt;/a&gt;
+{{ else }}
+  &lt;a href="{{ .markup.destination }}"&gt;{{ .markup.text }}&lt;/a&gt;
+{{ end }}</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 ### Mermaid diagrams
 

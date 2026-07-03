@@ -85,7 +85,7 @@ HTML files without front matter are classified based on content: full documents 
 
 ## `layouts/`
 
-Template files rendered by the configured engine. The Liquid engine looks for `.liquid` files first, then falls back to bare extensions. The Go template engine uses bare extensions (`.html`) directly.
+Template files rendered by the configured engine. The Liquid engine resolves `.liquid` files; the Go template engine (`engine: "gotemplate"`) resolves `.html` files. There is no cross-engine fallback.
 
 Layout lookup follows an explicit chain:
 

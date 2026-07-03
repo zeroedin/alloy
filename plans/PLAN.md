@@ -1569,6 +1569,9 @@ type Template interface {
 Both Tier 1 engines receive the same `map[string]any` context from the data cascade. No transformation needed. All built-in filters (slugify, date, default, etc.) are registered in both engines at startup. Shortcodes are registered internally via `RegisterShortcode`, which adds them as custom tags in Liquid (via `AddTag`) and as template functions in Go (via `FuncMap`) — a single registration call wires into both engines.
 
 **Tier 3 — Plugin engines (Node subprocess, significant performance cost):**
+
+> **Status: EXPERIMENTAL — NOT IMPLEMENTED, NOT PRIORITIZED.** Nothing in this subsection exists in the codebase: `alloy.engine()` is not part of the plugin API, and unknown `templates.engine` values fall back to Liquid. The design below is kept for reference only and may be dropped entirely.
+
 - Any JS-based engine (Nunjucks, EJS, Pug, etc.) can be registered via the Node bridge.
 - Every page render becomes an IPC round-trip. Expect 10-50x slower builds.
 - No data read tracking (same as Tier 1 engines).

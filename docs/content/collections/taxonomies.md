@@ -69,22 +69,45 @@ When `render: true` (the default), Alloy generates two kinds of pages per taxono
 
 Both use the same layout template. The `taxonomy` object in the template context tells you which type you are rendering:
 
-```liquid
-{% if taxonomy.term %}
-  <!-- Rendering /tags/javascript/ -->
-  <h1>{{ taxonomy.term }}</h1>
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="taxpage-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="taxpage-go">Go templates</wa-tab>
+
+<wa-tab-panel name="taxpage-liquid" active>
+<alloy-code lang="liquid">{% if taxonomy.term %}
+  &lt;!-- Rendering /tags/javascript/ --&gt;
+  &lt;h1&gt;{{ taxonomy.term }}&lt;/h1&gt;
   {% for post in taxonomy.pages %}
-    <a href="{{ post.url }}">{{ post.title }}</a>
+    &lt;a href="{{ post.url }}"&gt;{{ post.title }}&lt;/a&gt;
   {% endfor %}
 {% else %}
-  <!-- Rendering /tags/ -->
+  &lt;!-- Rendering /tags/ --&gt;
   {% for term in taxonomy.terms %}
-    <a href="{{ term.url }}">
+    &lt;a href="{{ term.url }}"&gt;
       {{ term.name }} ({{ term.pages | size }})
-    </a>
+    &lt;/a&gt;
   {% endfor %}
-{% endif %}
-```
+{% endif %}</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="taxpage-go">
+<alloy-code lang="html">{{ if .taxonomy.term }}
+  &lt;!-- Rendering /tags/javascript/ --&gt;
+  &lt;h1&gt;{{ .taxonomy.term }}&lt;/h1&gt;
+  {{ range .taxonomy.pages }}
+    &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
+  {{ end }}
+{{ else }}
+  &lt;!-- Rendering /tags/ --&gt;
+  {{ range .taxonomy.terms }}
+    &lt;a href="{{ .url }}"&gt;
+      {{ .name }} ({{ size .pages }})
+    &lt;/a&gt;
+  {{ end }}
+{{ end }}</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 ### Layout Lookup Order
 

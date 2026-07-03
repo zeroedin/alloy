@@ -15,6 +15,34 @@ Filters transform values in template expressions. Alloy ships with 50+ built-in 
 
 Filters chain left to right. Each filter receives the output of the previous expression as its input.
 
+## Filter syntax by engine
+
+All built-in filters are registered in both engines, but the calling syntax differs. Liquid uses pipe-and-colon syntax; Go templates call filters as functions with the input as the first argument.
+
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="syntax-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="syntax-go">Go templates</wa-tab>
+
+<wa-tab-panel name="syntax-liquid" active>
+<alloy-code lang="liquid">{{ page.title | upcase }}
+{{ page.summary | truncate: 100 }}
+{{ page.date | date: "%B %d, %Y" }}
+{{ collections.blog | sort: "title" | first }}</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="syntax-go">
+<alloy-code lang="html">{{ upcase .page.title }}
+{{ truncate .page.summary 100 }}
+{{ date .page.date "%B %d, %Y" }}
+{{ first (sort .collections.blog "title") }}</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
+
+Go's pipe syntax works for filters that take no extra arguments (`{% raw %}{{ .page.title | upcase }}{% endraw %}`), because Go pipelines pass the piped value as the *last* argument. For filters that take arguments, use function-call syntax so the input stays in the first position.
+
+The examples in the reference tables below use Liquid syntax.
+
 ## String filters
 
 {% raw %}
@@ -99,6 +127,7 @@ Array filters operate on collections, taxonomy groups, and any list data.
 | `uniq` | Remove duplicates | `{{ page.tags | uniq }}` |
 | `compact` | Remove nil values | `{{ pages | compact }}` |
 | `concat` | Concatenate two arrays | `{{ collections.blog | concat: collections.docs }}` |
+| `flatten` | Flatten nested arrays one level | `{{ nested_lists | flatten }}` |
 {% endraw %}
 
 ### where
@@ -172,16 +201,18 @@ The `map` filter extracts a single field from every item in an array:
 {% raw %}
 | Filter | Description | Example |
 |---|---|---|
-| `url` | Resolve path relative to `baseURL` | `{{ "css/main.css" | url }}` |
-| `absolute_url` | Full absolute URL with domain | `{{ page.url | absolute_url }}` |
+| `url` | Root-relative path (ensures a leading `/`) | `{{ "css/main.css" | url }}` --> `/css/main.css` |
+| `absolute_url` | Prepend a base URL to a path | `{{ page.url | absolute_url: site.baseURL }}` |
 | `url_encode` | Percent-encode a string | `{{ page.title | url_encode }}` |
 | `url_decode` | Decode a percent-encoded string | `{{ encoded | url_decode }}` |
 {% endraw %}
 
 ```liquid
 <link rel="stylesheet" href="{{ 'css/main.css' | url }}">
-<link rel="canonical" href="{{ page.url | absolute_url }}">
+<link rel="canonical" href="{{ page.url | absolute_url: site.baseURL }}">
 ```
+
+`absolute_url` requires the base as an explicit argument. Without one, the input is returned unchanged (inputs that already start with `http://` or `https://` always pass through untouched).
 
 ## Math filters
 
@@ -262,51 +293,69 @@ Bypasses auto-escaping for trusted HTML content. Relevant primarily for the Go t
 
 ## Asset filters
 
-### fingerprint
-
-Content-hash fingerprinting for cache busting. Computes a SHA-256 hash of the file contents and appends it to the filename:
-
-```liquid
-<link rel="stylesheet" href="{{ 'css/main.css' | fingerprint }}">
-<!-- Output: /css/main.abc123def456.css -->
-```
-
-The filter resolves paths against source directories in order: `static/` -> `assets/` -> `content/` (for co-located assets).
-
 ### cachebust
 
-Appends a content hash as a query parameter instead of rewriting the filename:
+Content-based cache busting. Reads the file, computes a SHA-256 hash of its contents, and appends the hash as a query parameter:
 
 ```liquid
 <link rel="stylesheet" href="{{ 'css/main.css' | cachebust }}">
 <!-- Output: /css/main.css?h=abc123def456 -->
 ```
 
-File not found degrades gracefully -- returns the path without a hash.
+The filter resolves paths against source directories in order: `static/` -> `assets/` -> `content/` (for co-located assets). File not found degrades gracefully -- returns the path without a hash.
+
+### fingerprint
+
+Inserts a short hash before the file extension:
+
+```liquid
+{{ 'css/main.css' | fingerprint }}
+<!-- Output: css/main.abc123def4567890.css -->
+```
+
+The hash is derived from the path string itself, not the file contents, and no renamed copy of the file is written to the output. For content-based cache busting that works with files as deployed, use `cachebust` instead.
 
 ### get_hash
 
-Returns the raw hash digest of a file:
+Returns the hash digest of a file's contents. Resolves paths the same way as `cachebust`:
 
 ```liquid
 {{ 'css/main.css' | get_hash }}
 <!-- Output: base64-encoded SHA-256 digest -->
+
+{{ 'css/main.css' | get_hash: 384 }}
+<!-- SHA-384 instead of SHA-256 (also accepts 512) -->
+
+{{ 'css/main.css' | get_hash: 256, false }}
+<!-- hex-encoded instead of base64 -->
 ```
 
-## Feed-related filters
+Useful for Subresource Integrity attributes: `integrity="sha256-{{ 'js/app.js' | get_hash }}"`.
 
-These filters are helpful when building RSS or Atom feed templates:
+## Building feeds with filters
+
+RSS and Atom feed templates combine `escape` (XML entities are a subset of HTML escaping), the `date` filter with an RFC 822 format string, and `absolute_url`:
 
 ```liquid
 <!-- layouts/feed.xml.liquid -->
 {% for post in collections.blog %}
 <item>
-  <title>{{ post.title | xml_escape }}</title>
-  <pubDate>{{ post.date | rfc822_date }}</pubDate>
-  <link>{{ post.url | absolute_url }}</link>
+  <title>{{ post.title | escape }}</title>
+  <pubDate>{{ post.date | date: "%a, %d %b %Y %H:%M:%S %z" }}</pubDate>
+  <link>{{ post.url | absolute_url: site.baseURL }}</link>
 </item>
 {% endfor %}
 ```
+
+See [Output Formats](/templates/output-formats/) for the full feed setup.
+
+## Liquid-only standard filters
+
+The Liquid engine is built on a full Liquid implementation, so the standard Shopify Liquid filters are also available even though they are not part of Alloy's built-in set:
+
+`slice`, `sort_natural`, `at_least`, `at_most`, `remove`, `remove_first`, `remove_last`, `replace_last`, `lstrip`, `rstrip`, `strip_newlines`, `escape_once`, `reject`, `has`, `find`, `find_index`, `sum`, `base64_encode`, `base64_decode`, `base64_url_safe_encode`, `base64_url_safe_decode`
+
+These are not registered in the Go template engine -- templates that use them are not portable across engines.
 
 ## Custom filters via plugins
 

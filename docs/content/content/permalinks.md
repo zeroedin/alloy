@@ -75,18 +75,21 @@ permalink: "/about/"
 ---
 ```
 
-### Template permalinks
+### Template permalinks (pagination pages only)
 
-Front matter permalinks that contain `{{ }}` are rendered through the configured template engine. This lets you build dynamic URLs from any front matter field:
+Permalinks containing `{{ }}` are rendered as templates only for [pagination](/content/pagination/) virtual pages, where the pagination `as:` variable provides the context:
 
 ```yaml
 ---
-title: "My Post"
-permalink: "/{{ page.customField | slugify }}/{{ page.date | date: '%Y' }}/"
+pagination:
+  data: site.data.team
+  perPage: 1
+  as: member
+permalink: "/team/{{ member.slug }}/"
 ---
 ```
 
-Template permalinks use the same engine configured in `templates.engine`. A Liquid permalink (`{{ page.slug }}`) in a Go template project will fail, and vice versa. Only pages with `{{ }}` in their permalink pay the template rendering cost.
+Pagination permalinks render through Liquid regardless of the configured engine. Outside pagination, a front matter `permalink:` is treated as a static string -- `{{ }}` in a regular page's permalink is not evaluated. Use the token syntax (`:slug`, `:year`, etc.) for dynamic URLs on regular pages.
 
 ### Static overrides
 

@@ -97,7 +97,7 @@ my-new-site/
 └── plugins/
 ```
 
-Use the `--content`, `--layouts`, `--assets`, `--static`, and `--data` flags to customize directory names. Custom names are written to the `structure:` block in the generated config:
+Use the `--content`, `--layouts`, `--assets`, `--static`, `--data`, and `--plugins` flags to customize directory names. Custom names are written to the `structure:` block in the generated config:
 
 ```bash
 alloy init --content pages --layouts templates
@@ -126,7 +126,7 @@ Prints usage information for all commands and flags.
 |---|---|---|---|
 | `--config` | `-c` | Path to config file (default: `alloy.config.yaml`) | all |
 | `--root` | `-r` | Project root directory (default: config file's directory) | all |
-| `--output` | `-o` | Output directory (default: `_site`) | build, serve |
+| `--output` | `-o` | Output directory (default: `_site`) | all |
 | `--verbose` | `-v` | Verbose per-file logging | all |
 | `--quiet` | `-q` | Suppress all output except errors | all |
 | `--port` | `-p` | Server port (default: 3000) | dev, serve |
@@ -139,6 +139,7 @@ Prints usage information for all commands and flags.
 | `--assets` | | Assets directory name (default: `assets`) | init |
 | `--static` | | Static directory name (default: `static`) | init |
 | `--data` | | Data directory name (default: `data`) | init |
+| `--plugins` | | Plugins directory name (default: `plugins`) | init |
 
 ### `--root` flag
 

@@ -18,7 +18,7 @@ outputs: ["html", "json"]
 <!-- layouts/post.json.liquid -->
 {
   "title": "{{ page.title }}",
-  "url": "{{ page.url | absolute_url }}",
+  "url": "{{ page.url | absolute_url: site.baseURL }}",
   "date": "{{ page.date | date: '%Y-%m-%dT%H:%M:%S%z' }}",
   "content": {{ content | json }}
 }
@@ -34,7 +34,7 @@ The `outputs` front matter field lists which formats to generate. When omitted, 
 
 ## Template file extensions
 
-The file extension before `.liquid` (or the bare extension for Go templates) determines the output format:
+The format sits between the layout name and the engine extension:
 
 **Liquid engine:**
 
@@ -50,8 +50,8 @@ layouts/robots.txt.liquid       --> plain text output
 
 ```
 layouts/default.html            --> HTML output
-layouts/post.json                --> JSON output
-layouts/feed.xml                 --> XML output
+layouts/post.json.html          --> JSON output
+layouts/feed.xml.html           --> XML output
 ```
 
 ## Requesting multiple formats
@@ -68,14 +68,18 @@ outputs: ["html", "json"]
 
 Alloy renders the page twice -- once with `layouts/single.liquid` (HTML) and once with `layouts/single.json.liquid` (JSON). Each format produces a separate output file.
 
+Note that the front matter `layout:` field only affects the HTML pass. Format layouts resolve by the candidate chain below -- `single.<format>`, section, filename, then default -- so name your format layout after one of those.
+
 ### Layout resolution for formats
 
-For a page requesting `json` output, the Liquid engine looks for layouts in this order:
+For a page requesting `json` output, Alloy looks for layouts in this order (shown with the Liquid extension; the Go engine checks the same names with `.html`):
 
-1. `layouts/single.json.liquid` (format-specific with `.liquid` extension)
-2. `layouts/single.json` (format-specific with bare extension, parsed as Liquid)
+1. `layouts/single.json.liquid`
+2. `layouts/<section>.json.liquid` (the page's section name)
+3. `layouts/<filename>.json.liquid` (the page's filename without extension)
+4. `layouts/default.json.liquid`
 
-The layout must exist for each requested format. A missing format-specific layout is a build error.
+A layout must exist for each requested format. If none of the candidates exist, the build fails.
 
 ## Practical examples
 
@@ -93,13 +97,13 @@ outputs: ["html", "json"]
 ```
 
 ```liquid
-<!-- layouts/blog-index.json.liquid -->
+<!-- layouts/blog.json.liquid (matches the section name) -->
 {
   "posts": [
     {% for post in collections.blog %}
     {
       "title": "{{ post.title | escape }}",
-      "url": "{{ post.url | absolute_url }}",
+      "url": "{{ post.url | absolute_url: site.baseURL }}",
       "date": "{{ post.date | date: '%Y-%m-%dT%H:%M:%S%z' }}",
       "summary": "{{ post.summary | escape }}"
     }{% unless forloop.last %},{% endunless %}
@@ -112,39 +116,37 @@ Output: `/blog/index.json` with a machine-readable list of posts.
 
 ### RSS/Atom feed
 
-Feeds are opt-in templates, not auto-generated. Place a `feed.xml` template in the `layouts/` directory:
+Feeds are opt-in, not auto-generated. A feed is a page requesting `xml` output through the same mechanism as any other format -- create a content stub that requests it, and a matching format layout:
+
+```yaml
+# content/blog/index.md
+---
+title: "Blog"
+outputs: ["html", "xml"]
+---
+```
 
 ```liquid
-<!-- layouts/feed.xml.liquid -->
+<!-- layouts/blog.xml.liquid (matches the section name) -->
 <?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
     <title>{{ site.title }}</title>
     <link>{{ site.baseURL }}</link>
-    <description>{{ site.description }}</description>
-    <atom:link href="{{ '/feed.xml' | absolute_url }}" rel="self" type="application/rss+xml"/>
     {% for post in collections.blog limit: 20 %}
     <item>
-      <title>{{ post.title | xml_escape }}</title>
-      <link>{{ post.url | absolute_url }}</link>
-      <pubDate>{{ post.date | rfc822_date }}</pubDate>
-      <guid>{{ post.url | absolute_url }}</guid>
-      <description>{{ post.summary | xml_escape }}</description>
+      <title>{{ post.title | escape }}</title>
+      <link>{{ post.url | absolute_url: site.baseURL }}</link>
+      <pubDate>{{ post.date | date: "%a, %d %b %Y %H:%M:%S %z" }}</pubDate>
+      <guid>{{ post.url | absolute_url: site.baseURL }}</guid>
+      <description>{{ post.summary | escape }}</description>
     </item>
     {% endfor %}
   </channel>
 </rss>
 ```
 
-**Feed template placement determines scope:**
-
-| Template location | Output path | Use case |
-|---|---|---|
-| `layouts/feed.xml.liquid` | `/feed.xml` | Site-wide feed |
-| `layouts/blog/feed.xml.liquid` | `/blog/feed.xml` | Section feed |
-| `layouts/taxonomies/tags/feed.xml.liquid` | `/tags/:slug/feed.xml` | Per-tag feed (rendered once per term) |
-
-Each feed template has access to the same `collections`, `taxonomies`, and `site` context as any other template. The template controls what data it renders.
+Output: `/blog/index.xml` alongside the HTML index. The template has access to the same `collections`, `taxonomies`, and `site` context as any other template -- XML entity escaping uses the standard `escape` filter, and RFC 822 dates come from the `date` filter with the format string shown above.
 
 ### Sitemap
 
@@ -174,13 +176,6 @@ Exclude a page from the sitemap:
 title: "Internal Page"
 sitemap: false
 ---
-```
-
-Disable sitemap generation entirely:
-
-```yaml
-# alloy.config.yaml
-sitemap: false
 ```
 
 ### Search index
@@ -245,4 +240,4 @@ When switching engines, create layout files with the appropriate extensions for 
 
 - [Templates Overview](/templates/) -- engine configuration and template context
 - [Layouts](/templates/layouts/) -- layout resolution and chaining
-- [Filters](/templates/filters/) -- filters useful for feed and API output (`xml_escape`, `json`, `absolute_url`)
+- [Filters](/templates/filters/) -- filters useful for feed and API output (`escape`, `json`, `date`, `absolute_url`)
