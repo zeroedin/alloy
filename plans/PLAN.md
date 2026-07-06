@@ -2022,7 +2022,7 @@ Built-in filters covering common SSG needs. Compiled Go functions registered wit
 - **Output safety**: `safeHTML` (bypass auto-escaping for trusted content — relevant for Go templates)
 - **Regex**: `findRE`, `replaceRE` (regex match and replace)
 - **Data**: `json` (serialize value to JSON), `default` (fallback value if nil/empty)
-- **Assets**: `cachebust` (content-hash cache busting via query string), `get_hash` (file content digest for SRI), `safeHTML` (bypass auto-escaping for trusted content)
+- **Assets**: `cachebust` (content-hash cache busting via query string), `get_hash` (file content digest for SRI)
 
 ### Tier 2: In-Process Plugins (via wazero)
 
