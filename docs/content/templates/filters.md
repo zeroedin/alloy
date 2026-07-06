@@ -304,17 +304,6 @@ Content-based cache busting. Reads the file, computes a SHA-256 hash of its cont
 
 The filter resolves paths against source directories in order: `static/` -> `assets/` -> `content/` (for co-located assets). File not found degrades gracefully -- returns the path without a hash.
 
-### fingerprint
-
-Inserts a short hash before the file extension:
-
-```liquid
-{{ 'css/main.css' | fingerprint }}
-<!-- Output: css/main.abc123def4567890.css -->
-```
-
-The hash is derived from the path string itself, not the file contents, and no renamed copy of the file is written to the output. For content-based cache busting that works with files as deployed, use `cachebust` instead.
-
 ### get_hash
 
 Returns the hash digest of a file's contents. Resolves paths the same way as `cachebust`:

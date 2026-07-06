@@ -2022,7 +2022,7 @@ Built-in filters covering common SSG needs. Compiled Go functions registered wit
 - **Output safety**: `safeHTML` (bypass auto-escaping for trusted content — relevant for Go templates)
 - **Regex**: `findRE`, `replaceRE` (regex match and replace)
 - **Data**: `json` (serialize value to JSON), `default` (fallback value if nil/empty)
-- **Assets**: `fingerprint` (content-hash fingerprinting, e.g. `{{ 'css/main.css' | fingerprint }}` → `/css/main.abc123.css`)
+- **Assets**: `cachebust` (content-hash cache busting via query string), `get_hash` (file content digest for SRI), `safeHTML` (bypass auto-escaping for trusted content)
 
 ### Tier 2: In-Process Plugins (via wazero)
 
@@ -3023,7 +3023,7 @@ When `--root` is not provided, the existing behavior is preserved: `ProjectRoot 
 - `.alloy/` directory stores build cache
 - `cache.json`: Content hashes for incremental detection
 - `templates.cache`: Pre-parsed template ASTs (if serializable)
-- `assets.cache`: Processed asset fingerprints
+- `assets.cache`: Processed asset hashes
 
 ### Memory Management
 - Stream large files rather than loading entirely into memory
