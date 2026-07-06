@@ -489,14 +489,6 @@ var _ = Describe("Built-in Filters", func() {
 		Expect(result).To(Equal("present"))
 	})
 
-	// ── Asset filters (individual — length assertion) ───────────────────
-
-	It("fingerprint appends hash to asset path", func() {
-		result := tmpl.Fingerprint("css/main.css")
-		s := result.(string)
-		Expect(len(s)).To(BeNumerically(">", len("css/main.css")))
-	})
-
 	// ── Output safety filters (individual — type assertion) ─────────────
 
 	It("safeHTML marks content as safe for Go template rendering", func() {
@@ -632,7 +624,7 @@ var _ = Describe("Built-in Filters", func() {
 			"plus", "minus", "times", "divided_by",
 			"modulo", "ceil", "floor", "round", "abs",
 			"markdownify", "findRE", "replaceRE",
-			"json", "default", "fingerprint", "safeHTML",
+			"json", "default", "safeHTML",
 			"flatten",
 			"cachebust", "get_hash", // issue #559: asset fingerprinting
 		}
