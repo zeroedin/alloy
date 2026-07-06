@@ -393,6 +393,17 @@ var _ = Describe("Config", func() {
 			Expect(cfg.Taxonomies["tags"].Layout).To(Equal("tags"),
 				"existing layout must not be overwritten")
 		})
+
+		It("normalizes engine \"go\" to \"gotemplate\" (issue #818)", func() {
+			cfg := &config.Config{
+				Templates: config.TemplatesConfig{Engine: "go"},
+			}
+			config.ApplyDefaults(cfg)
+			Expect(cfg.Templates.Engine).To(Equal("gotemplate"),
+				"\"go\" must be normalized to \"gotemplate\" — the short form is "+
+					"intuitive but the engine checks only match \"gotemplate\"; without "+
+					"normalization, \"go\" silently falls through to Liquid (issue #818)")
+		})
 	})
 
 	// ── Config file auto-detection (§1 Data Formats) ─────────────────
@@ -621,6 +632,41 @@ var _ = Describe("Config", func() {
 			err := config.Validate(cfg)
 			Expect(err).NotTo(HaveOccurred(),
 				"config with zero taxonomies must be valid")
+		})
+	})
+
+	// ── Templates.Engine validation (issue #818) ─────────────────────
+	// Unknown engine values must fail validation with a clear error.
+	// Known values ("liquid", "gotemplate") must pass.
+
+	Describe("Templates.Engine validation (issue #818)", func() {
+		It("rejects unknown engine value", func() {
+			cfg := &config.Config{
+				Title:   "Test",
+				BaseURL: "https://example.com",
+				Templates: config.TemplatesConfig{Engine: "jinja"},
+			}
+			err := config.Validate(cfg)
+			Expect(err).To(HaveOccurred(),
+				"unknown engine \"jinja\" must fail validation — without this "+
+					"guard, a typo silently falls through to Liquid at 4 comparison "+
+					"sites, then fails with a confusing \"no layout found\" error "+
+					"(issue #818)")
+			Expect(err.Error()).To(ContainSubstring("jinja"),
+				"error message must name the invalid value so the user knows what to fix")
+		})
+
+		It("accepts known engine values", func() {
+			for _, engine := range []string{"liquid", "gotemplate"} {
+				cfg := &config.Config{
+					Title:   "Test",
+					BaseURL: "https://example.com",
+					Templates: config.TemplatesConfig{Engine: engine},
+				}
+				err := config.Validate(cfg)
+				Expect(err).NotTo(HaveOccurred(),
+					"engine %q is a known value and must pass validation", engine)
+			}
 		})
 	})
 
