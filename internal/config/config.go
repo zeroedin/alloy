@@ -250,6 +250,9 @@ func ApplyDefaults(cfg *Config) {
 	if cfg.Templates.Engine == "" {
 		cfg.Templates.Engine = "liquid"
 	}
+	if cfg.Templates.Engine == "go" {
+		cfg.Templates.Engine = "gotemplate"
+	}
 	if len(cfg.Content.Formats) == 0 {
 		cfg.Content.Formats = []string{"md", "html"}
 	}
@@ -364,6 +367,11 @@ func Validate(cfg *Config) error {
 	}
 	if cfg.Plugins.Timeout < 0 {
 		return fmt.Errorf("validation error: plugins timeout must not be negative (got %d)", cfg.Plugins.Timeout)
+	}
+	switch cfg.Templates.Engine {
+	case "liquid", "gotemplate", "":
+	default:
+		return fmt.Errorf("validation error: unknown templates.engine %q (expected \"liquid\" or \"gotemplate\")", cfg.Templates.Engine)
 	}
 
 	structDir := func(configured, fallback string) string {
