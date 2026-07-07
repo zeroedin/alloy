@@ -891,47 +891,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 	reportEndStage(reporter)
 
-	// Stage 8: Feed template rendering
-	timer.Start("Feeds")
-	feedTemplates, err := output.ResolveFeedTemplates(layoutsDir)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("resolving feed templates: %w", err)
-	}
-	var renderedFeeds map[string]string
-	if len(feedTemplates) > 0 {
-		reportMessage(reporter, "Rendering feed templates…")
-		renderedFeeds = make(map[string]string, len(feedTemplates))
-		feedCtx := map[string]interface{}{
-			"site": map[string]interface{}{
-				"title":   cfg.Title,
-				"baseURL": cfg.BaseURL,
-			},
-		}
-		if siteData != nil {
-			feedCtx["site"].(map[string]interface{})["data"] = siteData
-		}
-		for _, ft := range feedTemplates {
-			source, err := os.ReadFile(ft.TemplatePath)
-			if err != nil {
-				return nil, fmt.Errorf("reading feed template %s: %w", ft.TemplatePath, err)
-			}
-			rendered, err := tmpl.RenderTemplate(string(source), ft.TemplatePath, feedCtx)
-			if err != nil {
-				return nil, fmt.Errorf("rendering feed template %s: %w", ft.TemplatePath, err)
-			}
-			outputPath := filepath.Join(outputDir, ft.OutputPath)
-			if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
-				return nil, fmt.Errorf("creating feed output dir: %w", err)
-			}
-			if err := os.WriteFile(outputPath, []byte(rendered), 0644); err != nil {
-				return nil, fmt.Errorf("writing feed %s: %w", ft.OutputPath, err)
-			}
-			renderedFeeds[ft.OutputPath] = rendered
-		}
-	}
-	timer.Stop()
-
-	// Stage 9: Sitemap generation
+	// Stage 8: Sitemap generation
 	timer.Start("Sitemap")
 	reportStartStage(reporter, "Finalizing", -1)
 	if cfg.Sitemap.Enabled && len(pages) > 0 {
@@ -964,9 +924,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		if len(page.RenderedBody) > 0 {
 			renderedContent[renderedContentKey(page)] = page.HTML()
 		}
-	}
-	for path, content := range renderedFeeds {
-		renderedContent[path] = content
 	}
 	reportEndStage(reporter)
 
