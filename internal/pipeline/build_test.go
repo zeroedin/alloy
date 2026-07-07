@@ -472,6 +472,7 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			result, err := pipeline.BuildWithContent(cfg, content)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
 
 			feedXML := result.RenderedContent["/feed.xml"]
 			Expect(feedXML).To(ContainSubstring("Template Engine Feed"),
@@ -496,6 +497,7 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			result, err := pipeline.BuildWithContent(cfg, content)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
 			Expect(result.RenderedContent).To(HaveKey("/blog/feed.xml"),
 				"a feed.xml in layouts/blog/ must produce /blog/feed.xml — "+
 					"template placement determines output path per plans/PLAN.md "+
