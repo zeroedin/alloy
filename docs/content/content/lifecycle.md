@@ -99,11 +99,9 @@ Every published page moves through these stages in order:
 11. **Content template rendering** -- Evaluate template tags in the content body with page data and site data.
 12. **Layout rendering** -- Inject rendered content into the resolved layout as `{{ content }}`.
 
-### Phase 2 -- Config-driven SSR (opt-in, experimental)
+Between rendering and output, an optional [config-driven SSR](/experimental/ssr/) phase runs when an `ssr:` block is configured -- pages with custom elements are piped through an external command for Declarative Shadow DOM expansion. This is an experimental feature, skipped by default and during `alloy dev`.
 
-If the [experimental `ssr:` config block](/experimental/ssr/) is configured, pages containing custom elements are piped through the SSR command for Declarative Shadow DOM expansion. Pages without custom elements skip this phase. This phase is skipped during `alloy dev`.
-
-### Phase 3 -- Output
+### Phase 2 -- Output
 
 13. **Asset copy** -- Copy `assets/` files to `_site/`.
 14. **Static and passthrough copy** -- Copy `static/` files and passthrough mappings.
