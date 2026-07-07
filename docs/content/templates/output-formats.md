@@ -178,9 +178,10 @@ sitemap: false
 ---
 ```
 
-Disable sitemap generation entirely:
+Disable sitemap generation entirely in your config:
 
 ```yaml
+# alloy.config.yaml
 sitemap: false
 ```
 
