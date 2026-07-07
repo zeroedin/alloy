@@ -670,6 +670,61 @@ var _ = Describe("Config", func() {
 		})
 	})
 
+	// ── Site-wide sitemap disable (issue #825) ───────────────────────
+	// sitemap: false in config must disable generation entirely.
+	// sitemap: {changefreq: ...} object form must keep working.
+	// PLAN.md:505-508 specifies this behavior.
+
+	Describe("Site-wide sitemap disable (issue #825)", func() {
+		It("parses sitemap: false as disabled", func() {
+			dir := GinkgoT().TempDir()
+			configContent := `title: "Sitemap Disable Test"
+baseURL: "https://example.com"
+sitemap: false
+`
+			Expect(os.WriteFile(filepath.Join(dir, "alloy.config.yaml"), []byte(configContent), 0644)).To(Succeed())
+
+			cfg, err := config.Load(filepath.Join(dir, "alloy.config.yaml"))
+			Expect(err).NotTo(HaveOccurred(),
+				"sitemap: false must not cause a YAML unmarshal error — "+
+					"SitemapConfig needs a custom UnmarshalYAML to accept the "+
+					"boolean form alongside the object form (issue #825)")
+			Expect(cfg.Sitemap.Enabled).To(BeFalse(),
+				"sitemap: false must set Enabled to false so the build "+
+					"pipeline skips sitemap.xml generation")
+		})
+
+		It("parses sitemap object form with Enabled defaulting to true", func() {
+			dir := GinkgoT().TempDir()
+			configContent := `title: "Sitemap Object Test"
+baseURL: "https://example.com"
+sitemap:
+  changefreq: "daily"
+  priority: 0.8
+`
+			Expect(os.WriteFile(filepath.Join(dir, "alloy.config.yaml"), []byte(configContent), 0644)).To(Succeed())
+
+			cfg, err := config.Load(filepath.Join(dir, "alloy.config.yaml"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Sitemap.Enabled).To(BeTrue(),
+				"sitemap object form must have Enabled=true — the boolean "+
+					"form opts out, the object form opts in with settings")
+			Expect(cfg.Sitemap.ChangeFreq).To(Equal("daily"))
+			Expect(cfg.Sitemap.Priority).To(Equal(0.8))
+		})
+
+		It("defaults Sitemap.Enabled to true when sitemap is omitted", func() {
+			cfg := &config.Config{
+				Title:   "Test",
+				BaseURL: "https://example.com",
+			}
+			config.ApplyDefaults(cfg)
+			Expect(cfg.Sitemap.Enabled).To(BeTrue(),
+				"when sitemap is not specified in config, ApplyDefaults must "+
+					"set Enabled=true — sitemaps are on by default (issue #825)")
+		})
+	})
+
 	// ── Configurable plugins directory (issue #802) ────────────────────
 	// The plugins directory must be configurable via structure.plugins,
 	// following the same pattern as content, layouts, assets, static, data.
