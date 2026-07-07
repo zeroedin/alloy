@@ -732,7 +732,7 @@ sitemap: false
 `
 			Expect(os.WriteFile(filepath.Join(dir, "alloy.config.yaml"), []byte(configContent), 0644)).To(Succeed())
 
-			cfg, err := config.LoadWithDefaults(filepath.Join(dir, "alloy.config.yaml"), nil)
+			cfg, err := config.LoadWithDefaults(filepath.Join(dir, "alloy.config.yaml"))
 			Expect(err).NotTo(HaveOccurred(),
 				"LoadWithDefaults must handle sitemap: false without error")
 			Expect(cfg.Sitemap.Enabled).To(BeFalse(),
