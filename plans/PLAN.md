@@ -507,18 +507,10 @@ Disable sitemap generation entirely at the site level:
 sitemap: false
 ```
 
-**RSS/Atom Feed** (`_site/feed.xml`):
-Feeds are **not auto-generated**. They are opt-in by placing a `feed.xml` template in the appropriate `layouts/` subdirectory. The template uses standard template context (collections, taxonomy data, site data) to build the XML. Alloy provides helpful filters (`rfc822_date`, `xml_escape`) but no built-in feed template.
+**RSS/Atom Feed**:
+Feeds are **not auto-generated** and have no dedicated feed system. They use the standard multi-format output mechanism — a content page declares `outputs: ["html", "xml"]` and a matching format layout (e.g., `layouts/blog.xml.liquid`) renders the feed XML. The template has access to the same `collections.*`, `taxonomy.*`, and `site.*` context as any other template. No `feed:` config block exists.
 
-**Feed template placement determines output path and context:**
-
-| Template location | Output path | Use case |
-|---|---|---|
-| `layouts/feed.xml` | `/feed.xml` | Site-wide feed (template accesses any collection) |
-| `layouts/blog/feed.xml` | `/blog/feed.xml` | Section feed (template receives section context) |
-| `layouts/taxonomies/tags/feed.xml` | `/tags/:slug/feed.xml` | Per-term feed (rendered once per term with term context) |
-
-No `feed:` config block exists. The template controls what data it renders — the same `collections.*`, `taxonomy.*`, and `site.*` context available to any other template.
+See §1e (Output Formats) for the multi-format rendering pipeline.
 
 ---
 
