@@ -894,8 +894,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Stage 8: Sitemap generation
 	timer.Start("Sitemap")
 	reportStartStage(reporter, "Finalizing", -1)
-	reportMessage(reporter, "Generating sitemap…")
-	if len(pages) > 0 {
+	if cfg.Sitemap.Enabled && len(pages) > 0 {
+		reportMessage(reporter, "Generating sitemap…")
 		sitemapXML, err := output.GenerateSitemap(pages, cfg.Sitemap, cfg.BaseURL)
 		if err != nil {
 			reportEndStage(reporter)
