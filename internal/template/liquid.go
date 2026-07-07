@@ -168,7 +168,7 @@ var knownLiquidFilters = map[string]bool{
 	"slugify": true, "group_by": true, "flatten": true,
 	"intersect": true, "union": true, "complement": true,
 	"absolute_url": true, "markdownify": true,
-	"json": true, "fingerprint": true, "safeHTML": true, "url": true,
+	"json": true, "safeHTML": true, "url": true,
 	"cachebust": true, "get_hash": true,
 }
 
@@ -414,10 +414,6 @@ func (f *alloyFilterBridge) ReplaceRE(input interface{}, args ...interface{}) in
 
 func (f *alloyFilterBridge) JSON(input interface{}, args ...interface{}) interface{} {
 	return f.call("json", input, args...)
-}
-
-func (f *alloyFilterBridge) Fingerprint(input interface{}, args ...interface{}) interface{} {
-	return f.call("fingerprint", input, args...)
 }
 
 func (f *alloyFilterBridge) SafeHTML(input interface{}, args ...interface{}) interface{} {

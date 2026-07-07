@@ -145,7 +145,6 @@ func RegisterBuiltinFilters(engine TemplateEngine) error {
 		},
 		"json":           JSONFilter,
 		"default":        Default,
-		"fingerprint":    Fingerprint,
 		"safeHTML":       SafeHTML,
 		"cachebust":      CacheBust,
 		"get_hash":       GetHash,
@@ -763,20 +762,6 @@ func Default(input interface{}, args ...interface{}) interface{} {
 	return input
 }
 
-// --- Asset filters ---
-
-func Fingerprint(input interface{}, args ...interface{}) interface{} {
-	s := toString(input)
-	h := sha256.Sum256([]byte(s))
-	hash := hex.EncodeToString(h[:8])
-	// Insert hash before the extension
-	lastDot := strings.LastIndex(s, ".")
-	if lastDot >= 0 {
-		return s[:lastDot] + "." + hash + s[lastDot:]
-	}
-	return s + "." + hash
-}
-
 // --- Output safety filters ---
 
 func SafeHTML(input interface{}, args ...interface{}) interface{} {
@@ -884,7 +869,6 @@ var builtinFilters = map[string]FilterFunc{
 	"replaceRE":     ReplaceRE,
 	"json":          JSONFilter,
 	"default":       Default,
-	"fingerprint":   Fingerprint,
 	"safeHTML":      SafeHTML,
 	"cachebust":     CacheBust,
 	"get_hash":      GetHash,
