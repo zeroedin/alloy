@@ -549,7 +549,11 @@ layouts/
 └── robots.txt         ← static content, no template tags, used by either
 ```
 
-If the Liquid engine finds no `.liquid` file, it falls back to the bare extension and parses it as Liquid. The Go engine only reads bare extension files — it never reads `.liquid` files. Alloy does not inspect file contents to determine the engine — it sends whatever file it finds to the configured engine. If the file contains syntax for the wrong engine, the engine will return a parse error and the build fails. This is the implementor's responsibility, not something Alloy guards against.
+If the Liquid engine finds no `.liquid` file, it falls back to the bare extension and parses it as Liquid. This fallback applies to all **automatic** layout lookup candidates — the "post", section-name, filename, and "default" steps in `ResolveLayout`, all candidates in `ResolveLayoutForFormat` and `ResolveTaxonomyLayout`, and parent layout resolution in `ResolveLayoutChain`. At each candidate step, the resolver tries `<name>.liquid` first, then `<name>.<bare-ext>` (e.g., `.html` for HTML output, `.json`/`.xml` for format layouts).
+
+**Explicit layout names are not subject to bare-extension fallback.** When a layout name is set deliberately via front matter `layout:` or `_data.yaml` cascade `layout:`, the resolver uses only the engine extension (`.liquid`). If `layout: article` is set and `article.liquid` does not exist, the resolver does not try `article.html` — the explicit name is treated as deliberate. The remaining automatic lookup chain still applies its own fallback.
+
+The Go engine only reads bare extension files — it never reads `.liquid` files. Alloy does not inspect file contents to determine the engine — it sends whatever file it finds to the configured engine. If the file contains syntax for the wrong engine, the engine will return a parse error and the build fails. This is the implementor's responsibility, not something Alloy guards against.
 
 ### Multiple Output Formats
 
