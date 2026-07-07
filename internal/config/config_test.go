@@ -673,7 +673,7 @@ var _ = Describe("Config", func() {
 	// ── Site-wide sitemap disable (issue #825) ───────────────────────
 	// sitemap: false in config must disable generation entirely.
 	// sitemap: {changefreq: ...} object form must keep working.
-	// PLAN.md:505-508 specifies this behavior.
+	// plans/PLAN.md §4 Sitemap specifies this behavior.
 
 	Describe("Site-wide sitemap disable (issue #825)", func() {
 		It("parses sitemap: false as disabled", func() {
@@ -722,6 +722,23 @@ sitemap:
 			Expect(cfg.Sitemap.Enabled).To(BeTrue(),
 				"when sitemap is not specified in config, ApplyDefaults must "+
 					"set Enabled=true — sitemaps are on by default (issue #825)")
+		})
+
+		It("LoadWithDefaults preserves sitemap: false through ApplyDefaults", func() {
+			dir := GinkgoT().TempDir()
+			configContent := `title: "Sitemap Disable Full Path"
+baseURL: "https://example.com"
+sitemap: false
+`
+			Expect(os.WriteFile(filepath.Join(dir, "alloy.config.yaml"), []byte(configContent), 0644)).To(Succeed())
+
+			cfg, err := config.LoadWithDefaults(filepath.Join(dir, "alloy.config.yaml"), nil)
+			Expect(err).NotTo(HaveOccurred(),
+				"LoadWithDefaults must handle sitemap: false without error")
+			Expect(cfg.Sitemap.Enabled).To(BeFalse(),
+				"sitemap: false must survive the full LoadWithDefaults path — "+
+					"ApplyDefaults must not unconditionally overwrite Enabled to "+
+					"true when the user explicitly disabled it (issue #825)")
 		})
 	})
 
