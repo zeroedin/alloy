@@ -170,8 +170,30 @@ type SourceConfig struct {
 
 // SitemapConfig holds sitemap generation settings.
 type SitemapConfig struct {
+	Enabled    bool    `yaml:"-" toml:"-" json:"-"`
+	enabledSet bool    // true when Enabled was explicitly set (by UnmarshalYAML or caller)
 	ChangeFreq string  `yaml:"changefreq" toml:"changefreq" json:"changefreq"`
 	Priority   float64 `yaml:"priority" toml:"priority" json:"priority"`
+}
+
+// UnmarshalYAML accepts both `sitemap: false` (boolean) and
+// `sitemap: {changefreq: ..., priority: ...}` (object) forms.
+func (s *SitemapConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var boolVal bool
+	if err := unmarshal(&boolVal); err == nil {
+		s.Enabled = boolVal
+		s.enabledSet = true
+		return nil
+	}
+	type plain SitemapConfig
+	var p plain
+	if err := unmarshal(&p); err != nil {
+		return err
+	}
+	*s = SitemapConfig(p)
+	s.Enabled = true
+	s.enabledSet = true
+	return nil
 }
 
 // LanguageConfig holds per-language settings for i18n.
@@ -288,6 +310,9 @@ func ApplyDefaults(cfg *Config) {
 	}
 	if cfg.Structure.Plugins == "" {
 		cfg.Structure.Plugins = "plugins"
+	}
+	if !cfg.Sitemap.enabledSet {
+		cfg.Sitemap.Enabled = true
 	}
 	// Replace nil TaxonomyConfig entries with zero-value structs.
 	// YAML `tags:` with no value produces a nil *TaxonomyConfig pointer;
