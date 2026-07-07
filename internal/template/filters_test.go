@@ -352,6 +352,10 @@ var _ = Describe("Built-in Filters", func() {
 	// a baseURL before asserting filter behavior.
 
 	Describe("URL filter baseURL binding (issue #821)", func() {
+		AfterEach(func() {
+			tmpl.RegisterURLFilters("")
+		})
+
 		It("absolute_url uses bound baseURL when no explicit argument is passed", func() {
 			tmpl.RegisterURLFilters("https://example.com")
 			result := tmpl.AbsoluteURL("/blog/post/")
