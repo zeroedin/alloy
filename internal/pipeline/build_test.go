@@ -427,4 +427,79 @@ var _ = Describe("Build Pipeline", func() {
 					"markdown or template rendering begins (issue #690)")
 		})
 	})
+
+	// ── Feed template pipeline integration (issue #822) ───────────────
+	// ResolveFeedTemplates and RenderFeedTemplate exist but have no call
+	// sites in the build pipeline. Feed templates placed in layouts/ must
+	// be discovered, rendered through the real template engine with full
+	// context, and written to the output directory.
+
+	Describe("Feed template pipeline integration (issue #822)", func() {
+		It("renders a site-wide feed template placed in layouts/", func() {
+			cfg := &config.Config{
+				Title:   "Feed Test Site",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			content := map[string]string{
+				"content/post.md": "---\ntitle: First Post\ndate: 2026-01-15\n---\nHello world",
+				"layouts/default.liquid": "<html>{{ content }}</html>",
+				"layouts/feed.xml": `<?xml version="1.0"?>
+<rss><channel><title>{{ site.title }}</title></channel></rss>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.RenderedContent).To(HaveKey("/feed.xml"),
+				"a feed.xml template in layouts/ root must produce /feed.xml "+
+					"in the build output — ResolveFeedTemplates discovers it, the "+
+					"pipeline renders it, and the result appears in RenderedContent "+
+					"(issue #822)")
+		})
+
+		It("feed template is rendered through the real template engine", func() {
+			cfg := &config.Config{
+				Title:   "Template Engine Feed",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			content := map[string]string{
+				"content/post.md": "---\ntitle: My Post\ndate: 2026-01-15\n---\nContent here",
+				"layouts/default.liquid": "<html>{{ content }}</html>",
+				"layouts/feed.xml": `<?xml version="1.0"?>
+<rss><channel><title>{{ site.title }}</title>
+<link>{{ site.baseURL }}</link></channel></rss>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, content)
+			Expect(err).NotTo(HaveOccurred())
+
+			feedXML := result.RenderedContent["/feed.xml"]
+			Expect(feedXML).To(ContainSubstring("Template Engine Feed"),
+				"feed must be rendered through the real template engine with "+
+					"site context — {{ site.title }} must resolve to the config "+
+					"title, not remain as a literal template tag (issue #822)")
+			Expect(feedXML).To(ContainSubstring("https://example.com"),
+				"{{ site.baseURL }} must resolve to the configured base URL")
+		})
+
+		It("section feed template produces output at section path", func() {
+			cfg := &config.Config{
+				Title:   "Section Feed Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			content := map[string]string{
+				"content/blog/post.md": "---\ntitle: Blog Post\ndate: 2026-01-15\n---\nA blog post",
+				"layouts/default.liquid": "<html>{{ content }}</html>",
+				"layouts/blog/feed.xml": `<?xml version="1.0"?>
+<rss><channel><title>Blog Feed</title></channel></rss>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RenderedContent).To(HaveKey("/blog/feed.xml"),
+				"a feed.xml in layouts/blog/ must produce /blog/feed.xml — "+
+					"template placement determines output path per plans/PLAN.md "+
+					"§4 Feed placement table (issue #822)")
+		})
+	})
 })
