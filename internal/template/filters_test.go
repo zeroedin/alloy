@@ -383,7 +383,7 @@ var _ = Describe("Built-in Filters", func() {
 			result := tmpl.URLFilter("css/main.css")
 			Expect(result).To(Equal("/blog/css/main.css"),
 				"url filter must prepend the path portion of baseURL — "+
-					"PLAN.md:2718 says 'resolves paths relative to baseURL'; "+
+					"PLAN.md §7 Assets says 'resolves paths relative to baseURL'; "+
 					"with baseURL https://example.com/blog, css/main.css must "+
 					"become /blog/css/main.css (issue #821)")
 		})

@@ -201,7 +201,7 @@ The `map` filter extracts a single field from every item in an array:
 {% raw %}
 | Filter | Description | Example |
 |---|---|---|
-| `url` | Resolve path relative to baseURL path prefix | `{{ "css/main.css" | url }}` --> `/css/main.css` |
+| `url` | Resolve path relative to baseURL path prefix | `{{ "css/main.css" | url }}` --> `/blog/css/main.css` |
 | `absolute_url` | Prepend full baseURL to a path | `{{ page.url | absolute_url }}` --> `https://example.com/page/` |
 | `url_encode` | Percent-encode a string | `{{ page.title | url_encode }}` |
 | `url_decode` | Decode a percent-encoded string | `{{ encoded | url_decode }}` |
