@@ -201,18 +201,18 @@ The `map` filter extracts a single field from every item in an array:
 {% raw %}
 | Filter | Description | Example |
 |---|---|---|
-| `url` | Root-relative path (ensures a leading `/`) | `{{ "css/main.css" | url }}` --> `/css/main.css` |
-| `absolute_url` | Prepend a base URL to a path | `{{ page.url | absolute_url: site.baseURL }}` |
+| `url` | Resolve path relative to baseURL path prefix | `{{ "css/main.css" | url }}` --> `/blog/css/main.css` |
+| `absolute_url` | Prepend full baseURL to a path | `{{ page.url | absolute_url }}` --> `https://example.com/page/` |
 | `url_encode` | Percent-encode a string | `{{ page.title | url_encode }}` |
 | `url_decode` | Decode a percent-encoded string | `{{ encoded | url_decode }}` |
 {% endraw %}
 
 ```liquid
 <link rel="stylesheet" href="{{ 'css/main.css' | url }}">
-<link rel="canonical" href="{{ page.url | absolute_url: site.baseURL }}">
+<link rel="canonical" href="{{ page.url | absolute_url }}">
 ```
 
-`absolute_url` requires the base as an explicit argument. Without one, the input is returned unchanged (inputs that already start with `http://` or `https://` always pass through untouched).
+Both filters use the site's configured `baseURL` automatically. `url` prepends the path portion (e.g., `/blog` from `https://example.com/blog`). `absolute_url` prepends the full base URL. An explicit argument to `absolute_url` overrides the configured base. Inputs that already start with `http://` or `https://` pass through untouched.
 
 ## Math filters
 
@@ -331,7 +331,7 @@ RSS and Atom feed templates combine `escape` (XML entities are a subset of HTML 
 <item>
   <title>{{ post.title | escape }}</title>
   <pubDate>{{ post.date | date: "%a, %d %b %Y %H:%M:%S %z" }}</pubDate>
-  <link>{{ post.url | absolute_url: site.baseURL }}</link>
+  <link>{{ post.url | absolute_url }}</link>
 </item>
 {% endfor %}
 ```

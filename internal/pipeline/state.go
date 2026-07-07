@@ -55,6 +55,7 @@ func InitPipelineState(cfg *config.Config, registry *plugin.Registry, hooks *plu
 		return nil, err
 	}
 	tmpl.RegisterAssetFilters(cfg.ProjectRoot, cfg.Structure.Static, cfg.Structure.Assets, cfg.Structure.Content)
+	tmpl.RegisterURLFilters(cfg.BaseURL)
 	if err := registerPluginExtensions(registry, engine); err != nil {
 		return nil, err
 	}
