@@ -26,7 +26,7 @@ alloy build --verbose
 alloy build --profile
 ```
 
-The pipeline runs Phase 1 (content rendering) and Phase 2 ([config-driven SSR](/experimental/ssr/), if configured). Every page is rendered, every file is written. No incremental shortcuts -- the output is deterministic and complete. Any page failure aborts the entire build with no partial output.
+Every page is rendered, every file is written. No incremental shortcuts -- the output is deterministic and complete. Any page failure aborts the entire build with no partial output.
 
 When `--profile` is passed, Alloy records per-stage wall-clock timings and writes `cpu.prof` and `mem.prof` to `.alloy/profiles` (or the directory specified by `--profile-dir`).
 
@@ -48,7 +48,6 @@ Key behaviors:
 
 - **Drafts are visible by default.** Pages with `draft: true` appear in the dev server so authors can preview work in progress. Use `--no-drafts` to hide them.
 - **Incremental rebuilds.** After the initial build, file changes trigger incremental rebuilds -- only changed and invalidated pages are re-rendered. Template changes invalidate pages that use that specific template, not all pages.
-- **SSR is skipped.** The dev server runs Phase 1 only. Web Components render client-side. This applies when [experimental config-driven SSR](/experimental/ssr/) is enabled -- plugin-based SSR using `ssr.render()` is unaffected.
 - **Port auto-increment.** If the default port (3000) is occupied, Alloy tries up to 10 consecutive ports before failing.
 
 ### `alloy serve`
@@ -63,7 +62,7 @@ alloy serve --refetch
 
 Key behaviors:
 
-- **Full pipeline.** Runs the same pipeline as `alloy build`, including [config-driven SSR](/experimental/ssr/) if configured.
+- **Full pipeline.** Runs the same pipeline as `alloy build`.
 - **Excludes drafts.** Draft content is hidden, matching production behavior.
 - **Writes to `_site/`.** Output is written to disk and served from there.
 - **Full rebuilds on change.** File changes trigger a complete pipeline rebuild (no incremental mode in serve).
@@ -199,6 +198,7 @@ Suppresses all output except errors. Exit code communicates success or failure.
 | File watching | no | yes (full rebuild) | yes (incremental) |
 | Server | no | yes | yes |
 | Use case | CI/CD, deploy | Local production preview | Active development |
-| [Config-driven SSR](/experimental/ssr/) | yes (if configured) | yes (if configured) | no |
+
+Config-driven SSR is an [experimental](/experimental/ssr/) feature. When an `ssr:` block is present, `alloy build` and `alloy serve` run an extra server-side rendering phase; `alloy dev` always skips it. Plugin-based SSR via `ssr.render()` is separate and unaffected.
 
 See also [Getting Started](/getting-started/) for installation and [Project Structure](/getting-started/project-structure/) for directory layout.
