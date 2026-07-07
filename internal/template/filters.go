@@ -575,6 +575,7 @@ var boundBaseURL struct {
 
 func RegisterURLFilters(baseURL string) {
 	boundBaseURL.raw = strings.TrimSuffix(baseURL, "/")
+	boundBaseURL.path = ""
 	if parsed, err := url.Parse(baseURL); err == nil {
 		boundBaseURL.path = strings.TrimSuffix(parsed.Path, "/")
 	}
@@ -582,10 +583,13 @@ func RegisterURLFilters(baseURL string) {
 
 func URLFilter(input interface{}, args ...interface{}) interface{} {
 	s := toString(input)
+	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "//") {
+		return s
+	}
 	if !strings.HasPrefix(s, "/") {
 		s = "/" + s
 	}
-	if boundBaseURL.path != "" {
+	if boundBaseURL.path != "" && !strings.HasPrefix(s, boundBaseURL.path+"/") {
 		s = boundBaseURL.path + s
 	}
 	return s
@@ -595,6 +599,9 @@ func AbsoluteURL(input interface{}, args ...interface{}) interface{} {
 	s := toString(input)
 	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
 		return s
+	}
+	if !strings.HasPrefix(s, "/") {
+		s = "/" + s
 	}
 	if len(args) > 0 {
 		base := strings.TrimSuffix(toString(args[0]), "/")
