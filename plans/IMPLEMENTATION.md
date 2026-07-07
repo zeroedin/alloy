@@ -277,7 +277,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
 - `ResolveFeedTemplates(layoutsDir)`: Scan `layouts/` for `feed.xml` templates. Template placement determines scope: `layouts/feed.xml` → site-wide (`/feed.xml`), `layouts/blog/feed.xml` → section (`/blog/feed.xml`), `layouts/taxonomies/tags/feed.xml` → per-term (`/tags/:slug/feed.xml`). Returns `[]FeedTemplate` with computed output paths and scope metadata.
 - `RenderFeedTemplate(tmpl FeedTemplate, context)`: Render a discovered feed template with the appropriate filtered context (all pages for site-wide, section pages for section feeds, tagged pages for per-term feeds).
 - **Note**: Feeds are now opt-in via template placement, not auto-generated. The old `GenerateFeed` function has been removed.
-- `GenerateSitemap`: XML sitemap with baseURL prefix, per-page exclusions
+- `GenerateSitemap`: XML sitemap with baseURL prefix, per-page exclusions. Skipped when `cfg.Sitemap.Enabled` is false (issue #825). `SitemapConfig` has a custom `UnmarshalYAML` to accept `sitemap: false` (sets `Enabled: false`) alongside the object form. `ApplyDefaults` sets `Enabled: true` when not explicitly disabled.
 - `ResolveOutputFormat(page) string`: Returns first entry from `page.Outputs`, defaulting to `"html"` when unset.
 - `ResolveFormatLayout(page, format, layoutsDir, engine) (string, error)`: Finds layout for a specific format: `<layout>.<format>.<engine-ext>` (e.g., `single.json.liquid`).
 
