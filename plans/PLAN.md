@@ -2016,7 +2016,7 @@ Built-in filters covering common SSG needs. Compiled Go functions registered wit
 - **Date**: `date` (strftime format string, e.g. `{{ page.date | date: "%B %d, %Y" }}`). Powered by `github.com/lestrrat-go/strftime` for full POSIX compliance. Supports all standard directives (`%A` through `%z`, `%%`). Both Liquid and Go template engines use the same `DateFormat` implementation — overrides liquidgo's native `date` filter. Accepts `time.Time` or string input (parsed from ISO 8601, RFC 3339, `YYYY-MM-DD HH:MM:SS`, `YYYY-MM-DD`). Returns input unchanged when no format argument is provided.
 - **Array**: `sort`, `reverse`, `first`, `last`, `where`, `group_by`, `size`, `map`, `uniq`, `compact`, `concat`
 - **Set operations**: `intersect`, `union`, `complement`
-- **URL**: `url`, `absolute_url`, `url_encode`, `url_decode`
+- **URL**: `url` (resolves path relative to baseURL path prefix), `absolute_url` (prepends full baseURL), `url_encode`, `url_decode`
 - **Math**: `plus`, `minus`, `times`, `divided_by`, `modulo`, `ceil`, `floor`, `round`, `abs`
 - **Content**: `markdownify` — renders a markdown string to HTML using the same goldmark configuration as the main content renderer, driven by the site's `content.markdown` config. Uses a shared goldmark instance, not per-call allocation. Does not run template tag protection (processes already-rendered values). Useful for rendering markdown in front matter fields (`{{ page.description | markdownify }}`), data file values, or any template string containing markdown syntax.
 - **Output safety**: `safeHTML` (bypass auto-escaping for trusted content — relevant for Go templates)

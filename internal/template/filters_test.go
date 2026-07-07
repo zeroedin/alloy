@@ -343,6 +343,52 @@ var _ = Describe("Built-in Filters", func() {
 			"url filter must ensure paths start with /")
 	})
 
+	// ── URL filter baseURL binding (issue #821) ──────────────────────────
+	// absolute_url and url should use site baseURL by default,
+	// matching Hugo's absURL and Jekyll's absolute_url behavior.
+	// The developer must add RegisterURLFilters(baseURL string) to the
+	// template package (same pattern as RegisterAssetFilters) and call it
+	// from InitPipelineState. Tests below call RegisterURLFilters to bind
+	// a baseURL before asserting filter behavior.
+
+	Describe("URL filter baseURL binding (issue #821)", func() {
+		It("absolute_url uses bound baseURL when no explicit argument is passed", func() {
+			tmpl.RegisterURLFilters("https://example.com")
+			result := tmpl.AbsoluteURL("/blog/post/")
+			Expect(result).To(Equal("https://example.com/blog/post/"),
+				"absolute_url must prepend bound baseURL when no explicit arg is "+
+					"passed — every comparable SSG resolves against the configured "+
+					"base URL automatically (issue #821)")
+		})
+
+		It("absolute_url explicit argument overrides bound baseURL", func() {
+			tmpl.RegisterURLFilters("https://example.com")
+			result := tmpl.AbsoluteURL("/blog/post/", "https://other.com")
+			Expect(result).To(Equal("https://other.com/blog/post/"),
+				"explicit base arg must take precedence over bound baseURL — "+
+					"backward compatibility with existing templates that pass "+
+					"site.baseURL explicitly")
+		})
+
+		It("absolute_url passes through already-absolute URLs with bound baseURL", func() {
+			tmpl.RegisterURLFilters("https://example.com")
+			result := tmpl.AbsoluteURL("https://external.com/page")
+			Expect(result).To(Equal("https://external.com/page"),
+				"URLs starting with http:// or https:// must pass through "+
+					"unchanged regardless of bound baseURL")
+		})
+
+		It("url filter prepends path portion of bound baseURL", func() {
+			tmpl.RegisterURLFilters("https://example.com/blog")
+			result := tmpl.URLFilter("css/main.css")
+			Expect(result).To(Equal("/blog/css/main.css"),
+				"url filter must prepend the path portion of baseURL — "+
+					"PLAN.md §7 Assets says 'resolves paths relative to baseURL'; "+
+					"with baseURL https://example.com/blog, css/main.css must "+
+					"become /blog/css/main.css (issue #821)")
+		})
+	})
+
 	// ── Math filters (table-driven) ─────────────────────────────────────
 
 	DescribeTable("Math filters",
