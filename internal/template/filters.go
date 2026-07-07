@@ -568,10 +568,25 @@ func Complement(input interface{}, args ...interface{}) interface{} {
 
 // --- URL filters ---
 
+var boundBaseURL struct {
+	raw  string // full baseURL (e.g. "https://example.com/blog")
+	path string // path portion only (e.g. "/blog")
+}
+
+func RegisterURLFilters(baseURL string) {
+	boundBaseURL.raw = strings.TrimSuffix(baseURL, "/")
+	if parsed, err := url.Parse(baseURL); err == nil {
+		boundBaseURL.path = strings.TrimSuffix(parsed.Path, "/")
+	}
+}
+
 func URLFilter(input interface{}, args ...interface{}) interface{} {
 	s := toString(input)
 	if !strings.HasPrefix(s, "/") {
 		s = "/" + s
+	}
+	if boundBaseURL.path != "" {
+		s = boundBaseURL.path + s
 	}
 	return s
 }
@@ -584,6 +599,9 @@ func AbsoluteURL(input interface{}, args ...interface{}) interface{} {
 	if len(args) > 0 {
 		base := strings.TrimSuffix(toString(args[0]), "/")
 		return base + s
+	}
+	if boundBaseURL.raw != "" {
+		return boundBaseURL.raw + s
 	}
 	return s
 }
