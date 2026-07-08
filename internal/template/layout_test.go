@@ -640,6 +640,68 @@ var _ = Describe("ResolveLayout", func() {
 					"cascade layout: 'sidebar.html' must resolve to sidebar.html directly")
 			})
 
+			It("resolves layout: 'data.json' to data.json directly", func() {
+				// .json is a recognized extension — used as literal filename.
+				layoutsDir := createLayoutsDir("data.json", "default.liquid")
+				page := &content.Page{
+					RelPath:     "api/endpoint.md",
+					Section:     "api",
+					FrontMatter: map[string]interface{}{"layout": "data.json"},
+				}
+				result, err := tmpl.ResolveLayout(page, layoutsDir, "liquid", map[string]string{})
+				Expect(err).NotTo(HaveOccurred(),
+					"extension-bearing .json layout name must not error when file exists")
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "data.json")),
+					"layout: 'data.json' must resolve to data.json directly")
+			})
+
+			It("resolves layout: 'page.txt' to page.txt directly", func() {
+				// .txt is a recognized extension — used as literal filename.
+				layoutsDir := createLayoutsDir("page.txt", "default.liquid")
+				page := &content.Page{
+					RelPath:     "docs/readme.md",
+					Section:     "docs",
+					FrontMatter: map[string]interface{}{"layout": "page.txt"},
+				}
+				result, err := tmpl.ResolveLayout(page, layoutsDir, "liquid", map[string]string{})
+				Expect(err).NotTo(HaveOccurred(),
+					"extension-bearing .txt layout name must not error when file exists")
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "page.txt")),
+					"layout: 'page.txt' must resolve to page.txt directly")
+			})
+
+			It("treats unrecognized extension .md as bare name", func() {
+				// layout: "page.md" — .md is NOT a recognized extension.
+				// Treated as bare name: tries page.md.liquid then page.md.html.
+				layoutsDir := createLayoutsDir("page.md.html", "default.liquid")
+				page := &content.Page{
+					RelPath:     "docs/guide.md",
+					Section:     "docs",
+					FrontMatter: map[string]interface{}{"layout": "page.md"},
+				}
+				result, err := tmpl.ResolveLayout(page, layoutsDir, "liquid", map[string]string{})
+				Expect(err).NotTo(HaveOccurred(),
+					"unrecognized extension .md must be treated as bare name with fallback")
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "page.md.html")),
+					"layout: 'page.md' must try page.md.liquid then page.md.html — .md is not a recognized extension")
+			})
+
+			It("resolves dotted name with recognized final extension", func() {
+				// layout: "some.thing.html" — filepath.Ext returns ".html" (recognized).
+				// Used as literal filename, not treated as bare name.
+				layoutsDir := createLayoutsDir("some.thing.html", "default.liquid")
+				page := &content.Page{
+					RelPath:     "docs/guide.md",
+					Section:     "docs",
+					FrontMatter: map[string]interface{}{"layout": "some.thing.html"},
+				}
+				result, err := tmpl.ResolveLayout(page, layoutsDir, "liquid", map[string]string{})
+				Expect(err).NotTo(HaveOccurred(),
+					"dotted name with recognized final extension must resolve as extension-bearing")
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "some.thing.html")),
+					"layout: 'some.thing.html' must resolve to some.thing.html directly — final .html is recognized")
+			})
+
 			It("errors for bare name when neither .liquid nor .html exists", func() {
 				// layout: "article" — bare name, tries article.liquid then article.html.
 				// Neither exists — must error, must not fall through to auto candidates.
@@ -857,6 +919,46 @@ var _ = Describe("ResolveLayout", func() {
 					"chain must error when parent has neither .liquid nor bare extension")
 				Expect(err.Error()).To(ContainSubstring("missing"),
 					"error must reference the missing parent layout name")
+			})
+
+			It("resolves extension-bearing chain parent layout: 'base.html' directly", func() {
+				// Chain parent has extension-bearing name — use as literal filename.
+				// Must not append .liquid (producing base.html.liquid).
+				dir, err := os.MkdirTemp("", "layout-chain-ext-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(dir) })
+
+				// base.html exists as the parent layout
+				err = os.WriteFile(filepath.Join(dir, "base.html"),
+					[]byte("<html>{{ content }}</html>"), 0644)
+				Expect(err).NotTo(HaveOccurred())
+
+				// child.liquid references "base.html" — extension-bearing
+				err = os.WriteFile(filepath.Join(dir, "child.liquid"),
+					[]byte(fmt.Sprintf("---\nlayout: \"base.html\"\n---\n<main>{{ content }}</main>")), 0644)
+				Expect(err).NotTo(HaveOccurred())
+
+				chain, err := tmpl.ResolveLayoutChain(filepath.Join(dir, "child.liquid"), dir, "liquid")
+				Expect(err).NotTo(HaveOccurred(),
+					"extension-bearing chain parent must resolve directly when file exists")
+				Expect(chain).To(HaveLen(2))
+				Expect(chain[1]).To(Equal(filepath.Join(dir, "base.html")),
+					"chain parent layout: 'base.html' must resolve to base.html directly — no .liquid appended")
+			})
+
+			It("errors for extension-bearing chain parent when file missing", func() {
+				dir, err := os.MkdirTemp("", "layout-chain-ext-missing-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(dir) })
+
+				// child.liquid references "gone.html" — extension-bearing, file doesn't exist
+				err = os.WriteFile(filepath.Join(dir, "child.liquid"),
+					[]byte(fmt.Sprintf("---\nlayout: \"gone.html\"\n---\n<main>{{ content }}</main>")), 0644)
+				Expect(err).NotTo(HaveOccurred())
+
+				_, err = tmpl.ResolveLayoutChain(filepath.Join(dir, "child.liquid"), dir, "liquid")
+				Expect(err).To(HaveOccurred(),
+					"extension-bearing chain parent with missing file must error")
 			})
 		})
 
