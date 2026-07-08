@@ -105,8 +105,8 @@ var _ = Describe("Full build pipeline", func() {
 
 			// layout value from blog/_data.yaml (inherited through deep/).
 			// Note: this tests the cascade VALUE, not layout file selection.
-			// default.liquid renders {{ page.layout }} which shows "post".
-			// A post.liquid layout is not needed for this test.
+			// post.liquid must exist because strict explicit-layout resolution
+			// requires the named layout file on disk when set via cascade.
 			Expect(leafHTML).To(ContainSubstring("post"),
 				"cascade must inherit layout value from blog/_data.yaml through deep/ level")
 		})
