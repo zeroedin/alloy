@@ -1,0 +1,6 @@
+title: "TOC False Test"
+baseURL: "https://example.com"
+
+content:
+  markdown:
+    toc: false

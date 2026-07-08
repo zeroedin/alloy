@@ -289,4 +289,4 @@ Alloy extracts heading structure from Markdown pages and exposes it as `page.toc
 </nav>
 ```
 
-Each TOC entry has `id` (heading anchor), `text` (plain text), `level` (2-6), and `children` (nested headings). TOC data is always extracted; heading anchor IDs are controlled by the `goldmark.autoHeadingID` setting (see [Content](/content/)).
+Each TOC entry has `id` (heading anchor), `text` (plain text), `level` (2-6), and `children` (nested headings). TOC extraction is controlled by `content.markdown.toc` (default: `true`). Heading anchor IDs are controlled separately by `content.markdown.goldmark.autoHeadingID` -- disabling TOC does not disable heading IDs (see [Content](/content/)).

@@ -110,7 +110,17 @@ Each TOC entry has:
 | `level` | int | Heading level (2--6; h1 is excluded) |
 | `children` | array | Nested headings one level deeper |
 
-TOC data is always extracted during Markdown rendering. The `goldmark.autoHeadingID` setting controls whether headings get `id` attributes in the HTML output -- without them, TOC anchor links have nothing to target.
+TOC extraction is controlled by `content.markdown.toc` (default: `true`). Set `toc: false` to disable it -- `page.toc` will be nil for all pages. This is independent of `content.markdown.goldmark.autoHeadingID`, which controls whether headings get `id` attributes in the HTML output. Disabling TOC does not disable heading IDs -- anchors still work, you just don't get the structured data.
+
+```yaml
+content:
+  markdown:
+    toc: false  # disable page.toc generation
+    goldmark:
+      autoHeadingID: true  # headings still get id attributes
+```
+
+For non-markdown content (`.html`, `.liquid`), `page.toc` is always empty. Plugins can build TOC for those pages via the `onContentTransformed` hook.
 
 ## HTML content files
 
