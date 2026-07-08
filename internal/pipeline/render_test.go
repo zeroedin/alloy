@@ -791,4 +791,113 @@ var _ = Describe("Build Pipeline", func() {
 	// Taxonomy pages (index + term pages) must be included in pre-render
 	// conflict detection. Their URLs are deterministic from taxonomy config
 	// and discovered terms — no rendering needed.
+
+	// ── TOC site-wide toggle (issue #828) ────────────────────────────
+	// content.markdown.toc controls whether page.toc is populated.
+	// Default true: page.toc is generated for markdown pages.
+	// Explicit false: page.toc is nil — template iteration yields nothing.
+	// Independent of autoHeadingID — headings still get id attributes
+	// when toc is disabled.
+
+	Describe("TOC site-wide toggle (issue #828)", func() {
+		It("page.toc is populated by default (toc omitted = true)", func() {
+			cfg := &config.Config{
+				Title:   "TOC Default Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/guide.md":         "---\ntitle: Guide\nlayout: default\n---\n## Getting Started\n\n### Installation\n\n## Configuration",
+				"layouts/default.liquid": `<html><body>{{ content }}<nav>{% for item in page.toc %}<a href="#{{ item.id }}">{{ item.text }}</a>{% endfor %}</nav></body></html>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["guide.md"]
+			Expect(html).To(ContainSubstring(`href="#getting-started"`),
+				"page.toc must be populated by default — TOC links must "+
+					"render in layout templates when toc config is omitted (issue #828)")
+			Expect(html).To(ContainSubstring(">Configuration<"),
+				"all headings must appear in page.toc when toc is enabled by default")
+		})
+
+		It("page.toc is nil when toc: false — template iteration yields nothing", func() {
+			tocFalse := false
+			cfg := &config.Config{
+				Title:   "TOC Disabled Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Content: config.ContentConfig{
+					Markdown: config.MarkdownConfig{
+						TOC: &tocFalse,
+					},
+				},
+			}
+			contentMap := map[string]string{
+				"content/guide.md":         "---\ntitle: Guide\nlayout: default\n---\n## Getting Started\n\n### Installation\n\n## Configuration",
+				"layouts/default.liquid": `<html><body>{{ content }}<nav class="toc">{% for item in page.toc %}<a href="#{{ item.id }}">{{ item.text }}</a>{% endfor %}</nav></body></html>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["guide.md"]
+			Expect(html).To(ContainSubstring(`<nav class="toc"></nav>`),
+				"page.toc must be nil when toc: false — template for loop over nil "+
+					"produces no output, leaving the nav element empty (issue #828)")
+			Expect(html).NotTo(ContainSubstring(`href="#getting-started"`),
+				"no TOC links should be rendered when toc: false")
+		})
+
+		It("headings still get id attributes when toc: false (autoHeadingID is independent)", func() {
+			tocFalse := false
+			cfg := &config.Config{
+				Title:   "TOC Off HeadingID On Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Content: config.ContentConfig{
+					Markdown: config.MarkdownConfig{
+						TOC: &tocFalse,
+					},
+				},
+			}
+			contentMap := map[string]string{
+				"content/guide.md":       "---\ntitle: Guide\nlayout: default\n---\n## Getting Started\n\nSome text.\n\n## Configuration",
+				"layouts/default.liquid": `<html><body>{{ content }}</body></html>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["guide.md"]
+			Expect(html).To(ContainSubstring(`id="getting-started"`),
+				"headings must still have auto-generated id attributes when toc: false — "+
+					"autoHeadingID (goldmark parser option) is independent of the toc toggle "+
+					"(issue #828)")
+			Expect(html).To(ContainSubstring(`id="configuration"`),
+				"all headings must retain id attributes regardless of toc setting")
+		})
+
+		It("HTML content files have no TOC regardless of toc setting", func() {
+			cfg := &config.Config{
+				Title:   "HTML No TOC Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/page.html":      "---\ntitle: HTML Page\nlayout: default\n---\n<h2>Section One</h2>\n<p>Text.</p>\n<h2>Section Two</h2>",
+				"layouts/default.liquid": `<html><body>{{ content }}<nav class="toc">{% for item in page.toc %}<a href="#{{ item.id }}">{{ item.text }}</a>{% endfor %}</nav></body></html>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["page.html"]
+			Expect(html).To(ContainSubstring(`<nav class="toc"></nav>`),
+				"HTML content files must have no TOC data — TOC extraction is a "+
+					"markdown-only operation (goldmark AST walk). For non-markdown "+
+					"content, plugins can build TOC via onContentTransformed hook (issue #828)")
+		})
+	})
 })
