@@ -874,8 +874,7 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(html).To(ContainSubstring(`id="getting-started"`),
 				"headings must still have auto-generated id attributes when toc: false — "+
 					"autoHeadingID (goldmark parser option) is independent of the toc toggle "+
-					"(Alloy-level AST walk). Disabling TOC saves the AST walk cost but "+
-					"does not change heading HTML output (issue #828)")
+					"(issue #828)")
 			Expect(html).To(ContainSubstring(`id="configuration"`),
 				"all headings must retain id attributes regardless of toc setting")
 		})

@@ -705,7 +705,7 @@ content:
     toc: true     # default: true — generate page.toc for all pages
 ```
 
-Set `content.markdown.toc: false` to disable TOC generation entirely — `page.toc` will be nil for all pages, and the AST walk that extracts headings is skipped. This is independent of `content.markdown.goldmark.autoHeadingID` — disabling TOC does not disable heading IDs. Headings still get `id` attributes for anchor links even when TOC is off.
+Set `content.markdown.toc: false` to disable TOC generation — `page.toc` will be nil for all pages. `RenderMarkdown` still returns TOC data (the AST walk cost is negligible), but the pipeline discards it when `toc: false`. This is independent of `content.markdown.goldmark.autoHeadingID` — disabling TOC does not disable heading IDs. Headings still get `id` attributes for anchor links even when TOC is off.
 
 **Future option:** Configurable ID generation algorithm via a custom `parser.IDs` implementation, exposed as a config option. For v1, goldmark's default slugification is used.
 

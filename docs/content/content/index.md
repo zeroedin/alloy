@@ -110,7 +110,7 @@ Each TOC entry has:
 | `level` | int | Heading level (2--6; h1 is excluded) |
 | `children` | array | Nested headings one level deeper |
 
-TOC extraction is controlled by `content.markdown.toc` (default: `true`). Set `toc: false` to disable it -- `page.toc` will be nil and the heading AST walk is skipped entirely. This is independent of `goldmark.autoHeadingID`, which controls whether headings get `id` attributes in the HTML output. Disabling TOC does not disable heading IDs -- anchors still work, you just don't get the structured data.
+TOC extraction is controlled by `content.markdown.toc` (default: `true`). Set `toc: false` to disable it -- `page.toc` will be nil for all pages. This is independent of `content.markdown.goldmark.autoHeadingID`, which controls whether headings get `id` attributes in the HTML output. Disabling TOC does not disable heading IDs -- anchors still work, you just don't get the structured data.
 
 ```yaml
 content:
