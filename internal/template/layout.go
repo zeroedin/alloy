@@ -57,18 +57,40 @@ func formatLayoutCandidates(dir, name, format, engine string) []string {
 	return []string{filepath.Join(dir, name+"."+format+layoutExtension(engine))}
 }
 
-// resolveExplicitLayout checks whether an explicitly-named layout file exists.
-// Returns its path if found, or an error if missing.
-func resolveExplicitLayout(layoutsDir, name, ext, pageRelPath string) (string, error) {
-	path := filepath.Join(layoutsDir, name+ext)
-	if _, err := os.Stat(path); err == nil {
-		return path, nil
+// recognizedLayoutExtensions contains file extensions that mark a layout name
+// as extension-bearing (used as a literal filename, no engine extension appended).
+var recognizedLayoutExtensions = map[string]bool{
+	".liquid": true,
+	".html":   true,
+	".xml":    true,
+	".json":   true,
+	".txt":    true,
+}
+
+// hasRecognizedExtension returns true if the layout name ends with a recognized
+// template/output extension, indicating it should be used as a literal filename.
+func hasRecognizedExtension(name string) bool {
+	return recognizedLayoutExtensions[filepath.Ext(name)]
+}
+
+// resolveNamedLayout resolves a layout specified by name (from front matter,
+// cascade, or layout chain parent references).
+// Extension-bearing names (e.g., "base.html") are used as literal filenames.
+// Bare names (e.g., "base") use engine-specific candidate resolution
+// (.liquid → .html for Liquid, .html only for gotemplate).
+func resolveNamedLayout(layoutsDir, name, engine string) (string, bool) {
+	if hasRecognizedExtension(name) {
+		path := filepath.Join(layoutsDir, name)
+		if _, err := os.Stat(path); err == nil {
+			return path, true
+		}
+		return "", false
 	}
-	return "", fmt.Errorf("layout %q not found for page %q", name+ext, pageRelPath)
+	return resolveFirstExisting(layoutCandidates(layoutsDir, name, engine))
 }
 
 // ResolveLayout finds the correct layout file for a page following the lookup order:
-// 1. Front matter layout (explicit — Liquid: strict hard error; gotemplate: fall through)
+// 1. Front matter layout (bare names get engine fallback; extension-bearing used as-is)
 // 2. "post" (for pages in date-based permalink sections)
 // 3. Section name (for index pages)
 // 4. Filename (without extension)
@@ -77,8 +99,6 @@ func resolveExplicitLayout(layoutsDir, name, ext, pageRelPath string) (string, e
 // per candidate before moving to the next candidate (per-candidate interleaving).
 // Returns error if no layout file is found on disk.
 func ResolveLayout(page *content.Page, layoutsDir string, engine string, permalinkCfg map[string]string) (string, error) {
-	ext := layoutExtension(engine)
-
 	// Check for layout: false
 	if val, ok := page.FrontMatter["layout"]; ok {
 		if b, ok := val.(bool); ok && !b {
@@ -86,17 +106,17 @@ func ResolveLayout(page *content.Page, layoutsDir string, engine string, permali
 		}
 	}
 
-	// 1. Explicit front matter layout
+	// 1. Front matter layout — resolved via resolveNamedLayout
 	if layout, ok := page.FrontMatter["layout"].(string); ok && layout != "" {
-		resolved, err := resolveExplicitLayout(layoutsDir, layout, ext, page.RelPath)
-		if err == nil {
+		resolved, found := resolveNamedLayout(layoutsDir, layout, engine)
+		if found {
 			return resolved, nil
 		}
-		// Liquid engine: strict — hard error, no fallback to auto candidates
-		if engine == "liquid" {
-			return "", err
+		// Extension-bearing or Liquid bare name: hard error, no fall-through
+		if engine == "liquid" || hasRecognizedExtension(layout) {
+			return "", fmt.Errorf("layout %q not found for page %q", layout, page.RelPath)
 		}
-		// Other engines: fall through to auto candidates (preserves pre-existing behavior)
+		// Gotemplate bare name: fall through to auto candidates (pre-existing behavior)
 	}
 
 	// 2-5. Auto candidates with per-candidate interleaved fallback
@@ -263,7 +283,7 @@ func StripLayoutFrontMatter(s string) string {
 
 // ResolveLayoutChain follows layout: directives in layout front matter to build
 // the full chain from innermost to root. Returns the ordered list of layout file paths.
-// For the Liquid engine, parent resolution tries .liquid then bare .html.
+// Parent names follow the same bare-name vs extension-bearing rules as front matter layout.
 // Returns error if the chain exceeds maxDepth (10) or if a referenced layout is not found.
 func ResolveLayoutChain(layoutPath string, layoutsDir string, engine string) ([]string, error) {
 	const maxDepth = 10
@@ -275,7 +295,7 @@ func ResolveLayoutChain(layoutPath string, layoutsDir string, engine string) ([]
 		if parent == "" {
 			return chain, nil
 		}
-		parentPath, found := resolveFirstExisting(layoutCandidates(layoutsDir, parent, engine))
+		parentPath, found := resolveNamedLayout(layoutsDir, parent, engine)
 		if !found {
 			return nil, fmt.Errorf("parent layout %q not found (referenced from %s)", parent, filepath.Base(current))
 		}
@@ -287,13 +307,10 @@ func ResolveLayoutChain(layoutPath string, layoutsDir string, engine string) ([]
 }
 
 // ResolveLayoutWithCascade resolves layout considering cascade data.
-// Explicit layout names (front matter or cascade) are strict — only the engine's
-// primary extension is tried, and missing = hard error with no fallback.
-// When no explicit layout is set, falls through to ResolveLayout which applies
-// bare-extension fallback for auto candidates.
+// Named layouts (front matter or cascade) use resolveNamedLayout: bare names get
+// engine fallback (.liquid → .html), extension-bearing names are used as-is.
+// When no explicit layout is set, falls through to ResolveLayout for auto candidates.
 func ResolveLayoutWithCascade(page *content.Page, layoutsDir, engine string, permalinkCfg map[string]string, cascadeData map[string]interface{}) (string, error) {
-	ext := layoutExtension(engine)
-
 	// Check for layout: false in front matter
 	if val, ok := page.FrontMatter["layout"]; ok {
 		if b, ok := val.(bool); ok && !b {
@@ -301,15 +318,23 @@ func ResolveLayoutWithCascade(page *content.Page, layoutsDir, engine string, per
 		}
 	}
 
-	// 1. Explicit front matter layout — strict, no bare-extension fallback
+	// 1. Front matter layout
 	if layout, ok := page.FrontMatter["layout"].(string); ok && layout != "" {
-		return resolveExplicitLayout(layoutsDir, layout, ext, page.RelPath)
+		resolved, found := resolveNamedLayout(layoutsDir, layout, engine)
+		if found {
+			return resolved, nil
+		}
+		return "", fmt.Errorf("layout %q not found for page %q", layout, page.RelPath)
 	}
 
-	// 2. Explicit cascade layout — strict, no bare-extension fallback
+	// 2. Cascade layout
 	if cascadeData != nil {
 		if layout, ok := cascadeData["layout"].(string); ok && layout != "" {
-			return resolveExplicitLayout(layoutsDir, layout, ext, page.RelPath)
+			resolved, found := resolveNamedLayout(layoutsDir, layout, engine)
+			if found {
+				return resolved, nil
+			}
+			return "", fmt.Errorf("layout %q not found for page %q", layout, page.RelPath)
 		}
 	}
 
