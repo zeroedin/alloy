@@ -361,26 +361,356 @@ var _ = Describe("ResolveLayout", func() {
 		})
 	})
 
-	// ── Multiple output format layout lookup ────────────────────────────
+	// ── Unified format layout resolution (issue #864) ──────────────────
+	// Format layout resolution mirrors the standard HTML chain with the
+	// output format infixed before the engine extension. One algorithm,
+	// one lookup order. No "single" concept.
 
-	Describe("Output format layout lookup", func() {
-		It("resolves format-specific layout (single.json.liquid for json output)", func() {
-			layoutsDir := createLayoutsDir("single.json.liquid")
-			page := &content.Page{
-				RelPath:     "blog/my-post.md",
-				Section:     "blog",
-				Outputs:     []string{"html", "json"},
-				FrontMatter: map[string]interface{}{},
+	Describe("Unified format layout resolution (issue #864)", func() {
+
+		// ── Blog-like section (date-based permalink) ───────────────────
+
+		Describe("Blog-like section with date-based permalinks", func() {
+			permalinkCfg := map[string]string{
+				"blog": "/:section/:year/:month/:day/:slug/",
 			}
-			result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(
-				SatisfyAny(
-					ContainSubstring(".json.liquid"),
-					ContainSubstring(".json"),
-				),
-				"output format layout must include format in the filename",
-			)
+
+			Context("child page format chain (content/blog/my-post.md, json)", func() {
+				newPage := func() *content.Page {
+					return &content.Page{
+						RelPath:     "blog/my-post.md",
+						Section:     "blog",
+						Outputs:     []string{"html", "json"},
+						FrontMatter: map[string]interface{}{},
+					}
+				}
+
+				It("uses front-matter layout with format infixed (step 1)", func() {
+					layoutsDir := createLayoutsDir("custom.json.liquid", "post.json.liquid", "my-post.json.liquid", "default.json.liquid")
+					page := newPage()
+					page.FrontMatter["layout"] = "custom"
+					result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", permalinkCfg)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(result).To(Equal(filepath.Join(layoutsDir, "custom.json.liquid")),
+						"front-matter layout with format infixed must take highest priority")
+				})
+
+				It("falls back to post.json.liquid for date-based section child (step 2)", func() {
+					layoutsDir := createLayoutsDir("post.json.liquid", "my-post.json.liquid", "default.json.liquid")
+					page := newPage()
+					result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", permalinkCfg)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(result).To(Equal(filepath.Join(layoutsDir, "post.json.liquid")),
+						"post with format infixed must be first fallback for date-based section children")
+				})
+
+				It("falls back to my-post.json.liquid when post.json.liquid missing (step 3)", func() {
+					layoutsDir := createLayoutsDir("my-post.json.liquid", "default.json.liquid")
+					page := newPage()
+					result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", permalinkCfg)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(result).To(Equal(filepath.Join(layoutsDir, "my-post.json.liquid")),
+						"filename match with format infixed must be used when post layout missing")
+				})
+
+				It("falls back to default.json.liquid as final fallback (step 4)", func() {
+					layoutsDir := createLayoutsDir("default.json.liquid")
+					page := newPage()
+					result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", permalinkCfg)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(result).To(Equal(filepath.Join(layoutsDir, "default.json.liquid")),
+						"default with format infixed must be the final fallback")
+				})
+
+				It("returns build error when no format layout found (step 5)", func() {
+					layoutsDir := createLayoutsDir()
+					page := newPage()
+					_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", permalinkCfg)
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(SatisfyAny(
+						ContainSubstring("no layout"),
+						ContainSubstring("not found"),
+					))
+				})
+			})
+
+			Context("index page format chain (content/blog/index.html, xml)", func() {
+				It("falls back to blog.xml.liquid for section index (step 2)", func() {
+					layoutsDir := createLayoutsDir("blog.xml.liquid", "index.xml.liquid", "default.xml.liquid")
+					page := &content.Page{
+						RelPath:     "blog/index.html",
+						Section:     "blog",
+						Outputs:     []string{"html", "xml"},
+						FrontMatter: map[string]interface{}{},
+					}
+					result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "xml", permalinkCfg)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(result).To(Equal(filepath.Join(layoutsDir, "blog.xml.liquid")),
+						"section name with format infixed must be preferred for index pages")
+				})
+
+				It("falls back to index.xml.liquid when section layout missing (step 3)", func() {
+					layoutsDir := createLayoutsDir("index.xml.liquid", "default.xml.liquid")
+					page := &content.Page{
+						RelPath:     "blog/index.html",
+						Section:     "blog",
+						Outputs:     []string{"html", "xml"},
+						FrontMatter: map[string]interface{}{},
+					}
+					result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "xml", permalinkCfg)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(result).To(Equal(filepath.Join(layoutsDir, "index.xml.liquid")),
+						"filename match (index.xml.liquid) must be tried when section layout missing")
+				})
+			})
+		})
+
+		// ── Regular section ────────────────────────────────────────────
+
+		Describe("Regular section", func() {
+			permalinkCfg := map[string]string{}
+
+			Context("format chain (content/docs/getting-started.md, json)", func() {
+				newPage := func() *content.Page {
+					return &content.Page{
+						RelPath:     "docs/getting-started.md",
+						Section:     "docs",
+						Outputs:     []string{"html", "json"},
+						FrontMatter: map[string]interface{}{},
+					}
+				}
+
+				It("uses front-matter layout with format infixed", func() {
+					layoutsDir := createLayoutsDir("custom.json.liquid", "getting-started.json.liquid", "default.json.liquid")
+					page := newPage()
+					page.FrontMatter["layout"] = "custom"
+					result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", permalinkCfg)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(result).To(Equal(filepath.Join(layoutsDir, "custom.json.liquid")),
+						"front-matter layout with format infixed must work for regular sections")
+				})
+
+				It("falls back to getting-started.json.liquid for filename match", func() {
+					layoutsDir := createLayoutsDir("getting-started.json.liquid", "default.json.liquid")
+					page := newPage()
+					result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", permalinkCfg)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(result).To(Equal(filepath.Join(layoutsDir, "getting-started.json.liquid")),
+						"filename match with format infixed must be preferred for regular sections")
+				})
+
+				It("falls back to default.json.liquid when filename match missing", func() {
+					layoutsDir := createLayoutsDir("default.json.liquid")
+					page := newPage()
+					result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", permalinkCfg)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(result).To(Equal(filepath.Join(layoutsDir, "default.json.liquid")),
+						"default with format infixed must be the fallback for regular sections")
+				})
+
+				It("does not include post step for non-date-based sections", func() {
+					// Only post.json.liquid exists — regular section should skip it
+					layoutsDir := createLayoutsDir("post.json.liquid")
+					page := newPage()
+					_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", permalinkCfg)
+					Expect(err).To(HaveOccurred(),
+						"regular sections must not use post layout — only date-based sections do")
+				})
+
+				It("does not use section name for non-index pages", func() {
+					// docs.json.liquid exists but page is NOT an index — should skip section step
+					layoutsDir := createLayoutsDir("docs.json.liquid")
+					page := newPage()
+					_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", permalinkCfg)
+					Expect(err).To(HaveOccurred(),
+						"section name layout must only be tried for index pages, not child pages")
+				})
+			})
+		})
+
+		// ── layout: false ──────────────────────────────────────────────
+
+		Describe("layout: false applies to format outputs", func() {
+			It("skips format layout resolution entirely", func() {
+				layoutsDir := createLayoutsDir("default.json.liquid")
+				page := &content.Page{
+					RelPath: "blog/raw-post.md",
+					Section: "blog",
+					Outputs: []string{"html", "json"},
+					FrontMatter: map[string]interface{}{
+						"layout": false,
+					},
+				}
+				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", map[string]string{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(""),
+					"layout: false must suppress format output layout resolution — same as HTML chain")
+			})
+		})
+
+		// ── Cascade _data.yaml support ─────────────────────────────────
+
+		Describe("Cascade _data.yaml flows into format resolution", func() {
+			It("uses cascade layout with format infixed", func() {
+				layoutsDir := createLayoutsDir("article.json.liquid")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "json"},
+					FrontMatter: map[string]interface{}{},
+				}
+				cascadeData := map[string]interface{}{
+					"layout": "article",
+				}
+				result, err := tmpl.ResolveLayoutForFormatWithCascade(page, layoutsDir, "liquid", "json", map[string]string{}, cascadeData)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "article.json.liquid")),
+					"cascade layout must be used with format infixed in format chain")
+			})
+
+			It("front-matter layout takes priority over cascade in format chain", func() {
+				layoutsDir := createLayoutsDir("custom.json.liquid", "article.json.liquid")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "json"},
+					FrontMatter: map[string]interface{}{"layout": "custom"},
+				}
+				cascadeData := map[string]interface{}{
+					"layout": "article",
+				}
+				result, err := tmpl.ResolveLayoutForFormatWithCascade(page, layoutsDir, "liquid", "json", map[string]string{}, cascadeData)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "custom.json.liquid")),
+					"front-matter layout must take priority over cascade in format chain")
+			})
+		})
+
+		// ── Bare-extension fallback for format layouts ──────────────────
+
+		Describe("Bare-extension fallback for format layouts", func() {
+			It("falls back to default.json when default.json.liquid missing", func() {
+				layoutsDir := createLayoutsDir("default.json")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "json"},
+					FrontMatter: map[string]interface{}{},
+				}
+				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", map[string]string{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "default.json")),
+					"Liquid engine must fall back to default.json when default.json.liquid missing")
+			})
+
+			It("prefers .json.liquid over bare .json when both exist", func() {
+				layoutsDir := createLayoutsDir("default.json.liquid", "default.json")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "json"},
+					FrontMatter: map[string]interface{}{},
+				}
+				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", map[string]string{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "default.json.liquid")),
+					".json.liquid must be preferred over bare .json when both exist")
+			})
+
+			It("falls back to default.xml when default.xml.liquid missing", func() {
+				layoutsDir := createLayoutsDir("default.xml")
+				page := &content.Page{
+					RelPath:     "blog/index.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "xml"},
+					FrontMatter: map[string]interface{}{},
+				}
+				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "xml", map[string]string{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "default.xml")),
+					"Liquid engine must fall back to default.xml when default.xml.liquid missing")
+			})
+
+			It("per-candidate interleaving: post.json wins over my-post.json.liquid", func() {
+				permalinkCfg := map[string]string{
+					"blog": "/:section/:year/:month/:day/:slug/",
+				}
+				layoutsDir := createLayoutsDir("post.json", "my-post.json.liquid")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "json"},
+					FrontMatter: map[string]interface{}{},
+				}
+				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", permalinkCfg)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "post.json")),
+					"per-candidate interleaving: post.json (higher-priority, bare extension) must win over my-post.json.liquid (lower-priority)")
+			})
+
+			It("falls back to filename-specific bare extension format layout", func() {
+				layoutsDir := createLayoutsDir("my-post.json")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "json"},
+					FrontMatter: map[string]interface{}{},
+				}
+				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", map[string]string{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "my-post.json")),
+					"Liquid engine must fall back to filename-specific bare extension format layout")
+			})
+		})
+
+		// ── No "single" concept ────────────────────────────────────────
+
+		Describe("No single concept in format chain", func() {
+			It("does not look for single.json.liquid in the chain", func() {
+				// Only single.json.liquid exists — the unified chain must not find it
+				// because "single" is not a valid auto candidate
+				layoutsDir := createLayoutsDir("single.json.liquid")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "json"},
+					FrontMatter: map[string]interface{}{},
+				}
+				_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", map[string]string{})
+				Expect(err).To(HaveOccurred(),
+					"single is not a valid auto candidate — unified chain must not look for single.json.liquid")
+			})
+		})
+
+		// ── Go template engine ─────────────────────────────────────────
+
+		Describe("Go template engine format layout lookup", func() {
+			It("resolves format layouts with .format.html for gotemplate", func() {
+				layoutsDir := createLayoutsDir("default.json.html")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "json"},
+					FrontMatter: map[string]interface{}{},
+				}
+				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", map[string]string{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "default.json.html")),
+					"Go template engine must use .format.html for format layouts")
+			})
+
+			It("gotemplate does NOT try .liquid files for format layouts", func() {
+				layoutsDir := createLayoutsDir("default.json.liquid")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "json"},
+					FrontMatter: map[string]interface{}{},
+				}
+				_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", map[string]string{})
+				Expect(err).To(HaveOccurred(),
+					"Go engine must never try .liquid files for format layout resolution")
+			})
 		})
 	})
 
@@ -717,80 +1047,8 @@ var _ = Describe("ResolveLayout", func() {
 			})
 		})
 
-		// ── ResolveLayoutForFormat ──────────────────────────────────
-
-		Describe("ResolveLayoutForFormat", func() {
-
-			It("falls back to single.json when single.json.liquid missing", func() {
-				layoutsDir := createLayoutsDir("single.json")
-				page := &content.Page{
-					RelPath:     "blog/my-post.md",
-					Section:     "blog",
-					Outputs:     []string{"html", "json"},
-					FrontMatter: map[string]interface{}{},
-				}
-				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal(filepath.Join(layoutsDir, "single.json")),
-					"Liquid engine must fall back to single.json when single.json.liquid missing")
-			})
-
-			It("falls back to default.xml when default.xml.liquid missing", func() {
-				layoutsDir := createLayoutsDir("default.xml")
-				page := &content.Page{
-					RelPath:     "blog/index.md",
-					Section:     "blog",
-					Outputs:     []string{"html", "xml"},
-					FrontMatter: map[string]interface{}{},
-				}
-				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "xml")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal(filepath.Join(layoutsDir, "default.xml")),
-					"Liquid engine must fall back to default.xml when default.xml.liquid missing")
-			})
-
-			It("prefers .json.liquid over .json when both exist", func() {
-				layoutsDir := createLayoutsDir("single.json.liquid", "single.json")
-				page := &content.Page{
-					RelPath:     "blog/my-post.md",
-					Section:     "blog",
-					Outputs:     []string{"html", "json"},
-					FrontMatter: map[string]interface{}{},
-				}
-				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal(filepath.Join(layoutsDir, "single.json.liquid")),
-					".json.liquid must be preferred over bare .json when both exist")
-			})
-
-			It("falls back to section-specific bare extension format layout", func() {
-				layoutsDir := createLayoutsDir("blog.json")
-				page := &content.Page{
-					RelPath:     "blog/my-post.md",
-					Section:     "blog",
-					Outputs:     []string{"html", "json"},
-					FrontMatter: map[string]interface{}{},
-				}
-				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal(filepath.Join(layoutsDir, "blog.json")),
-					"Liquid engine must fall back to section-specific bare extension format layout")
-			})
-
-			It("falls back to filename-specific bare extension format layout", func() {
-				layoutsDir := createLayoutsDir("my-post.json")
-				page := &content.Page{
-					RelPath:     "blog/my-post.md",
-					Section:     "blog",
-					Outputs:     []string{"html", "json"},
-					FrontMatter: map[string]interface{}{},
-				}
-				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal(filepath.Join(layoutsDir, "my-post.json")),
-					"Liquid engine must fall back to filename-specific bare extension format layout")
-			})
-		})
+		// ── ResolveLayoutForFormat (bare-extension tests moved to ────
+		// "Unified format layout resolution" section — issue #864) ──────
 
 		// ── ResolveTaxonomyLayout ──────────────────────────────────
 
@@ -1035,14 +1293,14 @@ var _ = Describe("ResolveLayout", func() {
 			})
 
 			It("gotemplate ResolveLayoutForFormat does NOT try .liquid files", func() {
-				layoutsDir := createLayoutsDir("single.json.liquid")
+				layoutsDir := createLayoutsDir("default.json.liquid")
 				page := &content.Page{
 					RelPath:     "blog/my-post.md",
 					Section:     "blog",
 					Outputs:     []string{"html", "json"},
 					FrontMatter: map[string]interface{}{},
 				}
-				_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json")
+				_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", map[string]string{})
 				Expect(err).To(HaveOccurred(),
 					"Go engine ResolveLayoutForFormat must never try .liquid files")
 			})
