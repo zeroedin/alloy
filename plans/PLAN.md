@@ -551,7 +551,14 @@ layouts/
 
 If the Liquid engine finds no `.liquid` file, it falls back to the bare extension and parses it as Liquid. This fallback applies to all **automatic** layout lookup candidates — the "post", section-name, filename, and "default" steps in `ResolveLayout`, all candidates in `ResolveLayoutForFormat` and `ResolveTaxonomyLayout`, and parent layout resolution in `ResolveLayoutChain`. At each candidate step, the resolver tries `<name>.liquid` first, then the bare extension form `<name>.html` (or `<name>.json`, `<name>.xml` for format layouts).
 
-**Explicit page-level layout names are not subject to bare-extension fallback.** When a layout name is set deliberately via front matter `layout:` or `_data.yaml` cascade `layout:`, the resolver uses only the engine extension (`.liquid`). If `layout: article` is set and `article.liquid` does not exist, the build errors — the explicit name is treated as deliberate. The resolver does not try `article.html` and does not fall through to automatic candidates. This rule applies only to page-level explicit names; `layout:` directives inside layout files (used for layout chaining) follow automatic-candidate fallback — `base.liquid` then `base.html` — because chain parent references are a layout-internal concern, not a deliberate page-level configuration choice.
+**Explicit layout names distinguish bare names from extension-bearing filenames.** When a layout name is set via front matter `layout:`, `_data.yaml` cascade `layout:`, or layout chain parent references (`layout:` inside layout front matter):
+
+- **Bare name** (no recognized extension) — e.g., `layout: "base"`. The engine resolves it with the same fallback as auto candidates: try `base.liquid` first, then `base.html`. If neither exists, the build errors — the resolver does not fall through to auto candidates. This matches the user intent of naming a layout without specifying a file format.
+- **Extension-bearing name** (has a recognized template/output extension) — e.g., `layout: "base.html"`, `layout: "base.liquid"`, `layout: "feed.xml"`. The name is used as a literal filename. No extension is appended, no fallback is attempted. If the file does not exist, the build errors.
+
+Recognized extensions for this purpose are `.liquid`, `.html`, `.xml`, `.json`, and `.txt` — the template engine extensions and the output format extensions Alloy supports. Any other extension (e.g., `.md`) is treated as part of a bare name.
+
+The same rules apply uniformly to all layout name sources: front matter `layout:`, cascade `_data.yaml` `layout:`, and `layout:` directives inside layout files (layout chaining).
 
 The Go engine only reads bare extension files — it never reads `.liquid` files. Alloy does not inspect file contents to determine the engine — it sends whatever file it finds to the configured engine. If the file contains syntax for the wrong engine, the engine will return a parse error and the build fails. This is the implementor's responsibility, not something Alloy guards against.
 

@@ -421,12 +421,12 @@ var _ = Describe("ResolveLayout", func() {
 		})
 	})
 
-	// ── Liquid bare-extension layout fallback (issue #827) ──────────
+	// ── Liquid bare-extension layout fallback (issue #827, revised #860) ──
 	// PLAN.md §1e: "If the Liquid engine finds no .liquid file, it falls
 	// back to the bare extension and parses it as Liquid."
-	// This fallback applies to all automatic/implicit lookup candidates.
-	// Explicit layout names (front matter layout:, cascade layout:) do
-	// NOT get the fallback — they are deliberate and must hard error.
+	// Bare layout names (no extension) get .liquid → .html fallback.
+	// Extension-bearing names (e.g., "base.html") are used as-is.
+	// Both apply to front matter, cascade, and layout chain sources.
 
 	Describe("Liquid bare-extension layout fallback (issue #827)", func() {
 
@@ -504,19 +504,20 @@ var _ = Describe("ResolveLayout", func() {
 					"Liquid engine must fall back to filename.html when filename.liquid missing")
 			})
 
-			It("errors for explicit front matter layout when .liquid missing (no bare-extension fallback)", func() {
-				// layout: "custom" set explicitly — only custom.liquid should be tried,
-				// NOT custom.html. Explicit names are deliberate — missing = hard error,
-				// even when auto candidates (default.liquid) exist.
+			It("falls back to custom.html for bare front matter layout when custom.liquid missing", func() {
+				// layout: "custom" is a bare name (no extension) — gets .liquid → .html
+				// fallback, same as auto candidates. Must find custom.html, not error.
 				layoutsDir := createLayoutsDir("custom.html", "default.liquid")
 				page := &content.Page{
 					RelPath:     "docs/guide.md",
 					Section:     "docs",
 					FrontMatter: map[string]interface{}{"layout": "custom"},
 				}
-				_, err := tmpl.ResolveLayout(page, layoutsDir, "liquid", map[string]string{})
-				Expect(err).To(HaveOccurred(),
-					"explicit front matter layout must error when .liquid missing — must not try bare extension or fall through to auto candidates")
+				result, err := tmpl.ResolveLayout(page, layoutsDir, "liquid", map[string]string{})
+				Expect(err).NotTo(HaveOccurred(),
+					"bare front matter layout name must fall back to .html when .liquid missing")
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "custom.html")),
+					"bare front matter layout 'custom' must resolve to custom.html via fallback")
 			})
 
 			It("per-candidate interleaving: post.html wins over my-post.liquid", func() {
@@ -555,6 +556,102 @@ var _ = Describe("ResolveLayout", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result).To(Equal(filepath.Join(layoutsDir, "my-post.html")),
 					"Liquid engine must fall back to my-post.html for date-based section filename step")
+			})
+		})
+
+		// ── Extension-bearing layout names (issue #860) ──────────────
+
+		Describe("Extension-bearing layout names (issue #860)", func() {
+
+			It("resolves layout: 'base.html' to base.html directly without appending .liquid", func() {
+				// Extension-bearing name — used as literal filename. No .liquid appended.
+				layoutsDir := createLayoutsDir("base.html", "base.liquid")
+				page := &content.Page{
+					RelPath:     "docs/guide.md",
+					Section:     "docs",
+					FrontMatter: map[string]interface{}{"layout": "base.html"},
+				}
+				result, err := tmpl.ResolveLayout(page, layoutsDir, "liquid", map[string]string{})
+				Expect(err).NotTo(HaveOccurred(),
+					"extension-bearing layout name must not error when file exists")
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "base.html")),
+					"layout: 'base.html' must resolve to base.html directly — not base.html.liquid, not base.liquid")
+			})
+
+			It("resolves layout: 'base.liquid' to base.liquid directly without double extension", func() {
+				// Extension-bearing name with .liquid — used as-is. Must not produce base.liquid.liquid.
+				layoutsDir := createLayoutsDir("base.liquid")
+				page := &content.Page{
+					RelPath:     "docs/guide.md",
+					Section:     "docs",
+					FrontMatter: map[string]interface{}{"layout": "base.liquid"},
+				}
+				result, err := tmpl.ResolveLayout(page, layoutsDir, "liquid", map[string]string{})
+				Expect(err).NotTo(HaveOccurred(),
+					"extension-bearing .liquid layout name must not error when file exists")
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "base.liquid")),
+					"layout: 'base.liquid' must resolve to base.liquid directly — no double extension")
+			})
+
+			It("errors for extension-bearing layout when file missing", func() {
+				// layout: "missing.html" — extension-bearing, used as literal filename.
+				// File doesn't exist — build error. No fallback, no auto candidates.
+				layoutsDir := createLayoutsDir("default.liquid")
+				page := &content.Page{
+					RelPath:     "docs/guide.md",
+					Section:     "docs",
+					FrontMatter: map[string]interface{}{"layout": "missing.html"},
+				}
+				_, err := tmpl.ResolveLayout(page, layoutsDir, "liquid", map[string]string{})
+				Expect(err).To(HaveOccurred(),
+					"extension-bearing layout with missing file must error — no fallback, no auto candidates")
+			})
+
+			It("resolves layout: 'feed.xml' to feed.xml directly", func() {
+				// Extension-bearing name with output format extension.
+				layoutsDir := createLayoutsDir("feed.xml", "default.liquid")
+				page := &content.Page{
+					RelPath:     "blog/index.md",
+					Section:     "blog",
+					FrontMatter: map[string]interface{}{"layout": "feed.xml"},
+				}
+				result, err := tmpl.ResolveLayout(page, layoutsDir, "liquid", map[string]string{})
+				Expect(err).NotTo(HaveOccurred(),
+					"extension-bearing .xml layout name must not error when file exists")
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "feed.xml")),
+					"layout: 'feed.xml' must resolve to feed.xml directly — recognized output format extension")
+			})
+
+			It("resolves extension-bearing cascade layout: 'sidebar.html' directly", func() {
+				// Extension-bearing name via cascade — same literal filename behavior.
+				layoutsDir := createLayoutsDir("sidebar.html", "default.liquid")
+				page := &content.Page{
+					RelPath:     "docs/guide.md",
+					Section:     "docs",
+					FrontMatter: map[string]interface{}{},
+				}
+				cascadeData := map[string]interface{}{
+					"layout": "sidebar.html",
+				}
+				result, err := tmpl.ResolveLayoutWithCascade(page, layoutsDir, "liquid", map[string]string{}, cascadeData)
+				Expect(err).NotTo(HaveOccurred(),
+					"extension-bearing cascade layout must resolve directly when file exists")
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "sidebar.html")),
+					"cascade layout: 'sidebar.html' must resolve to sidebar.html directly")
+			})
+
+			It("errors for bare name when neither .liquid nor .html exists", func() {
+				// layout: "article" — bare name, tries article.liquid then article.html.
+				// Neither exists — must error, must not fall through to auto candidates.
+				layoutsDir := createLayoutsDir("default.liquid")
+				page := &content.Page{
+					RelPath:     "docs/guide.md",
+					Section:     "docs",
+					FrontMatter: map[string]interface{}{"layout": "article"},
+				}
+				_, err := tmpl.ResolveLayout(page, layoutsDir, "liquid", map[string]string{})
+				Expect(err).To(HaveOccurred(),
+					"bare layout name must error when neither .liquid nor .html exists — must not fall through to auto candidates")
 			})
 		})
 
@@ -767,10 +864,9 @@ var _ = Describe("ResolveLayout", func() {
 
 		Describe("ResolveLayoutWithCascade", func() {
 
-			It("errors for explicit cascade layout when .liquid missing (no bare-extension fallback)", func() {
-				// Cascade sets layout: "article" — only article.html exists, not article.liquid.
-				// Explicit names are deliberate — missing = hard error. Must not try
-				// bare extension, must not fall through to auto candidates.
+			It("falls back to article.html for bare cascade layout when article.liquid missing", func() {
+				// Cascade sets layout: "article" — a bare name (no extension).
+				// Gets .liquid → .html fallback. Must find article.html, not error.
 				layoutsDir := createLayoutsDir("article.html", "default.liquid")
 				page := &content.Page{
 					RelPath:     "blog/my-post.md",
@@ -780,23 +876,27 @@ var _ = Describe("ResolveLayout", func() {
 				cascadeData := map[string]interface{}{
 					"layout": "article",
 				}
-				_, err := tmpl.ResolveLayoutWithCascade(page, layoutsDir, "liquid", map[string]string{}, cascadeData)
-				Expect(err).To(HaveOccurred(),
-					"explicit cascade layout must error when .liquid missing — must not try bare extension or fall through")
+				result, err := tmpl.ResolveLayoutWithCascade(page, layoutsDir, "liquid", map[string]string{}, cascadeData)
+				Expect(err).NotTo(HaveOccurred(),
+					"bare cascade layout name must fall back to .html when .liquid missing")
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "article.html")),
+					"bare cascade layout 'article' must resolve to article.html via fallback")
 			})
 
-			It("errors for explicit front matter layout via cascade path when .liquid missing", func() {
-				// Front matter layout: "custom" via ResolveLayoutWithCascade — same
-				// hard-error semantics as cascade layout names.
+			It("falls back to custom.html for bare front matter layout via cascade path when custom.liquid missing", func() {
+				// Front matter layout: "custom" via ResolveLayoutWithCascade — bare name,
+				// gets .liquid → .html fallback same as direct ResolveLayout path.
 				layoutsDir := createLayoutsDir("custom.html", "default.liquid")
 				page := &content.Page{
 					RelPath:     "blog/my-post.md",
 					Section:     "blog",
 					FrontMatter: map[string]interface{}{"layout": "custom"},
 				}
-				_, err := tmpl.ResolveLayoutWithCascade(page, layoutsDir, "liquid", map[string]string{}, nil)
-				Expect(err).To(HaveOccurred(),
-					"explicit front matter layout via ResolveLayoutWithCascade must error when .liquid missing")
+				result, err := tmpl.ResolveLayoutWithCascade(page, layoutsDir, "liquid", map[string]string{}, nil)
+				Expect(err).NotTo(HaveOccurred(),
+					"bare front matter layout via ResolveLayoutWithCascade must fall back to .html when .liquid missing")
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "custom.html")),
+					"bare front matter layout 'custom' via cascade path must resolve to custom.html via fallback")
 			})
 
 			It("falls through to ResolveLayout bare-extension fallback when no explicit layout set", func() {
