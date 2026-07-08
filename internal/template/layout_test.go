@@ -935,7 +935,7 @@ var _ = Describe("ResolveLayout", func() {
 
 				// child.liquid references "base.html" — extension-bearing
 				err = os.WriteFile(filepath.Join(dir, "child.liquid"),
-					[]byte(fmt.Sprintf("---\nlayout: \"base.html\"\n---\n<main>{{ content }}</main>")), 0644)
+					[]byte("---\nlayout: \"base.html\"\n---\n<main>{{ content }}</main>"), 0644)
 				Expect(err).NotTo(HaveOccurred())
 
 				chain, err := tmpl.ResolveLayoutChain(filepath.Join(dir, "child.liquid"), dir, "liquid")
@@ -953,7 +953,7 @@ var _ = Describe("ResolveLayout", func() {
 
 				// child.liquid references "gone.html" — extension-bearing, file doesn't exist
 				err = os.WriteFile(filepath.Join(dir, "child.liquid"),
-					[]byte(fmt.Sprintf("---\nlayout: \"gone.html\"\n---\n<main>{{ content }}</main>")), 0644)
+					[]byte("---\nlayout: \"gone.html\"\n---\n<main>{{ content }}</main>"), 0644)
 				Expect(err).NotTo(HaveOccurred())
 
 				_, err = tmpl.ResolveLayoutChain(filepath.Join(dir, "child.liquid"), dir, "liquid")
