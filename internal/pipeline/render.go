@@ -266,7 +266,7 @@ func renderPageFormats(page *content.Page, layoutsDir, engineName string, rc *Re
 		if format == "html" {
 			continue
 		}
-		fmtLayoutPath, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, engineName, format)
+		fmtLayoutPath, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, engineName, format, rc.Cfg.Permalinks)
 		if err != nil {
 			return fmt.Errorf("no %s layout found for %s: %w", format, page.RelPath, err)
 		}

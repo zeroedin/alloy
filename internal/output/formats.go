@@ -1,8 +1,6 @@
 package output
 
 import (
-	"path/filepath"
-
 	"github.com/zeroedin/alloy/internal/content"
 )
 
@@ -15,20 +13,3 @@ func ResolveOutputFormat(page *content.Page) string {
 	return "html"
 }
 
-// ResolveFormatLayout finds the layout file for a specific output format.
-// Lookup: layouts/<layout>.<format>.<engine-ext> → layouts/<layout>.<format>
-func ResolveFormatLayout(page *content.Page, format string, layoutsDir string, engine string) (string, error) {
-	ext := ".liquid"
-	if engine == "gotemplate" {
-		ext = ".html"
-	}
-
-	layout := page.Layout
-	if layout == "" {
-		layout = "single"
-	}
-
-	// Primary: <layout>.<format>.<engine-ext>
-	primary := filepath.Join(layoutsDir, layout+"."+format+ext)
-	return primary, nil
-}

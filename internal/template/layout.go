@@ -142,13 +142,73 @@ func ResolveLayout(page *content.Page, layoutsDir string, engine string, permali
 }
 
 // ResolveLayoutForFormat finds the correct layout for a specific output format.
+// Mirrors ResolveLayout with the output format infixed before the engine extension.
+// One algorithm, one lookup order — no "single" concept.
 // For the Liquid engine, each candidate tries .format.liquid then bare .format.
-func ResolveLayoutForFormat(page *content.Page, layoutsDir string, engine string, format string) (string, error) {
+func ResolveLayoutForFormat(page *content.Page, layoutsDir string, engine string, format string, permalinkCfg map[string]string) (string, error) {
+	if val, ok := page.FrontMatter["layout"]; ok {
+		if b, ok := val.(bool); ok && !b {
+			return "", nil
+		}
+	}
+
+	if layout, ok := page.FrontMatter["layout"].(string); ok && layout != "" {
+		if path, found := resolveFirstExisting(formatLayoutCandidates(layoutsDir, layout, format, engine)); found {
+			return path, nil
+		}
+	}
+
 	var candidates []string
 
-	candidates = append(candidates, formatLayoutCandidates(layoutsDir, "single", format, engine)...)
+	if isDateBasedSection(page.Section, permalinkCfg) && !isIndexPage(page.RelPath) {
+		candidates = append(candidates, formatLayoutCandidates(layoutsDir, "post", format, engine)...)
+	}
 
-	if page.Section != "" {
+	if isIndexPage(page.RelPath) && page.Section != "" {
+		candidates = append(candidates, formatLayoutCandidates(layoutsDir, page.Section, format, engine)...)
+	}
+
+	filename := filenameWithoutExt(page.RelPath)
+	candidates = append(candidates, formatLayoutCandidates(layoutsDir, filename, format, engine)...)
+
+	candidates = append(candidates, formatLayoutCandidates(layoutsDir, "default", format, engine)...)
+
+	if path, ok := resolveFirstExisting(candidates); ok {
+		return path, nil
+	}
+	return "", fmt.Errorf("no layout found for page %q with format %q", page.RelPath, format)
+}
+
+// ResolveLayoutForFormatWithCascade resolves format layout considering cascade data.
+// Mirrors ResolveLayoutWithCascade with the output format infixed.
+func ResolveLayoutForFormatWithCascade(page *content.Page, layoutsDir, engine, format string, permalinkCfg map[string]string, cascadeData map[string]interface{}) (string, error) {
+	if val, ok := page.FrontMatter["layout"]; ok {
+		if b, ok := val.(bool); ok && !b {
+			return "", nil
+		}
+	}
+
+	if layout, ok := page.FrontMatter["layout"].(string); ok && layout != "" {
+		if path, found := resolveFirstExisting(formatLayoutCandidates(layoutsDir, layout, format, engine)); found {
+			return path, nil
+		}
+	}
+
+	if cascadeData != nil {
+		if layout, ok := cascadeData["layout"].(string); ok && layout != "" {
+			if path, found := resolveFirstExisting(formatLayoutCandidates(layoutsDir, layout, format, engine)); found {
+				return path, nil
+			}
+		}
+	}
+
+	var candidates []string
+
+	if isDateBasedSection(page.Section, permalinkCfg) && !isIndexPage(page.RelPath) {
+		candidates = append(candidates, formatLayoutCandidates(layoutsDir, "post", format, engine)...)
+	}
+
+	if isIndexPage(page.RelPath) && page.Section != "" {
 		candidates = append(candidates, formatLayoutCandidates(layoutsDir, page.Section, format, engine)...)
 	}
 
