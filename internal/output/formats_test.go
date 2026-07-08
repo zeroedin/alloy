@@ -36,29 +36,8 @@ var _ = Describe("Output Formats", func() {
 		})
 	})
 
-	// ── Template file extension mapping (Liquid) ──────────────────────
-
-	Context("Template file extension mapping (Liquid)", func() {
-		It("looks for single.json.liquid for json format", func() {
-			page := &content.Page{
-				Section:     "blog",
-				Layout:      "single",
-				FrontMatter: map[string]interface{}{"title": "JSON Page"},
-			}
-			layoutPath, err := output.ResolveFormatLayout(page, "json", "layouts", "liquid")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(layoutPath).To(ContainSubstring("single.json.liquid"))
-		})
-
-		It("falls back to single.json if .liquid not found", func() {
-			page := &content.Page{
-				Section:     "blog",
-				Layout:      "single",
-				FrontMatter: map[string]interface{}{"title": "JSON Fallback"},
-			}
-			layoutPath, err := output.ResolveFormatLayout(page, "json", "layouts", "liquid")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(layoutPath).To(ContainSubstring("single.json"))
-		})
-	})
+	// ── Template file extension mapping (issue #864) ─────────────────
+	// ResolveFormatLayout was deleted — format layout resolution is now
+	// unified with the standard chain in internal/template.ResolveLayoutForFormat.
+	// See layout_test.go "Unified format layout resolution" for coverage.
 })

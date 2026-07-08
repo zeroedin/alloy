@@ -387,7 +387,6 @@ var _ = Describe("Cross-Cutting Integration", func() {
 			page := &content.Page{
 				RelPath:     "blog/post.md",
 				Section:     "blog",
-				Layout:      "single",
 				Outputs:     []string{"html", "json"},
 				FrontMatter: map[string]interface{}{"title": "Multi-format Post"},
 			}
@@ -402,24 +401,20 @@ var _ = Describe("Cross-Cutting Integration", func() {
 			Expect(page.Outputs).To(ContainElements("html", "json"))
 		})
 
-		It("format-specific layout resolves for non-HTML format", func() {
+		It("format-specific layout uses unified chain (issue #864)", func() {
 			page := &content.Page{
 				RelPath:     "blog/post.md",
 				Section:     "blog",
-				Layout:      "single",
 				FrontMatter: map[string]interface{}{"title": "JSON Post"},
 			}
 
-			// JSON format should resolve to single.json.liquid
-			layoutPath, err := output.ResolveFormatLayout(page, "json", "layouts", "liquid")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(layoutPath).To(ContainSubstring("single.json.liquid"),
-				"JSON format must resolve to format-specific layout")
-
-			// template package also has format-aware layout resolution
-			_, err = template.ResolveLayoutForFormat(page, "layouts", "liquid", "json")
-			// Error expected since layouts dir doesn't exist on disk — but the function must be callable
-			_ = err
+			// Unified format layout resolution uses the same chain as HTML
+			// with format infixed — no "single" concept. The function now
+			// requires permalinkCfg to detect date-based sections.
+			// "layouts" dir doesn't exist on disk — must return an error.
+			_, err := template.ResolveLayoutForFormat(page, "layouts", "liquid", "json", map[string]string{})
+			Expect(err).To(HaveOccurred(),
+				"format layout resolution must error when layouts directory does not exist")
 		})
 
 		It("output path uses format extension instead of html", func() {

@@ -141,14 +141,46 @@ func ResolveLayout(page *content.Page, layoutsDir string, engine string, permali
 	return "", fmt.Errorf("no layout found for page %q", page.RelPath)
 }
 
+// resolveNamedFormatLayout resolves an explicit layout name for a format output.
+// Extension-bearing names (e.g., "feed.xml") are used as literal filenames.
+// Bare names get format infixed via formatLayoutCandidates.
+func resolveNamedFormatLayout(layoutsDir, name, format, engine string) (string, bool) {
+	if hasRecognizedExtension(name) {
+		path := filepath.Join(layoutsDir, name)
+		if _, err := os.Stat(path); err == nil {
+			return path, true
+		}
+		return "", false
+	}
+	return resolveFirstExisting(formatLayoutCandidates(layoutsDir, name, format, engine))
+}
+
 // ResolveLayoutForFormat finds the correct layout for a specific output format.
+// Mirrors ResolveLayout with the output format infixed before the engine extension.
+// One algorithm, one lookup order — no "single" concept.
 // For the Liquid engine, each candidate tries .format.liquid then bare .format.
-func ResolveLayoutForFormat(page *content.Page, layoutsDir string, engine string, format string) (string, error) {
+func ResolveLayoutForFormat(page *content.Page, layoutsDir string, engine string, format string, permalinkCfg map[string]string) (string, error) {
+	if val, ok := page.FrontMatter["layout"]; ok {
+		if b, ok := val.(bool); ok && !b {
+			return "", nil
+		}
+	}
+
+	if layout, ok := page.FrontMatter["layout"].(string); ok && layout != "" {
+		resolved, found := resolveNamedFormatLayout(layoutsDir, layout, format, engine)
+		if found {
+			return resolved, nil
+		}
+		return "", fmt.Errorf("layout %q not found for page %q with format %q", layout, page.RelPath, format)
+	}
+
 	var candidates []string
 
-	candidates = append(candidates, formatLayoutCandidates(layoutsDir, "single", format, engine)...)
+	if isDateBasedSection(page.Section, permalinkCfg) && !isIndexPage(page.RelPath) {
+		candidates = append(candidates, formatLayoutCandidates(layoutsDir, "post", format, engine)...)
+	}
 
-	if page.Section != "" {
+	if isIndexPage(page.RelPath) && page.Section != "" {
 		candidates = append(candidates, formatLayoutCandidates(layoutsDir, page.Section, format, engine)...)
 	}
 
@@ -161,6 +193,37 @@ func ResolveLayoutForFormat(page *content.Page, layoutsDir string, engine string
 		return path, nil
 	}
 	return "", fmt.Errorf("no layout found for page %q with format %q", page.RelPath, format)
+}
+
+// ResolveLayoutForFormatWithCascade resolves format layout considering cascade data.
+// Mirrors ResolveLayoutWithCascade with the output format infixed.
+// Delegates to ResolveLayoutForFormat for auto candidates.
+func ResolveLayoutForFormatWithCascade(page *content.Page, layoutsDir, engine, format string, permalinkCfg map[string]string, cascadeData map[string]interface{}) (string, error) {
+	if val, ok := page.FrontMatter["layout"]; ok {
+		if b, ok := val.(bool); ok && !b {
+			return "", nil
+		}
+	}
+
+	if layout, ok := page.FrontMatter["layout"].(string); ok && layout != "" {
+		resolved, found := resolveNamedFormatLayout(layoutsDir, layout, format, engine)
+		if found {
+			return resolved, nil
+		}
+		return "", fmt.Errorf("layout %q not found for page %q with format %q", layout, page.RelPath, format)
+	}
+
+	if cascadeData != nil {
+		if layout, ok := cascadeData["layout"].(string); ok && layout != "" {
+			resolved, found := resolveNamedFormatLayout(layoutsDir, layout, format, engine)
+			if found {
+				return resolved, nil
+			}
+			return "", fmt.Errorf("layout %q not found for page %q with format %q", layout, page.RelPath, format)
+		}
+	}
+
+	return ResolveLayoutForFormat(page, layoutsDir, engine, format, permalinkCfg)
 }
 
 // ResolveTaxonomyLayout finds the layout for a taxonomy page.
