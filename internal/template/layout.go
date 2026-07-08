@@ -57,8 +57,18 @@ func formatLayoutCandidates(dir, name, format, engine string) []string {
 	return []string{filepath.Join(dir, name+"."+format+layoutExtension(engine))}
 }
 
+// resolveExplicitLayout checks whether an explicitly-named layout file exists.
+// Returns its path if found, or an error if missing.
+func resolveExplicitLayout(layoutsDir, name, ext, pageRelPath string) (string, error) {
+	path := filepath.Join(layoutsDir, name+ext)
+	if _, err := os.Stat(path); err == nil {
+		return path, nil
+	}
+	return "", fmt.Errorf("layout %q not found for page %q", name+ext, pageRelPath)
+}
+
 // ResolveLayout finds the correct layout file for a page following the lookup order:
-// 1. Front matter layout (explicit — strict, no bare-extension fallback)
+// 1. Front matter layout (explicit — Liquid: strict hard error; gotemplate: fall through)
 // 2. "post" (for pages in date-based permalink sections)
 // 3. Section name (for index pages)
 // 4. Filename (without extension)
@@ -76,13 +86,17 @@ func ResolveLayout(page *content.Page, layoutsDir string, engine string, permali
 		}
 	}
 
-	// 1. Explicit front matter layout — strict, no bare-extension fallback
+	// 1. Explicit front matter layout
 	if layout, ok := page.FrontMatter["layout"].(string); ok && layout != "" {
-		path := filepath.Join(layoutsDir, layout+ext)
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
+		resolved, err := resolveExplicitLayout(layoutsDir, layout, ext, page.RelPath)
+		if err == nil {
+			return resolved, nil
 		}
-		return "", fmt.Errorf("layout %q not found for page %q", layout+ext, page.RelPath)
+		// Liquid engine: strict — hard error, no fallback to auto candidates
+		if engine == "liquid" {
+			return "", err
+		}
+		// Other engines: fall through to auto candidates (preserves pre-existing behavior)
 	}
 
 	// 2-5. Auto candidates with per-candidate interleaved fallback
@@ -289,21 +303,13 @@ func ResolveLayoutWithCascade(page *content.Page, layoutsDir, engine string, per
 
 	// 1. Explicit front matter layout — strict, no bare-extension fallback
 	if layout, ok := page.FrontMatter["layout"].(string); ok && layout != "" {
-		path := filepath.Join(layoutsDir, layout+ext)
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
-		}
-		return "", fmt.Errorf("layout %q not found for page %q", layout+ext, page.RelPath)
+		return resolveExplicitLayout(layoutsDir, layout, ext, page.RelPath)
 	}
 
 	// 2. Explicit cascade layout — strict, no bare-extension fallback
 	if cascadeData != nil {
 		if layout, ok := cascadeData["layout"].(string); ok && layout != "" {
-			path := filepath.Join(layoutsDir, layout+ext)
-			if _, err := os.Stat(path); err == nil {
-				return path, nil
-			}
-			return "", fmt.Errorf("layout %q not found for page %q", layout+ext, page.RelPath)
+			return resolveExplicitLayout(layoutsDir, layout, ext, page.RelPath)
 		}
 	}
 
