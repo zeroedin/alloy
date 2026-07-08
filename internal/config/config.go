@@ -73,9 +73,18 @@ type ContentConfig struct {
 	Markdown MarkdownConfig `yaml:"markdown" toml:"markdown" json:"markdown"`
 }
 
-// MarkdownConfig holds goldmark options.
+// MarkdownConfig holds goldmark options and Alloy-level markdown settings.
+// TOC uses *bool so ApplyDefaults can distinguish "not set" (nil → true)
+// from "explicitly false".
 type MarkdownConfig struct {
+	TOC      *bool          `yaml:"toc" toml:"toc" json:"toc"`
 	Goldmark GoldmarkConfig `yaml:"goldmark" toml:"goldmark" json:"goldmark"`
+}
+
+// TOCValue returns the effective TOC setting.
+// nil (omitted) defaults to true; only explicit false disables.
+func (m *MarkdownConfig) TOCValue() bool {
+	return m.TOC == nil || *m.TOC
 }
 
 // GoldmarkConfig holds goldmark-specific options.
