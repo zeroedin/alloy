@@ -21,7 +21,7 @@ func resolveFirstExisting(candidates []string) (string, bool) {
 	return "", false
 }
 
-// layoutExtension returns the file extension for the given template engine.
+// layoutExtension returns the primary file extension for the given template engine.
 func layoutExtension(engine string) string {
 	switch engine {
 	case "gotemplate":
@@ -31,12 +31,40 @@ func layoutExtension(engine string) string {
 	}
 }
 
+// layoutCandidates returns the file paths to try for an automatic layout candidate.
+// For the Liquid engine, each candidate tries .liquid first then bare .html (per-candidate interleaving).
+// For gotemplate, only the native .html extension is used.
+func layoutCandidates(dir, name, engine string) []string {
+	if engine == "liquid" {
+		return []string{
+			filepath.Join(dir, name+".liquid"),
+			filepath.Join(dir, name+".html"),
+		}
+	}
+	return []string{filepath.Join(dir, name+layoutExtension(engine))}
+}
+
+// formatLayoutCandidates returns file paths for a format-specific layout candidate.
+// For Liquid: tries name.format.liquid then name.format (bare extension).
+// For gotemplate: tries name.format.html.
+func formatLayoutCandidates(dir, name, format, engine string) []string {
+	if engine == "liquid" {
+		return []string{
+			filepath.Join(dir, name+"."+format+".liquid"),
+			filepath.Join(dir, name+"."+format),
+		}
+	}
+	return []string{filepath.Join(dir, name+"."+format+layoutExtension(engine))}
+}
+
 // ResolveLayout finds the correct layout file for a page following the lookup order:
-// 1. Front matter layout
+// 1. Front matter layout (explicit — strict, no bare-extension fallback)
 // 2. "post" (for pages in date-based permalink sections)
 // 3. Section name (for index pages)
 // 4. Filename (without extension)
 // 5. "default"
+// For the Liquid engine, auto candidates (steps 2-5) try .liquid then bare .html
+// per candidate before moving to the next candidate (per-candidate interleaving).
 // Returns error if no layout file is found on disk.
 func ResolveLayout(page *content.Page, layoutsDir string, engine string, permalinkCfg map[string]string) (string, error) {
 	ext := layoutExtension(engine)
@@ -48,30 +76,30 @@ func ResolveLayout(page *content.Page, layoutsDir string, engine string, permali
 		}
 	}
 
-	// Build lookup chain
+	// 1. Explicit front matter layout — strict, no bare-extension fallback
+	if layout, ok := page.FrontMatter["layout"].(string); ok && layout != "" {
+		path := filepath.Join(layoutsDir, layout+ext)
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+		return "", fmt.Errorf("layout %q not found for page %q", layout+ext, page.RelPath)
+	}
+
+	// 2-5. Auto candidates with per-candidate interleaved fallback
 	var candidates []string
 
-	// 1. Front matter layout
-	if layout, ok := page.FrontMatter["layout"].(string); ok && layout != "" {
-		candidates = append(candidates, filepath.Join(layoutsDir, layout+ext))
-	}
-
-	// 2. For pages in date-based permalink sections, try "post" layout
 	if isDateBasedSection(page.Section, permalinkCfg) && !isIndexPage(page.RelPath) {
-		candidates = append(candidates, filepath.Join(layoutsDir, "post"+ext))
+		candidates = append(candidates, layoutCandidates(layoutsDir, "post", engine)...)
 	}
 
-	// 3. Section name (for index pages)
 	if isIndexPage(page.RelPath) && page.Section != "" {
-		candidates = append(candidates, filepath.Join(layoutsDir, page.Section+ext))
+		candidates = append(candidates, layoutCandidates(layoutsDir, page.Section, engine)...)
 	}
 
-	// 4. Filename (without extension)
 	filename := filenameWithoutExt(page.RelPath)
-	candidates = append(candidates, filepath.Join(layoutsDir, filename+ext))
+	candidates = append(candidates, layoutCandidates(layoutsDir, filename, engine)...)
 
-	// 5. Default
-	candidates = append(candidates, filepath.Join(layoutsDir, "default"+ext))
+	candidates = append(candidates, layoutCandidates(layoutsDir, "default", engine)...)
 
 	if path, ok := resolveFirstExisting(candidates); ok {
 		return path, nil
@@ -80,25 +108,20 @@ func ResolveLayout(page *content.Page, layoutsDir string, engine string, permali
 }
 
 // ResolveLayoutForFormat finds the correct layout for a specific output format.
+// For the Liquid engine, each candidate tries .format.liquid then bare .format.
 func ResolveLayoutForFormat(page *content.Page, layoutsDir string, engine string, format string) (string, error) {
-	ext := layoutExtension(engine)
-
 	var candidates []string
 
-	// Format-specific layout: single.<format>.<engine-ext>
-	candidates = append(candidates, filepath.Join(layoutsDir, "single."+format+ext))
+	candidates = append(candidates, formatLayoutCandidates(layoutsDir, "single", format, engine)...)
 
-	// Section-specific format layout
 	if page.Section != "" {
-		candidates = append(candidates, filepath.Join(layoutsDir, page.Section+"."+format+ext))
+		candidates = append(candidates, formatLayoutCandidates(layoutsDir, page.Section, format, engine)...)
 	}
 
-	// Filename-specific format layout
 	filename := filenameWithoutExt(page.RelPath)
-	candidates = append(candidates, filepath.Join(layoutsDir, filename+"."+format+ext))
+	candidates = append(candidates, formatLayoutCandidates(layoutsDir, filename, format, engine)...)
 
-	// Default format layout
-	candidates = append(candidates, filepath.Join(layoutsDir, "default."+format+ext))
+	candidates = append(candidates, formatLayoutCandidates(layoutsDir, "default", format, engine)...)
 
 	if path, ok := resolveFirstExisting(candidates); ok {
 		return path, nil
@@ -107,18 +130,17 @@ func ResolveLayoutForFormat(page *content.Page, layoutsDir string, engine string
 }
 
 // ResolveTaxonomyLayout finds the layout for a taxonomy page.
-// Lookup: layouts/taxonomies/<name>.<ext> → layouts/<name>.<ext>
+// Lookup per candidate: taxonomies/<name> then root <name>, with per-candidate
+// .liquid → .html interleaving for the Liquid engine.
 func ResolveTaxonomyLayout(taxonomyName string, layoutOverride string, layoutsDir string, engine string) (string, error) {
-	ext := layoutExtension(engine)
 	name := taxonomyName
 	if layoutOverride != "" {
 		name = layoutOverride
 	}
 
-	candidates := []string{
-		filepath.Join(layoutsDir, "taxonomies", name+ext),
-		filepath.Join(layoutsDir, name+ext),
-	}
+	var candidates []string
+	candidates = append(candidates, layoutCandidates(filepath.Join(layoutsDir, "taxonomies"), name, engine)...)
+	candidates = append(candidates, layoutCandidates(layoutsDir, name, engine)...)
 
 	if path, ok := resolveFirstExisting(candidates); ok {
 		return path, nil
@@ -227,10 +249,10 @@ func StripLayoutFrontMatter(s string) string {
 
 // ResolveLayoutChain follows layout: directives in layout front matter to build
 // the full chain from innermost to root. Returns the ordered list of layout file paths.
+// For the Liquid engine, parent resolution tries .liquid then bare .html.
 // Returns error if the chain exceeds maxDepth (10) or if a referenced layout is not found.
 func ResolveLayoutChain(layoutPath string, layoutsDir string, engine string) ([]string, error) {
 	const maxDepth = 10
-	ext := layoutExtension(engine)
 	chain := []string{layoutPath}
 
 	current := layoutPath
@@ -239,8 +261,8 @@ func ResolveLayoutChain(layoutPath string, layoutsDir string, engine string) ([]
 		if parent == "" {
 			return chain, nil
 		}
-		parentPath := filepath.Join(layoutsDir, parent+ext)
-		if _, err := os.Stat(parentPath); err != nil {
+		parentPath, found := resolveFirstExisting(layoutCandidates(layoutsDir, parent, engine))
+		if !found {
 			return nil, fmt.Errorf("parent layout %q not found (referenced from %s)", parent, filepath.Base(current))
 		}
 		chain = append(chain, parentPath)
@@ -251,6 +273,10 @@ func ResolveLayoutChain(layoutPath string, layoutsDir string, engine string) ([]
 }
 
 // ResolveLayoutWithCascade resolves layout considering cascade data.
+// Explicit layout names (front matter or cascade) are strict — only the engine's
+// primary extension is tried, and missing = hard error with no fallback.
+// When no explicit layout is set, falls through to ResolveLayout which applies
+// bare-extension fallback for auto candidates.
 func ResolveLayoutWithCascade(page *content.Page, layoutsDir, engine string, permalinkCfg map[string]string, cascadeData map[string]interface{}) (string, error) {
 	ext := layoutExtension(engine)
 
@@ -261,19 +287,27 @@ func ResolveLayoutWithCascade(page *content.Page, layoutsDir, engine string, per
 		}
 	}
 
-	// 1. Front matter layout takes priority
+	// 1. Explicit front matter layout — strict, no bare-extension fallback
 	if layout, ok := page.FrontMatter["layout"].(string); ok && layout != "" {
-		return filepath.Join(layoutsDir, layout+ext), nil
+		path := filepath.Join(layoutsDir, layout+ext)
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+		return "", fmt.Errorf("layout %q not found for page %q", layout+ext, page.RelPath)
 	}
 
-	// 2. Cascade data layout
+	// 2. Explicit cascade layout — strict, no bare-extension fallback
 	if cascadeData != nil {
 		if layout, ok := cascadeData["layout"].(string); ok && layout != "" {
-			return filepath.Join(layoutsDir, layout+ext), nil
+			path := filepath.Join(layoutsDir, layout+ext)
+			if _, err := os.Stat(path); err == nil {
+				return path, nil
+			}
+			return "", fmt.Errorf("layout %q not found for page %q", layout+ext, page.RelPath)
 		}
 	}
 
-	// 3. Fall back to standard resolution
+	// 3. Fall back to standard resolution (with bare-extension fallback for auto candidates)
 	return ResolveLayout(page, layoutsDir, engine, permalinkCfg)
 }
 
