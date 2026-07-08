@@ -411,10 +411,10 @@ var _ = Describe("Cross-Cutting Integration", func() {
 			// Unified format layout resolution uses the same chain as HTML
 			// with format infixed — no "single" concept. The function now
 			// requires permalinkCfg to detect date-based sections.
+			// "layouts" dir doesn't exist on disk — must return an error.
 			_, err := template.ResolveLayoutForFormat(page, "layouts", "liquid", "json", map[string]string{})
-			// Error expected since layouts dir doesn't exist on disk — but the function must be callable
-			// with the new 5-arg signature (page, layoutsDir, engine, format, permalinkCfg)
-			_ = err
+			Expect(err).To(HaveOccurred(),
+				"format layout resolution must error when layouts directory does not exist")
 		})
 
 		It("output path uses format extension instead of html", func() {

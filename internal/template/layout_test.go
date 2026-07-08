@@ -435,14 +435,18 @@ var _ = Describe("ResolveLayout", func() {
 			})
 
 			Context("index page format chain (content/blog/index.html, xml)", func() {
-				It("falls back to blog.xml.liquid for section index (step 2)", func() {
-					layoutsDir := createLayoutsDir("blog.xml.liquid", "index.xml.liquid", "default.xml.liquid")
-					page := &content.Page{
+				newIndexPage := func() *content.Page {
+					return &content.Page{
 						RelPath:     "blog/index.html",
 						Section:     "blog",
 						Outputs:     []string{"html", "xml"},
 						FrontMatter: map[string]interface{}{},
 					}
+				}
+
+				It("falls back to blog.xml.liquid for section index (step 2)", func() {
+					layoutsDir := createLayoutsDir("blog.xml.liquid", "index.xml.liquid", "default.xml.liquid")
+					page := newIndexPage()
 					result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "xml", permalinkCfg)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result).To(Equal(filepath.Join(layoutsDir, "blog.xml.liquid")),
@@ -451,16 +455,31 @@ var _ = Describe("ResolveLayout", func() {
 
 				It("falls back to index.xml.liquid when section layout missing (step 3)", func() {
 					layoutsDir := createLayoutsDir("index.xml.liquid", "default.xml.liquid")
-					page := &content.Page{
-						RelPath:     "blog/index.html",
-						Section:     "blog",
-						Outputs:     []string{"html", "xml"},
-						FrontMatter: map[string]interface{}{},
-					}
+					page := newIndexPage()
 					result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "xml", permalinkCfg)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result).To(Equal(filepath.Join(layoutsDir, "index.xml.liquid")),
 						"filename match (index.xml.liquid) must be tried when section layout missing")
+				})
+
+				It("falls back to default.xml.liquid as final fallback (step 4)", func() {
+					layoutsDir := createLayoutsDir("default.xml.liquid")
+					page := newIndexPage()
+					result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "xml", permalinkCfg)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(result).To(Equal(filepath.Join(layoutsDir, "default.xml.liquid")),
+						"default with format infixed must be final fallback for index pages")
+				})
+
+				It("returns build error when no format layout found (step 5)", func() {
+					layoutsDir := createLayoutsDir()
+					page := newIndexPage()
+					_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "xml", permalinkCfg)
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(SatisfyAny(
+						ContainSubstring("no layout"),
+						ContainSubstring("not found"),
+					))
 				})
 			})
 		})
@@ -583,6 +602,40 @@ var _ = Describe("ResolveLayout", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result).To(Equal(filepath.Join(layoutsDir, "custom.json.liquid")),
 					"front-matter layout must take priority over cascade in format chain")
+			})
+
+			It("falls through to auto candidates when neither front matter nor cascade set", func() {
+				layoutsDir := createLayoutsDir("my-post.json.liquid", "default.json.liquid")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "json"},
+					FrontMatter: map[string]interface{}{},
+				}
+				// No cascade layout set — should fall through to auto chain
+				result, err := tmpl.ResolveLayoutForFormatWithCascade(page, layoutsDir, "liquid", "json", map[string]string{}, nil)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "my-post.json.liquid")),
+					"when no explicit layout, cascade format resolver must fall through to auto candidates")
+			})
+
+			It("layout: false in front matter overrides cascade layout in format chain", func() {
+				layoutsDir := createLayoutsDir("article.json.liquid", "default.json.liquid")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "json"},
+					FrontMatter: map[string]interface{}{
+						"layout": false,
+					},
+				}
+				cascadeData := map[string]interface{}{
+					"layout": "article",
+				}
+				result, err := tmpl.ResolveLayoutForFormatWithCascade(page, layoutsDir, "liquid", "json", map[string]string{}, cascadeData)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(""),
+					"layout: false in front matter must suppress format output even when cascade sets a layout")
 			})
 		})
 
@@ -710,6 +763,23 @@ var _ = Describe("ResolveLayout", func() {
 				_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", map[string]string{})
 				Expect(err).To(HaveOccurred(),
 					"Go engine must never try .liquid files for format layout resolution")
+			})
+
+			It("resolves post.json.html for date-based section child with gotemplate", func() {
+				permalinkCfg := map[string]string{
+					"blog": "/:section/:year/:month/:day/:slug/",
+				}
+				layoutsDir := createLayoutsDir("post.json.html", "default.json.html")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "json"},
+					FrontMatter: map[string]interface{}{},
+				}
+				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", permalinkCfg)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "post.json.html")),
+					"Go engine must resolve post.json.html for date-based section children")
 			})
 		})
 	})

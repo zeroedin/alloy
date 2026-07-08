@@ -303,10 +303,16 @@ for _, page := range pages {
         if format == "html" {
             // Existing HTML path: template.ResolveLayout → render → ComputeOutputPath
         } else {
-            // Format-specific: template.ResolveLayoutForFormat(page, layoutsDir, engine, format)
-            // This is the canonical resolver — it checks disk for the layout file and
-            // returns an error if not found, consistent with ResolveLayout for HTML.
-            // (output.ResolveFormatLayout computes the path but does not validate existence.)
+            // Format-specific: unified chain with format infixed (issue #864).
+            // Uses the same lookup order as ResolveLayout (front matter → post →
+            // section name → filename → default) with .<format> before the engine ext.
+            if cascadeData != nil {
+                layoutPath, err = tmpl.ResolveLayoutForFormatWithCascade(
+                    page, layoutsDir, engineName, format, cfg.Permalinks, cascadeData)
+            } else {
+                layoutPath, err = tmpl.ResolveLayoutForFormat(
+                    page, layoutsDir, engineName, format, cfg.Permalinks)
+            }
             // Output path: replace extension — /my-post/index.json instead of index.html
         }
     }
