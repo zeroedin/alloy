@@ -95,6 +95,7 @@ type RenderContext struct {
 	TemplateUsage  map[string][]string
 	LayoutCache    map[string]tmpl.Template
 	Goldmark       goldmark.Markdown
+	PermalinkCfg   map[string]string
 }
 
 // Build runs the complete build pipeline (Phase 0 through Phase 3).
@@ -511,6 +512,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			Engine:         engine,
 			TemplateUsage:  templateUsage,
 			Goldmark:       sharedGoldmark,
+			PermalinkCfg:   permalinkCfg,
 		}
 		batchRendered, renderErr := renderPages(batches[i].pages, rc, reporter)
 		if renderErr != nil {
@@ -669,6 +671,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			Engine:         engine,
 			TemplateUsage:  templateUsage,
 			LayoutCache:    layoutCache,
+			PermalinkCfg:   permalinkCfg,
 		}
 		for _, page := range batch.pages {
 			var pageStart time.Time
