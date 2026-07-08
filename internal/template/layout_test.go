@@ -520,9 +520,9 @@ var _ = Describe("ResolveLayout", func() {
 			})
 
 			It("per-candidate interleaving: post.html wins over my-post.liquid", func() {
-				// When both post.html (bare-ext of higher-priority candidate) and
-				// my-post.liquid (engine-ext of lower-priority candidate) exist,
-				// per-candidate interleaving means post.html is tried first.
+				// When both post.html (bare extension of higher-priority candidate) and
+				// my-post.liquid (lower-priority candidate) exist, per-candidate
+				// interleaving means post.html is tried first.
 				// This disambiguates per-candidate from global ordering.
 				permalinkCfg := map[string]string{
 					"blog": "/:section/:year/:month/:day/:slug/",
@@ -536,7 +536,7 @@ var _ = Describe("ResolveLayout", func() {
 				result, err := tmpl.ResolveLayout(page, layoutsDir, "liquid", permalinkCfg)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result).To(Equal(filepath.Join(layoutsDir, "post.html")),
-					"per-candidate interleaving: post.html (higher-priority candidate bare-ext) must win over my-post.liquid (lower-priority candidate engine-ext)")
+					"per-candidate interleaving: post.html (higher-priority candidate, bare extension) must win over my-post.liquid (lower-priority candidate)")
 			})
 
 			It("falls back to my-post.html for date-based section when post and my-post.liquid missing", func() {
@@ -616,6 +616,20 @@ var _ = Describe("ResolveLayout", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result).To(Equal(filepath.Join(layoutsDir, "blog.json")),
 					"Liquid engine must fall back to section-specific bare extension format layout")
+			})
+
+			It("falls back to filename-specific bare extension format layout", func() {
+				layoutsDir := createLayoutsDir("my-post.json")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "json"},
+					FrontMatter: map[string]interface{}{},
+				}
+				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "my-post.json")),
+					"Liquid engine must fall back to filename-specific bare extension format layout")
 			})
 		})
 
@@ -730,6 +744,23 @@ var _ = Describe("ResolveLayout", func() {
 				Expect(chain[2]).To(Equal(filepath.Join(dir, "root.html")),
 					"bare-extension parent must be resolved at any level in the chain")
 			})
+
+			It("errors when parent layout has neither .liquid nor bare extension", func() {
+				dir, err := os.MkdirTemp("", "layout-chain-fallback-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(dir) })
+
+				// child.liquid references "missing" — neither missing.liquid nor missing.html exists
+				err = os.WriteFile(filepath.Join(dir, "child.liquid"),
+					[]byte("---\nlayout: \"missing\"\n---\n<main>{{ content }}</main>"), 0644)
+				Expect(err).NotTo(HaveOccurred())
+
+				_, err = tmpl.ResolveLayoutChain(filepath.Join(dir, "child.liquid"), dir, "liquid")
+				Expect(err).To(HaveOccurred(),
+					"chain must error when parent has neither .liquid nor bare extension")
+				Expect(err.Error()).To(ContainSubstring("missing"),
+					"error must reference the missing parent layout name")
+			})
 		})
 
 		// ── ResolveLayoutWithCascade ───────────────────────────────
@@ -819,6 +850,26 @@ var _ = Describe("ResolveLayout", func() {
 				_, err := tmpl.ResolveTaxonomyLayout("tags", "", layoutsDir, "gotemplate")
 				Expect(err).To(HaveOccurred(),
 					"Go engine ResolveTaxonomyLayout must never try .liquid files")
+			})
+
+			It("gotemplate ResolveLayoutChain does NOT try .liquid files for parent", func() {
+				dir, err := os.MkdirTemp("", "layout-chain-gotemplate-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(dir) })
+
+				// base.liquid exists but NOT base.html — Go engine must not find it
+				err = os.WriteFile(filepath.Join(dir, "base.liquid"),
+					[]byte("<html>{{ content }}</html>"), 0644)
+				Expect(err).NotTo(HaveOccurred())
+
+				// child.html references base
+				err = os.WriteFile(filepath.Join(dir, "child.html"),
+					[]byte("---\nlayout: \"base\"\n---\n<main>{{ content }}</main>"), 0644)
+				Expect(err).NotTo(HaveOccurred())
+
+				_, err = tmpl.ResolveLayoutChain(filepath.Join(dir, "child.html"), dir, "gotemplate")
+				Expect(err).To(HaveOccurred(),
+					"Go engine ResolveLayoutChain must never try .liquid files for parent resolution")
 			})
 		})
 	})
