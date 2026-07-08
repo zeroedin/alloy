@@ -267,7 +267,8 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
 - `TemplateContext` struct additions: `Pagination *pagination.PaginationContext` field, `Custom map[string]interface{}` field for dynamic top-level variables (the `as` alias).
 - `ResolveLayout`: Lookup chain per spec (front matter > section name > filename > default). Handle `layout: false`. **Bare-extension fallback (issue #827, revised #860)**: When engine is `"liquid"`, each automatic candidate (post, section, filename, default) tries `<name>.liquid` first, then `<name>.html` (per-candidate interleaving, not global). Front matter `layout:` names are checked first but follow the bare-name vs. extension-bearing distinction: bare names (no recognized extension, e.g., `layout: "custom"`) get the same `.liquid` → `.html` fallback; extension-bearing names (e.g., `layout: "custom.html"`) are used as literal filenames with no extension appended. If the explicit name resolves to nothing (neither extension found for bare, or file missing for extension-bearing), the build errors — no fall-through to auto candidates. Recognized extensions: `.liquid`, `.html`, `.xml`, `.json`, `.txt`. Implementation: add a `hasRecognizedExtension(name)` helper; if true, use the name as-is; if false, try `name.liquid` then `name.html` (same interleaving as auto candidates). The Go engine is unchanged — single extension, no fallback.
 - `ResolveLayoutWithCascade(page, layoutsDir, engine, permalinkCfg, cascadeData)`: Same lookup chain as `ResolveLayout`, but also considers `_data.yaml` cascade data for layout resolution. Front matter takes priority over cascade data. **Explicit layout names follow the bare-name vs. extension-bearing distinction** (issue #860): bare names get `.liquid` → `.html` fallback; extension-bearing names are used as literal filenames. If the explicit name resolves to nothing, the build errors — no fall-through to auto candidates. Both the front matter and cascade short-circuit paths must apply the same `hasRecognizedExtension` check.
-- `ResolveLayoutForFormat`: **Bare-extension fallback (issue #827)**: When engine is `"liquid"`, each format layout candidate tries `<name>.<format>.liquid` first, then `<name>.<format>` (bare extension form). Example: `single.json.liquid` → `single.json`.
+- `ResolveLayoutForFormat(page, layoutsDir, engine, format, permalinkCfg)`: **Unified format layout resolution (issue #864)**: Uses the same chain as `ResolveLayout` with the format infixed before the engine extension. Signature adds `permalinkCfg` to detect date-based sections. Lookup: front matter `layout:` with format infixed → "post" with format (date-based child) → section name with format (index page) → filename with format → "default" with format → error. Handles `layout: false` (returns `""`, no error). No `single` concept — deleted. **Bare-extension fallback (issue #827)**: Liquid engine tries `<name>.<format>.liquid` first, then `<name>.<format>` at each step.
+- `ResolveLayoutForFormatWithCascade(page, layoutsDir, engine, format, permalinkCfg, cascadeData)`: **Cascade-aware format layout resolution (issue #864)**: Same as `ResolveLayoutForFormat` but also considers `_data.yaml` cascade data. Front matter takes priority over cascade. Falls through to `ResolveLayoutForFormat` auto candidates when no explicit layout set.
 - `ResolveTaxonomyLayout`: `layouts/taxonomies/<name>.liquid` > `layouts/<name>.liquid`. **Bare-extension fallback (issue #827)**: When engine is `"liquid"`, each candidate tries `.liquid` first, then `.html`. Example: `taxonomies/tags.liquid` → `taxonomies/tags.html` → `tags.liquid` → `tags.html`.
 - `ResolveLayoutChain`: **Bare-name vs extension-bearing distinction (issue #827, revised #860)**: Parent layout references in `layout:` directives follow the same rules as front matter/cascade: use `hasRecognizedExtension(name)` — if true, use the name as a literal filename; if false, try `<parent>.liquid` first, then `<parent>.html` (Liquid engine) or `<parent>.html` only (Go engine). Missing parent = build error.
 - `RegisterShortcode`/`RenderShortcodes`: Registry + inline expansion
@@ -279,7 +280,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
 - **Note**: Feeds use the standard multi-format output mechanism (`outputs: ["html", "xml"]` + format layouts). No dedicated feed discovery or rendering code — `ResolveFeedTemplates`/`RenderFeedTemplate` were removed in issue #822.
 - `GenerateSitemap`: XML sitemap with baseURL prefix, per-page exclusions. Skipped when `cfg.Sitemap.Enabled` is false (issue #825). `SitemapConfig` has a custom `UnmarshalYAML` to accept `sitemap: false` (sets `Enabled: false`) alongside the object form. `ApplyDefaults` sets `Enabled: true` when not explicitly disabled.
 - `ResolveOutputFormat(page) string`: Returns first entry from `page.Outputs`, defaulting to `"html"` when unset.
-- `ResolveFormatLayout(page, format, layoutsDir, engine) (string, error)`: Finds layout for a specific format: `<layout>.<format>.<engine-ext>` (e.g., `single.json.liquid`).
+- `ResolveFormatLayout`: **Deleted (issue #864)** — format layout resolution is now unified with the standard chain in `internal/template.ResolveLayoutForFormat`. This function was a duplicate resolver with a hardcoded `single` default.
 
 #### Multi-format pipeline wiring (issue #71)
 
@@ -302,10 +303,16 @@ for _, page := range pages {
         if format == "html" {
             // Existing HTML path: template.ResolveLayout → render → ComputeOutputPath
         } else {
-            // Format-specific: template.ResolveLayoutForFormat(page, layoutsDir, engine, format)
-            // This is the canonical resolver — it checks disk for the layout file and
-            // returns an error if not found, consistent with ResolveLayout for HTML.
-            // (output.ResolveFormatLayout computes the path but does not validate existence.)
+            // Format-specific: unified chain with format infixed (issue #864).
+            // Uses the same lookup order as ResolveLayout (front matter → post →
+            // section name → filename → default) with .<format> before the engine ext.
+            if cascadeData != nil {
+                layoutPath, err = tmpl.ResolveLayoutForFormatWithCascade(
+                    page, layoutsDir, engineName, format, cfg.Permalinks, cascadeData)
+            } else {
+                layoutPath, err = tmpl.ResolveLayoutForFormat(
+                    page, layoutsDir, engineName, format, cfg.Permalinks)
+            }
             // Output path: replace extension — /my-post/index.json instead of index.html
         }
     }
@@ -314,7 +321,8 @@ for _, page := range pages {
 
 Key points:
 - `page.Outputs` is populated from `outputs` front matter during `content.BuildPage` (the field already exists on `content.Page`)
-- HTML format uses existing `template.ResolveLayout` (no change). Non-HTML formats use `template.ResolveLayoutForFormat` — the canonical resolver that validates the layout file exists on disk. `output.ResolveFormatLayout` computes the expected path (useful for testing) but should not be used as the pipeline resolver.
+- HTML format uses existing `template.ResolveLayout` (no change). Non-HTML formats use `template.ResolveLayoutForFormat(page, layoutsDir, engine, format, permalinkCfg)` — the unified resolver that mirrors the HTML chain with format infixed and validates the layout file exists on disk. The old `output.ResolveFormatLayout` is deleted (issue #864) — it was a duplicate with hardcoded `single` default.
+- When cascade data is available, use `template.ResolveLayoutForFormatWithCascade(page, layoutsDir, engine, format, permalinkCfg, cascadeData)` instead.
 - Output path for non-HTML: `output.ComputeOutputPath(page.URL)` returns `slug/index.html` — for JSON it should produce `slug/index.json`. Either extend `ComputeOutputPath` to accept a format parameter, or compute manually.
 - The rendered body for each format is independent — a page's JSON output uses a different layout than its HTML output.
 - Content rendering (markdown → HTML) happens once. Layout rendering happens per format.

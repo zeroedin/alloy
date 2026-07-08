@@ -572,7 +572,16 @@ outputs: ["html", "json"]     # Generate both /my-post/index.html and /my-post/i
 ---
 ```
 
-The corresponding layout must exist for each format. For a page requesting `json` output with the Liquid engine, Alloy looks for `layouts/single.json.liquid` first, then `layouts/single.json` (following the standard layout lookup order).
+The corresponding layout must exist for each format. Format layout resolution uses the same chain as HTML layout resolution with the output format infixed before the engine extension (`.<format>.liquid` instead of `.liquid`). There is no separate algorithm — one function, one lookup order. At each step, the Liquid engine tries `<name>.<format>.liquid` first, then `<name>.<format>` (bare extension fallback, same as the HTML chain). The Go engine tries `<name>.<format>.html` only.
+
+For example, a blog child page (`content/blog/my-post.md`) with `outputs: ["html", "json"]` and a date-based permalink section resolves the JSON layout as:
+1. `layouts/<front-matter-layout>.json.liquid` (if `layout:` set in front matter or `_data.yaml` cascade)
+2. `layouts/post.json.liquid` (date-based section child — same as the HTML chain's "post" step)
+3. `layouts/my-post.json.liquid` (filename match)
+4. `layouts/default.json.liquid` (fallback)
+5. Build error
+
+This mirrors the HTML chain exactly: front matter > post (date-based child) > section name (index page) > filename > default. The `layout: false` directive suppresses format outputs the same way it suppresses HTML output. There is no `single` concept — Alloy explicitly rejects Hugo's `single` vs `list` distinction (see Layout Lookup Order below).
 
 ---
 
@@ -1668,6 +1677,30 @@ At each step, the Liquid engine checks for `.liquid` first then bare extension. 
 4. Build error
 
 The `post.liquid` convention only applies to children of sections with date-based permalink patterns. All other pages resolve through explicit `layout:`, filename match, or `default.liquid`.
+
+**Format layout chain** — For pages with `outputs: ["html", "json"]` (or any non-HTML format), the format layout chain is the HTML chain above with the format infixed before the engine extension. One algorithm, one lookup order — there is no separate format resolver. At each step, the Liquid engine tries `<name>.<format>.liquid` first, then `<name>.<format>` (bare extension fallback).
+
+*Blog child (`content/blog/my-post.md`, JSON format):*
+1. `layouts/<layout>.json.liquid` (from front matter / `_data.yaml` cascade)
+2. `layouts/post.json.liquid` (date-based section child)
+3. `layouts/my-post.json.liquid` (filename match)
+4. `layouts/default.json.liquid` (fallback)
+5. Build error
+
+*Blog index (`content/blog/index.html`, XML format):*
+1. `layouts/<layout>.xml.liquid` (from front matter / `_data.yaml` cascade)
+2. `layouts/blog.xml.liquid` (section name for index page)
+3. `layouts/index.xml.liquid` (filename match)
+4. `layouts/default.xml.liquid` (fallback)
+5. Build error
+
+*Regular section (`content/docs/getting-started.md`, JSON format):*
+1. `layouts/<layout>.json.liquid` (from front matter / `_data.yaml` cascade)
+2. `layouts/getting-started.json.liquid` (filename match)
+3. `layouts/default.json.liquid` (fallback)
+4. Build error
+
+`layout: false` suppresses format outputs the same way it suppresses HTML output — the format chain is not consulted.
 
 ### Layouts, Partials, Shortcodes
 
