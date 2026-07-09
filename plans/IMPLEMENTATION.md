@@ -83,7 +83,7 @@ Used by `LoadFile` and `LoadExternalFiles` for `.json` files only. Front matter,
 **File**: `internal/validation/conflicts.go`
 
 - `DetectConflicts`: Group `OutputPathEntry` by path, return conflicts where count > 1
-- `ValidatePermalinkAliases`: Error if page has no output URL (`p.URL == ""`) AND aliases. Must check the computed `URL` field (populated by `ResolveForSection`), not the front-matter `Permalink` field — pages without an explicit `permalink:` in front matter still have valid URLs from config-level `permalinks:` patterns (issue #110).
+- `ValidatePermalinkAliases`: Error if page has no output URL (`p.URL == ""`) AND aliases. Must check the computed `URL` field (populated by `ResolveForSection`), not the front-matter `Permalink` field — pages without an explicit `permalink:` in front matter still have valid URLs from `_data.yaml` cascade patterns (issue #110). Permalink patterns come exclusively from `_data.yaml` cascade, not `Config.Permalinks` (issue #832).
 
 ### 1E: `internal/pagination` — 22 tests
 **File**: `internal/pagination/pagination.go`
@@ -243,13 +243,13 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
 - `Resolve`: Front matter permalink > pattern with tokens. Handle `permalink: false`.
 - `ContainsLiquidTags`: Check for `{{` in string
 - `DefaultFromPath`: `blog/my-post.md` -> `/blog/my-post/`. Handles index files: `index.md` → `/`, `blog/index.md` → `/blog/`, `blog/post/index.md` → `/blog/post/` (strips `/index` suffix).
-- `ResolveForSection`: Front matter > section pattern > default pattern > file path. **Index file override (issue #39)**: Before applying section or default patterns (steps 2-3), check if the page is an index file (`isIndexFile(page.RelPath)`). If so, skip directly to `DefaultFromPath` (step 4). This prevents `default: "/:slug/"` from turning `index.md` (title: "Home") into `/home/` instead of `/`. Front matter `permalink:` (step 1) still overrides — allows configuring index path for subdirectory deployments.
+- `ResolveForSection`: Front matter > section pattern > default pattern > file path. **Index file override (issue #39)**: Before applying section or default patterns (steps 2-3), check if the page is an index file (`isIndexFile(page.RelPath)`). If so, skip directly to `DefaultFromPath` (step 4). This prevents `default: "/:slug/"` from turning `index.md` (title: "Home") into `/home/` instead of `/`. Front matter `permalink:` (step 1) still overrides — allows configuring index path for subdirectory deployments. The `permalinkCfg` map must come from cascade data only (see §4D pipeline step 6, issue #832).
 - `ResolveAliases`: Return page's Aliases slice
 
 ### 3B: `internal/collection` — 38 tests
 **Files**: `collection.go`, `taxonomy.go`
 
-- `BuildCollections(pages, permalinkCfg, collectionNames []string)`: Group pages by section. A section becomes a collection if it has date-based permalink tokens `:year`/`:month`/`:day` **or** is listed in `collectionNames` (extracted from `cfg.Collections` keys). Both sources seed a single membership map; a section qualifying via both mechanisms produces one collection (no duplication). `collectionNames` may be nil (backward-compatible, date-tokens-only behavior).
+- `BuildCollections(pages, permalinkCfg, collectionNames []string)`: Group pages by section. A section becomes a collection if it has date-based permalink tokens `:year`/`:month`/`:day` **or** is listed in `collectionNames` (extracted from `cfg.Collections` keys). Both sources seed a single membership map; a section qualifying via both mechanisms produces one collection (no duplication). `collectionNames` may be nil (backward-compatible, date-tokens-only behavior). The `permalinkCfg` map must come from cascade data only (see §4D pipeline step 6, issue #832).
 - `BuildCollectionsWithMode(pages, permalinkCfg, collectionNames []string, devMode bool)`: Lifecycle-aware wrapper — applies lifecycle filtering (drafts, future `publishDate`, past `expiryDate`) via `content.FilterByLifecycle` before calling `buildCollectionsIncludeAll`. `devMode=true` includes drafts; `devMode=false` excludes them. Future/expired pages are always excluded.
 - `SortPages`/`SortByFrontMatter`: Stable sort, dateless pages sort after dated ones
 - `Freeze`/`IsFrozen`/`AddPage`: Add `frozen bool` field, error if frozen
@@ -289,7 +289,7 @@ The pipeline currently renders each page once (HTML only). Pages with `outputs: 
 ```
 // Current: single render per page
 for _, page := range pages {
-    layoutPath := tmpl.ResolveLayout(page, layoutsDir, engineName, cfg.Permalinks)
+    layoutPath := tmpl.ResolveLayout(page, layoutsDir, engineName, permalinkCfg)
     // ... render and write
 }
 
@@ -308,10 +308,10 @@ for _, page := range pages {
             // section name → filename → default) with .<format> before the engine ext.
             if cascadeData != nil {
                 layoutPath, err = tmpl.ResolveLayoutForFormatWithCascade(
-                    page, layoutsDir, engineName, format, cfg.Permalinks, cascadeData)
+                    page, layoutsDir, engineName, format, permalinkCfg, cascadeData)
             } else {
                 layoutPath, err = tmpl.ResolveLayoutForFormat(
-                    page, layoutsDir, engineName, format, cfg.Permalinks)
+                    page, layoutsDir, engineName, format, permalinkCfg)
             }
             // Output path: replace extension — /my-post/index.json instead of index.html
         }
@@ -432,15 +432,19 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
  3. content.DiscoverWithFormats(contentDir, formats)      ✅ done
  4. content.FilterByLifecycle(pages, now, includeDrafts)  ✅ done (issue #108: must pass includeDrafts from server mode, not hardcode false)
  5. cascade.LoadDirectoryCascade + FindCascadeData + PageContext ✅ done (was step 6, reordered for #302)
- 6. permalink.ResolveFromCascade(page, cascadeData)       ← CHANGED (issue #302)
-    Permalink pattern comes from _data.yaml cascade (step 5), not cfg.Permalinks.
-    Remove `Permalinks map[string]string` from Config struct.
-    Remove `ResolveForSection` — replaced by `ResolveFromCascade`.
+ 6. permalink.ResolveFromCascade(page, cascadeData)       ← CHANGED (issues #302, #832)
+    Permalink pattern comes from _data.yaml cascade (step 5), not Config.Permalinks.
+    Remove `Permalinks map[string]string` from Config struct (issue #832).
+    `buildPermalinkCfg` must build its map from cascade data only — remove the
+    `fallback map[string]string` parameter (issue #832).
+    Config loaders (YAML/TOML/JSON) must silently ignore unknown `permalinks:` key
+    in old config files — do not reject unknown keys.
+    Remove permalinks entries from testdata/*.yaml/toml/json.
     Update all callers in build.go (batch loop, i18n prefix logic).
  7. data.LoadDirectory(dataDir) → siteData                ✅ done
  8. collection.BuildCollections(pages, cascadeData, collectionNames)  ← CHANGED (issues #302, #766)
     Date-based section detection reads permalink from each section's
-    _data.yaml cascade instead of cfg.Permalinks map.
+    _data.yaml cascade instead of Config.Permalinks map.
     `collectionNames` extracted from cfg.Collections keys — sections listed
     there become collections regardless of permalink pattern (issue #766).
     `isDateBasedSection` in layout.go also needs cascade data.

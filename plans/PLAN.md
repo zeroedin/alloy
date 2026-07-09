@@ -268,7 +268,7 @@ External file not found is a build error — not a warning, not silently skipped
 
 ### Permalink Resolution
 
-Permalink patterns are **not configured at the site level**. There is no `permalinks:` key in `alloy.config.yaml`. URL patterns are section-level data that belongs in `_data.yaml` — sections own their own URL structure.
+Permalink patterns are **not configured at the site level**. There is no `permalinks:` key in `alloy.config.yaml`. URL patterns are section-level data that belongs in `_data.yaml` — sections own their own URL structure. The `Config` struct must not have a `Permalinks` field. The config loader must silently ignore an unknown `permalinks:` key in old config files (backward compatibility — issue #832).
 
 **Resolution order:**
 1. Front matter `permalink:` (always wins)
