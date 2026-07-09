@@ -225,17 +225,17 @@ Partials are reusable template fragments stored in `layouts/partials/` (by conve
 Both tags resolve paths relative to the `layouts/` directory, trying `name.liquid`, then `name.html`, then the bare name. The difference: `{% include %}` shares the parent template's variable scope, while `{% render %}` creates an isolated scope (variables from the parent are not accessible unless explicitly passed).
 </wa-tab-panel>
 <wa-tab-panel name="partials-go">
-<alloy-code lang="html">{{ include "partials/header" }}
-{{ include "partials/footer" }}
-{{ include "partials/social-links" }}</alloy-code>
+<alloy-code lang="html">{{ partial "partials/header" }}
+{{ partial "partials/footer" }}
+{{ partial "partials/social-links" }}</alloy-code>
 
-The `include` function resolves paths relative to the `layouts/` directory, trying `name.html`, then the bare name. Context is optional -- with no argument, the include inherits the current template context (like Liquid's `{% include %}`). Pass an explicit context to narrow scope:
+The `partial` function resolves paths relative to the `layouts/` directory, trying `name.html`, then the bare name. Context is optional -- with no argument, the partial inherits the current template context (like Liquid's `{% include %}`). Pass an explicit context to narrow scope:
 
-<alloy-code lang="html">{{ include "partials/card" (dict "item" . "compact" true) }}</alloy-code>
+<alloy-code lang="html">{{ partial "partials/card" (dict "item" . "compact" true) }}</alloy-code>
 
-Unlike Go's built-in `{{ template }}` action, `include` is a function -- its output can be captured in variables and used in pipelines:
+Unlike Go's built-in `{{ template }}` action, `partial` is a function -- its output can be captured in variables and used in pipelines:
 
-<alloy-code lang="html">{{ $nav := include "partials/nav" }}
+<alloy-code lang="html">{{ $nav := partial "partials/nav" }}
 {{ if $nav }}&lt;div class="has-nav"&gt;{{ $nav }}&lt;/div&gt;{{ end }}</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>
@@ -258,7 +258,7 @@ With the Go template engine (`engine: "gotemplate"`), layouts are `.html` files 
 </html>
 ```
 
-Layout chaining works identically in both engines -- a `layout:` directive in the layout's front matter names the parent (see [Layout chaining](#layout-chaining)). Cross-file includes use the `{{ include }}` function (see [Partials and includes](#partials-and-includes)). `{% render %}` and `{% inline %}` are Liquid-only tags.
+Layout chaining works identically in both engines -- a `layout:` directive in the layout's front matter names the parent (see [Layout chaining](#layout-chaining)). Cross-file partials use the `{{ partial }}` function (see [Partials and includes](#partials-and-includes)). `{% include %}`, `{% render %}`, and `{% inline %}` are Liquid-only tags.
 
 Two helper functions are registered for working with ordered map data (JSON data files preserve key order via an ordered map type that Go's index syntax cannot address):
 
