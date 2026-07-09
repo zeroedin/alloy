@@ -2558,14 +2558,14 @@ If a render hook template exists, Alloy registers a custom goldmark node rendere
 
 | Template | `markup.*` properties |
 |---|---|
-| `render-blockquote` | `inner` (rendered inner HTML), `attributes` |
-| `render-codeblock` | `inner` (raw code text), `language`, `attributes` |
-| `render-heading` | `inner` (rendered inner HTML), `level` (1-6), `id` (auto-generated slug via `slugify` — e.g., "My Section" → `my-section`), `text` (plain text, no HTML) |
-| `render-image` | `src`, `alt`, `title`, `attributes` |
+| `render-blockquote` | `inner` (rendered inner HTML) |
+| `render-codeblock` | `inner` (raw code text), `language` |
+| `render-heading` | `inner` (rendered inner HTML), `level` (1-6), `id` (custom `{#id}` attribute if present, otherwise auto-generated slug via `slugify` — e.g., "My Section" → `my-section`), `text` (plain text, no HTML), `attributes` (map of goldmark-parsed attributes from `{.class #id key="value"}` syntax) |
+| `render-image` | `src`, `alt`, `title` |
 | `render-link` | `destination`, `text` (rendered inner HTML), `title`, `is_external` (boolean: starts with `http://` or `https://`) |
-| `render-table` | `inner` (rendered inner HTML — thead/tbody/tr/td), `attributes` |
+| `render-table` | `inner` (rendered inner HTML — thead/tbody/tr/td) |
 
-The full `page.*` and `site.*` context is also available — render hooks can access front matter, site data, collections, etc.
+Render hooks receive only the `markup` object — `page.*` and `site.*` are not available. Page-aware behavior belongs in layouts or plugin hooks (`onPageRendered`). Attribute support is currently limited to headings (the only element type goldmark parses attributes for) — see issue #892 for extending to other block elements.
 
 **Language-specific code block hooks** — `render-codeblock-{language}.liquid` overrides rendering for a specific fenced code block language. For example, `render-codeblock-mermaid.liquid` renders mermaid blocks as `<div class="mermaid">` instead of `<pre><code>`. The generic `render-codeblock.liquid` is the fallback when no language-specific template matches. Lookup order: language-specific → generic → default goldmark rendering.
 
