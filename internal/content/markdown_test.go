@@ -1237,22 +1237,40 @@ var _ = Describe("RenderMarkdown", func() {
 				"markup.attributes must include arbitrary key=value attributes from goldmark syntax")
 		})
 
-		It("render-heading.liquid markup.attributes is empty map when no attributes are specified (issue #824)", func() {
+		It("render-heading.liquid renders without error when no attributes are present (issue #824)", func() {
 			opts := content.MarkdownOptions{
 				Unsafe: true, Typographer: true, TemplateTags: true,
 				AutoHeadingID: true,
 				Hooks: map[string]string{
-					"heading": `<h{{ markup.level }}>{{ markup.inner }}</h{{ markup.level }}>`,
+					"heading": `<h{{ markup.level }} data-attrs="{{ markup.attributes }}">{{ markup.inner }}</h{{ markup.level }}>`,
 				},
 				HookRenderer: hookRenderer,
 			}
 			out, _, err := content.RenderMarkdown([]byte("## Plain Heading"), content.CreateGoldmark(opts))
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
-			Expect(html).To(ContainSubstring("<h2>"),
+			Expect(html).To(ContainSubstring("<h2"),
 				"heading hook must still work when no attributes are present")
 			Expect(html).To(ContainSubstring("Plain Heading"),
 				"heading content must render correctly without attributes")
+		})
+
+		It("render-heading.liquid markup.id falls back to auto-slug when {.class} present without {#id} (issue #824)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				AutoHeadingID: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }} id="{{ markup.id }}" class="{{ markup.attributes.class }}">{{ markup.inner }}</h{{ markup.level }}>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			out, _, err := content.RenderMarkdown([]byte("## My Title {.featured}"), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`id="my-title"`),
+				"markup.id must fall back to auto-generated slug when no {#id} attribute is present")
+			Expect(html).To(ContainSubstring(`class="featured"`),
+				"markup.attributes.class must still be populated from {.class} syntax")
 		})
 
 		It("render-heading.liquid markup.id still works with attributes override (issue #824)", func() {

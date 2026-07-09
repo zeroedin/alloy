@@ -2560,7 +2560,7 @@ If a render hook template exists, Alloy registers a custom goldmark node rendere
 |---|---|
 | `render-blockquote` | `inner` (rendered inner HTML) |
 | `render-codeblock` | `inner` (raw code text), `language` |
-| `render-heading` | `inner` (rendered inner HTML), `level` (1-6), `id` (auto-generated slug via `slugify` — e.g., "My Section" → `my-section`), `text` (plain text, no HTML), `attributes` (map of goldmark-parsed attributes from `{.class #id key="value"}` syntax) |
+| `render-heading` | `inner` (rendered inner HTML), `level` (1-6), `id` (custom `{#id}` attribute if present, otherwise auto-generated slug via `slugify` — e.g., "My Section" → `my-section`), `text` (plain text, no HTML), `attributes` (map of goldmark-parsed attributes from `{.class #id key="value"}` syntax) |
 | `render-image` | `src`, `alt`, `title` |
 | `render-link` | `destination`, `text` (rendered inner HTML), `title`, `is_external` (boolean: starts with `http://` or `https://`) |
 | `render-table` | `inner` (rendered inner HTML — thead/tbody/tr/td) |
