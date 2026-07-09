@@ -3,7 +3,3 @@ baseURL: "https://example.com"
 
 build:
   output: "_site"
-
-permalinks:
-  blog: "/:year/:month/:slug/"
-  default: "/:slug/"
