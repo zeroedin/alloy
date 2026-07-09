@@ -167,6 +167,10 @@ func ResolveLayoutForFormat(page *content.Page, layoutsDir string, engine string
 	}
 
 	if layout, ok := page.FrontMatter["layout"].(string); ok && layout != "" {
+		if hasRecognizedExtension(layout) {
+			bare := strings.TrimSuffix(layout, filepath.Ext(layout))
+			return "", fmt.Errorf("extension-bearing layout %q cannot be used with format outputs; use `layout: %s` instead", layout, bare)
+		}
 		resolved, found := resolveNamedFormatLayout(layoutsDir, layout, format, engine)
 		if found {
 			return resolved, nil
@@ -206,6 +210,10 @@ func ResolveLayoutForFormatWithCascade(page *content.Page, layoutsDir, engine, f
 	}
 
 	if layout, ok := page.FrontMatter["layout"].(string); ok && layout != "" {
+		if hasRecognizedExtension(layout) {
+			bare := strings.TrimSuffix(layout, filepath.Ext(layout))
+			return "", fmt.Errorf("extension-bearing layout %q cannot be used with format outputs; use `layout: %s` instead", layout, bare)
+		}
 		resolved, found := resolveNamedFormatLayout(layoutsDir, layout, format, engine)
 		if found {
 			return resolved, nil
@@ -215,6 +223,10 @@ func ResolveLayoutForFormatWithCascade(page *content.Page, layoutsDir, engine, f
 
 	if cascadeData != nil {
 		if layout, ok := cascadeData["layout"].(string); ok && layout != "" {
+			if hasRecognizedExtension(layout) {
+				bare := strings.TrimSuffix(layout, filepath.Ext(layout))
+				return "", fmt.Errorf("extension-bearing layout %q cannot be used with format outputs; use `layout: %s` instead", layout, bare)
+			}
 			resolved, found := resolveNamedFormatLayout(layoutsDir, layout, format, engine)
 			if found {
 				return resolved, nil
