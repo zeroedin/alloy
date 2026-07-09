@@ -348,10 +348,20 @@ Key points:
 - `RenderTemplate`: Parse + render, wrap errors with source path. **Must use a cached environment** (issue #364) — currently creates a new `liquid.Environment` and registers standard tags per call. Use `sync.Once` to initialize a package-level default environment, or eliminate `RenderTemplate` entirely by passing the engine to all callers. The `rc.Engine != nil` guard in `renderPages` (build.go:1272) should always be true — engine is created by `createEngine(cfg)` which never returns nil. The `else` branch using `RenderTemplate` is dead code and should be removed. The `Server.RenderPage` path (server.go:401) should use the engine instance held by the server, not a bare `RenderTemplate` call — otherwise plugin filters and custom tags are unavailable in dev mode on-demand renders.
 - Must support: `{{ var }}`, `{{ page.title }}`, `{% if %}`, `{% for %}`, `{% assign %}`, `{{ content }}` injection, `{% include %}`, filter pipelines
 
-### 4B: Go Template Engine (~12 tests)
+### 4B: Go Template Engine (~22 tests)
 **File**: `internal/template/gotemplate.go`
 
 - Adapt `html/template` to `TemplateEngine` interface via `FuncMap`
+- **Partials via `partial` function (issue #823)**: Register a `"partial"` FuncMap function that resolves and renders partial templates from the layouts directory. Implementation:
+  - Add `SetIncludesDir(dir string)` method to `goEngine` (same interface as `liquidEngine`). The pipeline already calls this at `InitPipelineState` (state.go:62-64) via interface assertion.
+  - The `partial` function signature: `func(name string, ctx ...interface{}) (template.HTML, error)`. Takes a path string and an optional context. If no context arg, uses the current dot (captured via closure over the render context). Returns `template.HTML` so output is not double-escaped.
+  - Resolution: try `layoutsDir/name.html` first, then `layoutsDir/name` (raw name). Same candidate pattern as Liquid's `ReadTemplateFile`.
+  - Path sandboxing: `filepath.Rel(absRoot, absPath)` must not start with `..`. Build error on traversal.
+  - Parse with the engine's FuncMap (so filters, `dict`, `partial` itself are available in nested partials).
+  - Nesting depth: render-scoped counter (closure-captured or carried on the render context — NOT package-level, which would be shared across concurrent renders in the dev server). Increment on entry, decrement on exit (use defer). Build error at depth > 100 with message containing "too deep" or "nesting" (matches Ruby/Go Liquid's `StackLevelError`).
+  - Missing partial file: build error with clear message.
+  - The `partial` function must be registered in the FuncMap *before* `Parse` is called (Go templates bind functions at parse time). Register it in `NewGoEngine()` or in `SetIncludesDir()` — the function needs the layouts dir path to resolve files.
+  - **Important**: The `partial` function needs access to the current render context (dot) at render time to serve as the default context argument. Since FuncMap functions are bound at parse time, the function must capture the render context via a mechanism set during `Render()` — e.g., a pointer to the current context stored on `goTemplate` before `Execute`, read by the `partial` closure.
 - **`*ordered.Map` compatibility (issue #458)**: Go templates use reflection — `*ordered.Map` is a struct, not a map or slice, so neither `{{ index }}` nor `{{ range }}` work natively. Converting to `map[string]interface{}` enables property access but loses iteration order; converting to `[]KVPair` enables ordered iteration but breaks key-based lookup. These are mutually exclusive on the same value. Fix: keep `*ordered.Map` as the context value and register FuncMap helpers in the Go template engine:
   - **`oget`** (`{{ oget .site.data.tokens "white" }}`): calls `m.Get(key)` on `*ordered.Map`, returns the value. Falls back to `index` for regular maps.
   - **`orange`** (`{{ range orange .site.data.tokens }}`): calls `m.Entries()` on `*ordered.Map`, returns `[]KVPair` for ordered iteration. Each entry has `.Key` and `.Value`.
