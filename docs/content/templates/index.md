@@ -96,14 +96,12 @@ Every template receives these top-level variables:
 {{ .content }}
 
 &lt;h2&gt;Recent posts&lt;/h2&gt;
-{{ range .collections.blog }}
+{{ range limit .collections.blog 5 }}
   &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
 {{ end }}</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>
 {% endraw %}
-
-> The Go version loops the whole collection: Go's `range` has no equivalent of Liquid's `limit: 5`. To cap the loop, guard on the index -- `{% raw %}{{ range $i, $post := .collections.blog }}{{ if lt $i 5 }}...{{ end }}{{ end }}{% endraw %}`.
 
 ## Template resolution
 

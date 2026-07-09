@@ -650,6 +650,102 @@ var _ = Describe("Built-in Filters", func() {
 			"items without the sort key must sort to the end")
 	})
 
+	// ── limit filter (issue #826) ──────────────────────────────────────
+	// limit returns the first N elements of an array, providing Go template
+	// parity with Liquid's {% for ... limit: N %} clause.
+
+	Context("limit filter (issue #826)", func() {
+		It("returns the first N elements from an array", func() {
+			input := []interface{}{"a", "b", "c", "d", "e"}
+			result := tmpl.Limit(input, 3)
+			Expect(result).To(Equal([]interface{}{"a", "b", "c"}),
+				"limit must return the first N elements of the array — "+
+					"this is the core use case: {{ range limit .collections.blog 5 }}")
+		})
+
+		It("returns the full array when N exceeds array length", func() {
+			input := []interface{}{"a", "b", "c"}
+			result := tmpl.Limit(input, 10)
+			Expect(result).To(Equal([]interface{}{"a", "b", "c"}),
+				"limit with N > len(arr) must clamp to array length, not panic")
+		})
+
+		It("returns an empty slice when N is 0", func() {
+			input := []interface{}{"a", "b", "c"}
+			result := tmpl.Limit(input, 0)
+			Expect(result).To(Equal([]interface{}{}),
+				"limit with N=0 must return an empty slice, not nil")
+		})
+
+		It("returns an empty slice when N is negative", func() {
+			input := []interface{}{"a", "b", "c"}
+			result := tmpl.Limit(input, -1)
+			Expect(result).To(Equal([]interface{}{}),
+				"limit clamps negative N to 0 — no Python-style negative indexing")
+		})
+
+		It("returns the full array when no argument is given", func() {
+			input := []interface{}{"a", "b", "c"}
+			result := tmpl.Limit(input)
+			Expect(result).To(Equal([]interface{}{"a", "b", "c"}),
+				"limit with no argument must return the full array unchanged")
+		})
+
+		It("returns nil when input is nil", func() {
+			result := tmpl.Limit(nil, 3)
+			Expect(result).To(BeNil(),
+				"limit on nil input must return nil — "+
+					"consistent with toSlice(nil) returning nil")
+		})
+
+		It("returns an empty slice when input is an empty array", func() {
+			input := []interface{}{}
+			result := tmpl.Limit(input, 3)
+			Expect(result).To(Equal([]interface{}{}),
+				"limit on empty array must return empty slice")
+		})
+
+		It("coerces string-typed N via toInt", func() {
+			input := []interface{}{"a", "b", "c", "d", "e"}
+			result := tmpl.Limit(input, "2")
+			Expect(result).To(Equal([]interface{}{"a", "b"}),
+				"limit must handle string-typed N — YAML front matter often "+
+					"delivers quoted numbers as strings (limit: \"2\" vs limit: 2)")
+		})
+
+		It("returns the full array when N equals array length", func() {
+			input := []interface{}{"a", "b", "c"}
+			result := tmpl.Limit(input, 3)
+			Expect(result).To(Equal([]interface{}{"a", "b", "c"}),
+				"limit with N == len(arr) must return all elements — "+
+					"a naive < guard (instead of <=) would fail here")
+		})
+
+		It("works on a single-element array", func() {
+			input := []interface{}{"only"}
+			result := tmpl.Limit(input, 1)
+			Expect(result).To(Equal([]interface{}{"only"}),
+				"limit on single-element array must not panic or off-by-one")
+		})
+
+		It("is accessible via ApplyFilter dispatch", func() {
+			input := []interface{}{"a", "b", "c", "d", "e"}
+			result := tmpl.ApplyFilter("limit", input, 2)
+			Expect(result).To(Equal([]interface{}{"a", "b"}),
+				"limit must be registered in the builtinFilters map so "+
+					"ApplyFilter can dispatch it — this is how the Liquid engine "+
+					"and Go template engine resolve filters at runtime (issue #826)")
+		})
+
+		It("no-arg dispatch via ApplyFilter returns full array", func() {
+			input := []interface{}{"a", "b", "c"}
+			result := tmpl.ApplyFilter("limit", input)
+			Expect(result).To(Equal([]interface{}{"a", "b", "c"}),
+				"ApplyFilter with no extra args must forward zero args to Limit — "+
+					"Liquid {{ arr | limit }} must not break silently")
+		})
+	})
+
 	// ── ApplyFilter and IsBuiltinFilter dispatch (issue #363) ────────
 	// These tests verify all built-in filters are registered and
 	// discoverable. The hardcoded list IS the spec — it defines which
@@ -667,7 +763,8 @@ var _ = Describe("Built-in Filters", func() {
 			"replace", "replace_first", "split", "join",
 			"strip", "append", "prepend", "newline_to_br",
 			"contains", "date", "sort", "reverse",
-			"first", "last", "where", "group_by",
+			"first", "last", "limit", // issue #826: array truncation
+			"where", "group_by",
 			"size", "map", "uniq", "compact", "concat",
 			"intersect", "union", "complement",
 			"url", "absolute_url", "url_encode", "url_decode",
