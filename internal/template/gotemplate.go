@@ -4,18 +4,26 @@ import (
 	"bytes"
 	"fmt"
 	gohtml "html/template"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 
 	"github.com/zeroedin/alloy/internal/ordered"
 )
 
 // goEngine adapts Go's html/template to the TemplateEngine interface.
 type goEngine struct {
-	funcMap gohtml.FuncMap
+	funcMap     gohtml.FuncMap
+	includesDir string
+	mu          sync.Mutex
+	depth       int
+	renderCtx   map[string]interface{} // set during Render for partial to access current dot
 }
 
 // NewGoEngine creates a new Go html/template engine.
 func NewGoEngine() TemplateEngine {
-	return &goEngine{
+	e := &goEngine{
 		funcMap: gohtml.FuncMap{
 			"oget": func(m interface{}, key string) interface{} {
 				if om, ok := m.(*ordered.Map); ok {
@@ -39,14 +47,108 @@ func NewGoEngine() TemplateEngine {
 				}
 				return nil
 			},
+			"dict": func(pairs ...interface{}) map[string]interface{} {
+				m := make(map[string]interface{}, len(pairs)/2)
+				for i := 0; i+1 < len(pairs); i += 2 {
+					m[fmt.Sprint(pairs[i])] = pairs[i+1]
+				}
+				return m
+			},
 		},
 	}
+	// partial is a placeholder until SetIncludesDir wires the real implementation.
+	// Go's html/template requires all FuncMap entries at parse time, so we register
+	// a stub that the real closure (set in SetIncludesDir) replaces.
+	e.funcMap["partial"] = func(path string, args ...interface{}) (gohtml.HTML, error) {
+		return "", fmt.Errorf("partial %q: includes directory not configured", path)
+	}
+	return e
+}
+
+// SetIncludesDir sets the layouts directory for resolving partial templates.
+func (e *goEngine) SetIncludesDir(dir string) {
+	e.includesDir = dir
+	e.funcMap["partial"] = func(path string, args ...interface{}) (gohtml.HTML, error) {
+		return e.renderPartial(path, args...)
+	}
+}
+
+const maxPartialDepth = 100
+
+func (e *goEngine) renderPartial(path string, args ...interface{}) (gohtml.HTML, error) {
+	e.mu.Lock()
+	e.depth++
+	d := e.depth
+	ctx := e.renderCtx
+	e.mu.Unlock()
+	defer func() {
+		e.mu.Lock()
+		e.depth--
+		e.mu.Unlock()
+	}()
+
+	if d > maxPartialDepth {
+		return "", fmt.Errorf("partial %q: nesting too deep (max depth %d)", path, maxPartialDepth)
+	}
+
+	absRoot, err := filepath.Abs(e.includesDir)
+	if err != nil {
+		return "", fmt.Errorf("partial %q: %w", path, err)
+	}
+
+	candidates := []string{
+		filepath.Join(e.includesDir, path+".html"),
+		filepath.Join(e.includesDir, path),
+	}
+
+	var content []byte
+	for _, candidate := range candidates {
+		abs, err := filepath.Abs(candidate)
+		if err != nil {
+			continue
+		}
+		rel, relErr := filepath.Rel(absRoot, abs)
+		if relErr != nil || strings.HasPrefix(rel, "..") {
+			return "", fmt.Errorf("partial %q: path traversal outside layouts directory", path)
+		}
+		content, err = os.ReadFile(candidate)
+		if err == nil {
+			break
+		}
+	}
+	if content == nil {
+		return "", fmt.Errorf("partial %q: no such template", path)
+	}
+
+	tpl := gohtml.New(path).Funcs(e.funcMap)
+	parsed, err := tpl.Parse(string(content))
+	if err != nil {
+		return "", fmt.Errorf("partial %q: %w", path, err)
+	}
+
+	var data interface{}
+	if len(args) > 0 {
+		data = args[0]
+	} else {
+		data = ctx
+	}
+	if ctxMap, ok := data.(map[string]interface{}); ok {
+		data = markHTMLSafe(ctxMap)
+	}
+
+	var buf bytes.Buffer
+	if err := parsed.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("partial %q: %w", path, err)
+	}
+
+	return gohtml.HTML(buf.String()), nil
 }
 
 // goTemplate wraps a parsed Go html/template.
 type goTemplate struct {
-	tpl  *gohtml.Template
-	name string
+	tpl    *gohtml.Template
+	name   string
+	engine *goEngine
 }
 
 func (e *goEngine) Parse(name string, content []byte) (Template, error) {
@@ -55,7 +157,7 @@ func (e *goEngine) Parse(name string, content []byte) (Template, error) {
 	if err != nil {
 		return nil, fmt.Errorf("go template parse error in %s: %s", name, err.Error())
 	}
-	return &goTemplate{tpl: parsed, name: name}, nil
+	return &goTemplate{tpl: parsed, name: name, engine: e}, nil
 }
 
 // AddFilter registers a filter function. Must be called before Parse —
@@ -84,6 +186,14 @@ func (e *goEngine) AddTag(name string, fn TagFunc) error {
 
 func (t *goTemplate) Render(ctx map[string]interface{}) ([]byte, error) {
 	data := markHTMLSafe(ctx)
+	t.engine.mu.Lock()
+	t.engine.renderCtx = ctx
+	t.engine.mu.Unlock()
+	defer func() {
+		t.engine.mu.Lock()
+		t.engine.renderCtx = nil
+		t.engine.mu.Unlock()
+	}()
 	var buf bytes.Buffer
 	if err := t.tpl.Execute(&buf, data); err != nil {
 		return nil, fmt.Errorf("go template render error in %s: %s", t.name, err.Error())
