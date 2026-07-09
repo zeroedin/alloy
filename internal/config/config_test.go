@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -103,10 +104,12 @@ var _ = Describe("Config", func() {
 
 			It("does not expose a Permalinks field on Config struct (issue #832)", func() {
 				Expect(err).NotTo(HaveOccurred())
-				// After removal, cfg.Permalinks must not compile. Until
-				// the field is removed, this test asserts the field is nil/empty
-				// to signal "this value must not be used."
-				Expect(cfg.Permalinks).To(BeNil(),
+				// Use reflection so this test compiles both before AND after the
+				// field is removed. Direct field access (cfg.Permalinks) would
+				// cause a compile error when the developer deletes the field,
+				// deadlocking them under the immutable-tests rule.
+				_, found := reflect.TypeOf(*cfg).FieldByName("Permalinks")
+				Expect(found).To(BeFalse(),
 					"Config.Permalinks must be removed (issue #832) — "+
 						"permalink patterns belong in _data.yaml cascade, not site config. "+
 						"The developer must: "+
@@ -1137,6 +1140,25 @@ default = "/:slug/"
 				"config with legacy permalinks JSON key must load without error — "+
 					"JSON decoder must not reject unknown keys (issue #832)")
 			Expect(cfg.Title).To(Equal("Legacy Config"))
+		})
+
+		It("loads legacy YAML config through LoadWithDefaults without error", func() {
+			dir := GinkgoT().TempDir()
+			configContent := `title: "Legacy Defaults"
+baseURL: "https://example.com"
+permalinks:
+  blog: "/:year/:month/:slug/"
+`
+			Expect(os.WriteFile(filepath.Join(dir, "alloy.config.yaml"), []byte(configContent), 0644)).To(Succeed())
+
+			cfg, err := config.LoadWithDefaults(filepath.Join(dir, "alloy.config.yaml"))
+			Expect(err).NotTo(HaveOccurred(),
+				"LoadWithDefaults is the primary CLI/pipeline entry point — "+
+					"legacy permalinks: key must not cause errors through the "+
+					"full Load → ApplyDefaults path (issue #832)")
+			Expect(cfg.Title).To(Equal("Legacy Defaults"))
+			Expect(cfg.Build.Output).To(Equal("_site"),
+				"ApplyDefaults must still apply after loading a legacy config")
 		})
 	})
 })
