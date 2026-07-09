@@ -2,10 +2,18 @@
 type: minor
 ---
 
-Render hook context is now enriched with additional properties:
+Render hook templates now receive richer context for links and headings.
 
-- **render-link**: `markup.title` passes the link title from `[text](url "title")` syntax
-- **render-heading**: `markup.inner` now contains rendered HTML (preserving inline formatting like `<strong>`) instead of plain text
-- **render-heading**: `markup.text` provides the plain-text version of the heading content
-- **render-heading**: `markup.attributes` exposes a map of goldmark attributes from `{.class #id key=value}` syntax
-- **render-heading**: `markup.id` uses the explicit `{#custom-id}` attribute when present, falling back to the auto-generated slug
+Link hooks receive `markup.title` from the Markdown link title syntax `[text](url "title")`.
+
+```liquid
+<a href="{{ markup.destination }}" title="{{ markup.title }}">{{ markup.text }}</a>
+```
+
+Heading hooks receive `markup.inner` as rendered HTML (preserving inline formatting like `<strong>`), `markup.text` as plain text, and `markup.attributes` as a map of goldmark attributes from `{.class #id key=value}` syntax. `markup.id` uses the explicit `{#custom-id}` attribute when present, falling back to the auto-generated slug.
+
+```liquid
+<h{{ markup.level }} id="{{ markup.id }}" class="{{ markup.attributes.class }}">
+  {{ markup.inner }}
+</h{{ markup.level }}>
+```
