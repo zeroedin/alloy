@@ -109,6 +109,7 @@ func (r *hookNodeRenderer) renderLink(
 		"markup": map[string]interface{}{
 			"destination": destination,
 			"text":        textBuf.String(),
+			"title":       string(n.Title),
 			"is_external": isExternal,
 		},
 	}
@@ -129,13 +130,35 @@ func (r *hookNodeRenderer) renderHeading(
 
 	var textBuf bytes.Buffer
 	extractText(&textBuf, n, source)
-	inner := textBuf.String()
+	text := textBuf.String()
+
+	inner, err := renderChildrenToHTML(r.childRenderer, source, n)
+	if err != nil {
+		return ast.WalkStop, err
+	}
+
+	id := slugifyHeading(text)
+	attrs := make(map[string]interface{})
+	for _, attr := range n.Attributes() {
+		name := string(attr.Name)
+		switch v := attr.Value.(type) {
+		case []byte:
+			attrs[name] = string(v)
+		default:
+			attrs[name] = v
+		}
+		if name == "id" {
+			id = attrs[name].(string)
+		}
+	}
 
 	ctx := map[string]interface{}{
 		"markup": map[string]interface{}{
-			"level": n.Level,
-			"id":    slugifyHeading(inner),
-			"inner": inner,
+			"level":      n.Level,
+			"id":         id,
+			"inner":      inner,
+			"text":       text,
+			"attributes": attrs,
 		},
 	}
 	rendered, err := r.renderHookTemplate(r.hooks["heading"], ctx)
