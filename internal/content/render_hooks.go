@@ -148,7 +148,9 @@ func (r *hookNodeRenderer) renderHeading(
 			attrs[name] = v
 		}
 		if name == "id" {
-			id = attrs[name].(string)
+			if s, ok := attrs[name].(string); ok {
+				id = s
+			}
 		}
 	}
 
