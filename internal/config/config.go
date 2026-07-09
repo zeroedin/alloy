@@ -26,7 +26,6 @@ type Config struct {
 	Templates     TemplatesConfig              `yaml:"templates" toml:"templates" json:"templates"`
 	Plugins       PluginsConfig                `yaml:"plugins" toml:"plugins" json:"plugins"`
 	Taxonomies    map[string]*TaxonomyConfig   `yaml:"taxonomies" toml:"taxonomies" json:"taxonomies"`
-	Permalinks    map[string]string            `yaml:"permalinks" toml:"permalinks" json:"permalinks"`
 	Pagination    PaginationConfig             `yaml:"pagination" toml:"pagination" json:"pagination"`
 	Passthrough   []PassthroughMapping         `yaml:"passthrough" toml:"passthrough" json:"passthrough"`
 	Watch         []WatchMapping               `yaml:"watch" toml:"watch" json:"watch"`
