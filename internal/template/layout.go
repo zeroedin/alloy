@@ -73,6 +73,15 @@ func hasRecognizedExtension(name string) bool {
 	return recognizedLayoutExtensions[filepath.Ext(name)]
 }
 
+// stripRecognizedExtensions removes all trailing recognized extensions from a
+// layout name, returning the bare name suitable for format infixing.
+func stripRecognizedExtensions(name string) string {
+	for hasRecognizedExtension(name) {
+		name = strings.TrimSuffix(name, filepath.Ext(name))
+	}
+	return name
+}
+
 // resolveNamedLayout resolves a layout specified by name (from front matter,
 // cascade, or layout chain parent references).
 // Extension-bearing names (e.g., "base.html") are used as literal filenames.
@@ -167,6 +176,9 @@ func ResolveLayoutForFormat(page *content.Page, layoutsDir string, engine string
 	}
 
 	if layout, ok := page.FrontMatter["layout"].(string); ok && layout != "" {
+		if hasRecognizedExtension(layout) {
+			return "", fmt.Errorf("extension-bearing layout %q cannot be used with format outputs; use `layout: %s` instead", layout, stripRecognizedExtensions(layout))
+		}
 		resolved, found := resolveNamedFormatLayout(layoutsDir, layout, format, engine)
 		if found {
 			return resolved, nil
@@ -206,6 +218,9 @@ func ResolveLayoutForFormatWithCascade(page *content.Page, layoutsDir, engine, f
 	}
 
 	if layout, ok := page.FrontMatter["layout"].(string); ok && layout != "" {
+		if hasRecognizedExtension(layout) {
+			return "", fmt.Errorf("extension-bearing layout %q cannot be used with format outputs; use `layout: %s` instead", layout, stripRecognizedExtensions(layout))
+		}
 		resolved, found := resolveNamedFormatLayout(layoutsDir, layout, format, engine)
 		if found {
 			return resolved, nil
@@ -215,6 +230,9 @@ func ResolveLayoutForFormatWithCascade(page *content.Page, layoutsDir, engine, f
 
 	if cascadeData != nil {
 		if layout, ok := cascadeData["layout"].(string); ok && layout != "" {
+			if hasRecognizedExtension(layout) {
+				return "", fmt.Errorf("extension-bearing layout %q cannot be used with format outputs; use `layout: %s` instead", layout, stripRecognizedExtensions(layout))
+			}
 			resolved, found := resolveNamedFormatLayout(layoutsDir, layout, format, engine)
 			if found {
 				return resolved, nil
