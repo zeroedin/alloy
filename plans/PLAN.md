@@ -1152,13 +1152,13 @@ Templates can access a page's translations:
 
 ```liquid
 {% for translation in page.translations %}
-  <a href="{{ translation.url }}" hreflang="{{ translation.language }}">
-    {{ translation.language }}
+  <a href="{{ translation.url }}" hreflang="{{ translation.lang }}">
+    {{ translation.lang }}
   </a>
 {% endfor %}
 ```
 
-`page.translations` is an array of the same page in other languages, matched by relative path. If no counterpart exists in a language, that language is absent from the array.
+`page.translations` is an array of the same page in other languages, matched by relative path. Each entry has `url`, `lang`, and `title`. If no counterpart exists in a language, that language is absent from the array.
 
 ### Build Behavior
 
