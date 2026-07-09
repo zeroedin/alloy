@@ -77,79 +77,9 @@ func resolveAssetFile(relPath string) ([]byte, error) {
 	return nil, fmt.Errorf("asset not found: %s", relPath)
 }
 
-// RegisterBuiltinFilters registers all Tier 1 built-in filters on the given engine.
+// RegisterBuiltinFilters registers all built-in filters on the given engine.
 func RegisterBuiltinFilters(engine TemplateEngine) error {
-	filters := map[string]FilterFunc{
-		"slugify":        Slugify,
-		"upcase":         Upcase,
-		"downcase":       Downcase,
-		"capitalize":     Capitalize,
-		"truncate":       Truncate,
-		"truncatewords":  TruncateWords,
-		"strip_html":     StripHTML,
-		"escape":         Escape,
-		"replace":        Replace,
-		"replace_first":  ReplaceFirst,
-		"split":          Split,
-		"join":           Join,
-		"strip":          Strip,
-		"append":         Append,
-		"prepend":        Prepend,
-		"newline_to_br":  NewlineToBr,
-		"contains":       Contains,
-		"date":           DateFormat,
-		"sort":           Sort,
-		"reverse":        Reverse,
-		"first":          First,
-		"last":           Last,
-		"where":          Where,
-		"group_by":       GroupBy,
-		"size":           Size,
-		"map":            Map,
-		"flatten":        Flatten,
-		"uniq":           Uniq,
-		"compact":        Compact,
-		"concat":         Concat,
-		"intersect":      Intersect,
-		"union":          Union,
-		"complement":     Complement,
-		"url":            URLFilter,
-		"absolute_url":   AbsoluteURL,
-		"url_encode":     URLEncode,
-		"url_decode":     URLDecode,
-		"plus":           Plus,
-		"minus":          Minus,
-		"times":          Times,
-		"divided_by":     DividedBy,
-		"modulo":         Modulo,
-		"ceil":           Ceil,
-		"floor":          Floor,
-		"round":          Round,
-		"abs":            Abs,
-		"markdownify":    Markdownify,
-		"findRE": func(input interface{}, args ...interface{}) interface{} {
-			// Liquid convention: input=text, args[0]=pattern
-			// Go function: input=pattern, args[0]=text
-			if len(args) == 0 {
-				return []string{}
-			}
-			return FindRE(args[0], input)
-		},
-		"replaceRE": func(input interface{}, args ...interface{}) interface{} {
-			// Liquid: input=text, args[0]=pattern, args[1]=replacement
-			// Go: input=pattern, args[0]=text, args[1]=replacement
-			if len(args) < 2 {
-				return toString(input)
-			}
-			return ReplaceRE(args[0], input, args[1])
-		},
-		"json":           JSONFilter,
-		"default":        Default,
-		"safeHTML":       SafeHTML,
-		"cachebust":      CacheBust,
-		"get_hash":       GetHash,
-	}
-	for name, fn := range filters {
+	for name, fn := range builtinFilters {
 		if err := engine.AddFilter(name, fn); err != nil {
 			return err
 		}
@@ -393,6 +323,24 @@ func Last(input interface{}, args ...interface{}) interface{} {
 		return nil
 	}
 	return arr[len(arr)-1]
+}
+
+func Limit(input interface{}, args ...interface{}) interface{} {
+	arr := toSlice(input)
+	if arr == nil {
+		return nil
+	}
+	if len(args) == 0 {
+		return arr
+	}
+	n := toInt(args[0])
+	if n < 0 {
+		n = 0
+	}
+	if n > len(arr) {
+		n = len(arr)
+	}
+	return arr[:n]
 }
 
 func Where(input interface{}, args ...interface{}) interface{} {
@@ -740,6 +688,23 @@ func cachedCompile(pattern string) (*regexp.Regexp, error) {
 	return re, nil
 }
 
+// findREFilter adapts FindRE to the Liquid convention where input=text and args[0]=pattern.
+func findREFilter(input interface{}, args ...interface{}) interface{} {
+	if len(args) == 0 {
+		return []string{}
+	}
+	return FindRE(args[0], input)
+}
+
+// replaceREFilter adapts ReplaceRE to the Liquid convention where input=text,
+// args[0]=pattern, and args[1]=replacement.
+func replaceREFilter(input interface{}, args ...interface{}) interface{} {
+	if len(args) < 2 {
+		return toString(input)
+	}
+	return ReplaceRE(args[0], input, args[1])
+}
+
 func FindRE(input interface{}, args ...interface{}) interface{} {
 	pattern := toString(input)
 	if len(args) == 0 {
@@ -865,6 +830,7 @@ var builtinFilters = map[string]FilterFunc{
 	"reverse":       Reverse,
 	"first":         First,
 	"last":          Last,
+	"limit":         Limit,
 	"where":         Where,
 	"group_by":      GroupBy,
 	"size":          Size,
@@ -890,8 +856,8 @@ var builtinFilters = map[string]FilterFunc{
 	"round":         Round,
 	"abs":           Abs,
 	"markdownify":   Markdownify,
-	"findRE":        FindRE,
-	"replaceRE":     ReplaceRE,
+	"findRE":        findREFilter,
+	"replaceRE":     replaceREFilter,
 	"json":          JSONFilter,
 	"default":       Default,
 	"safeHTML":      SafeHTML,
@@ -978,7 +944,11 @@ func toInt(v interface{}) int {
 	case float32:
 		return int(n)
 	case string:
-		return 0
+		i, err := strconv.Atoi(n)
+		if err != nil {
+			return 0
+		}
+		return i
 	default:
 		return 0
 	}

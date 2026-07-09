@@ -122,6 +122,7 @@ Array filters operate on collections, taxonomy groups, and any list data.
 | `reverse` | Reverse order | `{{ collections.blog | reverse }}` |
 | `first` | First item | `{{ collections.blog | first }}` |
 | `last` | Last item | `{{ collections.blog | last }}` |
+| `limit` | First N items | `{{ collections.blog | limit: 5 }}` |
 | `size` | Count items | `{{ collections.blog | size }}` |
 | `map` | Extract a single field | `{{ collections.blog | map: "title" }}` |
 | `uniq` | Remove duplicates | `{{ page.tags | uniq }}` |
@@ -142,6 +143,44 @@ The `where` filter selects items from an array where a field matches a value:
 
 {% assign js_posts = collections.blog | where: "tags", "javascript" %}
 ```
+
+### limit
+
+The `limit` filter returns the first N items from an array. It provides Go template parity with Liquid's `{% for ... limit: N %}` loop clause:
+
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="limit-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="limit-go">Go templates</wa-tab>
+
+<wa-tab-panel name="limit-liquid" active>
+<alloy-code lang="liquid">&lt;h2&gt;Recent posts&lt;/h2&gt;
+{% assign recent = collections.blog | limit: 5 %}
+{% for post in recent %}
+  &lt;a href="{{ post.url }}"&gt;{{ post.title }}&lt;/a&gt;
+{% endfor %}</alloy-code>
+
+Liquid's `{% for ... limit: 5 %}` clause still works -- the `limit` filter is an alternative that's useful in `assign` chains or when composing filters:
+
+<alloy-code lang="liquid">{% assign top3 = collections.blog | sort: "date" | reverse | limit: 3 %}</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="limit-go">
+<alloy-code lang="html">&lt;h2&gt;Recent posts&lt;/h2&gt;
+{{ range limit .collections.blog 5 }}
+  &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
+{{ end }}</alloy-code>
+
+Without `limit`, the Go template workaround requires index-guarding, which iterates the whole collection:
+
+<alloy-code lang="html">&lt;!-- Without limit -- verbose and iterates every item --&gt;
+{{ range $i, $post := .collections.blog }}{{ if lt $i 5 }}
+  &lt;a href="{{ $post.url }}"&gt;{{ $post.title }}&lt;/a&gt;
+{{ end }}{{ end }}</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
+
+`limit` clamps to array bounds -- `limit: 100` on a 3-item array returns all 3 items. A negative or zero argument returns an empty array. Calling `limit` with no argument returns the array unchanged.
 
 ### sort
 
