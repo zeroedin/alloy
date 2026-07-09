@@ -84,14 +84,14 @@ var _ = Describe("GoEngine", func() {
 		})
 	})
 
-	// ── Partials (issue #823) ─────────────────────────────────────────
-	// The Go template engine must support a `partial` function that
+	// ── Includes / partials (issue #823, #883) ───────────────────────
+	// The Go template engine must support an `include` function that
 	// resolves and renders partial templates from the layouts directory.
-	// This provides engine parity with Liquid's {% include %}.
+	// Named `include` for parity with Liquid's {% include %} (issue #883).
 	//
 	// The developer must:
 	// 1. Add a SetIncludesDir method to goEngine (like liquidEngine has)
-	// 2. Register a "partial" FuncMap function that:
+	// 2. Register an "include" FuncMap function that:
 	//    - Takes a path string and optional context argument
 	//    - Resolves from the layouts directory (path + ".html", then raw path)
 	//    - Reads and parses the file as a Go template (with the engine's FuncMap)
@@ -100,19 +100,19 @@ var _ = Describe("GoEngine", func() {
 	// 3. Track nesting depth, error at 100 ("Nesting too deep")
 	// 4. Guard against path traversal outside the layouts root
 
-	Describe("Partials (issue #823)", func() {
-		var partialEngine tmpl.TemplateEngine
+	Describe("Includes (issue #823, #883)", func() {
+		var includeEngine tmpl.TemplateEngine
 
 		BeforeEach(func() {
-			partialEngine = tmpl.NewGoEngine()
-			if setter, ok := partialEngine.(interface{ SetIncludesDir(string) }); ok {
+			includeEngine = tmpl.NewGoEngine()
+			if setter, ok := includeEngine.(interface{ SetIncludesDir(string) }); ok {
 				setter.SetIncludesDir("testdata/layouts")
 			}
 		})
 
-		It("renders a partial with {{ partial \"path\" }}", func() {
-			tpl, err := partialEngine.Parse("layout", []byte(
-				`<html>{{ partial "partials/header" }}<body>{{ .content }}</body></html>`))
+		It("renders a partial with {{ include \"path\" }}", func() {
+			tpl, err := includeEngine.Parse("layout", []byte(
+				`<html>{{ include "partials/header" }}<body>{{ .content }}</body></html>`))
 			Expect(err).NotTo(HaveOccurred())
 
 			result, err := tpl.Render(map[string]interface{}{
@@ -121,14 +121,14 @@ var _ = Describe("GoEngine", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(result)).To(ContainSubstring("<header>My Site</header>"),
-				"partial must render the partial template with the current context — "+
+				"include must render the partial template with the current context — "+
 					"this is the core use case replacing {{ template }} for cross-file "+
 					"includes (issue #823)")
 		})
 
 		It("uses current context when no argument is given", func() {
-			tpl, err := partialEngine.Parse("layout", []byte(
-				`{{ partial "partials/header" }}`))
+			tpl, err := includeEngine.Parse("layout", []byte(
+				`{{ include "partials/header" }}`))
 			Expect(err).NotTo(HaveOccurred())
 
 			result, err := tpl.Render(map[string]interface{}{
@@ -136,25 +136,25 @@ var _ = Describe("GoEngine", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(result)).To(ContainSubstring("<header>Implicit Context</header>"),
-				"partial with no context argument must inherit the current dot — "+
+				"include with no context argument must inherit the current dot — "+
 					"symmetric with Liquid's {% include %} which shares scope")
 		})
 
 		It("accepts explicit context argument", func() {
-			tpl, err := partialEngine.Parse("layout", []byte(
-				`{{ partial "partials/greeting" (dict "name" "Alice") }}`))
+			tpl, err := includeEngine.Parse("layout", []byte(
+				`{{ include "partials/greeting" (dict "name" "Alice") }}`))
 			Expect(err).NotTo(HaveOccurred())
 
 			result, err := tpl.Render(map[string]interface{}{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(result)).To(ContainSubstring("Hello, Alice!"),
-				"partial must render with the explicitly passed context map — "+
-					"this enables narrowing context like Hugo's {{ partial \"x\" . }}")
+				"include must render with the explicitly passed context map — "+
+					"this enables narrowing context for component-like partials")
 		})
 
 		It("returns output usable in variable assignment", func() {
-			tpl, err := partialEngine.Parse("layout", []byte(
-				`{{ $h := partial "partials/header" }}{{ if $h }}GOT:{{ $h }}{{ end }}`))
+			tpl, err := includeEngine.Parse("layout", []byte(
+				`{{ $h := include "partials/header" }}{{ if $h }}GOT:{{ $h }}{{ end }}`))
 			Expect(err).NotTo(HaveOccurred())
 
 			result, err := tpl.Render(map[string]interface{}{
@@ -162,31 +162,31 @@ var _ = Describe("GoEngine", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(result)).To(ContainSubstring("GOT:<header>Captured</header>"),
-				"partial must be a function (not an action) so its output can be "+
-					"captured in a variable — this is why we use partial instead of "+
-					"{{ template }}, which writes directly to the output stream")
+				"include must be a function (not an action) so its output can be "+
+					"captured in a variable — unlike {{ template }}, which writes "+
+					"directly to the output stream")
 		})
 
-		It("renders nested partials", func() {
-			tpl, err := partialEngine.Parse("layout", []byte(
-				`{{ partial "partials/nav" }}`))
+		It("renders nested includes", func() {
+			tpl, err := includeEngine.Parse("layout", []byte(
+				`{{ include "partials/nav" }}`))
 			Expect(err).NotTo(HaveOccurred())
 
 			result, err := tpl.Render(map[string]interface{}{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(result)).To(ContainSubstring("<nav><a href=\"/\">Home</a></nav>"),
-				"partials must be able to call other partials — "+
-					"nav.html contains {{ partial \"partials/nav-links\" }}")
+				"includes must be able to call other includes — "+
+					"nav.html contains {{ include \"partials/nav-links\" }}")
 		})
 
-		It("errors on circular partial inclusion", func() {
-			tpl, err := partialEngine.Parse("layout", []byte(
-				`{{ partial "partials/circular-a" }}`))
+		It("errors on circular inclusion", func() {
+			tpl, err := includeEngine.Parse("layout", []byte(
+				`{{ include "partials/circular-a" }}`))
 			Expect(err).NotTo(HaveOccurred())
 
 			_, err = tpl.Render(map[string]interface{}{})
 			Expect(err).To(HaveOccurred(),
-				"circular partials must produce a build error, not infinite recursion")
+				"circular includes must produce a build error, not infinite recursion")
 			Expect(err.Error()).To(SatisfyAny(
 				ContainSubstring("too deep"),
 				ContainSubstring("nesting"),
@@ -196,25 +196,25 @@ var _ = Describe("GoEngine", func() {
 					"matches Ruby/Go Liquid's StackLevelError behavior (max depth 100)")
 		})
 
-		It("errors on missing partial", func() {
-			tpl, err := partialEngine.Parse("layout", []byte(
-				`{{ partial "partials/nonexistent" }}`))
+		It("errors on missing include", func() {
+			tpl, err := includeEngine.Parse("layout", []byte(
+				`{{ include "partials/nonexistent" }}`))
 			Expect(err).NotTo(HaveOccurred())
 
 			_, err = tpl.Render(map[string]interface{}{})
 			Expect(err).To(HaveOccurred(),
-				"referencing a partial that doesn't exist must be a build error, "+
+				"referencing a file that doesn't exist must be a build error, "+
 					"not silent empty output — matches Liquid's {% include %} behavior")
 		})
 
 		It("rejects path traversal outside layouts root", func() {
-			tpl, err := partialEngine.Parse("layout", []byte(
-				`{{ partial "../../../etc/passwd" }}`))
+			tpl, err := includeEngine.Parse("layout", []byte(
+				`{{ include "../../../etc/passwd" }}`))
 			Expect(err).NotTo(HaveOccurred())
 
 			_, err = tpl.Render(map[string]interface{}{})
 			Expect(err).To(HaveOccurred(),
-				"partial paths that traverse outside the layouts directory must "+
+				"include paths that traverse outside the layouts directory must "+
 					"be rejected — same sandboxing as Liquid's ReadTemplateFile")
 			Expect(err.Error()).To(SatisfyAny(
 				ContainSubstring("traversal"),
@@ -227,9 +227,9 @@ var _ = Describe("GoEngine", func() {
 					"sandboxing implemented")
 		})
 
-		It("renders partial output unescaped", func() {
-			tpl, err := partialEngine.Parse("layout", []byte(
-				`{{ partial "partials/header" }}`))
+		It("renders include output unescaped", func() {
+			tpl, err := includeEngine.Parse("layout", []byte(
+				`{{ include "partials/header" }}`))
 			Expect(err).NotTo(HaveOccurred())
 
 			result, err := tpl.Render(map[string]interface{}{
@@ -237,14 +237,14 @@ var _ = Describe("GoEngine", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(result)).To(ContainSubstring("<header>"),
-				"partial output must not be HTML-escaped — it returns template.HTML, "+
+				"include output must not be HTML-escaped — it returns template.HTML, "+
 					"not a raw string, so Go's html/template does not double-escape it")
 		})
 
-		It("makes filters available inside partials", func() {
-			tmpl.RegisterBuiltinFilters(partialEngine)
-			tpl, err := partialEngine.Parse("layout", []byte(
-				`{{ partial "partials/footer" }}`))
+		It("makes filters available inside includes", func() {
+			tmpl.RegisterBuiltinFilters(includeEngine)
+			tpl, err := includeEngine.Parse("layout", []byte(
+				`{{ include "partials/footer" }}`))
 			Expect(err).NotTo(HaveOccurred())
 
 			result, err := tpl.Render(map[string]interface{}{
@@ -253,8 +253,8 @@ var _ = Describe("GoEngine", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(result)).To(ContainSubstring("© FILTERTEST"),
 				"FuncMap functions (filters) registered on the engine must be "+
-					"available inside partials — footer.html calls {{ upcase .site.title }}, "+
-					"which requires the upcase filter in the partial's FuncMap")
+					"available inside includes — footer.html calls {{ upcase .site.title }}, "+
+					"which requires the upcase filter in the included file's FuncMap")
 		})
 	})
 

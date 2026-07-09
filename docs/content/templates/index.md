@@ -36,9 +36,9 @@ templates:
 &lt;html&gt;
 &lt;head&gt;&lt;title&gt;{{ .page.title }}&lt;/title&gt;&lt;/head&gt;
 &lt;body&gt;
-  {{ partial "partials/header" }}
+  {{ include "partials/header" }}
   {{ .content }}
-  {{ partial "partials/footer" }}
+  {{ include "partials/footer" }}
 &lt;/body&gt;
 &lt;/html&gt;</alloy-code>
 </wa-tab-panel>
