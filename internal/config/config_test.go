@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -96,13 +97,28 @@ var _ = Describe("Config", func() {
 				Expect(cfg.Taxonomies["categories"].Layout).To(Equal("categories"))
 			})
 
-			// Issue #302: Site-level permalinks removed. Permalink patterns
-			// are set via _data.yaml cascade, not alloy.config.yaml.
-			// The developer must:
-			// 1. Remove Permalinks field from Config struct (compiler catches all callers)
-			// 2. Remove permalinks from testdata/*.yaml/toml/json
-			// 3. Config loader must not error on unknown keys (old configs with
-			//    permalinks: should load without failing)
+			// ── Site-level permalinks removal (issue #832, was #302) ────────
+			// PLAN.md §1b forbids a site-level permalinks: key.
+			// Permalink patterns are set via _data.yaml cascade, not alloy.config.yaml.
+			// The Config struct must NOT have a Permalinks field.
+
+			It("does not expose a Permalinks field on Config struct (issue #832)", func() {
+				Expect(err).NotTo(HaveOccurred())
+				// Use reflection so this test compiles both before AND after the
+				// field is removed. Direct field access (cfg.Permalinks) would
+				// cause a compile error when the developer deletes the field,
+				// deadlocking them under the immutable-tests rule.
+				_, found := reflect.TypeOf(*cfg).FieldByName("Permalinks")
+				Expect(found).To(BeFalse(),
+					"Config.Permalinks must be removed (issue #832) — "+
+						"permalink patterns belong in _data.yaml cascade, not site config. "+
+						"The developer must: "+
+						"1. Remove Permalinks field from Config struct (compiler catches all callers) "+
+						"2. Remove permalinks from testdata/*.yaml/toml/json "+
+						"3. Remove the fallback parameter from buildPermalinkCfg "+
+						"4. Config loader must not error on unknown keys (old configs with "+
+						"permalinks: should load without failing)")
+			})
 
 			It("parses pagination section with path", func() {
 				Expect(err).NotTo(HaveOccurred())
@@ -1059,6 +1075,90 @@ structure:
 				"autoHeadingID must remain true (default) when only toc is disabled — "+
 					"the two settings are independent: toc controls AST walk for page.toc, "+
 					"autoHeadingID controls goldmark parser.WithAutoHeadingID()")
+		})
+	})
+
+	// ── Site-level permalinks removal (issue #832) ──────────────────
+	// Old configs may still have a `permalinks:` key. After removing the
+	// field from Config, the YAML/TOML/JSON loaders must silently ignore
+	// the unknown key — not error. This ensures backward compatibility
+	// for users migrating from configs that used the old key.
+
+	Describe("Site-level permalinks removal backward compat (issue #832)", func() {
+		It("loads YAML config containing permalinks: without error", func() {
+			dir := GinkgoT().TempDir()
+			configContent := `title: "Legacy Config"
+baseURL: "https://example.com"
+permalinks:
+  blog: "/:year/:month/:slug/"
+  default: "/:slug/"
+`
+			Expect(os.WriteFile(filepath.Join(dir, "alloy.config.yaml"), []byte(configContent), 0644)).To(Succeed())
+
+			cfg, err := config.Load(filepath.Join(dir, "alloy.config.yaml"))
+			Expect(err).NotTo(HaveOccurred(),
+				"config with legacy permalinks: key must load without error — "+
+					"after removing the Permalinks field from Config, the YAML "+
+					"decoder must not reject unknown keys (issue #832)")
+			Expect(cfg.Title).To(Equal("Legacy Config"),
+				"other config fields must still parse correctly alongside "+
+					"the ignored permalinks: key")
+		})
+
+		It("loads TOML config containing [permalinks] without error", func() {
+			dir := GinkgoT().TempDir()
+			configContent := `title = "Legacy Config"
+baseURL = "https://example.com"
+
+[permalinks]
+blog = "/:year/:month/:slug/"
+default = "/:slug/"
+`
+			Expect(os.WriteFile(filepath.Join(dir, "alloy.config.toml"), []byte(configContent), 0644)).To(Succeed())
+
+			cfg, err := config.Load(filepath.Join(dir, "alloy.config.toml"))
+			Expect(err).NotTo(HaveOccurred(),
+				"config with legacy [permalinks] TOML section must load without error — "+
+					"TOML decoder must not reject unknown keys (issue #832)")
+			Expect(cfg.Title).To(Equal("Legacy Config"))
+		})
+
+		It("loads JSON config containing permalinks without error", func() {
+			dir := GinkgoT().TempDir()
+			configContent := `{
+  "title": "Legacy Config",
+  "baseURL": "https://example.com",
+  "permalinks": {
+    "blog": "/:year/:month/:slug/",
+    "default": "/:slug/"
+  }
+}`
+			Expect(os.WriteFile(filepath.Join(dir, "alloy.config.json"), []byte(configContent), 0644)).To(Succeed())
+
+			cfg, err := config.Load(filepath.Join(dir, "alloy.config.json"))
+			Expect(err).NotTo(HaveOccurred(),
+				"config with legacy permalinks JSON key must load without error — "+
+					"JSON decoder must not reject unknown keys (issue #832)")
+			Expect(cfg.Title).To(Equal("Legacy Config"))
+		})
+
+		It("loads legacy YAML config through LoadWithDefaults without error", func() {
+			dir := GinkgoT().TempDir()
+			configContent := `title: "Legacy Defaults"
+baseURL: "https://example.com"
+permalinks:
+  blog: "/:year/:month/:slug/"
+`
+			Expect(os.WriteFile(filepath.Join(dir, "alloy.config.yaml"), []byte(configContent), 0644)).To(Succeed())
+
+			cfg, err := config.LoadWithDefaults(filepath.Join(dir, "alloy.config.yaml"))
+			Expect(err).NotTo(HaveOccurred(),
+				"LoadWithDefaults is the primary CLI/pipeline entry point — "+
+					"legacy permalinks: key must not cause errors through the "+
+					"full Load → ApplyDefaults path (issue #832)")
+			Expect(cfg.Title).To(Equal("Legacy Defaults"))
+			Expect(cfg.Build.Output).To(Equal("_site"),
+				"ApplyDefaults must still apply after loading a legacy config")
 		})
 	})
 })

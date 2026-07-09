@@ -126,10 +126,6 @@ var _ = Describe("Build Pipeline", func() {
 					"tags":       {Render: &renderFalse},
 					"categories": {Render: &renderFalse},
 				},
-				Permalinks: map[string]string{
-					"blog":    "/:year/:month/:slug/",
-					"default": "/:slug/",
-				},
 			}
 			contentMap := map[string]string{
 				"content/blog/_data.yaml":  "layout: post",

@@ -29,10 +29,6 @@ taxonomies:
     permalink: "/categories/:slug/"
     layout: "categories"
 
-permalinks:
-  blog: "/:year/:month/:slug/"
-  default: "/:slug/"
-
 pagination:
   path: "page"
 

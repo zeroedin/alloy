@@ -232,7 +232,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 	engine := ps.Engine
 	siteData := ps.SiteData
-	permalinkCfg := buildPermalinkCfg(ps, cfg.Permalinks)
+	permalinkCfg := buildPermalinkCfg(ps)
 
 	// ═══ Content pipeline ═══
 
@@ -1054,16 +1054,13 @@ func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineSt
 	return pages, bc, nil
 }
 // buildPermalinkCfg builds a section-to-pattern permalink map by extracting
-// permalink patterns from cascade _data.yaml, with cfg.Permalinks as fallback.
-// Only top-level section directories are extracted (e.g. content/blog/ → "blog"),
-// matching ResolveForSection's section-name lookup. Nested _data.yaml permalink
-// patterns (e.g. content/blog/2026/) are not extracted — ResolveForSection only
-// looks up by section name (first path component).
-func buildPermalinkCfg(ps *PipelineState, fallback map[string]string) map[string]string {
-	result := make(map[string]string, len(fallback))
-	for k, v := range fallback {
-		result[k] = v
-	}
+// permalink patterns from cascade _data.yaml. Only top-level section
+// directories are extracted (e.g. content/blog/ → "blog"), matching
+// ResolveForSection's section-name lookup. Nested _data.yaml permalink
+// patterns (e.g. content/blog/2026/) are not extracted — ResolveForSection
+// only looks up by section name (first path component).
+func buildPermalinkCfg(ps *PipelineState) map[string]string {
+	result := make(map[string]string)
 	for key, data := range ps.CascadeData {
 		pattern, ok := data["permalink"].(string)
 		if !ok || pattern == "" {

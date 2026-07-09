@@ -269,7 +269,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	}
 	pagesToRender = filteredToRender
 
-	permalinkCfg := buildPermalinkCfg(ps, cfg.Permalinks)
+	permalinkCfg := buildPermalinkCfg(ps)
 	for _, page := range allPages {
 		url, err := permalink.ResolveForSection(page, permalinkCfg)
 		if err != nil {
