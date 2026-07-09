@@ -160,6 +160,24 @@ func parseChangeset(content string) (changeset, error) {
 	return changeset{bumpType: bumpType, summary: summary}, nil
 }
 
+func bulletItem(summary string) string {
+	lines := strings.Split(summary, "\n")
+	var b strings.Builder
+	for i, line := range lines {
+		if i == 0 {
+			b.WriteString("- ")
+			b.WriteString(line)
+		} else if line == "" {
+			b.WriteString("")
+		} else {
+			b.WriteString("  ")
+			b.WriteString(line)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 func buildDescriptions(changesets []changeset) string {
 	levels := make(map[string]bool)
 	for _, cs := range changesets {
@@ -170,8 +188,7 @@ func buildDescriptions(changesets []changeset) string {
 
 	if len(levels) <= 1 {
 		for _, cs := range changesets {
-			b.WriteString(cs.summary)
-			b.WriteString("\n")
+			b.WriteString(bulletItem(cs.summary))
 		}
 		return b.String()
 	}
@@ -197,8 +214,7 @@ func buildDescriptions(changesets []changeset) string {
 		b.WriteString("\n\n")
 		for _, cs := range changesets {
 			if cs.bumpType == o.level {
-				b.WriteString(cs.summary)
-				b.WriteString("\n")
+				b.WriteString(bulletItem(cs.summary))
 			}
 		}
 		first = false
