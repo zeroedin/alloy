@@ -1133,6 +1133,161 @@ var _ = Describe("RenderMarkdown", func() {
 			Expect(html).To(ContainSubstring(`<a href="/about">Internal</a>`),
 				"internal link must not have target=_blank")
 		})
+
+		// ── Render hook context enrichment (issue #824) ──────────────
+		// These tests verify that render hooks receive the full context
+		// documented in PLAN.md: heading attributes, link title, and
+		// heading inner HTML vs plain text.
+
+		It("render-link.liquid receives markup.title from link title (issue #824)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"link": `<a href="{{ markup.destination }}" title="{{ markup.title }}">{{ markup.text }}</a>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			out, _, err := content.RenderMarkdown([]byte(`[Click here](https://example.com "Link tooltip")`), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`title="Link tooltip"`),
+				"markup.title must contain the link title from [text](url \"title\") syntax")
+		})
+
+		It("render-link.liquid markup.title is empty when no title is provided (issue #824)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"link": `<a href="{{ markup.destination }}" title="{{ markup.title }}">{{ markup.text }}</a>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			out, _, err := content.RenderMarkdown([]byte(`[Click here](https://example.com)`), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`title=""`),
+				"markup.title must be empty string when link has no title")
+		})
+
+		It("render-heading.liquid receives markup.inner as rendered HTML (issue #824)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				AutoHeadingID: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }} id="{{ markup.id }}">{{ markup.inner }}</h{{ markup.level }}>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			out, _, err := content.RenderMarkdown([]byte("## Hello **world**"), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<strong>world</strong>"),
+				"markup.inner must contain rendered HTML, not plain text — inline formatting must be preserved")
+		})
+
+		It("render-heading.liquid receives markup.text as plain text (issue #824)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				AutoHeadingID: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }}><span class="text">{{ markup.text }}</span>{{ markup.inner }}</h{{ markup.level }}>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			out, _, err := content.RenderMarkdown([]byte("## Hello **world**"), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`<span class="text">Hello world</span>`),
+				"markup.text must be plain text with all inline formatting stripped")
+			Expect(html).To(ContainSubstring("<strong>world</strong>"),
+				"markup.inner must still contain the rendered HTML version")
+		})
+
+		It("render-heading.liquid receives markup.attributes from goldmark attribute syntax (issue #824)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				AutoHeadingID: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }} id="{{ markup.attributes.id }}" class="{{ markup.attributes.class }}">{{ markup.inner }}</h{{ markup.level }}>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			out, _, err := content.RenderMarkdown([]byte("## My Section {.highlight #custom-id}"), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`id="custom-id"`),
+				"markup.attributes.id must contain the id from {#custom-id} syntax")
+			Expect(html).To(ContainSubstring(`class="highlight"`),
+				"markup.attributes.class must contain the class from {.highlight} syntax")
+		})
+
+		It("render-heading.liquid markup.attributes includes arbitrary key-value pairs (issue #824)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				AutoHeadingID: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }} data-section="{{ markup.attributes.data-section }}">{{ markup.inner }}</h{{ markup.level }}>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			out, _, err := content.RenderMarkdown([]byte(`## Intro {data-section="hero"}`), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`data-section="hero"`),
+				"markup.attributes must include arbitrary key=value attributes from goldmark syntax")
+		})
+
+		It("render-heading.liquid renders without error when no attributes are present (issue #824)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				AutoHeadingID: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }} data-attrs="{{ markup.attributes }}">{{ markup.inner }}</h{{ markup.level }}>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			out, _, err := content.RenderMarkdown([]byte("## Plain Heading"), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<h2"),
+				"heading hook must still work when no attributes are present")
+			Expect(html).To(ContainSubstring("Plain Heading"),
+				"heading content must render correctly without attributes")
+		})
+
+		It("render-heading.liquid markup.id falls back to auto-slug when {.class} present without {#id} (issue #824)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				AutoHeadingID: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }} id="{{ markup.id }}" class="{{ markup.attributes.class }}">{{ markup.inner }}</h{{ markup.level }}>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			out, _, err := content.RenderMarkdown([]byte("## My Title {.featured}"), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`id="my-title"`),
+				"markup.id must fall back to auto-generated slug when no {#id} attribute is present")
+			Expect(html).To(ContainSubstring(`class="featured"`),
+				"markup.attributes.class must still be populated from {.class} syntax")
+		})
+
+		It("render-heading.liquid markup.id still works with attributes override (issue #824)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				AutoHeadingID: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }} id="{{ markup.id }}">{{ markup.inner }}</h{{ markup.level }}>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			out, _, err := content.RenderMarkdown([]byte("## My Section {#custom-id}"), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`id="custom-id"`),
+				"markup.id must reflect the custom id from {#custom-id} attribute syntax, not the auto-generated slug")
+		})
 	})
 
 	// ── Shared goldmark instance (issue #353, #700) ────────────────
