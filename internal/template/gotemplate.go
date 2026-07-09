@@ -19,7 +19,7 @@ type goEngine struct {
 	funcMap        gohtml.FuncMap
 	includesDir    string
 	absIncludesDir string
-	partialCache   sync.Map // map[string]*gohtml.Template
+	includeCache   sync.Map // map[string]*gohtml.Template
 	depth          atomic.Int32
 }
 
@@ -61,11 +61,11 @@ func NewGoEngine() TemplateEngine {
 			},
 		},
 	}
-	// partial is a placeholder until SetIncludesDir wires the real implementation.
+	// include is a placeholder until SetIncludesDir wires the real implementation.
 	// Go's html/template requires all FuncMap entries at parse time, so we register
 	// a stub that the real closure (set in SetIncludesDir) replaces.
-	e.funcMap["partial"] = func(path string, dot interface{}) (gohtml.HTML, error) {
-		return "", fmt.Errorf("partial %q: includes directory not configured", path)
+	e.funcMap["include"] = func(path string, dot interface{}) (gohtml.HTML, error) {
+		return "", fmt.Errorf("include %q: includes directory not configured", path)
 	}
 	return e
 }
@@ -79,22 +79,22 @@ func (e *goEngine) SetIncludesDir(dir string) {
 	if err == nil {
 		e.absIncludesDir = abs
 	}
-	e.funcMap["partial"] = func(path string, dot interface{}) (gohtml.HTML, error) {
-		return e.renderPartial(path, dot)
+	e.funcMap["include"] = func(path string, dot interface{}) (gohtml.HTML, error) {
+		return e.renderInclude(path, dot)
 	}
 }
 
-const maxPartialDepth = 100
+const maxIncludeDepth = 100
 
-func (e *goEngine) renderPartial(path string, dot interface{}) (gohtml.HTML, error) {
+func (e *goEngine) renderInclude(path string, dot interface{}) (gohtml.HTML, error) {
 	d := e.depth.Add(1)
 	defer e.depth.Add(-1)
 
-	if d > maxPartialDepth {
-		return "", fmt.Errorf("partial %q: nesting too deep (max depth %d)", path, maxPartialDepth)
+	if d > maxIncludeDepth {
+		return "", fmt.Errorf("include %q: nesting too deep (max depth %d)", path, maxIncludeDepth)
 	}
 
-	parsed, err := e.resolvePartial(path)
+	parsed, err := e.resolveInclude(path)
 	if err != nil {
 		return "", err
 	}
@@ -106,14 +106,14 @@ func (e *goEngine) renderPartial(path string, dot interface{}) (gohtml.HTML, err
 
 	var buf bytes.Buffer
 	if err := parsed.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("partial %q: %w", path, err)
+		return "", fmt.Errorf("include %q: %w", path, err)
 	}
 
 	return gohtml.HTML(buf.String()), nil
 }
 
-func (e *goEngine) resolvePartial(path string) (*gohtml.Template, error) {
-	if cached, ok := e.partialCache.Load(path); ok {
+func (e *goEngine) resolveInclude(path string) (*gohtml.Template, error) {
+	if cached, ok := e.includeCache.Load(path); ok {
 		return cached.(*gohtml.Template), nil
 	}
 
@@ -130,7 +130,7 @@ func (e *goEngine) resolvePartial(path string) (*gohtml.Template, error) {
 		}
 		rel, relErr := filepath.Rel(e.absIncludesDir, abs)
 		if relErr != nil || strings.HasPrefix(rel, "..") {
-			return nil, fmt.Errorf("partial %q: path traversal outside layouts directory", path)
+			return nil, fmt.Errorf("include %q: path traversal outside layouts directory", path)
 		}
 		content, err = os.ReadFile(candidate)
 		if err == nil {
@@ -138,28 +138,28 @@ func (e *goEngine) resolvePartial(path string) (*gohtml.Template, error) {
 		}
 	}
 	if content == nil {
-		return nil, fmt.Errorf("partial %q: no such template", path)
+		return nil, fmt.Errorf("include %q: no such template", path)
 	}
 
-	src := injectPartialDot(string(content))
+	src := injectIncludeDot(string(content))
 	tpl := gohtml.New(path).Funcs(e.funcMap)
 	parsed, err := tpl.Parse(src)
 	if err != nil {
-		return nil, fmt.Errorf("partial %q: %w", path, err)
+		return nil, fmt.Errorf("include %q: %w", path, err)
 	}
 
-	e.partialCache.Store(path, parsed)
+	e.includeCache.Store(path, parsed)
 	return parsed, nil
 }
 
-// partialNoDotPattern matches {{ partial "path" }} calls that have no second
+// includeNoDotPattern matches {{ include "path" }} calls that have no second
 // argument (no explicit dot). The parse-time rewrite injects `. ` so the
-// partial function always receives the current dot — including inside
+// include function always receives the current dot — including inside
 // {{ range }} and {{ with }} blocks where dot changes.
-var partialNoDotPattern = regexp.MustCompile(`(partial\s+"[^"]*?")\s*(-?\}\})`)
+var includeNoDotPattern = regexp.MustCompile(`(include\s+"[^"]*?")\s*(-?\}\})`)
 
-func injectPartialDot(src string) string {
-	return partialNoDotPattern.ReplaceAllString(src, "${1} . ${2}")
+func injectIncludeDot(src string) string {
+	return includeNoDotPattern.ReplaceAllString(src, "${1} . ${2}")
 }
 
 // goTemplate wraps a parsed Go html/template.
@@ -170,7 +170,7 @@ type goTemplate struct {
 }
 
 func (e *goEngine) Parse(name string, content []byte) (Template, error) {
-	src := injectPartialDot(string(content))
+	src := injectIncludeDot(string(content))
 	tpl := gohtml.New(name).Funcs(e.funcMap)
 	parsed, err := tpl.Parse(src)
 	if err != nil {
