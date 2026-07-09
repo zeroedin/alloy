@@ -1429,6 +1429,20 @@ var _ = Describe("ResolveLayout", func() {
 					"bare front matter layout 'custom' via cascade path must resolve to custom.html via fallback")
 			})
 
+			It("layout:false in front matter takes priority over cascade layout (issue #858)", func() {
+				layoutsDir := createLayoutsDir("article.liquid")
+				page := &content.Page{
+					RelPath:     "blog/raw.md",
+					Section:     "blog",
+					FrontMatter: map[string]interface{}{"layout": false},
+				}
+				cascadeData := map[string]interface{}{"layout": "article"}
+				result, err := tmpl.ResolveLayoutWithCascade(page, layoutsDir, "liquid", map[string]string{}, cascadeData)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(""),
+					"layout:false must suppress rendering even when cascade provides a layout")
+			})
+
 			It("falls through to ResolveLayout bare-extension fallback when no explicit layout set", func() {
 				// No front matter layout, no cascade layout — falls through to ResolveLayout.
 				// Only bare-extension default.html exists — Liquid engine must find it.
