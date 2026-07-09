@@ -432,15 +432,13 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
  3. content.DiscoverWithFormats(contentDir, formats)      ✅ done
  4. content.FilterByLifecycle(pages, now, includeDrafts)  ✅ done (issue #108: must pass includeDrafts from server mode, not hardcode false)
  5. cascade.LoadDirectoryCascade + FindCascadeData + PageContext ✅ done (was step 6, reordered for #302)
- 6. permalink.ResolveFromCascade(page, cascadeData)       ← CHANGED (issues #302, #832)
-    Permalink pattern comes from _data.yaml cascade (step 5), not Config.Permalinks.
-    Remove `Permalinks map[string]string` from Config struct (issue #832).
-    `buildPermalinkCfg` must build its map from cascade data only — remove the
-    `fallback map[string]string` parameter (issue #832).
-    Config loaders (YAML/TOML/JSON) must silently ignore unknown `permalinks:` key
-    in old config files — do not reject unknown keys.
-    Remove permalinks entries from testdata/*.yaml/toml/json.
-    Update all callers in build.go (batch loop, i18n prefix logic).
+ 6. permalink.ResolveForSection(page, permalinkCfg)       ✅ done (issues #302, #832)
+    `permalinkCfg` is built by `buildPermalinkCfg(ps)` from `_data.yaml` cascade
+    data only — the `Config.Permalinks` fallback was removed (issue #832).
+    Config loaders (YAML/TOML/JSON) silently ignore unknown `permalinks:` key
+    in old config files — decoders do not reject unknown keys.
+    `ResolveFromCascade` exists as an alternative that takes raw cascade data
+    instead of the pre-built section map, but the pipeline uses `ResolveForSection`.
  7. data.LoadDirectory(dataDir) → siteData                ✅ done
  8. collection.BuildCollections(pages, cascadeData, collectionNames)  ← CHANGED (issues #302, #766)
     Date-based section detection reads permalink from each section's
