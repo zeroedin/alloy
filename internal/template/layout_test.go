@@ -782,6 +782,106 @@ var _ = Describe("ResolveLayout", func() {
 					"Go engine must resolve post.json.html for date-based section children")
 			})
 		})
+
+		// ── Extension-bearing layout + format outputs (issue #869) ──────
+
+		Describe("Extension-bearing layout name with format outputs (issue #869)", func() {
+
+			It("errors when layout: 'article.liquid' is used with format outputs", func() {
+				layoutsDir := createLayoutsDir("article.liquid", "article.json.liquid")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "json"},
+					FrontMatter: map[string]interface{}{"layout": "article.liquid"},
+				}
+				_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", map[string]string{})
+				Expect(err).To(HaveOccurred(),
+					"extension-bearing layout must error when used with format outputs")
+				Expect(err.Error()).To(ContainSubstring("extension-bearing"),
+					"error must mention that the layout name is extension-bearing")
+				Expect(err.Error()).To(ContainSubstring("article"),
+					"error must suggest the bare name alternative")
+			})
+
+			It("errors when layout: 'article.html' is used with format outputs", func() {
+				layoutsDir := createLayoutsDir("article.html", "article.json.liquid")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "json"},
+					FrontMatter: map[string]interface{}{"layout": "article.html"},
+				}
+				_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", map[string]string{})
+				Expect(err).To(HaveOccurred(),
+					"extension-bearing .html layout must error when used with format outputs")
+			})
+
+			It("errors when layout: 'feed.xml' is used with format outputs", func() {
+				layoutsDir := createLayoutsDir("feed.xml")
+				page := &content.Page{
+					RelPath:     "blog/index.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "xml"},
+					FrontMatter: map[string]interface{}{"layout": "feed.xml"},
+				}
+				_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "xml", map[string]string{})
+				Expect(err).To(HaveOccurred(),
+					"extension-bearing .xml layout must error when used with format outputs")
+			})
+
+			It("does NOT error for extension-bearing layout with default HTML-only output", func() {
+				// layout: "article.liquid" with no outputs key (HTML only) is fine —
+				// ResolveLayout handles it, ResolveLayoutForFormat is never called.
+				// This test exercises ResolveLayout to confirm no regression.
+				layoutsDir := createLayoutsDir("article.liquid")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					FrontMatter: map[string]interface{}{"layout": "article.liquid"},
+				}
+				result, err := tmpl.ResolveLayout(page, layoutsDir, "liquid", map[string]string{})
+				Expect(err).NotTo(HaveOccurred(),
+					"extension-bearing layout with default HTML output must not error")
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "article.liquid")),
+					"extension-bearing layout must resolve normally for HTML-only pages")
+			})
+
+			It("does NOT error for bare layout name with format outputs", func() {
+				// layout: "article" (bare name) + outputs: [html, json] is fine —
+				// format infixing produces article.json.liquid as expected.
+				layoutsDir := createLayoutsDir("article.json.liquid")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "json"},
+					FrontMatter: map[string]interface{}{"layout": "article"},
+				}
+				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "liquid", "json", map[string]string{})
+				Expect(err).NotTo(HaveOccurred(),
+					"bare layout name with format outputs must not error — format infixing works")
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "article.json.liquid")),
+					"bare layout name must resolve via format infixing")
+			})
+
+			It("errors for extension-bearing cascade layout with format outputs", func() {
+				layoutsDir := createLayoutsDir("article.liquid", "article.json.liquid")
+				page := &content.Page{
+					RelPath:     "blog/my-post.md",
+					Section:     "blog",
+					Outputs:     []string{"html", "json"},
+					FrontMatter: map[string]interface{}{},
+				}
+				cascadeData := map[string]interface{}{
+					"layout": "article.liquid",
+				}
+				_, err := tmpl.ResolveLayoutForFormatWithCascade(page, layoutsDir, "liquid", "json", map[string]string{}, cascadeData)
+				Expect(err).To(HaveOccurred(),
+					"extension-bearing cascade layout must error when used with format outputs")
+				Expect(err.Error()).To(ContainSubstring("extension-bearing"),
+					"error must mention that the cascade layout name is extension-bearing")
+			})
+		})
 	})
 
 	// ── Layout from _data.yaml cascade (§4) ─────────────────────────

@@ -583,6 +583,12 @@ For example, a blog child page (`content/blog/my-post.md`) with `outputs: ["html
 
 This mirrors the HTML chain exactly: front matter > post (date-based child) > section name (index page) > filename > default. The `layout: false` directive suppresses format outputs the same way it suppresses HTML output. There is no `single` concept — Alloy explicitly rejects Hugo's `single` vs `list` distinction (see Layout Lookup Order below).
 
+**Extension-bearing layout names are incompatible with format outputs.** When a page declares `outputs: ["html", "json"]` (or any multi-format output), the layout name must be a bare name (e.g., `layout: "article"`) so the format infixing logic can produce `article.json.liquid`, `article.xml.liquid`, etc. Extension-bearing names (e.g., `layout: "article.liquid"`, `layout: "article.html"`) bypass format infixing and would silently serve the wrong template for non-HTML formats. Alloy prevents this with a build error:
+
+> extension-bearing layout "article.liquid" cannot be used with format outputs; use `layout: article` instead
+
+This applies to both front matter `layout:` and `_data.yaml` cascade `layout:`. Extension-bearing layout names remain valid for HTML-only pages (the default when no `outputs` key is set).
+
 ---
 
 ## 1f. Content Lifecycle
