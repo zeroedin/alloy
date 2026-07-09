@@ -43,8 +43,6 @@ Layouts wrap your page content in shared HTML structure. Every content page is r
 </wa-tab-group>
 {% endraw %}
 
-> The Go version has no header/footer includes: `{% include %}` and `{% render %}` are Liquid-only, and the Go engine currently has no partials mechanism. Shared structure lives in parent layouts via [layout chaining](#layout-chaining) instead. See [Go template engine](#go-template-engine).
-
 The `{{ content }}` variable holds the fully rendered body of the current page. For Markdown files, this is already converted to HTML before the layout is applied.
 
 ## Layout resolution order
@@ -212,17 +210,38 @@ Custom front matter fields work the same way. If your content defines `author: "
 
 ## Partials and includes
 
-Partials are reusable template fragments stored in `layouts/partials/`. Include them with the `{% include %}` or `{% render %}` tag:
+Partials are reusable template fragments stored in `layouts/partials/` (by convention -- any path under `layouts/` works). Both engines resolve partials from the layouts directory.
 
-```liquid
-{% include "partials/header" %}
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="partials-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="partials-go">Go templates</wa-tab>
+
+<wa-tab-panel name="partials-liquid" active>
+<alloy-code lang="liquid">{% include "partials/header" %}
 {% include "partials/footer" %}
-{% render "partials/social-links" %}
-```
+{% render "partials/social-links" %}</alloy-code>
 
-Both tags resolve paths relative to the `layouts/` directory, trying `name.liquid`, then `name.html`, then the bare name. The difference: `{% include %}` shares the parent template's variable scope, while `{% render %}` creates an isolated scope (variables from the parent are not accessible unless explicitly passed). Includes are Liquid-only -- see the Go template engine section below.
+Both tags resolve paths relative to the `layouts/` directory, trying `name.liquid`, then `name.html`, then the bare name. The difference: `{% include %}` shares the parent template's variable scope, while `{% render %}` creates an isolated scope (variables from the parent are not accessible unless explicitly passed).
+</wa-tab-panel>
+<wa-tab-panel name="partials-go">
+<alloy-code lang="html">{{ partial "partials/header" }}
+{{ partial "partials/footer" }}
+{{ partial "partials/social-links" }}</alloy-code>
 
-Plugin-registered filters work inside partials -- the same filter dispatch mechanism applies to all template files.
+The `partial` function resolves paths relative to the `layouts/` directory, trying `name.html`, then the bare name. Context is optional -- with no argument, the partial inherits the current template context (like Liquid's `{% include %}`). Pass an explicit context to narrow scope:
+
+<alloy-code lang="html">{{ partial "partials/card" (dict "item" . "compact" true) }}</alloy-code>
+
+Unlike Go's built-in `{{ template }}` action, `partial` is a function -- its output can be captured in variables and used in pipelines:
+
+<alloy-code lang="html">{{ $nav := partial "partials/nav" }}
+{{ if $nav }}&lt;div class="has-nav"&gt;{{ $nav }}&lt;/div&gt;{{ end }}</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
+
+Plugin-registered filters work inside partials in both engines -- the same filter dispatch mechanism applies to all template files. Partials can include other partials (nesting is capped at 100 levels).
 
 ### Go template engine
 
@@ -239,7 +258,7 @@ With the Go template engine (`engine: "gotemplate"`), layouts are `.html` files 
 </html>
 ```
 
-Layout chaining works identically in both engines -- a `layout:` directive in the layout's front matter names the parent (see [Layout chaining](#layout-chaining)). Each layout file is parsed standalone, so Go's `{{ template }}` / `{{ define }}` cross-file mechanisms are not available; there is no partials directory equivalent for the Go engine. `{% include %}`, `{% render %}`, and `{% inline %}` are Liquid-only tags.
+Layout chaining works identically in both engines -- a `layout:` directive in the layout's front matter names the parent (see [Layout chaining](#layout-chaining)). Cross-file partials use the `{{ partial }}` function (see [Partials and includes](#partials-and-includes)). `{% include %}`, `{% render %}`, and `{% inline %}` are Liquid-only tags.
 
 Two helper functions are registered for working with ordered map data (JSON data files preserve key order via an ordered map type that Go's index syntax cannot address):
 

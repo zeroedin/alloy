@@ -36,14 +36,14 @@ templates:
 &lt;html&gt;
 &lt;head&gt;&lt;title&gt;{{ .page.title }}&lt;/title&gt;&lt;/head&gt;
 &lt;body&gt;
+  {{ partial "partials/header" }}
   {{ .content }}
+  {{ partial "partials/footer" }}
 &lt;/body&gt;
 &lt;/html&gt;</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>
 {% endraw %}
-
-> The Go version has no header/footer lines because the Go engine currently has no partials mechanism -- `{% include %}` is Liquid-only. See [Layouts](/templates/layouts/#go-template-engine).
 
 Every content page is rendered through its resolved layout. The layout receives the page's rendered body as `{{ content }}` and can access all front matter fields via the `page` object.
 
