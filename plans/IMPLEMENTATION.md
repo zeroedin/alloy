@@ -358,7 +358,7 @@ Key points:
   - Resolution: try `layoutsDir/name.html` first, then `layoutsDir/name` (raw name). Same candidate pattern as Liquid's `ReadTemplateFile`.
   - Path sandboxing: `filepath.Rel(absRoot, absPath)` must not start with `..`. Build error on traversal.
   - Parse with the engine's FuncMap (so filters, `dict`, `partial` itself are available in nested partials).
-  - Nesting depth: package-level or closure-captured counter. Increment on entry, decrement on exit (use defer). Build error at depth > 100 with message containing "too deep" or "nesting" (matches Ruby/Go Liquid's `StackLevelError`).
+  - Nesting depth: render-scoped counter (closure-captured or carried on the render context — NOT package-level, which would be shared across concurrent renders in the dev server). Increment on entry, decrement on exit (use defer). Build error at depth > 100 with message containing "too deep" or "nesting" (matches Ruby/Go Liquid's `StackLevelError`).
   - Missing partial file: build error with clear message.
   - The `partial` function must be registered in the FuncMap *before* `Parse` is called (Go templates bind functions at parse time). Register it in `NewGoEngine()` or in `SetIncludesDir()` — the function needs the layouts dir path to resolve files.
   - **Important**: The `partial` function needs access to the current render context (dot) at render time to serve as the default context argument. Since FuncMap functions are bound at parse time, the function must capture the render context via a mechanism set during `Render()` — e.g., a pointer to the current context stored on `goTemplate` before `Execute`, read by the `partial` closure.

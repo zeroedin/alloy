@@ -216,6 +216,15 @@ var _ = Describe("GoEngine", func() {
 			Expect(err).To(HaveOccurred(),
 				"partial paths that traverse outside the layouts directory must "+
 					"be rejected — same sandboxing as Liquid's ReadTemplateFile")
+			Expect(err.Error()).To(SatisfyAny(
+				ContainSubstring("traversal"),
+				ContainSubstring("outside"),
+				ContainSubstring("illegal"),
+				ContainSubstring("sandbox"),
+			),
+				"error must explicitly indicate path traversal rejection, not just "+
+					"file-not-found — a missing-file error would pass without any "+
+					"sandboxing implemented")
 		})
 
 		It("renders partial output unescaped", func() {
@@ -233,6 +242,7 @@ var _ = Describe("GoEngine", func() {
 		})
 
 		It("makes filters available inside partials", func() {
+			tmpl.RegisterBuiltinFilters(partialEngine)
 			tpl, err := partialEngine.Parse("layout", []byte(
 				`{{ partial "partials/footer" }}`))
 			Expect(err).NotTo(HaveOccurred())
@@ -241,10 +251,10 @@ var _ = Describe("GoEngine", func() {
 				"site": map[string]interface{}{"title": "FilterTest"},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(result)).To(ContainSubstring("© FilterTest"),
-				"filters and FuncMap functions registered on the engine must be "+
-					"available inside partials — the partial is parsed with the "+
-					"same FuncMap as the parent template")
+			Expect(string(result)).To(ContainSubstring("© FILTERTEST"),
+				"FuncMap functions (filters) registered on the engine must be "+
+					"available inside partials — footer.html calls {{ upcase .site.title }}, "+
+					"which requires the upcase filter in the partial's FuncMap")
 		})
 	})
 
