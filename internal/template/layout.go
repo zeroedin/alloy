@@ -102,9 +102,10 @@ func resolveNamedLayout(layoutsDir, name, engine string) (string, bool) {
 // 1. Front matter layout (bare names get engine fallback; extension-bearing used as-is)
 // 2. "post" (for pages in date-based permalink sections)
 // 3. Section name (for index pages)
-// 4. Filename (without extension)
-// 5. "default"
-// For the Liquid engine, auto candidates (steps 2-5) try .liquid then bare .html
+// 4. "default"
+// Filename matching was removed in issue #902 — layouts are either explicitly set
+// or use convention/default fallbacks.
+// For the Liquid engine, auto candidates try .liquid then bare .html
 // per candidate before moving to the next candidate (per-candidate interleaving).
 // Returns error if no layout file is found on disk.
 func ResolveLayout(page *content.Page, layoutsDir string, engine string, permalinkCfg map[string]string) (string, error) {
@@ -128,7 +129,7 @@ func ResolveLayout(page *content.Page, layoutsDir string, engine string, permali
 		// Gotemplate bare name: fall through to auto candidates (pre-existing behavior)
 	}
 
-	// 2-5. Auto candidates with per-candidate interleaved fallback
+	// 2-4. Auto candidates with per-candidate interleaved fallback
 	var candidates []string
 
 	if isDateBasedSection(page.Section, permalinkCfg) && !isIndexPage(page.RelPath) {
@@ -138,9 +139,6 @@ func ResolveLayout(page *content.Page, layoutsDir string, engine string, permali
 	if isIndexPage(page.RelPath) && page.Section != "" {
 		candidates = append(candidates, layoutCandidates(layoutsDir, page.Section, engine)...)
 	}
-
-	filename := filenameWithoutExt(page.RelPath)
-	candidates = append(candidates, layoutCandidates(layoutsDir, filename, engine)...)
 
 	candidates = append(candidates, layoutCandidates(layoutsDir, "default", engine)...)
 
@@ -195,9 +193,6 @@ func ResolveLayoutForFormat(page *content.Page, layoutsDir string, engine string
 	if isIndexPage(page.RelPath) && page.Section != "" {
 		candidates = append(candidates, formatLayoutCandidates(layoutsDir, page.Section, format, engine)...)
 	}
-
-	filename := filenameWithoutExt(page.RelPath)
-	candidates = append(candidates, formatLayoutCandidates(layoutsDir, filename, format, engine)...)
 
 	candidates = append(candidates, formatLayoutCandidates(layoutsDir, "default", format, engine)...)
 
@@ -440,9 +435,3 @@ func isIndexPage(relPath string) bool {
 	return base == "index.md" || base == "index.html"
 }
 
-// filenameWithoutExt returns the base filename without its extension.
-func filenameWithoutExt(relPath string) string {
-	base := filepath.Base(relPath)
-	ext := filepath.Ext(base)
-	return strings.TrimSuffix(base, ext)
-}
