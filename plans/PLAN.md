@@ -209,7 +209,7 @@ content/about/
 - `templates.engine: "gotemplate"` → `.liquid` files are always passthrough, even if `liquid` is in `content.formats` (the Go template engine cannot render Liquid syntax)
 - `.liquid` is NOT in the default `content.formats` list — with default settings, `.liquid` files in `content/` are passthrough
 
-Fragments inherit layout from the cascade chain: `_data.yaml` `layout:` → filename match → `default.liquid` fallback. A `_data.yaml` with `layout: element` wraps every fragment in that directory with the element layout, producing full HTML documents in the output. `layout: false` in `_data.yaml` skips layout wrapping — the fragment passes through unwrapped.
+Fragments inherit layout from the cascade chain: `_data.yaml` `layout:` → default layout fallback (`default.liquid` for Liquid engine, `default.html` for Go engine). A `_data.yaml` with `layout: element` wraps every fragment in that directory with the element layout, producing full HTML documents in the output. `layout: false` in `_data.yaml` skips layout wrapping — the fragment passes through unwrapped.
 
 ```
 content/patterns/card/
@@ -549,7 +549,7 @@ layouts/
 └── robots.txt         ← static content, no template tags, used by either
 ```
 
-If the Liquid engine finds no `.liquid` file, it falls back to the bare extension and parses it as Liquid. This fallback applies to all **automatic** layout lookup candidates — the "post", section-name, filename, and "default" steps in `ResolveLayout`, and all candidates in `ResolveLayoutForFormat` and `ResolveTaxonomyLayout`. At each candidate step, the resolver tries `<name>.liquid` first, then the bare extension form `<name>.html` (or `<name>.json`, `<name>.xml` for format layouts). Layout chain parent references (`layout:` inside layout files) are explicit names, not automatic candidates — they follow the bare-name vs. extension-bearing rules below.
+If the Liquid engine finds no `.liquid` file, it falls back to the bare extension and parses it as Liquid. This fallback applies to all **automatic** layout lookup candidates — the "post", section-name, and "default" steps in `ResolveLayout`, and all candidates in `ResolveLayoutForFormat` and `ResolveTaxonomyLayout`. At each candidate step, the resolver tries `<name>.liquid` first, then the bare extension form `<name>.html` (or `<name>.json`, `<name>.xml` for format layouts). Layout chain parent references (`layout:` inside layout files) are explicit names, not automatic candidates — they follow the bare-name vs. extension-bearing rules below.
 
 **Explicit layout names distinguish bare names from extension-bearing filenames.** When a layout name is set via front matter `layout:`, `_data.yaml` cascade `layout:`, or layout chain parent references (`layout:` inside layout front matter):
 
