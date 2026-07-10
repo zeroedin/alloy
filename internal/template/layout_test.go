@@ -121,6 +121,20 @@ var _ = Describe("ResolveLayout", func() {
 				Expect(result).To(Equal(filepath.Join(layoutsDir, "default.liquid")),
 					"default.liquid must be used when section layout is missing — no filename matching")
 			})
+
+			It("does NOT resolve to filename-matching layout for blog index (issue #902)", func() {
+				// index.liquid exists on disk but must be ignored — filename matching removed
+				layoutsDir := createLayoutsDir("index.liquid", "default.liquid")
+				page := &content.Page{
+					RelPath:     "blog/index.html",
+					Section:     "blog",
+					FrontMatter: map[string]interface{}{},
+				}
+				result, err := tmpl.ResolveLayout(page, layoutsDir, "liquid", permalinkCfg)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "default.liquid")),
+					"filename-matching layout must be ignored for blog index — index.liquid exists but default.liquid must be used")
+			})
 		})
 	})
 
@@ -256,6 +270,15 @@ var _ = Describe("ResolveLayout", func() {
 			_, err := tmpl.ResolveLayout(page, layoutsDir, "liquid", map[string]string{})
 			Expect(err).To(HaveOccurred(),
 				"explicit layout must error when file not found — must not fall through to default.liquid")
+			Expect(err.Error()).To(
+				SatisfyAny(
+					ContainSubstring("layout"),
+					ContainSubstring("not found"),
+					ContainSubstring("no layout"),
+					ContainSubstring("nonexistent"),
+				),
+				"error should indicate the missing layout",
+			)
 		})
 
 		It("errors when cascade layout does not exist on disk", func() {
@@ -272,6 +295,15 @@ var _ = Describe("ResolveLayout", func() {
 			_, err := tmpl.ResolveLayoutWithCascade(page, layoutsDir, "liquid", map[string]string{}, cascadeData)
 			Expect(err).To(HaveOccurred(),
 				"cascade layout must error when file not found — must not fall through to default.liquid")
+			Expect(err.Error()).To(
+				SatisfyAny(
+					ContainSubstring("layout"),
+					ContainSubstring("not found"),
+					ContainSubstring("no layout"),
+					ContainSubstring("missing"),
+				),
+				"error should indicate the missing layout",
+			)
 		})
 	})
 
@@ -307,6 +339,19 @@ var _ = Describe("ResolveLayout", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).To(Equal(filepath.Join(layoutsDir, "base.html")),
 				"gotemplate engine must use .html extension, not .liquid")
+		})
+
+		It("resolves to default.html when no layout set for gotemplate engine", func() {
+			layoutsDir := createLayoutsDir("default.html")
+			page := &content.Page{
+				RelPath:     "docs/guide.md",
+				Section:     "docs",
+				FrontMatter: map[string]interface{}{},
+			}
+			result, err := tmpl.ResolveLayout(page, layoutsDir, "gotemplate", map[string]string{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal(filepath.Join(layoutsDir, "default.html")),
+				"gotemplate engine must auto-resolve to default.html when no layout is set")
 		})
 	})
 
