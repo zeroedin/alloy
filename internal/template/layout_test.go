@@ -735,51 +735,124 @@ var _ = Describe("ResolveLayout", func() {
 			})
 		})
 
-		// ── Go template engine ─────────────────────────────────────────
+		// ── Go template engine (issue #834) ───────────────────────────
+		// PLAN.md §1e: "Go engine — uses bare extension files directly."
+		// For format layouts, Go engine uses name.format (bare extension),
+		// NOT name.format.html. The format extension IS the file extension.
 
-		Describe("Go template engine format layout lookup", func() {
-			It("resolves format layouts with .format.html for gotemplate", func() {
-				layoutsDir := createLayoutsDir("default.json.html")
-				page := &content.Page{
+		Describe("Go engine format layout uses bare extensions (issue #834)", func() {
+			newPage := func() *content.Page {
+				return &content.Page{
 					RelPath:     "blog/my-post.md",
 					Section:     "blog",
 					Outputs:     []string{"html", "json"},
 					FrontMatter: map[string]interface{}{},
 				}
+			}
+
+			It("resolves JSON format layout with bare extension (default.json, not default.json.html)", func() {
+				layoutsDir := createLayoutsDir("default.json")
+				page := newPage()
 				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", map[string]string{})
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal(filepath.Join(layoutsDir, "default.json.html")),
-					"Go template engine must use .format.html for format layouts")
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "default.json")),
+					"Go engine must use bare .format extension — default.json, not default.json.html")
+			})
+
+			It("resolves XML format layout with bare extension (default.xml, not default.xml.html)", func() {
+				layoutsDir := createLayoutsDir("default.xml")
+				page := newPage()
+				page.Outputs = []string{"html", "xml"}
+				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "xml", map[string]string{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "default.xml")),
+					"Go engine must use bare .format extension — default.xml, not default.xml.html")
+			})
+
+			It("resolves post.json for date-based section child with bare extension", func() {
+				permalinkCfg := map[string]string{
+					"blog": "/:section/:year/:month/:day/:slug/",
+				}
+				layoutsDir := createLayoutsDir("post.json", "default.json")
+				page := newPage()
+				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", permalinkCfg)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "post.json")),
+					"Go engine must resolve post.json (bare extension) for date-based section children")
+			})
+
+			It("resolves section-specific format layout with bare extension (blog.xml)", func() {
+				layoutsDir := createLayoutsDir("blog.xml", "default.xml")
+				page := &content.Page{
+					RelPath:     "blog/index.html",
+					Section:     "blog",
+					Outputs:     []string{"html", "xml"},
+					FrontMatter: map[string]interface{}{},
+				}
+				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "xml", map[string]string{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "blog.xml")),
+					"Go engine must resolve blog.xml (bare extension) for section index format layouts")
+			})
+
+			It("resolves filename-specific format layout with bare extension (my-post.json)", func() {
+				layoutsDir := createLayoutsDir("my-post.json", "default.json")
+				page := newPage()
+				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", map[string]string{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "my-post.json")),
+					"Go engine must resolve my-post.json (bare extension) for filename-specific format layouts")
+			})
+
+			It("resolves front-matter layout with bare format extension (custom.json)", func() {
+				layoutsDir := createLayoutsDir("custom.json", "default.json")
+				page := newPage()
+				page.FrontMatter["layout"] = "custom"
+				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", map[string]string{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "custom.json")),
+					"Go engine front-matter layout must use bare format extension — custom.json, not custom.json.html")
+			})
+
+			It("does NOT match name.format.html — rejects engine suffix on format candidates", func() {
+				// Only the wrong pattern exists (name.format.html) — Go engine must not find it
+				layoutsDir := createLayoutsDir("default.json.html")
+				page := newPage()
+				_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", map[string]string{})
+				Expect(err).To(HaveOccurred(),
+					"Go engine must NOT match default.json.html — bare extension (default.json) is the only valid pattern")
 			})
 
 			It("gotemplate does NOT try .liquid files for format layouts", func() {
 				layoutsDir := createLayoutsDir("default.json.liquid")
-				page := &content.Page{
-					RelPath:     "blog/my-post.md",
-					Section:     "blog",
-					Outputs:     []string{"html", "json"},
-					FrontMatter: map[string]interface{}{},
-				}
+				page := newPage()
 				_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", map[string]string{})
 				Expect(err).To(HaveOccurred(),
 					"Go engine must never try .liquid files for format layout resolution")
 			})
 
-			It("resolves post.json.html for date-based section child with gotemplate", func() {
+			It("respects full candidate chain priority with bare extensions", func() {
+				// All candidates exist — post.json must win (highest priority for date-based section child)
 				permalinkCfg := map[string]string{
 					"blog": "/:section/:year/:month/:day/:slug/",
 				}
-				layoutsDir := createLayoutsDir("post.json.html", "default.json.html")
-				page := &content.Page{
-					RelPath:     "blog/my-post.md",
-					Section:     "blog",
-					Outputs:     []string{"html", "json"},
-					FrontMatter: map[string]interface{}{},
-				}
+				layoutsDir := createLayoutsDir("post.json", "my-post.json", "default.json")
+				page := newPage()
 				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", permalinkCfg)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal(filepath.Join(layoutsDir, "post.json.html")),
-					"Go engine must resolve post.json.html for date-based section children")
+				Expect(result).To(Equal(filepath.Join(layoutsDir, "post.json")),
+					"Go engine format candidate chain must follow same priority as HTML chain — post > filename > default")
+			})
+
+			It("returns build error when no bare-extension format layout found", func() {
+				layoutsDir := createLayoutsDir()
+				page := newPage()
+				_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", map[string]string{})
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(SatisfyAny(
+					ContainSubstring("no layout"),
+					ContainSubstring("not found"),
+				))
 			})
 		})
 
