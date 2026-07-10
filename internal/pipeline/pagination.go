@@ -64,11 +64,16 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 			var renderer pagination.TemplateRenderer
 			if engine != nil {
 				renderer = func(source string, ctx map[string]interface{}) (string, error) {
+					// Convert *ordered.Map values to map[string]interface{}
+					// so Go templates can access fields via .member.slug syntax.
+					// Liquid handles *ordered.Map via LiquidMethodMissing but
+					// Go templates require native map types.
+					converted := convertOrderedMaps(ctx)
 					tpl, err := engine.Parse("_permalink", []byte(source))
 					if err != nil {
 						return "", err
 					}
-					out, err := tpl.Render(ctx)
+					out, err := tpl.Render(converted)
 					if err != nil {
 						return "", err
 					}
@@ -118,15 +123,23 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 				"items":        pctx.Items,
 			}
 			vp.FrontMatter["_paginationAs"] = asVar
-			// Make the data items available under the 'as' variable name
+			// Make the data items available under the 'as' variable name.
+			// Convert *ordered.Map items to map[string]interface{} so both
+			// Liquid and Go template engines can access fields via dot syntax.
 			if perPage == 1 && len(pctx.Items) == 1 {
-				vp.FrontMatter["_paginationData"] = pctx.Items[0]
-				interpolateFrontMatter(vp, asVar, pctx.Items[0], engine)
+				item := convertOrderedValue(pctx.Items[0])
+				vp.FrontMatter["_paginationData"] = item
+				interpolateFrontMatter(vp, asVar, item, engine)
 			} else {
-				vp.FrontMatter["_paginationData"] = pctx.Items
+				converted := make([]interface{}, len(pctx.Items))
+				for ci, item := range pctx.Items {
+					converted[ci] = convertOrderedValue(item)
+				}
+				vp.FrontMatter["_paginationData"] = converted
 			}
 			result = append(result, vp)
 		}
 	}
 	return result
 }
+

@@ -370,6 +370,28 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		// Lifecycle filter
 		batchPages = content.FilterByLifecycle(batchPages, time.Now(), cfg.IncludeDrafts)
 
+		// Build a template permalink renderer from the configured engine
+		// so front matter permalinks containing {{ }} are rendered through
+		// the correct template engine (Liquid or Go templates).
+		var plRenderer permalink.PermalinkRenderer
+		if engine != nil {
+			plRenderer = func(source string, ctx map[string]interface{}) (string, error) {
+				tpl, err := engine.Parse("_permalink", []byte(source))
+				if err != nil {
+					return "", err
+				}
+				out, err := tpl.Render(ctx)
+				if err != nil {
+					return "", err
+				}
+				return string(out), nil
+			}
+		} else {
+			plRenderer = func(source string, ctx map[string]interface{}) (string, error) {
+				return tmpl.RenderTemplate(source, "_permalink", ctx)
+			}
+		}
+
 		// Permalink resolution
 		prefix := i18n.OutputPrefix(lc.Code, lc.Root)
 		langPrefix := lc.Code + "/"
@@ -379,7 +401,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				// doesn't double it (e.g., /es/es/about/).
 				origRelPath := page.RelPath
 				page.RelPath = strings.TrimPrefix(page.RelPath, langPrefix)
-				url, err := permalink.ResolveForSection(page, permalinkCfg)
+				url, err := permalink.ResolveForSection(page, permalinkCfg, plRenderer)
 				page.RelPath = origRelPath
 				if err != nil {
 					return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
@@ -390,7 +412,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				}
 				page.URL = "/" + prefix + strings.TrimPrefix(url, "/")
 			} else {
-				url, err := permalink.ResolveForSection(page, permalinkCfg)
+				url, err := permalink.ResolveForSection(page, permalinkCfg, plRenderer)
 				if err != nil {
 					return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
 				}
