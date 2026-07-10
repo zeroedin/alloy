@@ -46,7 +46,7 @@ func layoutCandidates(dir, name, engine string) []string {
 
 // formatLayoutCandidates returns file paths for a format-specific layout candidate.
 // For Liquid: tries name.format.liquid then name.format (bare extension).
-// For gotemplate: tries name.format.html.
+// For gotemplate: tries name.format (bare extension — the format IS the file extension).
 func formatLayoutCandidates(dir, name, format, engine string) []string {
 	if engine == "liquid" {
 		return []string{
@@ -54,7 +54,7 @@ func formatLayoutCandidates(dir, name, format, engine string) []string {
 			filepath.Join(dir, name+"."+format),
 		}
 	}
-	return []string{filepath.Join(dir, name+"."+format+layoutExtension(engine))}
+	return []string{filepath.Join(dir, name+"."+format)}
 }
 
 // recognizedLayoutExtensions contains file extensions that mark a layout name
