@@ -129,7 +129,7 @@ func ResolveLayout(page *content.Page, layoutsDir string, engine string, permali
 		// Gotemplate bare name: fall through to auto candidates (pre-existing behavior)
 	}
 
-	// 2-5. Auto candidates with per-candidate interleaved fallback
+	// 2-4. Auto candidates with per-candidate interleaved fallback
 	var candidates []string
 
 	if isDateBasedSection(page.Section, permalinkCfg) && !isIndexPage(page.RelPath) {
