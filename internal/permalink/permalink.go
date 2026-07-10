@@ -196,7 +196,7 @@ func ResolveAliases(page *content.Page) ([]string, error) {
 // the provided renderer. Returns an error if no renderer is provided,
 // the renderer fails, or the result is empty/whitespace.
 func renderTemplatePermalink(source string, page *content.Page, renderers []PermalinkRenderer) (string, error) {
-	if len(renderers) == 0 {
+	if len(renderers) == 0 || renderers[0] == nil {
 		return "", fmt.Errorf("template permalink %q requires a renderer but none was provided", source)
 	}
 
@@ -234,6 +234,7 @@ func buildPermalinkContext(page *content.Page) map[string]interface{} {
 		pageCtx["collection"] = page.Section
 	}
 	delete(pageCtx, "url")
+	delete(pageCtx, "permalink")
 
 	return map[string]interface{}{
 		"page": pageCtx,

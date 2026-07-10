@@ -61,28 +61,11 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 		var paths []string
 
 		if useTemplatePermalink && perPage == 1 {
-			var renderer pagination.TemplateRenderer
-			if engine != nil {
-				renderer = func(source string, ctx map[string]interface{}) (string, error) {
-					// Convert *ordered.Map values to map[string]interface{}
-					// so Go templates can access fields via .member.slug syntax.
-					// Liquid handles *ordered.Map via LiquidMethodMissing but
-					// Go templates require native map types.
-					converted := convertOrderedMaps(ctx)
-					tpl, err := engine.Parse("_permalink", []byte(source))
-					if err != nil {
-						return "", err
-					}
-					out, err := tpl.Render(converted)
-					if err != nil {
-						return "", err
-					}
-					return string(out), nil
-				}
-			} else {
-				renderer = func(source string, ctx map[string]interface{}) (string, error) {
-					return tmpl.RenderTemplate(source, "_permalink", ctx)
-				}
+			// Wrap the base permalink renderer with *ordered.Map conversion
+			// so Go templates can access JSON data fields via .member.slug syntax.
+			baseRenderer := newPermalinkRenderer(engine)
+			var renderer pagination.TemplateRenderer = func(source string, ctx map[string]interface{}) (string, error) {
+				return baseRenderer(source, convertOrderedMaps(ctx))
 			}
 			contexts, paths, err = pagination.PaginateWithTemplatePermalink(resolved, permalinkStr, asVar, renderer)
 		} else {

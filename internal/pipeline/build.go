@@ -3,6 +3,7 @@ package pipeline
 import (
 	"errors"
 	"fmt"
+	"html"
 	"io/fs"
 	"log"
 	"os"
@@ -370,27 +371,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		// Lifecycle filter
 		batchPages = content.FilterByLifecycle(batchPages, time.Now(), cfg.IncludeDrafts)
 
-		// Build a template permalink renderer from the configured engine
-		// so front matter permalinks containing {{ }} are rendered through
-		// the correct template engine (Liquid or Go templates).
-		var plRenderer permalink.PermalinkRenderer
-		if engine != nil {
-			plRenderer = func(source string, ctx map[string]interface{}) (string, error) {
-				tpl, err := engine.Parse("_permalink", []byte(source))
-				if err != nil {
-					return "", err
-				}
-				out, err := tpl.Render(ctx)
-				if err != nil {
-					return "", err
-				}
-				return string(out), nil
-			}
-		} else {
-			plRenderer = func(source string, ctx map[string]interface{}) (string, error) {
-				return tmpl.RenderTemplate(source, "_permalink", ctx)
-			}
-		}
+		plRenderer := newPermalinkRenderer(engine)
 
 		// Permalink resolution
 		prefix := i18n.OutputPrefix(lc.Code, lc.Root)
@@ -1098,6 +1079,41 @@ func buildPermalinkCfg(ps *PipelineState) map[string]string {
 	}
 	return result
 }
+
+// newPermalinkRenderer creates a PermalinkRenderer from the configured template
+// engine. When engine is nil, falls back to Liquid-only RenderTemplate.
+// Applies html.UnescapeString to output because Go's html/template escapes
+// special characters (&, <, >) which corrupts URL paths. Recovers panics
+// from malformed templates to return an actionable error.
+func newPermalinkRenderer(engine tmpl.TemplateEngine) permalink.PermalinkRenderer {
+	if engine != nil {
+		return func(source string, ctx map[string]interface{}) (result string, err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("template permalink panic: %v", r)
+				}
+			}()
+			tpl, err := engine.Parse("_permalink", []byte(source))
+			if err != nil {
+				return "", err
+			}
+			out, err := tpl.Render(ctx)
+			if err != nil {
+				return "", err
+			}
+			return html.UnescapeString(string(out)), nil
+		}
+	}
+	return func(source string, ctx map[string]interface{}) (result string, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("template permalink panic: %v", r)
+			}
+		}()
+		return tmpl.RenderTemplate(source, "_permalink", ctx)
+	}
+}
+
 // resolveDir resolves a relative directory against the project root.
 // If projectRoot is empty, the directory is returned as-is (relative to CWD).
 func resolveDir(projectRoot, dir string) string {

@@ -271,26 +271,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 
 	permalinkCfg := buildPermalinkCfg(ps)
 
-	// Build a template permalink renderer from the configured engine
-	// (parity with Build — issue #830).
-	var plRenderer permalink.PermalinkRenderer
-	if ps.Engine != nil {
-		plRenderer = func(source string, ctx map[string]interface{}) (string, error) {
-			tpl, err := ps.Engine.Parse("_permalink", []byte(source))
-			if err != nil {
-				return "", err
-			}
-			out, err := tpl.Render(ctx)
-			if err != nil {
-				return "", err
-			}
-			return string(out), nil
-		}
-	} else {
-		plRenderer = func(source string, ctx map[string]interface{}) (string, error) {
-			return tmpl.RenderTemplate(source, "_permalink", ctx)
-		}
-	}
+	plRenderer := newPermalinkRenderer(ps.Engine)
 
 	for _, page := range allPages {
 		url, err := permalink.ResolveForSection(page, permalinkCfg, plRenderer)
