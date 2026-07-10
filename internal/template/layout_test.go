@@ -741,15 +741,18 @@ var _ = Describe("ResolveLayout", func() {
 		// NOT name.format.html. The format extension IS the file extension.
 
 		Describe("Go engine format layout uses bare extensions (issue #834)", func() {
-
-			It("resolves JSON format layout with bare extension (default.json, not default.json.html)", func() {
-				layoutsDir := createLayoutsDir("default.json")
-				page := &content.Page{
+			newPage := func() *content.Page {
+				return &content.Page{
 					RelPath:     "blog/my-post.md",
 					Section:     "blog",
 					Outputs:     []string{"html", "json"},
 					FrontMatter: map[string]interface{}{},
 				}
+			}
+
+			It("resolves JSON format layout with bare extension (default.json, not default.json.html)", func() {
+				layoutsDir := createLayoutsDir("default.json")
+				page := newPage()
 				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", map[string]string{})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result).To(Equal(filepath.Join(layoutsDir, "default.json")),
@@ -758,12 +761,8 @@ var _ = Describe("ResolveLayout", func() {
 
 			It("resolves XML format layout with bare extension (default.xml, not default.xml.html)", func() {
 				layoutsDir := createLayoutsDir("default.xml")
-				page := &content.Page{
-					RelPath:     "blog/my-post.md",
-					Section:     "blog",
-					Outputs:     []string{"html", "xml"},
-					FrontMatter: map[string]interface{}{},
-				}
+				page := newPage()
+				page.Outputs = []string{"html", "xml"}
 				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "xml", map[string]string{})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result).To(Equal(filepath.Join(layoutsDir, "default.xml")),
@@ -775,12 +774,7 @@ var _ = Describe("ResolveLayout", func() {
 					"blog": "/:section/:year/:month/:day/:slug/",
 				}
 				layoutsDir := createLayoutsDir("post.json", "default.json")
-				page := &content.Page{
-					RelPath:     "blog/my-post.md",
-					Section:     "blog",
-					Outputs:     []string{"html", "json"},
-					FrontMatter: map[string]interface{}{},
-				}
+				page := newPage()
 				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", permalinkCfg)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result).To(Equal(filepath.Join(layoutsDir, "post.json")),
@@ -803,12 +797,7 @@ var _ = Describe("ResolveLayout", func() {
 
 			It("resolves filename-specific format layout with bare extension (my-post.json)", func() {
 				layoutsDir := createLayoutsDir("my-post.json", "default.json")
-				page := &content.Page{
-					RelPath:     "blog/my-post.md",
-					Section:     "blog",
-					Outputs:     []string{"html", "json"},
-					FrontMatter: map[string]interface{}{},
-				}
+				page := newPage()
 				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", map[string]string{})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result).To(Equal(filepath.Join(layoutsDir, "my-post.json")),
@@ -817,12 +806,8 @@ var _ = Describe("ResolveLayout", func() {
 
 			It("resolves front-matter layout with bare format extension (custom.json)", func() {
 				layoutsDir := createLayoutsDir("custom.json", "default.json")
-				page := &content.Page{
-					RelPath:     "blog/my-post.md",
-					Section:     "blog",
-					Outputs:     []string{"html", "json"},
-					FrontMatter: map[string]interface{}{"layout": "custom"},
-				}
+				page := newPage()
+				page.FrontMatter["layout"] = "custom"
 				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", map[string]string{})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result).To(Equal(filepath.Join(layoutsDir, "custom.json")),
@@ -832,12 +817,7 @@ var _ = Describe("ResolveLayout", func() {
 			It("does NOT match name.format.html — rejects engine suffix on format candidates", func() {
 				// Only the wrong pattern exists (name.format.html) — Go engine must not find it
 				layoutsDir := createLayoutsDir("default.json.html")
-				page := &content.Page{
-					RelPath:     "blog/my-post.md",
-					Section:     "blog",
-					Outputs:     []string{"html", "json"},
-					FrontMatter: map[string]interface{}{},
-				}
+				page := newPage()
 				_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", map[string]string{})
 				Expect(err).To(HaveOccurred(),
 					"Go engine must NOT match default.json.html — bare extension (default.json) is the only valid pattern")
@@ -845,12 +825,7 @@ var _ = Describe("ResolveLayout", func() {
 
 			It("gotemplate does NOT try .liquid files for format layouts", func() {
 				layoutsDir := createLayoutsDir("default.json.liquid")
-				page := &content.Page{
-					RelPath:     "blog/my-post.md",
-					Section:     "blog",
-					Outputs:     []string{"html", "json"},
-					FrontMatter: map[string]interface{}{},
-				}
+				page := newPage()
 				_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", map[string]string{})
 				Expect(err).To(HaveOccurred(),
 					"Go engine must never try .liquid files for format layout resolution")
@@ -862,12 +837,7 @@ var _ = Describe("ResolveLayout", func() {
 					"blog": "/:section/:year/:month/:day/:slug/",
 				}
 				layoutsDir := createLayoutsDir("post.json", "my-post.json", "default.json")
-				page := &content.Page{
-					RelPath:     "blog/my-post.md",
-					Section:     "blog",
-					Outputs:     []string{"html", "json"},
-					FrontMatter: map[string]interface{}{},
-				}
+				page := newPage()
 				result, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", permalinkCfg)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result).To(Equal(filepath.Join(layoutsDir, "post.json")),
@@ -876,12 +846,7 @@ var _ = Describe("ResolveLayout", func() {
 
 			It("returns build error when no bare-extension format layout found", func() {
 				layoutsDir := createLayoutsDir()
-				page := &content.Page{
-					RelPath:     "blog/my-post.md",
-					Section:     "blog",
-					Outputs:     []string{"html", "json"},
-					FrontMatter: map[string]interface{}{},
-				}
+				page := newPage()
 				_, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, "gotemplate", "json", map[string]string{})
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(SatisfyAny(
