@@ -209,7 +209,7 @@ content/about/
 - `templates.engine: "gotemplate"` → `.liquid` files are always passthrough, even if `liquid` is in `content.formats` (the Go template engine cannot render Liquid syntax)
 - `.liquid` is NOT in the default `content.formats` list — with default settings, `.liquid` files in `content/` are passthrough
 
-Fragments inherit layout from the cascade chain: `_data.yaml` `layout:` → filename match → `default.liquid` fallback. A `_data.yaml` with `layout: element` wraps every fragment in that directory with the element layout, producing full HTML documents in the output. `layout: false` in `_data.yaml` skips layout wrapping — the fragment passes through unwrapped.
+Fragments inherit layout from the cascade chain: `_data.yaml` `layout:` → `default.liquid` fallback. A `_data.yaml` with `layout: element` wraps every fragment in that directory with the element layout, producing full HTML documents in the output. `layout: false` in `_data.yaml` skips layout wrapping — the fragment passes through unwrapped.
 
 ```
 content/patterns/card/
@@ -577,18 +577,16 @@ The corresponding layout must exist for each format. Format layout resolution us
 **Liquid engine** — a blog child page (`content/blog/my-post.md`) with `outputs: ["html", "json"]` and a date-based permalink section resolves the JSON layout as:
 1. `layouts/<front-matter-layout>.json.liquid` (if `layout:` set in front matter or `_data.yaml` cascade)
 2. `layouts/post.json.liquid` (date-based section child — same as the HTML chain's "post" step)
-3. `layouts/my-post.json.liquid` (filename match)
-4. `layouts/default.json.liquid` (fallback)
-5. Build error
+3. `layouts/default.json.liquid` (fallback)
+4. Build error
 
 **Go engine** — same chain, bare format extensions:
 1. `layouts/<front-matter-layout>.json` (if `layout:` set)
 2. `layouts/post.json` (date-based section child)
-3. `layouts/my-post.json` (filename match)
-4. `layouts/default.json` (fallback)
-5. Build error
+3. `layouts/default.json` (fallback)
+4. Build error
 
-This mirrors the HTML chain exactly: front matter > post (date-based child) > section name (index page) > filename > default. The `layout: false` directive suppresses format outputs the same way it suppresses HTML output. There is no `single` concept — Alloy explicitly rejects Hugo's `single` vs `list` distinction (see Layout Lookup Order below).
+This mirrors the HTML chain exactly: front matter > post (date-based child) > section name (index page) > default. The `layout: false` directive suppresses format outputs the same way it suppresses HTML output. There is no `single` concept — Alloy explicitly rejects Hugo's `single` vs `list` distinction (see Layout Lookup Order below).
 
 **Extension-bearing layout names are incompatible with format outputs.** When a page declares `outputs: ["html", "json"]` (or any multi-format output), the layout name must be a bare name (e.g., `layout: "article"`) so the format infixing logic can produce `article.json.liquid`, `article.xml.liquid`, etc. Extension-bearing names (e.g., `layout: "article.liquid"`, `layout: "article.html"`) bypass format infixing and would silently serve the wrong template for non-HTML formats. Alloy prevents this with a build error:
 
@@ -1661,57 +1659,53 @@ Alloy sends each page's template + context to the Node bridge, the plugin render
 
 ### Layout Lookup Order
 
-Alloy does not auto-assign layouts based on directory structure. Layout resolution follows an explicit, predictable chain — no `single` vs `list` distinction, no section-type guessing.
+Alloy does not auto-assign layouts based on directory structure or filename. Layout resolution follows an explicit, predictable chain — no `single` vs `list` distinction, no section-type guessing, no filename matching. Both Eleventy and Zola operate the same way — layouts are either explicitly set or use a default fallback.
 
 At each step, the Liquid engine checks for `.liquid` first then bare extension. The Go engine uses bare extension directly.
 
+**When `layout:` is set** (front matter or `_data.yaml` cascade):
+1. `layouts/<layout-value>.liquid` — direct path lookup (value is a path from `layouts/`, e.g., `layout: "article"` → `layouts/article.liquid`, `layout: "blog/post"` → `layouts/blog/post.liquid`)
+2. Build error if not found
+
 **Blog-like section** (permalink has date tokens, e.g., `blog: "/:year/:month/:day/:slug/"`):
 
-*Index file (`content/blog/index.html`):*
-1. `layout:` from front matter / `_data.yaml` cascade (explicit override)
-2. `layouts/blog.liquid` (section name from permalink config)
-3. `layouts/index.liquid` (filename match)
-4. `layouts/default.liquid` (fallback)
-5. Build error
+*Index file (`content/blog/index.html`, no `layout:` set):*
+1. `layouts/blog.liquid` (section name from permalink config)
+2. `layouts/default.liquid` (fallback)
+3. Build error
 
-*Child file (`content/blog/my-post.md`):*
-1. `layout:` from front matter / `_data.yaml` cascade (explicit override)
-2. `layouts/post.liquid` (child of a date-based permalink section)
-3. `layouts/my-post.liquid` (filename match)
-4. `layouts/default.liquid` (fallback)
-5. Build error
+*Child file (`content/blog/my-post.md`, no `layout:` set):*
+1. `layouts/post.liquid` (child of a date-based permalink section)
+2. `layouts/default.liquid` (fallback)
+3. Build error
 
 **Regular section or standalone pages** (permalink without date tokens, e.g., `docs: "/docs/:slug/"`, or no permalink entry):
 
-*Any file (`content/docs/getting-started.md`):*
-1. `layout:` from front matter / `_data.yaml` cascade (explicit override)
-2. `layouts/getting-started.liquid` (filename match)
-3. `layouts/default.liquid` (fallback)
-4. Build error
+*Any file (`content/docs/getting-started.md`, no `layout:` set):*
+1. `layouts/default.liquid` (fallback)
+2. Build error
 
-The `post.liquid` convention only applies to children of sections with date-based permalink patterns. All other pages resolve through explicit `layout:`, filename match, or `default.liquid`.
+**Root-level pages** (`content/about.md`, no `layout:` set):
+1. `layouts/default.liquid` (fallback)
+2. Build error
+
+The `post.liquid` convention only applies to children of sections with date-based permalink patterns. All other pages resolve through explicit `layout:` or `default.liquid`.
 
 **Format layout chain** — For pages with `outputs: ["html", "json"]` (or any non-HTML format), the format layout chain is the HTML chain above with the format infixed before the engine extension. One algorithm, one lookup order — there is no separate format resolver. At each step, the Liquid engine tries `<name>.<format>.liquid` first, then `<name>.<format>` (bare extension fallback).
 
-*Blog child (`content/blog/my-post.md`, JSON format):*
-1. `layouts/<layout>.json.liquid` (from front matter / `_data.yaml` cascade)
-2. `layouts/post.json.liquid` (date-based section child)
-3. `layouts/my-post.json.liquid` (filename match)
-4. `layouts/default.json.liquid` (fallback)
-5. Build error
+*Blog child (`content/blog/my-post.md`, JSON format, no `layout:` set):*
+1. `layouts/post.json.liquid` (date-based section child)
+2. `layouts/default.json.liquid` (fallback)
+3. Build error
 
-*Blog index (`content/blog/index.html`, XML format):*
-1. `layouts/<layout>.xml.liquid` (from front matter / `_data.yaml` cascade)
-2. `layouts/blog.xml.liquid` (section name for index page)
-3. `layouts/index.xml.liquid` (filename match)
-4. `layouts/default.xml.liquid` (fallback)
-5. Build error
+*Blog index (`content/blog/index.html`, XML format, no `layout:` set):*
+1. `layouts/blog.xml.liquid` (section name for index page)
+2. `layouts/default.xml.liquid` (fallback)
+3. Build error
 
-*Regular section (`content/docs/getting-started.md`, JSON format):*
-1. `layouts/<layout>.json.liquid` (from front matter / `_data.yaml` cascade)
-2. `layouts/getting-started.json.liquid` (filename match)
-3. `layouts/default.json.liquid` (fallback)
-4. Build error
+*Regular section (`content/docs/getting-started.md`, JSON format, no `layout:` set):*
+1. `layouts/default.json.liquid` (fallback)
+2. Build error
 
 `layout: false` suppresses format outputs the same way it suppresses HTML output — the format chain is not consulted.
 
@@ -3240,7 +3234,7 @@ func BenchmarkBuild1000Pages(b *testing.B) {
 ### Phase 2 — Content Model
 - [ ] Data cascade (global → directory → front matter → computed)
 - [ ] Data file loading (YAML, TOML, JSON, CSV in `data/` and `_data.*`)
-- [ ] Layout lookup and resolution (front matter → permalink section convention → filename match → `default.liquid` fallback)
+- [ ] Layout lookup and resolution (front matter → permalink section convention → `default.liquid` fallback)
 - [ ] Collections (sections, taxonomies)
 - [ ] Taxonomy page generation (index + per-term pages, shared layout, `taxonomy` context object)
 - [ ] Permalinks and URL generation (token system, front matter overrides, Liquid fallback, aliases)
