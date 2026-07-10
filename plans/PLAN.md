@@ -572,13 +572,20 @@ outputs: ["html", "json"]     # Generate both /my-post/index.html and /my-post/i
 ---
 ```
 
-The corresponding layout must exist for each format. Format layout resolution uses the same chain as HTML layout resolution with the output format infixed before the engine extension (`.<format>.liquid` instead of `.liquid`). There is no separate algorithm — one function, one lookup order. At each step, the Liquid engine tries `<name>.<format>.liquid` first, then `<name>.<format>` (bare extension fallback, same as the HTML chain). The Go engine tries `<name>.<format>.html` only.
+The corresponding layout must exist for each format. Format layout resolution uses the same chain as HTML layout resolution with the output format infixed. There is no separate algorithm — one function, one lookup order. At each step, the Liquid engine tries `<name>.<format>.liquid` first, then `<name>.<format>` (bare extension fallback, same as the HTML chain). The Go engine uses `<name>.<format>` directly — the format extension IS the file extension, consistent with the Go engine's bare-extension rule (§1e: "Go engine — uses bare extension files directly").
 
-For example, a blog child page (`content/blog/my-post.md`) with `outputs: ["html", "json"]` and a date-based permalink section resolves the JSON layout as:
+**Liquid engine** — a blog child page (`content/blog/my-post.md`) with `outputs: ["html", "json"]` and a date-based permalink section resolves the JSON layout as:
 1. `layouts/<front-matter-layout>.json.liquid` (if `layout:` set in front matter or `_data.yaml` cascade)
 2. `layouts/post.json.liquid` (date-based section child — same as the HTML chain's "post" step)
 3. `layouts/my-post.json.liquid` (filename match)
 4. `layouts/default.json.liquid` (fallback)
+5. Build error
+
+**Go engine** — same chain, bare format extensions:
+1. `layouts/<front-matter-layout>.json` (if `layout:` set)
+2. `layouts/post.json` (date-based section child)
+3. `layouts/my-post.json` (filename match)
+4. `layouts/default.json` (fallback)
 5. Build error
 
 This mirrors the HTML chain exactly: front matter > post (date-based child) > section name (index page) > filename > default. The `layout: false` directive suppresses format outputs the same way it suppresses HTML output. There is no `single` concept — Alloy explicitly rejects Hugo's `single` vs `list` distinction (see Layout Lookup Order below).
