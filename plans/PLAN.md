@@ -296,7 +296,7 @@ This cascades to all pages in `content/blog/` and subdirectories. A post at `con
 | `:section` | Top-level content directory | `blog` |
 | `:filename` | Source filename without extension | `my-first-post` |
 
-**Front matter permalinks containing `{{ }}` trigger template rendering** — uses the configured template engine (Liquid or Go templates), ~50µs per page:
+**Front matter permalinks containing `{{ }}` trigger template rendering** — uses the configured template engine (Liquid or Go templates), ~50µs per page. **A template permalink that renders to an empty or whitespace-only string is a fatal build error** — distinct from `permalink: false` which is an intentional opt-out:
 
 ```yaml
 ---
@@ -308,7 +308,7 @@ permalink: "/{{ page.customField | slugify }}/{{ page.date | date: '%Y' }}/"
 ---
 ```
 
-The permalink template syntax must match the configured engine. A Liquid permalink (`{{ page.slug }}`) in a Go template project will fail — and vice versa. Detection uses `{{` which is shared by both engines, but rendering uses the configured engine.
+The permalink template syntax must match the configured engine. A Liquid permalink (`{{ page.slug }}`) in a Go template project will fail — and vice versa. Detection uses `{{` which is shared by both engines, but rendering uses the configured engine. Missing field behavior follows engine defaults: Liquid silently produces empty strings; Go templates error.
 
 **Token and template modes are mutually exclusive.** When `{{` is detected in a permalink, the entire string is a template expression. Token syntax (`:year`, `:slug`, etc.) is not processed — `:year` would appear as literal text. Every token has a template equivalent:
 
@@ -321,9 +321,9 @@ The permalink template syntax must match the configured engine. A Liquid permali
 | `:title` | `{{ page.title }}` | `{{ .page.title }}` |
 | `:section` | `{{ page.collection }}` | `{{ .page.collection }}` |
 
-**Template context** contains `page.*` — all front matter fields plus `date`, `slug`, `collection`, and `summary`. `page.url` is **not** available (it is the value being computed). `site.*` and `collections.*` are not available — permalink resolution runs before the full site context is built.
+`:filename` has no direct template equivalent — use `{{ page.slug }}` or a custom front matter field instead.
 
-**Error handling:** A template permalink that renders to an empty or whitespace-only string is a **fatal build error** — distinct from `permalink: false` which is an intentional opt-out. Missing field behavior follows engine defaults: Liquid silently produces empty strings; Go templates error.
+**Template context** contains `page.*` — all front matter fields plus `date`, `slug`, `collection`, and `summary`. `page.url` is **not** available (it is the value being computed). `site.*` and `collections.*` are not available — permalink resolution runs before the full site context is built.
 
 **Static front matter overrides** are also token-free fast path:
 

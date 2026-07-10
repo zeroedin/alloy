@@ -236,7 +236,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
 
 ## Phase 3: Mid-Level Packages (~79 tests)
 
-### 3A: `internal/permalink` — 34 tests
+### 3A: `internal/permalink` — 39 tests
 **File**: `internal/permalink/permalink.go`
 
 - `ResolveTokens`: Replace `:year`, `:month`, `:day`, `:slug`, `:section`, `:filename`, `:title`
@@ -245,7 +245,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
 - `ContainsLiquidTags`: Check for `{{` in string (name is legacy — detects both Liquid and Go template syntax since both use `{{`)
 - `DefaultFromPath`: `blog/my-post.md` -> `/blog/my-post/`. Handles index files: `index.md` → `/`, `blog/index.md` → `/blog/`, `blog/post/index.md` → `/blog/post/` (strips `/index` suffix).
 - `ResolveForSection(page, permalinkCfg, renderer ...PermalinkRenderer)`: Front matter > section pattern > default pattern > file path. **Template permalink rendering (issue #830)**: When the front matter permalink contains `{{`, render through the renderer. Section/default config patterns continue to use token resolution (they don't support `{{`). **Index file override (issue #39)**: Before applying section or default patterns (steps 2-3), check if the page is an index file (`isIndexFile(page.RelPath)`). If so, skip directly to `DefaultFromPath` (step 4). This prevents `default: "/:slug/"` from turning `index.md` (title: "Home") into `/home/` instead of `/`. Front matter `permalink:` (step 1) still overrides — allows configuring index path for subdirectory deployments. The `permalinkCfg` map must come from cascade data only (see §4D pipeline step 6, issue #832).
-- `ResolveFromCascade(page, cascadeData, renderer ...PermalinkRenderer)`: Same as `ResolveFromCascade` but also checks cascade permalink patterns for `{{` — cascade patterns with template syntax are rendered through the renderer, not through token resolution.
+- `ResolveFromCascade(page, cascadeData, renderer ...PermalinkRenderer)`: Same as `ResolveForSection` but also checks cascade permalink patterns for `{{` — cascade patterns with template syntax are rendered through the renderer, not through token resolution. Empty/whitespace render results produce the same fatal error as front matter template permalinks.
 - `ResolveAliases`: Return page's Aliases slice
 
 ### 3B: `internal/collection` — 38 tests
