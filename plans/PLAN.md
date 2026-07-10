@@ -310,6 +310,21 @@ permalink: "/{{ page.customField | slugify }}/{{ page.date | date: '%Y' }}/"
 
 The permalink template syntax must match the configured engine. A Liquid permalink (`{{ page.slug }}`) in a Go template project will fail — and vice versa. Detection uses `{{` which is shared by both engines, but rendering uses the configured engine.
 
+**Token and template modes are mutually exclusive.** When `{{` is detected in a permalink, the entire string is a template expression. Token syntax (`:year`, `:slug`, etc.) is not processed — `:year` would appear as literal text. Every token has a template equivalent:
+
+| Token | Liquid equivalent | Go template equivalent |
+|---|---|---|
+| `:year` | `{{ page.date \| date: '%Y' }}` | `{{ .page.date \| date "%Y" }}` |
+| `:month` | `{{ page.date \| date: '%m' }}` | `{{ .page.date \| date "%m" }}` |
+| `:day` | `{{ page.date \| date: '%d' }}` | `{{ .page.date \| date "%d" }}` |
+| `:slug` | `{{ page.slug }}` | `{{ .page.slug }}` |
+| `:title` | `{{ page.title }}` | `{{ .page.title }}` |
+| `:section` | `{{ page.collection }}` | `{{ .page.collection }}` |
+
+**Template context** contains `page.*` — all front matter fields plus `date`, `slug`, `collection`, and `summary`. `page.url` is **not** available (it is the value being computed). `site.*` and `collections.*` are not available — permalink resolution runs before the full site context is built.
+
+**Error handling:** A template permalink that renders to an empty or whitespace-only string is a **fatal build error** — distinct from `permalink: false` which is an intentional opt-out. Missing field behavior follows engine defaults: Liquid silently produces empty strings; Go templates error.
+
 **Static front matter overrides** are also token-free fast path:
 
 ```yaml
@@ -345,7 +360,7 @@ The lookup order for index files is:
 
 Non-index files follow the full chain: front matter `permalink:` → `_data.yaml` cascade `permalink:` → `DefaultFromPath`.
 
-**Performance:** 3000 pages with token replacement ≈ 1ms. Only pages with `{{ }}` in their permalink pay the Liquid rendering cost.
+**Performance:** 3000 pages with token replacement ≈ 1ms. Only pages with `{{ }}` in their permalink pay the template rendering cost (~50µs each). Pages without `{{` skip the template engine entirely — zero overhead.
 
 ### `permalink: false`
 
@@ -482,7 +497,7 @@ For a team member `{name: "Alice", slug: "alice"}`, the virtual page gets:
 **Rules:**
 - Only string-valued front matter fields are interpolated. Non-string values (numbers, booleans, arrays, maps) are left unchanged.
 - Only fields containing `{{ }}` or `{% %}` markers are rendered through the template engine. Fields without markers skip the renderer entirely — no performance cost.
-- Interpolation uses the same template engine and renderer as permalink processing. Full Liquid (or Go template) syntax is supported, including filters.
+- Interpolation uses the same template engine and renderer as permalink processing. Full Liquid (or Go template) syntax is supported, including filters. The renderer must use the **configured engine** (`engine: "gotemplate"` or the default Liquid) — it must not fall back to Liquid when a Go template engine is configured.
 - The template context contains only the `as:` variable (e.g., `{member: item}`). `site.*`, `page.*`, and `collections.*` are not available during front matter interpolation — this runs at pagination time, before the full template context is built.
 - Skipped fields: `permalink` (already processed), `layout`, `pagination`, and any key starting with `_` (internal transport keys such as `_paginationCtx`, `_paginationAs`, `_paginationData`).
 - Only applies to virtual pages (`perPage: 1`). Paginated list pages (`perPage > 1`) do not interpolate front matter — the `as:` variable is a list, not a single item.

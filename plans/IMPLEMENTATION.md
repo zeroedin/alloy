@@ -236,14 +236,16 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
 
 ## Phase 3: Mid-Level Packages (~79 tests)
 
-### 3A: `internal/permalink` — 22 tests
+### 3A: `internal/permalink` — 34 tests
 **File**: `internal/permalink/permalink.go`
 
 - `ResolveTokens`: Replace `:year`, `:month`, `:day`, `:slug`, `:section`, `:filename`, `:title`
-- `Resolve`: Front matter permalink > pattern with tokens. Handle `permalink: false`.
-- `ContainsLiquidTags`: Check for `{{` in string
+- `PermalinkRenderer`: Type alias `func(source string, ctx map[string]interface{}) (string, error)`. Callback provided by the pipeline from the configured template engine.
+- `Resolve(pattern, page, renderer ...PermalinkRenderer)`: Front matter permalink > pattern with tokens. Handle `permalink: false`. **Template permalink rendering (issue #830)**: When a front matter permalink string contains `{{`, render it through the provided `PermalinkRenderer` callback instead of returning it verbatim. Token resolution (`:year`, `:slug`, etc.) is skipped entirely in template mode — the two modes are mutually exclusive. The renderer receives a `page` context built from `page.ToTemplateMap()`, wrapped as `map[string]interface{}{"page": pageMap}`. `page.url` is excluded from the context (circular reference — it is the value being computed). **Empty render is a fatal error**: if the renderer returns an empty or whitespace-only string (after trimming), return an error. This is distinct from `permalink: false` which returns `("", nil)` intentionally.
+- `ContainsLiquidTags`: Check for `{{` in string (name is legacy — detects both Liquid and Go template syntax since both use `{{`)
 - `DefaultFromPath`: `blog/my-post.md` -> `/blog/my-post/`. Handles index files: `index.md` → `/`, `blog/index.md` → `/blog/`, `blog/post/index.md` → `/blog/post/` (strips `/index` suffix).
-- `ResolveForSection`: Front matter > section pattern > default pattern > file path. **Index file override (issue #39)**: Before applying section or default patterns (steps 2-3), check if the page is an index file (`isIndexFile(page.RelPath)`). If so, skip directly to `DefaultFromPath` (step 4). This prevents `default: "/:slug/"` from turning `index.md` (title: "Home") into `/home/` instead of `/`. Front matter `permalink:` (step 1) still overrides — allows configuring index path for subdirectory deployments. The `permalinkCfg` map must come from cascade data only (see §4D pipeline step 6, issue #832).
+- `ResolveForSection(page, permalinkCfg, renderer ...PermalinkRenderer)`: Front matter > section pattern > default pattern > file path. **Template permalink rendering (issue #830)**: When the front matter permalink contains `{{`, render through the renderer. Section/default config patterns continue to use token resolution (they don't support `{{`). **Index file override (issue #39)**: Before applying section or default patterns (steps 2-3), check if the page is an index file (`isIndexFile(page.RelPath)`). If so, skip directly to `DefaultFromPath` (step 4). This prevents `default: "/:slug/"` from turning `index.md` (title: "Home") into `/home/` instead of `/`. Front matter `permalink:` (step 1) still overrides — allows configuring index path for subdirectory deployments. The `permalinkCfg` map must come from cascade data only (see §4D pipeline step 6, issue #832).
+- `ResolveFromCascade(page, cascadeData, renderer ...PermalinkRenderer)`: Same as `ResolveFromCascade` but also checks cascade permalink patterns for `{{` — cascade patterns with template syntax are rendered through the renderer, not through token resolution.
 - `ResolveAliases`: Return page's Aliases slice
 
 ### 3B: `internal/collection` — 38 tests
@@ -391,7 +393,7 @@ Key points:
 - `copyDirConcurrent(src, dst string, excludes []string)` — add `excludes` parameter; during `filepath.Walk`, compute each file's relative path from `src` and skip if `matchExclude(excludes, relPath)` returns true. Callers without excludes pass `nil`.
 - `RecopyPassthroughFile` in `internal/server/watcher.go` — check exclude patterns before recopying; if `from` is a glob, also verify the changed file matches the `from` glob. Return error (or skip indicator) for excluded/non-matching files.
 
-### 4D: `internal/pipeline` — 19 tests
+### 4D: `internal/pipeline` — 28 tests
 **File**: `internal/pipeline/build.go`
 
 - `BuildWithContent(cfg, contentMap, opts ...BuildOptions)`: Thin wrapper around `Build()`. Writes `contentMap` entries to a temp directory preserving path structure (e.g., `"content/index.md"` → `tmpDir/content/index.md`, `"layouts/default.liquid"` → `tmpDir/layouts/default.liquid`), sets `cfg.ProjectRoot = tmpDir`, and calls `Build(cfg, opts...)`. This ensures every pipeline stage runs — plugins, hooks, data cascade, collections, lifecycle filtering, layout chaining, SSR, validation, output. Zero divergence from `Build()`. The temp directory is cleaned up after `Build()` returns. `BuildWithContent` must NOT duplicate any pipeline logic — it is purely file setup + delegation (issue #283).
@@ -442,13 +444,20 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
  3. content.DiscoverWithFormats(contentDir, formats)      ✅ done
  4. content.FilterByLifecycle(pages, now, includeDrafts)  ✅ done (issue #108: must pass includeDrafts from server mode, not hardcode false)
  5. cascade.LoadDirectoryCascade + FindCascadeData + PageContext ✅ done (was step 6, reordered for #302)
- 6. permalink.ResolveForSection(page, permalinkCfg)       ✅ done (issues #302, #832)
+ 6. permalink.ResolveForSection(page, permalinkCfg, renderer)  ← CHANGED (issue #830)
     `permalinkCfg` is built by `buildPermalinkCfg(ps)` from `_data.yaml` cascade
     data only — the `Config.Permalinks` fallback was removed (issue #832).
     Config loaders (YAML/TOML/JSON) silently ignore unknown `permalinks:` key
     in old config files — decoders do not reject unknown keys.
     `ResolveFromCascade` exists as an alternative that takes raw cascade data
     instead of the pre-built section map, but the pipeline uses `ResolveForSection`.
+    **Template permalink rendering (issue #830)**: The pipeline must construct a
+    `permalink.PermalinkRenderer` callback from the configured template engine and
+    pass it to `ResolveForSection`. The callback parses and renders the permalink
+    string with a `{"page": page.ToTemplateMap()}` context. When the configured
+    engine is `"gotemplate"`, the callback must use the Go template engine — it
+    must NOT fall back to Liquid. When no engine is explicitly configured, use
+    the default Liquid engine.
  7. data.LoadDirectory(dataDir) → siteData                ✅ done
  8. collection.BuildCollections(pages, cascadeData, collectionNames)  ← CHANGED (issues #302, #766)
     Date-based section detection reads permalink from each section's
