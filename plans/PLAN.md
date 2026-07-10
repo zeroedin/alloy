@@ -1664,7 +1664,7 @@ Alloy does not auto-assign layouts based on directory structure or filename. Lay
 At each step, the Liquid engine checks for `.liquid` first then bare extension. The Go engine uses bare extension directly.
 
 **When `layout:` is set** (front matter or `_data.yaml` cascade):
-1. `layouts/<layout-value>.liquid` — direct path lookup (value is a path from `layouts/`, e.g., `layout: "article"` → `layouts/article.liquid`, `layout: "blog/post"` → `layouts/blog/post.liquid`)
+1. `layouts/<layout-value>.<engine-ext>` — direct path lookup with engine-specific extension (value is a path from `layouts/`, e.g., `layout: "article"` → `layouts/article.liquid` or `layouts/article.html`, `layout: "blog/post"` → `layouts/blog/post.liquid` or `layouts/blog/post.html`). Subdirectories are valid — organize layouts however you want.
 2. Build error if not found
 
 **Blog-like section** (permalink has date tokens, e.g., `blog: "/:year/:month/:day/:slug/"`):
