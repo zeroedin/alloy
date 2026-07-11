@@ -50,8 +50,8 @@ layouts/robots.txt.liquid       --> plain text output
 
 ```
 layouts/default.html            --> HTML output
-layouts/post.json.html          --> JSON output
-layouts/feed.xml.html           --> XML output
+layouts/post.json               --> JSON output
+layouts/feed.xml                --> XML output
 ```
 
 ## Requesting multiple formats
@@ -68,16 +68,27 @@ outputs: ["html", "json"]
 
 Alloy renders the page twice -- once with `layouts/single.liquid` (HTML) and once with `layouts/single.json.liquid` (JSON). Each format produces a separate output file.
 
-Note that the front matter `layout:` field only affects the HTML pass. Format layouts resolve by the candidate chain below -- `single.<format>`, section, filename, then default -- so name your format layout after one of those.
+Front matter `layout:` drives format resolution too. A page with `layout: "article"` requesting JSON output looks for `article.json.liquid` first. Cascade layouts from `_data.yaml` also apply to format outputs.
 
 ### Layout resolution for formats
 
-For a page requesting `json` output, Alloy looks for layouts in this order (shown with the Liquid extension; the Go engine checks the same names with `.html`):
+Format layout resolution mirrors the HTML layout chain, with the format infixed before the engine extension. Each candidate has a bare-extension fallback step.
 
-1. `layouts/single.json.liquid`
-2. `layouts/<section>.json.liquid` (the page's section name)
-3. `layouts/<filename>.json.liquid` (the page's filename without extension)
-4. `layouts/default.json.liquid`
+**With `layout` set** (front matter or cascade), for a page requesting `json` output with `layout: "article"`:
+
+1. `layouts/article.json.liquid` → `layouts/article.json` (named layout)
+2. Build error
+
+**Without `layout`** (auto resolution), for a page in a date-based section requesting `json`:
+
+1. `layouts/post.json.liquid` → `layouts/post.json` (date-based section child)
+2. `layouts/<section>.json.liquid` → `layouts/<section>.json` (section index only)
+3. `layouts/default.json.liquid` → `layouts/default.json` (fallback)
+4. Build error
+
+The Go template engine checks `name.json` (bare format extension) at each step instead of `name.json.liquid`.
+
+Extension-bearing layout names (e.g., `layout: "article.liquid"`) with `outputs:` produce a build error. Use bare names (`layout: "article"`) when requesting format outputs.
 
 A layout must exist for each requested format. If none of the candidates exist, the build fails.
 
