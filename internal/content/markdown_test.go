@@ -2,6 +2,7 @@ package content_test
 
 import (
 	"encoding/json"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -1673,6 +1674,112 @@ var _ = Describe("RenderMarkdown", func() {
 			html := string(out)
 			Expect(html).To(ContainSubstring(`id="custom-id"`),
 				"markup.id must reflect the custom id from {#custom-id} attribute syntax, not the auto-generated slug")
+		})
+
+		// ── Heading hook edge cases (issue #896) ─────────────────────
+		// Additional edge-case tests for render hook context enrichment
+		// identified during PR #895 review. Covers empty heading text,
+		// deeply nested inline elements, and error propagation.
+
+		It("empty heading text with {#id} attribute uses explicit id (issue #896)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				AutoHeadingID: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }} id="{{ markup.id }}" data-text="{{ markup.text }}">{{ markup.inner }}</h{{ markup.level }}>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			out, _, err := content.RenderMarkdown(
+				[]byte("## {#custom-id}\n"),
+				content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`id="custom-id"`),
+				"markup.id must use the explicit {#custom-id} attribute "+
+					"when heading text is empty — slugifyHeading returns "+
+					"empty but the attribute override must take precedence "+
+					"(issue #896)")
+			Expect(html).To(ContainSubstring(`data-text=""`),
+				"markup.text must be empty when the heading contains "+
+					"only an attribute annotation and no visible text — "+
+					"extractText returns empty string (issue #896)")
+		})
+
+		It("empty heading inner is empty when only {#id} is present (issue #896)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				AutoHeadingID: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }} id="{{ markup.id }}">INNER[{{ markup.inner }}]INNER</h{{ markup.level }}>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			out, _, err := content.RenderMarkdown(
+				[]byte("## {#custom-id}\n"),
+				content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("INNER[]INNER"),
+				"markup.inner must be empty when heading has no visible "+
+					"content — renderChildrenToHTML produces empty string "+
+					"for an attribute-only heading (issue #896)")
+		})
+
+		It("multiple nested inline elements in heading (issue #896)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				AutoHeadingID: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }} id="{{ markup.id }}"><span class="text">{{ markup.text }}</span>{{ markup.inner }}</h{{ markup.level }}>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			out, _, err := content.RenderMarkdown(
+				[]byte("## Hello **[world](https://example.com)** and `code`\n"),
+				content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<strong>"),
+				"markup.inner must render bold formatting as <strong> — "+
+					"renderChildrenToHTML produces full inline HTML (issue #896)")
+			Expect(html).To(ContainSubstring(`<a href="https://example.com">world</a>`),
+				"markup.inner must render links as <a> elements — "+
+					"nested inline elements inside bold must render correctly")
+			Expect(html).To(ContainSubstring("<code>code</code>"),
+				"markup.inner must render inline code as <code> — "+
+					"all inline element types must be present in the "+
+					"rendered HTML (issue #896)")
+			Expect(html).To(ContainSubstring(`<span class="text">Hello world and code</span>`),
+				"markup.text must strip all inline formatting to plain text — "+
+					"bold, links, and code elements must all be removed, "+
+					"leaving only their text content (issue #896)")
+		})
+
+		It("HookRenderer error propagates through heading hook to RenderMarkdown (issue #896)", func() {
+			errorHookRenderer := func(templateSrc string, ctx map[string]interface{}) (string, error) {
+				return "", fmt.Errorf("deliberate hook error")
+			}
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				AutoHeadingID: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }}>{{ markup.inner }}</h{{ markup.level }}>`,
+				},
+				HookRenderer: errorHookRenderer,
+			}
+			_, _, err := content.RenderMarkdown(
+				[]byte("## Test Heading\n"),
+				content.CreateGoldmark(opts))
+			Expect(err).To(HaveOccurred(),
+				"RenderMarkdown must return a non-nil error when the "+
+					"HookRenderer callback fails — errors must propagate "+
+					"through renderHookTemplate → renderHeading → "+
+					"goldmark.Render → RenderMarkdown (issue #896)")
+			Expect(err.Error()).To(ContainSubstring("deliberate hook error"),
+				"the original error message must be preserved in the "+
+					"propagated error — the developer must not swallow "+
+					"or wrap the error in a way that loses the message")
 		})
 	})
 
