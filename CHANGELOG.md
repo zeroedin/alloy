@@ -1,3 +1,7 @@
+## v0.4.2 (2026-07-11)
+
+- Fix codeblock render hook over-escaping `"` and `'` to `&#34;` and `&#39;` in `markup.inner`, breaking shiki and other downstream highlighters that don't decode quote entities. Codeblock inner content is element content (inside `<alloy-code>…</alloy-code>`), where only `&`, `<`, and `>` need escaping — quote characters are safe and must pass through as literal characters. The `markup.language` field continues to use full HTML attribute escaping since it lands in a `lang="…"` attribute.
+
 ## v0.4.1 (2026-07-11)
 
 - Fix raw HTML blocks inside blockquotes and tables rendering as live markup when blockquote or table render hooks are active. Alloy entity-encodes `<script>`, `<div>`, and other HTML blocks before the hook template runs. Inline formatting like bold and emphasis renders normally.
