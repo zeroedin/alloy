@@ -2595,6 +2595,12 @@ If a render hook template exists, Alloy registers a custom goldmark node rendere
 
 Render hooks receive only the `markup` object — `page.*` and `site.*` are not available. Page-aware behavior belongs in layouts or plugin hooks (`onPageRendered`). Attribute support is currently limited to headings (the only element type goldmark parses attributes for) — see issue #892 for extending to other block elements.
 
+**Heading hook edge cases (issue #896):**
+- Empty heading text (`## {#custom-id}`): `markup.text` is empty, `markup.inner` is empty, `markup.id` uses the explicit `{#id}` attribute (not the empty slug from `slugifyHeading`).
+- Multiple nested inline elements (bold wrapping links, inline code): `markup.inner` renders all inline HTML (`<strong>`, `<a>`, `<code>`), `markup.text` strips them to plain text.
+- Non-`[]byte` attribute values from third-party goldmark extensions (e.g. `bool`, `float64`): passed through to `markup.attributes` as-is via the type switch default case.
+- HookRenderer errors propagate through the heading hook to `RenderMarkdown` as a non-nil error.
+
 **Language-specific code block hooks** — `render-codeblock-{language}.liquid` overrides rendering for a specific fenced code block language. For example, `render-codeblock-mermaid.liquid` renders mermaid blocks as `<div class="mermaid">` instead of `<pre><code>`. The generic `render-codeblock.liquid` is the fallback when no language-specific template matches. Lookup order: language-specific → generic → default goldmark rendering.
 
 **Example: custom code block rendering**
