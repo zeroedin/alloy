@@ -253,14 +253,19 @@ func extractNodeAttributes(node ast.Node) map[string]interface{} {
 }
 
 // typographerReplacer converts goldmark typographer HTML entities back
-// to ASCII equivalents so html.EscapeString produces the correct
-// entities (&#34;, &#39;) for HTML attribute safety. Goldmark stores
-// replacements as HTML entity strings (e.g. &ldquo;), not Unicode.
+// to their character equivalents so html.EscapeString handles them
+// correctly and slugifyHeading sees real characters, not entity names.
+// Goldmark stores replacements as HTML entity strings, not Unicode.
 var typographerReplacer = strings.NewReplacer(
 	"&ldquo;", "\"",
 	"&rdquo;", "\"",
 	"&lsquo;", "'",
 	"&rsquo;", "'",
+	"&ndash;", "–",
+	"&mdash;", "—",
+	"&hellip;", "…",
+	"&laquo;", "«",
+	"&raquo;", "»",
 )
 
 // extractRawInlineText collects text content from all inline node types
