@@ -444,16 +444,20 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
  3. content.DiscoverWithFormats(contentDir, formats)      ✅ done
  4. content.FilterByLifecycle(pages, now, includeDrafts)  ✅ done (issue #108: must pass includeDrafts from server mode, not hardcode false)
  5. cascade.LoadDirectoryCascade + FindCascadeData + PageContext ✅ done (was step 6, reordered for #302)
- 6. permalink.ResolveForSection(page, permalinkCfg, renderer)  ← CHANGED (issue #830)
-    `permalinkCfg` is built by `buildPermalinkCfg(ps)` from `_data.yaml` cascade
-    data only — the `Config.Permalinks` fallback was removed (issue #832).
-    Config loaders (YAML/TOML/JSON) silently ignore unknown `permalinks:` key
-    in old config files — decoders do not reject unknown keys.
-    `ResolveFromCascade` exists as an alternative that takes raw cascade data
-    instead of the pre-built section map, but the pipeline uses `ResolveForSection`.
+ 6. permalink.ResolveFromCascade(page, cascadeData, renderer)  ← CHANGED (issues #830, #910)
+    For each page, look up per-page cascade data via
+    `cascade.FindCascadeData(ps.CascadeData, ps.ContentBase, page.RelPath)` and
+    pass it to `ResolveFromCascade`. This replaces the previous approach of
+    `buildPermalinkCfg(ps)` + `ResolveForSection` which flattened cascade data
+    into a section-name-only map, silently dropping nested `_data.yaml` permalink
+    patterns (issue #910). `buildPermalinkCfg` may still be needed for
+    `BuildCollections` date-based section detection (step 8) but must no longer be
+    used for permalink resolution. Config loaders (YAML/TOML/JSON) silently ignore
+    unknown `permalinks:` key in old config files — decoders do not reject unknown
+    keys (issue #832).
     **Template permalink rendering (issue #830)**: The pipeline must construct a
     `permalink.PermalinkRenderer` callback from the configured template engine and
-    pass it to `ResolveForSection`. The callback parses and renders the permalink
+    pass it to `ResolveFromCascade`. The callback parses and renders the permalink
     string with a `{"page": page.ToTemplateMap()}` context. When the configured
     engine is `"gotemplate"`, the callback must use the Go template engine — it
     must NOT fall back to Liquid. When no engine is explicitly configured, use
