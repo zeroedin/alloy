@@ -1491,7 +1491,7 @@ var _ = Describe("RenderMarkdown", func() {
 		// ── Block-level raw HTML escaping in markup.inner (issue #955) ──
 		// escapingRawHTMLRenderer handles inline raw HTML (ast.KindRawHTML)
 		// but not block-level HTML (ast.KindHTMLBlock). Block HTML inside
-		// blockquote/table content passes through unescaped in markup.inner.
+		// blockquote content passes through unescaped in markup.inner.
 
 		It("escapes block-level raw HTML in blockquote markup.inner (issue #955)", func() {
 			opts := content.MarkdownOptions{
@@ -1514,29 +1514,27 @@ var _ = Describe("RenderMarkdown", func() {
 				"<script> must be entity-encoded in markup.inner")
 		})
 
-		It("escapes block-level raw HTML in table markup.inner (issue #955)", func() {
+		It("escapes multi-line block HTML in blockquote markup.inner (issue #955)", func() {
 			opts := content.MarkdownOptions{
 				Unsafe: true, Typographer: true, TemplateTags: true,
 				Hooks: map[string]string{
-					"table": `<div class="table-wrapper">{{ markup.inner }}</div>`,
+					"blockquote": `<aside>{{ markup.inner }}</aside>`,
 				},
 				HookRenderer: hookRenderer,
 			}
-			// Table followed by a block-level HTML element — goldmark renders
-			// the table and then the HTML block as siblings. The table hook's
-			// child renderer processes both via renderChildrenToHTML/Render.
-			md := "| A |\n|---|\n| 1 |\n\n<script>alert('xss')</script>\n"
+			md := "> <div class=\"box\">\n>   <p>injected</p>\n> </div>\n"
 			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
-			// The table hook only renders the table node's children, so the
-			// <script> block is outside the hook scope. This test verifies
-			// the child renderer escapes block HTML if it encounters one.
-			// If the table hook doesn't see the script block at all, the
-			// test still passes (no <script> in output).
-			Expect(html).NotTo(ContainSubstring("<script>"),
-				"block-level <script> must not appear unescaped in any "+
-					"render hook output (issue #955)")
+			Expect(html).NotTo(ContainSubstring("<div"),
+				"multi-line block HTML inside a blockquote must be escaped "+
+					"in markup.inner — the ast.KindHTMLBlock handler must "+
+					"iterate all Lines() segments (issue #955)")
+			Expect(html).To(ContainSubstring("&lt;div"),
+				"opening tag must be entity-encoded")
+			Expect(html).To(ContainSubstring("&lt;/div&gt;"),
+				"closing tag must be entity-encoded — all line segments "+
+					"must be processed, not just the first")
 		})
 
 		It("escapes block-level div in blockquote markup.inner (issue #955)", func() {
