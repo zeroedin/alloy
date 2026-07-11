@@ -431,6 +431,7 @@ func CreateGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) gold
 	parserOpts := []parser.Option{}
 	if opts.AutoHeadingID {
 		parserOpts = append(parserOpts, parser.WithAutoHeadingID(), parser.WithAttribute())
+		extensions = append(extensions, &blockAttributesExtension{})
 	}
 	parserOpts = append(parserOpts, extraParserOpts...)
 

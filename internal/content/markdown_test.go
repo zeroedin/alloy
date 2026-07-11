@@ -5,6 +5,9 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/yuin/goldmark/ast"
+	extast "github.com/yuin/goldmark/extension/ast"
+	"github.com/yuin/goldmark/text"
 
 	"github.com/zeroedin/alloy/internal/content"
 	tmpl "github.com/zeroedin/alloy/internal/template"
@@ -1442,6 +1445,314 @@ var _ = Describe("RenderMarkdown", func() {
 				"TOC must reflect second page's headings, not first page's")
 			Expect(toc2[0].Text).To(Equal("Second Page"))
 			Expect(toc2[0].Children).To(HaveLen(1))
+		})
+	})
+
+	// ── Block-level attribute parsing (issue #892) ────────────────────
+	// Goldmark parser extensions for attributes on non-heading block
+	// elements (fenced code blocks, blockquotes, tables) and render
+	// hook context enrichment to pass markup.attributes.
+	//
+	// Attribute syntax follows Hugo convention:
+	//   - Headings / fenced code blocks: same line (right side)
+	//     ## Heading {.class}     ```go {.highlight}
+	//   - Blockquotes / tables: trailing (line below element)
+	//     > text\n{.note}        | a |\n|---|\n| 1 |\n{.data}
+	//
+	// Extensions are registered in CreateGoldmark when
+	// parser.WithAttribute() is enabled (AutoHeadingID: true).
+
+	Describe("Block-level attribute parsing (issue #892)", func() {
+		attrOpts := content.MarkdownOptions{
+			Unsafe:        true,
+			Typographer:   true,
+			TemplateTags:  true,
+			AutoHeadingID: true,
+		}
+
+		// ── Parser-level tests ────────────────────────────────────────
+		// Verify goldmark AST nodes have attributes after parsing.
+		// These test the parser extensions themselves, not the render hooks.
+
+		Context("Parser extensions", func() {
+			// Control test: heading attributes already work via goldmark core.
+			// This validates the test approach — if this passes but the
+			// block-element tests fail, the gap is in the parser extensions.
+			It("parses attributes on headings (control — goldmark core)", func() {
+				md := content.CreateGoldmark(attrOpts)
+				source := []byte("## My Section {.intro #custom-id}\n")
+				reader := text.NewReader(source)
+				doc := md.Parser().Parse(reader)
+
+				var found bool
+				err := ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+					if !entering {
+						return ast.WalkContinue, nil
+					}
+					if n.Kind() == ast.KindHeading {
+						attrs := make(map[string]string)
+						for _, attr := range n.Attributes() {
+							if v, ok := attr.Value.([]byte); ok {
+								attrs[string(attr.Name)] = string(v)
+							}
+						}
+						Expect(attrs).To(HaveKeyWithValue("class", "intro"),
+							"heading must have class attribute from {.intro}")
+						Expect(attrs).To(HaveKeyWithValue("id", "custom-id"),
+							"heading must have id attribute from {#custom-id}")
+						found = true
+					}
+					return ast.WalkContinue, nil
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(found).To(BeTrue(),
+					"AST must contain a heading node — test setup error if missing")
+			})
+
+			It("parses attributes on fenced code blocks", func() {
+				md := content.CreateGoldmark(attrOpts)
+				source := []byte("```go {.highlight}\nfmt.Println(\"hello\")\n```\n")
+				reader := text.NewReader(source)
+				doc := md.Parser().Parse(reader)
+
+				var found bool
+				err := ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+					if !entering {
+						return ast.WalkContinue, nil
+					}
+					if n.Kind() == ast.KindFencedCodeBlock {
+						cb := n.(*ast.FencedCodeBlock)
+						Expect(string(cb.Language(source))).To(Equal("go"),
+							"language must be 'go' — the {.highlight} portion is "+
+								"attributes, not part of the language identifier")
+						attrs := make(map[string]string)
+						for _, attr := range n.Attributes() {
+							if v, ok := attr.Value.([]byte); ok {
+								attrs[string(attr.Name)] = string(v)
+							}
+						}
+						Expect(attrs).To(HaveKeyWithValue("class", "highlight"),
+							"fenced code block must have class attribute parsed "+
+								"from {.highlight} on the opening fence line")
+						found = true
+					}
+					return ast.WalkContinue, nil
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(found).To(BeTrue(),
+					"AST must contain a fenced code block node")
+			})
+
+			It("parses trailing attributes on blockquotes", func() {
+				md := content.CreateGoldmark(attrOpts)
+				source := []byte("> This is a note\n{.callout}\n")
+				reader := text.NewReader(source)
+				doc := md.Parser().Parse(reader)
+
+				var found bool
+				err := ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+					if !entering {
+						return ast.WalkContinue, nil
+					}
+					if n.Kind() == ast.KindBlockquote {
+						attrs := make(map[string]string)
+						for _, attr := range n.Attributes() {
+							if v, ok := attr.Value.([]byte); ok {
+								attrs[string(attr.Name)] = string(v)
+							}
+						}
+						Expect(attrs).To(HaveKeyWithValue("class", "callout"),
+							"blockquote must have class attribute parsed from "+
+								"trailing {.callout} on the line after the quote")
+						found = true
+					}
+					return ast.WalkContinue, nil
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(found).To(BeTrue(),
+					"AST must contain a blockquote node")
+			})
+
+			It("parses trailing attributes on tables", func() {
+				md := content.CreateGoldmark(attrOpts)
+				source := []byte("| Name | Age |\n| ---- | --- |\n| Alice | 30 |\n{.data-table}\n")
+				reader := text.NewReader(source)
+				doc := md.Parser().Parse(reader)
+
+				var found bool
+				err := ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+					if !entering {
+						return ast.WalkContinue, nil
+					}
+					if n.Kind() == extast.KindTable {
+						attrs := make(map[string]string)
+						for _, attr := range n.Attributes() {
+							if v, ok := attr.Value.([]byte); ok {
+								attrs[string(attr.Name)] = string(v)
+							}
+						}
+						Expect(attrs).To(HaveKeyWithValue("class", "data-table"),
+							"table must have class attribute parsed from "+
+								"trailing {.data-table} on the line after the table")
+						found = true
+					}
+					return ast.WalkContinue, nil
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(found).To(BeTrue(),
+					"AST must contain a table node")
+			})
+
+			It("parses multiple attributes on a single element", func() {
+				md := content.CreateGoldmark(attrOpts)
+				source := []byte("```js {.highlight #code-1 data-line-numbers=true}\nconsole.log('hi');\n```\n")
+				reader := text.NewReader(source)
+				doc := md.Parser().Parse(reader)
+
+				var found bool
+				err := ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+					if !entering {
+						return ast.WalkContinue, nil
+					}
+					if n.Kind() == ast.KindFencedCodeBlock {
+						attrs := make(map[string]string)
+						for _, attr := range n.Attributes() {
+							if v, ok := attr.Value.([]byte); ok {
+								attrs[string(attr.Name)] = string(v)
+							}
+						}
+						Expect(attrs).To(HaveKeyWithValue("class", "highlight"),
+							"must parse .class shorthand")
+						Expect(attrs).To(HaveKeyWithValue("id", "code-1"),
+							"must parse #id shorthand")
+						Expect(attrs).To(HaveKeyWithValue("data-line-numbers", "true"),
+							"must parse key=value attributes")
+						found = true
+					}
+					return ast.WalkContinue, nil
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(found).To(BeTrue(),
+					"AST must contain a fenced code block node")
+			})
+		})
+
+		// ── Render hook attribute context ──────────────────────────────
+		// Verify markup.attributes is populated when render hooks are active.
+
+		Context("Render hook attribute context", func() {
+			hookRenderer := func(templateSrc string, ctx map[string]interface{}) (string, error) {
+				engine := tmpl.NewLiquidEngine()
+				tpl, err := engine.Parse("hook", []byte(templateSrc))
+				if err != nil {
+					return "", err
+				}
+				result, err := tpl.Render(ctx)
+				if err != nil {
+					return "", err
+				}
+				return string(result), nil
+			}
+
+			It("render-heading hook receives markup.attributes", func() {
+				opts := content.MarkdownOptions{
+					Unsafe: true, Typographer: true, TemplateTags: true,
+					AutoHeadingID: true,
+					Hooks: map[string]string{
+						"heading": `<h{{ markup.level }} data-class="{{ markup.attributes.class }}">{{ markup.inner }}</h{{ markup.level }}>`,
+					},
+					HookRenderer: hookRenderer,
+				}
+				out, _, err := content.RenderMarkdown(
+					[]byte("## Introduction {.hero}\n"),
+					content.CreateGoldmark(opts))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(string(out)).To(ContainSubstring(`data-class="hero"`),
+					"markup.attributes.class must contain the class from "+
+						"{.hero} — renderHeading must extract node.Attributes() "+
+						"and pass them as markup.attributes")
+			})
+
+			It("render-codeblock hook receives markup.attributes", func() {
+				opts := content.MarkdownOptions{
+					Unsafe: true, Typographer: true, TemplateTags: true,
+					AutoHeadingID: true,
+					Hooks: map[string]string{
+						"codeblock": `<pre data-class="{{ markup.attributes.class }}" data-lang="{{ markup.language }}">{{ markup.inner }}</pre>`,
+					},
+					HookRenderer: hookRenderer,
+				}
+				out, _, err := content.RenderMarkdown(
+					[]byte("```go {.highlight}\nfmt.Println(\"hello\")\n```\n"),
+					content.CreateGoldmark(opts))
+				Expect(err).NotTo(HaveOccurred())
+				html := string(out)
+				Expect(html).To(ContainSubstring(`data-class="highlight"`),
+					"markup.attributes.class must contain the class from "+
+						"{.highlight} on the opening fence line")
+				Expect(html).To(ContainSubstring(`data-lang="go"`),
+					"markup.language must still be 'go' — attributes must not "+
+						"interfere with language detection")
+			})
+
+			It("render-blockquote hook receives markup.attributes", func() {
+				opts := content.MarkdownOptions{
+					Unsafe: true, Typographer: true, TemplateTags: true,
+					AutoHeadingID: true,
+					Hooks: map[string]string{
+						"blockquote": `<aside data-class="{{ markup.attributes.class }}">{{ markup.inner }}</aside>`,
+					},
+					HookRenderer: hookRenderer,
+				}
+				out, _, err := content.RenderMarkdown(
+					[]byte("> Important note\n{.warning}\n"),
+					content.CreateGoldmark(opts))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(string(out)).To(ContainSubstring(`data-class="warning"`),
+					"markup.attributes.class must contain the class from "+
+						"trailing {.warning} after the blockquote")
+			})
+
+			It("render-table hook receives markup.attributes", func() {
+				opts := content.MarkdownOptions{
+					Unsafe: true, Typographer: true, TemplateTags: true,
+					AutoHeadingID: true,
+					Hooks: map[string]string{
+						"table": `<div data-class="{{ markup.attributes.class }}">{{ markup.inner }}</div>`,
+					},
+					HookRenderer: hookRenderer,
+				}
+				out, _, err := content.RenderMarkdown(
+					[]byte("| A | B |\n|---|---|\n| 1 | 2 |\n{.striped}\n"),
+					content.CreateGoldmark(opts))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(string(out)).To(ContainSubstring(`data-class="striped"`),
+					"markup.attributes.class must contain the class from "+
+						"trailing {.striped} after the table")
+			})
+
+			It("render hook receives empty attributes when none specified", func() {
+				opts := content.MarkdownOptions{
+					Unsafe: true, Typographer: true, TemplateTags: true,
+					AutoHeadingID: true,
+					Hooks: map[string]string{
+						"heading": `<h{{ markup.level }} data-has-attrs="{{ markup.attributes.class }}">{{ markup.inner }}</h{{ markup.level }}>`,
+					},
+					HookRenderer: hookRenderer,
+				}
+				out, _, err := content.RenderMarkdown(
+					[]byte("## Plain Heading\n"),
+					content.CreateGoldmark(opts))
+				Expect(err).NotTo(HaveOccurred())
+				html := string(out)
+				Expect(html).To(ContainSubstring(`data-has-attrs=""`),
+					"markup.attributes must be an empty map (not nil) when "+
+						"no attributes are specified — Liquid accesses on nil "+
+						"produce empty string, but the key must exist to avoid "+
+						"template errors in strict mode")
+				Expect(html).To(ContainSubstring("Plain Heading"),
+					"heading content must render correctly without attributes")
+			})
 		})
 	})
 })

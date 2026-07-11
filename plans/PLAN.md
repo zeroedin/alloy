@@ -2495,7 +2495,7 @@ Source File → Front Matter Extract → Format Detect → Markdown Parse → Me
 1. **Front matter extraction**: Split YAML/TOML header from body (delimited by `---` or `+++`)
 2. **Format detection**: By file extension (`.md`, `.html`, `.txt`)
 3. **Markdown parsing** (`.md` files only):
-   - goldmark (CommonMark + extensions: tables, footnotes, task lists, typographer, auto heading IDs, heading attributes)
+   - goldmark (CommonMark + extensions: tables, footnotes, task lists, typographer, auto heading IDs, block-level attributes on headings/code blocks/blockquotes/tables)
    - `html.WithUnsafe()` enabled — raw HTML blocks pass through untouched
    - Template tag extensions — `{{ ... }}` and `{% ... %}` patterns are emitted as custom AST nodes (inline or block) and rendered verbatim regardless of the `unsafe` setting. No special delimiters needed.
    - `.html` → no Markdown processing (already HTML)
@@ -2588,14 +2588,37 @@ If a render hook template exists, Alloy registers a custom goldmark node rendere
 
 | Template | `markup.*` properties |
 |---|---|
-| `render-blockquote` | `inner` (rendered inner HTML) |
-| `render-codeblock` | `inner` (raw code text), `language` |
+| `render-blockquote` | `inner` (rendered inner HTML), `attributes` |
+| `render-codeblock` | `inner` (raw code text), `language`, `attributes` |
 | `render-heading` | `inner` (rendered inner HTML), `level` (1-6), `id` (custom `{#id}` attribute if present, otherwise auto-generated slug via `slugify` — e.g., "My Section" → `my-section`), `text` (plain text, no HTML), `attributes` (map of goldmark-parsed attributes from `{.class #id key="value"}` syntax) |
 | `render-image` | `src`, `alt`, `title` |
 | `render-link` | `destination`, `text` (rendered inner HTML), `title`, `is_external` (boolean: starts with `http://` or `https://`) |
-| `render-table` | `inner` (rendered inner HTML — thead/tbody/tr/td) |
+| `render-table` | `inner` (rendered inner HTML — thead/tbody/tr/td), `attributes` |
 
-Render hooks receive only the `markup` object — `page.*` and `site.*` are not available. Page-aware behavior belongs in layouts or plugin hooks (`onPageRendered`). Attribute support is currently limited to headings (the only element type goldmark parses attributes for) — see issue #892 for extending to other block elements.
+Render hooks receive only the `markup` object — `page.*` and `site.*` are not available. Page-aware behavior belongs in layouts or plugin hooks (`onPageRendered`).
+
+**Block-level attributes (issue #892)** — Custom goldmark parser extensions enable `{.class #id key=value}` attribute syntax on block elements beyond headings. Attribute syntax follows Hugo's convention:
+
+- **Headings and fenced code blocks** — attributes on the same line (right side):
+  ```markdown
+  ## My Section {.intro #overview}
+
+  ```go {.highlight}
+  fmt.Println("hello")
+  ```
+  ```
+- **Blockquotes and tables** — trailing attributes on the line below the element:
+  ```markdown
+  > This is an important note
+  {.callout}
+
+  | Name  | Role      |
+  | ----- | --------- |
+  | Alice | Engineer  |
+  {.striped}
+  ```
+
+The extensions are registered in `CreateGoldmark` when `parser.WithAttribute()` is enabled (i.e., when `AutoHeadingID` is true). `markup.attributes` is a `map[string]interface{}` — keys are attribute names, values are strings. When no attributes are present, `markup.attributes` is an empty map (not nil). This attribute syntax is not part of the CommonMark or GFM specs — it is an extension-level feature following the Kramdown/Pandoc convention, consistent with Hugo's goldmark attribute support. Image and link attributes are not supported (inline elements cannot have trailing attribute blocks).
 
 **Heading hook edge cases (issue #896):**
 - Empty heading text (`## {#custom-id}`): `markup.text` is empty, `markup.inner` is empty, `markup.id` uses the explicit `{#id}` attribute (not the empty slug from `slugifyHeading`).
