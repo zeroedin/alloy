@@ -287,6 +287,8 @@
 
 ## v0.1.0 (2026-06-23)
 
+### Minor Changes
+
 Initial release of Alloy — a fast, extensible static site generator written in Go.
 
 - **Config**: Customize your project structure, build output, content formats, and plugin settings in YAML, TOML, or JSON
