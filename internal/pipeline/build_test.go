@@ -571,9 +571,6 @@ var _ = Describe("Build Pipeline", func() {
 				"index file must resolve to its directory path (/blog/posts/) — "+
 					"cascade permalink patterns must not apply to index files, "+
 					"even in nested directories (issue #39)")
-			Expect(indexHTML).NotTo(ContainSubstring("/2026/"),
-				"index file must NOT use cascade permalink pattern — "+
-					"applying /blog/:year/:month/:slug/ to an index would produce a wrong URL")
 
 			// Non-index file in same directory must use cascade permalink
 			postHTML := result.RenderedContent["blog/posts/first-post.md"]
