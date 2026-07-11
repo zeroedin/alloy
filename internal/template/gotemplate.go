@@ -119,7 +119,6 @@ func (e *goEngine) resolveInclude(path string) (*gohtml.Template, error) {
 
 	candidates := []string{
 		filepath.Join(e.includesDir, path+".html"),
-		filepath.Join(e.includesDir, path),
 	}
 
 	var content []byte

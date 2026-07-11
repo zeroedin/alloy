@@ -201,7 +201,7 @@ func (t *liquidTemplate) Render(ctx map[string]interface{}) ([]byte, error) {
 	}
 	result := t.tpl.Render(ctx, opts)
 	for _, err := range t.tpl.Errors() {
-		if _, ok := err.(*liquid.FileSystemError); ok {
+		if _, ok := err.(*liquid.FileSystemError); ok && t.includesDir == "" {
 			continue
 		}
 		return nil, fmt.Errorf("liquid render error in %s: %s", t.name, err.Error())
@@ -254,7 +254,7 @@ func RenderTemplate(source string, sourcePath string, ctx map[string]interface{}
 
 // ---------------------------------------------------------------------------
 // alloyFileSystem — resolves {% include %} / {% render %} templates from
-// the layouts directory. Tries name.liquid, name.html, then the raw name.
+// the layouts directory. Tries name.liquid, then name.html.
 // ---------------------------------------------------------------------------
 
 type alloyFileSystem struct {
@@ -265,12 +265,11 @@ type alloyFileSystem struct {
 func (fs *alloyFileSystem) ReadTemplateFile(templatePath string) (string, error) {
 	absRoot, err := filepath.Abs(fs.root)
 	if err != nil {
-		return "", fmt.Errorf("illegal template path %q: %w", templatePath, err)
+		return "", liquid.NewFileSystemError(fmt.Sprintf("cannot resolve includes root for %q", templatePath))
 	}
 	candidates := []string{
 		filepath.Join(fs.root, templatePath+".liquid"),
 		filepath.Join(fs.root, templatePath+".html"),
-		filepath.Join(fs.root, templatePath),
 	}
 	for _, path := range candidates {
 		abs, err := filepath.Abs(path)
@@ -279,7 +278,7 @@ func (fs *alloyFileSystem) ReadTemplateFile(templatePath string) (string, error)
 		}
 		rel, relErr := filepath.Rel(absRoot, abs)
 		if relErr != nil || strings.HasPrefix(rel, "..") {
-			return "", fmt.Errorf("illegal template path %q", templatePath)
+			return "", liquid.NewFileSystemError(fmt.Sprintf("illegal template path %q: traversal outside includes directory", templatePath))
 		}
 		data, err := os.ReadFile(path)
 		if err == nil {
@@ -292,7 +291,7 @@ func (fs *alloyFileSystem) ReadTemplateFile(templatePath string) (string, error)
 			return src, nil
 		}
 	}
-	return "", fmt.Errorf("no such template %q", templatePath)
+	return "", liquid.NewFileSystemError(fmt.Sprintf("no such template %q", templatePath))
 }
 
 // ---------------------------------------------------------------------------
