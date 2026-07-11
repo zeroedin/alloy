@@ -195,6 +195,48 @@ var _ = Describe("DeepMerge", func() {
 			Expect(result["layout"]).To(Equal("default"))
 		})
 
+		// ── Multi-language cascade lookup (issue #914) ──────────────
+		// In multi-language builds, cascade data keys include the language
+		// prefix (e.g., "content/es/blog/"). FindCascadeData must receive
+		// the full lang-prefixed RelPath (e.g., "es/blog/my-post.md") to
+		// match these keys. The pipeline is responsible for passing the
+		// original (un-stripped) RelPath to FindCascadeData and only
+		// stripping the prefix for permalink token resolution.
+
+		It("finds language-specific cascade data when given lang-prefixed relPath (issue #914)", func() {
+			cascadeData := map[string]map[string]interface{}{
+				"content/":          {"layout": "default"},
+				"content/en/blog/":  {"permalink": "/posts/:slug/"},
+				"content/es/blog/":  {"permalink": "/:slug/"},
+			}
+			// Spanish page with full lang-prefixed RelPath
+			esResult := cascade.FindCascadeData(cascadeData, "content", "es/blog/my-post.md")
+			Expect(esResult).NotTo(BeNil(),
+				"FindCascadeData must find content/es/blog/ when given es/blog/my-post.md — "+
+					"the language prefix is part of the directory tree, not a virtual namespace")
+			Expect(esResult["permalink"]).To(Equal("/:slug/"),
+				"Spanish cascade data must contain the Spanish permalink pattern, "+
+					"not the English one or the root default")
+
+			// English page with full lang-prefixed RelPath
+			enResult := cascade.FindCascadeData(cascadeData, "content", "en/blog/my-post.md")
+			Expect(enResult).NotTo(BeNil(),
+				"FindCascadeData must find content/en/blog/ when given en/blog/my-post.md")
+			Expect(enResult["permalink"]).To(Equal("/posts/:slug/"),
+				"English cascade data must contain the English permalink pattern")
+
+			// Stripped RelPath (wrong usage) would match content/blog/ which doesn't exist,
+			// then fall back to content/ — proving the stripped path is wrong for this lookup
+			strippedResult := cascade.FindCascadeData(cascadeData, "content", "blog/my-post.md")
+			Expect(strippedResult).NotTo(BeNil(),
+				"stripped path falls back to content/ root entry")
+			Expect(strippedResult).NotTo(HaveKey("permalink"),
+				"stripped path blog/my-post.md must NOT find a permalink key — "+
+					"content/ has no permalink, and content/blog/ doesn't exist. "+
+					"This proves that using the stripped RelPath for cascade lookup "+
+					"would miss language-specific _data.yaml entries (issue #914)")
+		})
+
 		It("deep-merges nested maps across 3+ directory levels", func() {
 			// 3 levels of _data.yaml with nested map keys, pre-accumulated
 			// the way LoadDirectoryCascade produces them (parent merged into
