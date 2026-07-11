@@ -1,6 +1,9 @@
 package template_test
 
 import (
+	"fmt"
+	"sync"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -255,6 +258,151 @@ var _ = Describe("GoEngine", func() {
 				"FuncMap functions (filters) registered on the engine must be "+
 					"available inside includes — footer.html calls {{ upcase .site.title }}, "+
 					"which requires the upcase filter in the included file's FuncMap")
+		})
+
+		// ── Issue #884: Context passing in range/with blocks ───────
+		// The parse-time rewrite (injectIncludeDot) must inject the
+		// current dot — inside {{ range }} that's the loop element,
+		// inside {{ with }} that's the narrowed scope. A naive
+		// implementation that captures root context would pass the
+		// wrong value to the partial. Disambiguation: root context
+		// has name: "ROOT" but range/with elements have different
+		// names — only correct dot passing produces the expected output.
+
+		It("passes current dot to include inside {{ range }}", func() {
+			tpl, err := includeEngine.Parse("range-include", []byte(
+				`{{ range .items }}{{ include "partials/greeting" }}{{ end }}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := tpl.Render(map[string]interface{}{
+				"name": "ROOT",
+				"items": []interface{}{
+					map[string]interface{}{"name": "Alice"},
+					map[string]interface{}{"name": "Bob"},
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			output := string(result)
+			Expect(output).To(ContainSubstring("Hello, Alice!"),
+				"first range element must pass its own dot to the partial — "+
+					"greeting.html reads {{ .name }} which must be the element's name")
+			Expect(output).To(ContainSubstring("Hello, Bob!"),
+				"second range element must also pass its own dot")
+			Expect(output).NotTo(ContainSubstring("Hello, ROOT!"),
+				"root context must NOT leak into range-scoped includes — "+
+					"the parse-time rewrite (injectIncludeDot) must inject "+
+					"the current dot, not the root dot")
+		})
+
+		It("passes current dot to include inside {{ with }}", func() {
+			tpl, err := includeEngine.Parse("with-include", []byte(
+				`{{ with .author }}{{ include "partials/greeting" }}{{ end }}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := tpl.Render(map[string]interface{}{
+				"name":   "ROOT",
+				"author": map[string]interface{}{"name": "Carol"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			output := string(result)
+			Expect(output).To(ContainSubstring("Hello, Carol!"),
+				"{{ with .author }} rebinds dot to .author — the include "+
+					"must receive .author as context, not the root map")
+			Expect(output).NotTo(ContainSubstring("Hello, ROOT!"),
+				"root context must NOT leak into with-scoped includes — "+
+					"the parse-time rewrite must inject the current dot")
+		})
+	})
+
+	// ── Issue #884: dict helper error handling ────────────────────────
+	// The dict function accepts key-value pairs and returns a map.
+	// An odd number of arguments is an error — the function cannot
+	// form complete key-value pairs.
+
+	Describe("dict helper function (issue #884)", func() {
+		It("returns an error when called with an odd number of arguments (3 args)", func() {
+			tpl, err := engine.Parse("dict-odd-3", []byte(
+				`{{ dict "key1" "val1" "orphan" }}`))
+			Expect(err).NotTo(HaveOccurred(),
+				"dict with odd args must parse successfully — the error "+
+					"is at render time, not parse time")
+
+			_, err = tpl.Render(map[string]interface{}{})
+			Expect(err).To(HaveOccurred(),
+				"dict with 3 arguments (odd) must produce a render error")
+			Expect(err.Error()).To(ContainSubstring("even number"),
+				"error message must indicate that dict requires an even "+
+					"number of arguments — not a generic render failure")
+		})
+
+		It("returns an error when called with a single argument", func() {
+			tpl, err := engine.Parse("dict-odd-1", []byte(
+				`{{ dict "lonely" }}`))
+			Expect(err).NotTo(HaveOccurred(),
+				"dict with 1 arg must parse successfully")
+
+			_, err = tpl.Render(map[string]interface{}{})
+			Expect(err).To(HaveOccurred(),
+				"dict with 1 argument (odd) must produce a render error")
+			Expect(err.Error()).To(ContainSubstring("even number"),
+				"error message must match the multi-arg odd case — "+
+					"same validation, same error format")
+		})
+	})
+
+	// ── Issue #884: Concurrent rendering safety ──────────────────────
+	// The goEngine uses atomic.Int32 for depth tracking and sync.Map
+	// for include caching. This test verifies that multiple goroutines
+	// can call Render on the same engine instance simultaneously
+	// without data races or incorrect output. The -race flag (used by
+	// the CI test command) catches memory safety issues; these
+	// assertions verify functional correctness under concurrency.
+
+	Describe("Concurrent rendering (issue #884)", func() {
+		It("produces correct output from concurrent Render calls on the same engine", func() {
+			concurrentEngine := tmpl.NewGoEngine()
+			if setter, ok := concurrentEngine.(interface{ SetIncludesDir(string) }); ok {
+				setter.SetIncludesDir("testdata/layouts")
+			}
+
+			tpl, err := concurrentEngine.Parse("concurrent", []byte(
+				`{{ include "partials/greeting" }}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			const n = 10
+			type renderResult struct {
+				output string
+				err    error
+			}
+			results := make([]renderResult, n)
+			var wg sync.WaitGroup
+			wg.Add(n)
+
+			for i := 0; i < n; i++ {
+				go func(idx int) {
+					defer wg.Done()
+					name := fmt.Sprintf("Concurrent%d", idx)
+					out, err := tpl.Render(map[string]interface{}{
+						"name": name,
+					})
+					results[idx] = renderResult{
+						output: string(out),
+						err:    err,
+					}
+				}(i)
+			}
+
+			wg.Wait()
+
+			for i := 0; i < n; i++ {
+				name := fmt.Sprintf("Concurrent%d", i)
+				Expect(results[i].err).NotTo(HaveOccurred(),
+					fmt.Sprintf("goroutine %d must render without error", i))
+				Expect(results[i].output).To(
+					ContainSubstring(fmt.Sprintf("Hello, %s!", name)),
+					fmt.Sprintf("goroutine %d must render with its own context — "+
+						"context must not leak between concurrent renders", i))
+			}
 		})
 	})
 
