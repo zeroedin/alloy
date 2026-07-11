@@ -579,4 +579,150 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Multi-language cascade permalink resolution (issue #914) ─────
+	// In multi-language builds, cascade data (from _data.yaml) is loaded from
+	// the full content tree: content/en/blog/_data.yaml, content/es/blog/_data.yaml.
+	// Cascade keys include the language prefix (e.g., "content/es/blog/").
+	//
+	// The pipeline strips the language prefix from page.RelPath before permalink
+	// resolution to avoid URL doubling (/es/es/about/). However, the cascade
+	// lookup (FindCascadeData) must use the ORIGINAL (un-stripped) RelPath so it
+	// finds language-specific _data.yaml entries. The stripped RelPath should
+	// only be used for ResolveFromCascade (token resolution + DefaultFromPath).
+	//
+	// Without this fix, FindCascadeData receives "blog/my-post.md" and looks for
+	// "content/blog/" — but the data is keyed as "content/es/blog/". Language-
+	// specific cascade permalink patterns are never found, and pages fall back
+	// to DefaultFromPath.
+
+	Describe("Multi-language cascade permalink resolution (issue #914)", func() {
+		It("applies language-specific _data.yaml permalink to pages in that language", func() {
+			cfg := &config.Config{
+				Title:   "i18n Cascade Test",
+				BaseURL: "https://example.com",
+				Languages: map[string]*config.LanguageConfig{
+					"en": {Root: true, Weight: 1},
+					"es": {Weight: 2},
+				},
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			files := map[string]string{
+				"layouts/default.liquid":         "URL:{{ page.url }}",
+				"content/es/blog/_data.yaml":     "permalink: \"/:slug/\"",
+				"content/es/blog/hola.md":        "---\ntitle: Hola\ndate: 2026-04-10\nlayout: default\n---\n# Hola",
+				"content/en/blog/hello.md":       "---\ntitle: Hello\ndate: 2026-04-10\nlayout: default\n---\n# Hello",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			esHTML := result.RenderedContent["es/blog/hola.md"]
+			Expect(esHTML).To(ContainSubstring("URL:/es/hola/"),
+				"language-specific _data.yaml permalink must apply — "+
+					"content/es/blog/_data.yaml has permalink: /:slug/ which should "+
+					"resolve to /es/hola/ (cascade pattern + language output prefix). "+
+					"This fails when FindCascadeData receives the stripped RelPath "+
+					"(blog/hola.md) instead of the original (es/blog/hola.md), "+
+					"causing it to look for content/blog/ instead of content/es/blog/")
+
+			// Guard: English page without cascade data falls back to DefaultFromPath
+			enHTML := result.RenderedContent["en/blog/hello.md"]
+			Expect(enHTML).To(ContainSubstring("URL:/blog/hello/"),
+				"English page (root language, no cascade permalink) must use "+
+					"DefaultFromPath — /blog/hello/ without language prefix since "+
+					"en has root: true")
+		})
+
+		It("applies root language cascade permalink without URL prefix", func() {
+			cfg := &config.Config{
+				Title:   "Root Lang Cascade Test",
+				BaseURL: "https://example.com",
+				Languages: map[string]*config.LanguageConfig{
+					"en": {Root: true, Weight: 1},
+					"es": {Weight: 2},
+				},
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			files := map[string]string{
+				"layouts/default.liquid":         "URL:{{ page.url }}",
+				"content/en/blog/_data.yaml":     "permalink: \"/articles/:slug/\"",
+				"content/en/blog/hello.md":       "---\ntitle: Hello\ndate: 2026-04-10\nlayout: default\n---\n# Hello",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["en/blog/hello.md"]
+			Expect(html).To(ContainSubstring("URL:/articles/hello/"),
+				"root language page must use its language-specific cascade permalink "+
+					"without URL prefix — content/en/blog/_data.yaml has "+
+					"permalink: /articles/:slug/ → /articles/hello/. "+
+					"Root language (root: true) outputs at site root, not /en/. "+
+					"This fails when FindCascadeData uses the stripped RelPath "+
+					"(blog/hello.md → content/blog/) instead of the original "+
+					"(en/blog/hello.md → content/en/blog/)")
+		})
+
+		It("falls back to DefaultFromPath when language has no cascade permalink", func() {
+			cfg := &config.Config{
+				Title:   "Fallback Test",
+				BaseURL: "https://example.com",
+				Languages: map[string]*config.LanguageConfig{
+					"en": {Root: true, Weight: 1},
+					"fr": {Weight: 2},
+				},
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			files := map[string]string{
+				"layouts/default.liquid":         "URL:{{ page.url }}",
+				"content/fr/blog/bonjour.md":     "---\ntitle: Bonjour\ndate: 2026-04-10\nlayout: default\n---\n# Bonjour",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["fr/blog/bonjour.md"]
+			Expect(html).To(ContainSubstring("URL:/fr/blog/bonjour/"),
+				"when no _data.yaml exists in the language content tree, permalink "+
+					"resolution must fall back to DefaultFromPath — "+
+					"blog/bonjour.md → /blog/bonjour/ with /fr/ language prefix → "+
+					"/fr/blog/bonjour/")
+		})
+
+		It("each language resolves from its own cascade data independently", func() {
+			cfg := &config.Config{
+				Title:   "Independent Cascade Test",
+				BaseURL: "https://example.com",
+				Languages: map[string]*config.LanguageConfig{
+					"en": {Root: true, Weight: 1},
+					"es": {Weight: 2},
+				},
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			files := map[string]string{
+				"layouts/default.liquid":         "URL:{{ page.url }}",
+				"content/en/blog/_data.yaml":     "permalink: \"/posts/:slug/\"",
+				"content/es/blog/_data.yaml":     "permalink: \"/:slug/\"",
+				"content/en/blog/hello.md":       "---\ntitle: Hello\ndate: 2026-04-10\nlayout: default\n---\n# Hello",
+				"content/es/blog/hola.md":        "---\ntitle: Hola\ndate: 2026-04-10\nlayout: default\n---\n# Hola",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			enHTML := result.RenderedContent["en/blog/hello.md"]
+			Expect(enHTML).To(ContainSubstring("URL:/posts/hello/"),
+				"English page must use content/en/blog/_data.yaml permalink — "+
+					"/posts/:slug/ → /posts/hello/ (root language, no prefix). "+
+					"Each language has independent cascade data")
+
+			esHTML := result.RenderedContent["es/blog/hola.md"]
+			Expect(esHTML).To(ContainSubstring("URL:/es/hola/"),
+				"Spanish page must use content/es/blog/_data.yaml permalink — "+
+					"/:slug/ → /hola/ with /es/ prefix → /es/hola/. "+
+					"Languages must not share cascade data — if both used the same "+
+					"pattern, this test would detect the cross-contamination")
+		})
+	})
+
 })

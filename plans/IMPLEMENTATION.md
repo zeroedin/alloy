@@ -70,7 +70,7 @@ Used by `LoadFile` and `LoadExternalFiles` for `.json` files only. Front matter,
 - `LoadCSV`: `encoding/csv`, first row = headers, subsequent rows = `[]map[string]string`
 - **External data files (issue #271)**: `loadSiteData` in `build.go` must also load files from `cfg.Data.Files` (a `map[string]string` of key → path). For each entry, resolve the path relative to `cfg.ProjectRoot`, call `data.LoadFile`, and add the result to `siteData[key]`. Check for collisions with `data/` directory keys. File not found is a build error. Add `DataConfig` struct to `config.go` with `Files map[string]string` field.
 
-### 1C: `internal/cascade` — 36 tests
+### 1C: `internal/cascade` — 37 tests
 **Files**: `internal/cascade/merge.go`, `internal/cascade/context.go`
 
 - `DeepMerge`: Recursive map merge, arrays replaced (not concatenated)
@@ -394,7 +394,7 @@ Key points:
 - `copyDirConcurrent(src, dst string, excludes []string)` — add `excludes` parameter; during `filepath.Walk`, compute each file's relative path from `src` and skip if `matchExclude(excludes, relPath)` returns true. Callers without excludes pass `nil`.
 - `RecopyPassthroughFile` in `internal/server/watcher.go` — check exclude patterns before recopying; if `from` is a glob, also verify the changed file matches the `from` glob. Return error (or skip indicator) for excluded/non-matching files.
 
-### 4D: `internal/pipeline` — 28 tests
+### 4D: `internal/pipeline` — 32 tests
 **File**: `internal/pipeline/build.go`
 
 - `BuildWithContent(cfg, contentMap, opts ...BuildOptions)`: Thin wrapper around `Build()`. Writes `contentMap` entries to a temp directory preserving path structure (e.g., `"content/index.md"` → `tmpDir/content/index.md`, `"layouts/default.liquid"` → `tmpDir/layouts/default.liquid`), sets `cfg.ProjectRoot = tmpDir`, and calls `Build(cfg, opts...)`. This ensures every pipeline stage runs — plugins, hooks, data cascade, collections, lifecycle filtering, layout chaining, SSR, validation, output. Zero divergence from `Build()`. The temp directory is cleaned up after `Build()` returns. `BuildWithContent` must NOT duplicate any pipeline logic — it is purely file setup + delegation (issue #283).
@@ -445,16 +445,28 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
  3. content.DiscoverWithFormats(contentDir, formats)      ✅ done
  4. content.FilterByLifecycle(pages, now, includeDrafts)  ✅ done (issue #108: must pass includeDrafts from server mode, not hardcode false)
  5. cascade.LoadDirectoryCascade + FindCascadeData + PageContext ✅ done (was step 6, reordered for #302)
- 6. permalink.ResolveFromCascade(page, cascadeData, renderer)  ← CHANGED (issues #830, #910)
+ 6. permalink.ResolveFromCascade(page, cascadeData, renderer)  ← CHANGED (issues #830, #910, #914)
     For each page, look up per-page cascade data via
-    `cascade.FindCascadeData(ps.CascadeData, ps.ContentBase, page.RelPath)` and
-    pass it to `ResolveFromCascade`. `ResolveForSection` is dead code slated for removal in issue #915 —
+    `cascade.FindCascadeData(ps.CascadeData, ps.ContentBase, relPath)` and
+    pass it to `ResolveFromCascade` (`relPath` is `page.RelPath` in single-language
+    builds; in multi-language builds it is the original un-stripped path — see
+    issue #914 note below). `ResolveForSection` is dead code slated for removal in issue #915 —
     it flattened cascade data into a section-name-only map, silently dropping nested
     `_data.yaml` permalink patterns (issue #910). `buildPermalinkCfg` may still be
     needed for `BuildCollections` date-based section detection (step 8) but must no
     longer be used for permalink resolution. Config loaders (YAML/TOML/JSON) silently ignore
     unknown `permalinks:` key in old config files — decoders do not reject unknown
     keys (issue #832).
+    **Multi-language cascade lookup (issue #914)**: In multi-language builds, the
+    pipeline strips the language prefix from `page.RelPath` before permalink
+    resolution to prevent URL doubling (e.g., `/es/es/about/`). The `FindCascadeData`
+    call must use the ORIGINAL (un-stripped) `page.RelPath` — e.g.,
+    `es/blog/my-post.md` — so it finds cascade keys like `content/es/blog/`.
+    Only `ResolveFromCascade` receives the stripped `page.RelPath` (e.g.,
+    `blog/my-post.md`) for token resolution and `DefaultFromPath`. The language
+    output prefix is applied to the resolved URL afterward. Without this,
+    `FindCascadeData` receives `blog/my-post.md`, looks for `content/blog/`, and
+    misses language-specific `_data.yaml` entries entirely.
     **Template permalink rendering (issue #830)**: The pipeline must construct a
     `permalink.PermalinkRenderer` callback from the configured template engine and
     pass it to `ResolveFromCascade`. The callback parses and renders the permalink
@@ -805,6 +817,11 @@ for _, langCtx := range langContexts {
     // IMPORTANT (issue #113): permalink resolution must use the
     // ORIGINAL relPath (without language prefix), not the prefixed
     // one. Resolve permalink first, then prefix RelPath.
+    //
+    // IMPORTANT (issue #914): FindCascadeData must use the FULL
+    // (lang-prefixed) relPath so it finds language-specific _data.yaml
+    // entries (e.g., content/es/blog/ for es/blog/my-post.md).
+    // Only ResolveFromCascade receives the stripped relPath.
 
     langSiteData := copyMap(siteData)
     langSiteData["language"] = i18n.LanguageData(langCtx)
