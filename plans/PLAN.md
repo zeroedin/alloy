@@ -1817,10 +1817,12 @@ The SVG markup is inlined directly into the rendered HTML. This is essential for
 - Path must start with `./` or `../` — always relative to the content file's directory
 - Absolute paths are a build error
 - File not found is a build error (not silent empty output)
-- **Path sandboxing** — After resolving the relative path, the result must be within the content root directory. Paths that traverse outside content (e.g., `../../../../etc/passwd`) are a build error. The check: `filepath.Rel(contentRoot, resolvedPath)` must not start with `..`. This allows `../shared.svg` when it stays inside `content/` but blocks escaping to the filesystem.
+- **Path sandboxing** — After resolving the relative path, the result must be within the content root directory. Paths that traverse outside content (e.g., `../../../../etc/passwd`) are a build error. The check: `filepath.Rel(contentRoot, resolvedPath)` must not start with `..`. This allows `../shared.svg` when it stays inside `content/` but blocks escaping to the filesystem. **Fail-closed (issue #932):** If `_contentRoot` is missing or empty in the render context, the tag must return an error rather than silently skipping the sandbox check. The production pipeline always sets both `_contentDir` and `_contentRoot`, but the tag must not rely on that — fail closed.
 
 **Allowed file types** (text-based only):
 `.svg`, `.html`, `.htm`, `.txt`, `.css`, `.js`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`, `.md`
+
+Extension matching is case-insensitive — `.SVG`, `.Png`, etc. are normalized via `strings.ToLower` before checking the allowlist and binary-extension blocklist (issue #931).
 
 Binary file types (`.png`, `.jpg`, `.gif`, `.webp`, `.woff2`, `.pdf`, etc.) produce a build error with guidance: `"inline: binary file type .png not supported — use <img> instead"`.
 
