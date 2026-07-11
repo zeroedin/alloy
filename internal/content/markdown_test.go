@@ -1265,7 +1265,7 @@ var _ = Describe("RenderMarkdown", func() {
 				},
 				HookRenderer: hookRenderer,
 			}
-			md := "```liquid\n{% youtube \"dQw4w9WgXcQ\" %}\n{% include 'partial.html' %}\n```"
+			md := "```liquid\n{% youtube \"dQw4w9WgXcQ\" %}\n{{ post.title }}\n{% include 'partial.html' %}\n```"
 			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
@@ -1280,6 +1280,13 @@ var _ = Describe("RenderMarkdown", func() {
 				"double-encoded ampersands (&amp;#34; → &#x26;#34;) must "+
 					"not appear — this is the symptom seen on alloyssg.dev "+
 					"where shiki re-escapes the & from &#34; (issue #962)")
+			Expect(html).To(ContainSubstring(`"dQw4w9WgXcQ"`),
+				"double quotes in Liquid tag arguments must appear as "+
+					"literal quote characters in the rendered output — "+
+					"they are safe in element content context")
+			Expect(html).To(ContainSubstring("'partial.html'"),
+				"single quotes in Liquid tag arguments must appear as "+
+					"literal quote characters in the rendered output")
 			Expect(html).To(ContainSubstring("&#123;%"),
 				"Liquid control tags must still be entity-encoded — "+
 					"quote escaping removal must not affect Liquid delimiter "+
