@@ -2099,6 +2099,8 @@ Built-in filters covering common SSG needs. Compiled Go functions registered wit
 - **Data**: `json` (serialize value to JSON), `default` (fallback value if nil/empty)
 - **Assets**: `cachebust` (content-hash cache busting via query string), `get_hash` (file content digest for SRI)
 
+**Filter pipes inside `{% for %}` expressions are not supported.** Standard Liquid's `for` tag parses `limit:` and `offset:` as built-in tag parameters from the raw markup — they are not pipe filters. Writing `{% for x in arr | limit: 5 %}` is silently broken: the template pre-processor rewrites `| limit:` to a `plugin_filter` bridge call, which the `for` tag does not recognize as a `limit:` parameter. The two correct forms are the `for`-tag clause (`{% for x in arr limit: 5 %}`) and the assign-then-loop pattern (`{% assign capped = arr | limit: 5 %}{% for x in capped %}`).
+
 ### Tier 2: In-Process Plugins (via wazero)
 
 For custom filters, shortcodes, and data transforms that are pure computation — takes input, returns output, no system access needed. Alloy provides two flavors that both run in-process via **wazero** (pure Go WebAssembly runtime, zero CGo):
