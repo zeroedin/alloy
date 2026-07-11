@@ -1822,7 +1822,7 @@ The SVG markup is inlined directly into the rendered HTML. This is essential for
 **Allowed file types** (text-based only):
 `.svg`, `.html`, `.htm`, `.txt`, `.css`, `.js`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`, `.md`
 
-Extension matching is case-insensitive — `.SVG`, `.Png`, etc. are normalized via `strings.ToLower` before checking the allowlist and binary-extension blocklist (issue #931).
+Extension matching is case-insensitive — `.SVG`, `.Png`, etc. are normalized via `strings.ToLower` before checking the binary-extension blocklist (issue #931).
 
 Binary file types (`.png`, `.jpg`, `.gif`, `.webp`, `.woff2`, `.pdf`, etc.) produce a build error with guidance: `"inline: binary file type .png not supported — use <img> instead"`.
 

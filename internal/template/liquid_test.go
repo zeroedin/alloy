@@ -883,7 +883,7 @@ var _ = Describe("LiquidEngine", func() {
 		})
 
 		// ── Case-insensitive extension matching (issue #931) ──────────
-		// The binary-extension allowlist check uses strings.ToLower on the
+		// The binary-extension blocklist check uses strings.ToLower on the
 		// file extension. Without a test using a mixed-case extension,
 		// removing ToLower would go undetected.
 
