@@ -428,4 +428,155 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Nested cascade permalink resolution (issue #910) ──────────────
+	// Permalink patterns in _data.yaml cascade to subdirectories. A nested
+	// _data.yaml can override the parent's permalink pattern — typically to
+	// add dynamic tokens (like :year/:month) that the file system can't
+	// express. The pipeline must resolve permalinks using per-page cascade
+	// data (the nearest _data.yaml in the directory tree), not a flat
+	// section-name-only map.
+
+	Describe("Nested cascade permalink resolution (issue #910)", func() {
+		It("nested _data.yaml permalink adds date tokens that parent does not have", func() {
+			cfg := &config.Config{
+				Title:   "Nested Cascade Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// blog/ uses simple slugs for static pages (about, contact).
+			// blog/posts/ adds date-based URLs — the file system can't express
+			// :year/:month, so a nested _data.yaml provides them.
+			files := map[string]string{
+				"layouts/default.liquid":             "URL:{{ page.url }}",
+				"content/blog/_data.yaml":            "permalink: \"/blog/:slug/\"",
+				"content/blog/posts/_data.yaml":      "permalink: \"/blog/:year/:month/:slug/\"",
+				"content/blog/about.md":              "---\ntitle: About\ndate: 2026-04-10\nlayout: default\n---\n# About",
+				"content/blog/posts/first-post.md":   "---\ntitle: First Post\ndate: 2026-04-10\nlayout: default\n---\n# First",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			// Guard: top-level section permalink still works
+			aboutHTML := result.RenderedContent["blog/about.md"]
+			Expect(aboutHTML).To(ContainSubstring("URL:/blog/about/"),
+				"page in top-level section must use blog/_data.yaml permalink pattern — "+
+					"/blog/:slug/ → /blog/about/")
+
+			// Core assertion: nested _data.yaml permalink overrides parent
+			postHTML := result.RenderedContent["blog/posts/first-post.md"]
+			Expect(postHTML).To(ContainSubstring("URL:/blog/2026/04/first-post/"),
+				"page in nested directory must use the nearest _data.yaml permalink pattern — "+
+					"content/blog/posts/_data.yaml has permalink: /blog/:year/:month/:slug/ "+
+					"which must resolve to /blog/2026/04/first-post/. The file system can't "+
+					"express date-based URLs, so this nested _data.yaml is the only way to "+
+					"add :year/:month tokens for a subdirectory. "+
+					"This fails when the pipeline uses a flat section-name-only map "+
+					"(buildPermalinkCfg) instead of per-page cascade data (issue #910)")
+		})
+
+		It("nested cascade inherits parent permalink when no local override", func() {
+			cfg := &config.Config{
+				Title:   "Cascade Inherit Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// blog/ sets a date-based permalink. blog/posts/ has a _data.yaml
+			// for layout but no permalink key — must inherit the parent's pattern.
+			files := map[string]string{
+				"layouts/default.liquid":             "URL:{{ page.url }}",
+				"content/blog/_data.yaml":            "permalink: \"/blog/:year/:slug/\"",
+				"content/blog/posts/_data.yaml":      "layout: default",
+				"content/blog/posts/inherited.md":    "---\ntitle: Inherited\ndate: 2026-06-15\nlayout: default\n---\n# Inherited",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["blog/posts/inherited.md"]
+			Expect(html).To(ContainSubstring("URL:/blog/2026/inherited/"),
+				"when nested _data.yaml has no permalink key, the parent's permalink pattern "+
+					"must cascade down — /blog/:year/:slug/ → /blog/2026/inherited/. "+
+					"LoadDirectoryCascade merges parent data into child entries, so the "+
+					"parent's permalink key is available in the child's cascade data")
+		})
+
+		It("front matter permalink overrides nested cascade permalink", func() {
+			cfg := &config.Config{
+				Title:   "FM Override Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			files := map[string]string{
+				"layouts/default.liquid":             "URL:{{ page.url }}",
+				"content/blog/posts/_data.yaml":      "permalink: \"/blog/:year/:month/:slug/\"",
+				"content/blog/posts/custom.md":       "---\ntitle: Custom\ndate: 2026-04-10\nlayout: default\npermalink: /my-custom-path/\n---\n# Custom",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["blog/posts/custom.md"]
+			Expect(html).To(ContainSubstring("URL:/my-custom-path/"),
+				"front matter permalink must override nested cascade permalink — "+
+					"front matter always wins regardless of cascade depth")
+		})
+
+		It("deeply nested cascade uses most-specific _data.yaml permalink", func() {
+			cfg := &config.Config{
+				Title:   "Deep Cascade Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// Three levels: blog/ uses simple slugs, blog/posts/ adds dates,
+			// blog/posts/featured/ uses a curated URL scheme.
+			files := map[string]string{
+				"layouts/default.liquid":                          "URL:{{ page.url }}",
+				"content/blog/_data.yaml":                         "permalink: \"/blog/:slug/\"",
+				"content/blog/posts/_data.yaml":                   "permalink: \"/blog/:year/:month/:slug/\"",
+				"content/blog/posts/featured/_data.yaml":          "permalink: \"/blog/featured/:slug/\"",
+				"content/blog/posts/featured/highlight.md":        "---\ntitle: Highlight\ndate: 2026-04-10\nlayout: default\n---\n# Highlight",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["blog/posts/featured/highlight.md"]
+			Expect(html).To(ContainSubstring("URL:/blog/featured/highlight/"),
+				"page must use the most-specific (deepest) _data.yaml permalink pattern — "+
+					"content/blog/posts/featured/_data.yaml overrides both parent levels. "+
+					"This proves the pipeline resolves per-page cascade data, not just "+
+					"top-level section patterns")
+		})
+
+		It("index file in nested directory skips cascade permalink", func() {
+			cfg := &config.Config{
+				Title:   "Index Skip Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			files := map[string]string{
+				"layouts/default.liquid":             "URL:{{ page.url }}",
+				"content/blog/posts/_data.yaml":      "permalink: \"/blog/:year/:month/:slug/\"",
+				"content/blog/posts/index.md":        "---\ntitle: All Posts\nlayout: default\n---\n# All Posts",
+				"content/blog/posts/first-post.md":   "---\ntitle: First Post\ndate: 2026-04-10\nlayout: default\n---\n# First",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			// Index files must skip cascade permalink — resolve to directory path
+			indexHTML := result.RenderedContent["blog/posts/index.md"]
+			Expect(indexHTML).To(ContainSubstring("URL:/blog/posts/"),
+				"index file must resolve to its directory path (/blog/posts/) — "+
+					"cascade permalink patterns must not apply to index files, "+
+					"even in nested directories (issue #39)")
+
+			// Non-index file in same directory must use cascade permalink
+			postHTML := result.RenderedContent["blog/posts/first-post.md"]
+			Expect(postHTML).To(ContainSubstring("URL:/blog/2026/04/first-post/"),
+				"non-index page in the same directory must use the cascade permalink")
+		})
+	})
+
 })

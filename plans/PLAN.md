@@ -284,6 +284,18 @@ permalink: "/:year/:month/:slug/"
 
 This cascades to all pages in `content/blog/` and subdirectories. A post at `content/blog/my-post.md` with `date: 2026-04-10` becomes `/2026/04/my-post/`. To include the section prefix: `permalink: "/blog/:year/:month/:slug/"` or `permalink: "/:section/:year/:month/:slug/"`.
 
+**Nested `_data.yaml` overrides** — a subdirectory's `_data.yaml` can override the parent's permalink pattern, typically to add dynamic tokens that the file system can't express. Each page resolves its permalink from the nearest `_data.yaml` in the directory tree (issue #910):
+
+```yaml
+# content/blog/_data.yaml — simple slugs for static pages
+permalink: "/blog/:slug/"
+
+# content/blog/posts/_data.yaml — date-based URLs for blog posts
+permalink: "/blog/:year/:month/:slug/"
+```
+
+A static page at `content/blog/about.md` resolves to `/blog/about/` (parent pattern). A post at `content/blog/posts/first-post.md` with `date: 2026-04-10` resolves to `/blog/2026/04/first-post/` (nested override with date tokens). When a nested `_data.yaml` has no `permalink` key, the parent's pattern cascades down unchanged — `LoadDirectoryCascade` merges parent data into child entries. The pipeline must resolve permalinks using per-page cascade data from `cascade.FindCascadeData`, not a flat section-name-only map.
+
 **Available tokens:**
 
 | Token | Value | Example |

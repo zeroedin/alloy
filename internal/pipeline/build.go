@@ -373,7 +373,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 		plRenderer := newPermalinkRenderer(engine)
 
-		// Permalink resolution
+		// Permalink resolution — uses per-page cascade data so nested
+		// _data.yaml permalink patterns are respected (issue #910).
 		prefix := i18n.OutputPrefix(lc.Code, lc.Root)
 		langPrefix := lc.Code + "/"
 		for _, page := range batchPages {
@@ -382,7 +383,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				// doesn't double it (e.g., /es/es/about/).
 				origRelPath := page.RelPath
 				page.RelPath = strings.TrimPrefix(page.RelPath, langPrefix)
-				url, err := permalink.ResolveForSection(page, permalinkCfg, plRenderer)
+				url, err := resolvePagePermalink(page, ps, plRenderer)
 				page.RelPath = origRelPath
 				if err != nil {
 					return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
@@ -393,7 +394,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				}
 				page.URL = "/" + prefix + strings.TrimPrefix(url, "/")
 			} else {
-				url, err := permalink.ResolveForSection(page, permalinkCfg, plRenderer)
+				url, err := resolvePagePermalink(page, ps, plRenderer)
 				if err != nil {
 					return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
 				}
@@ -1056,12 +1057,20 @@ func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineSt
 	}
 	return pages, bc, nil
 }
+// resolvePagePermalink resolves the permalink for a single page using its
+// nearest cascade data from _data.yaml. Shared by Build and BuildIncremental.
+func resolvePagePermalink(page *content.Page, ps *PipelineState, renderer permalink.PermalinkRenderer) (string, error) {
+	pageCascade := cascade.FindCascadeData(ps.CascadeData, ps.ContentBase, page.RelPath)
+	return permalink.ResolveFromCascade(page, pageCascade, renderer)
+}
+
 // buildPermalinkCfg builds a section-to-pattern permalink map by extracting
 // permalink patterns from cascade _data.yaml. Only top-level section
-// directories are extracted (e.g. content/blog/ → "blog"), matching
-// ResolveForSection's section-name lookup. Nested _data.yaml permalink
-// patterns (e.g. content/blog/2026/) are not extracted — ResolveForSection
-// only looks up by section name (first path component).
+// directories are extracted (e.g. content/blog/ → "blog"). Nested patterns
+// are not included — this map is used by buildCollectionsContext (collection
+// membership via date-token detection) and ResolveLayout (layout auto-detection),
+// which only need section-level granularity. Permalink resolution uses
+// per-page cascade data via resolvePagePermalink instead.
 func buildPermalinkCfg(ps *PipelineState) map[string]string {
 	result := make(map[string]string)
 	for key, data := range ps.CascadeData {
