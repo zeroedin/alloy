@@ -380,10 +380,12 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		for _, page := range batchPages {
 			if multiLang {
 				// Strip lang prefix from RelPath so permalink resolver
-				// doesn't double it (e.g., /es/es/about/).
+				// doesn't double it (e.g., /es/es/about/). The cascade
+				// lookup must use the original (un-stripped) RelPath so
+				// language-specific _data.yaml entries are found (issue #914).
 				origRelPath := page.RelPath
 				page.RelPath = strings.TrimPrefix(page.RelPath, langPrefix)
-				url, err := resolvePagePermalink(page, ps, plRenderer)
+				url, err := resolvePagePermalink(page, ps, plRenderer, origRelPath)
 				page.RelPath = origRelPath
 				if err != nil {
 					return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
@@ -1059,8 +1061,15 @@ func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineSt
 }
 // resolvePagePermalink resolves the permalink for a single page using its
 // nearest cascade data from _data.yaml. Shared by Build and BuildIncremental.
-func resolvePagePermalink(page *content.Page, ps *PipelineState, renderer permalink.PermalinkRenderer) (string, error) {
-	pageCascade := cascade.FindCascadeData(ps.CascadeData, ps.ContentBase, page.RelPath)
+// cascadeLookupPath overrides the path used for FindCascadeData when the
+// page's RelPath has been stripped (e.g., lang prefix removed for token
+// resolution) but cascade lookup needs the original path (issue #914).
+func resolvePagePermalink(page *content.Page, ps *PipelineState, renderer permalink.PermalinkRenderer, cascadeLookupPath ...string) (string, error) {
+	lookupPath := page.RelPath
+	if len(cascadeLookupPath) > 0 {
+		lookupPath = cascadeLookupPath[0]
+	}
+	pageCascade := cascade.FindCascadeData(ps.CascadeData, ps.ContentBase, lookupPath)
 	return permalink.ResolveFromCascade(page, pageCascade, renderer)
 }
 
