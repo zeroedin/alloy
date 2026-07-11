@@ -348,6 +348,20 @@ var _ = Describe("GoEngine", func() {
 				"error message must match the multi-arg odd case — "+
 					"same validation, same error format")
 		})
+
+		It("returns an empty map when called with zero arguments", func() {
+			tpl, err := engine.Parse("dict-zero", []byte(
+				`{{ $d := dict }}{{ len $d }}`))
+			Expect(err).NotTo(HaveOccurred(),
+				"dict with 0 args must parse successfully")
+
+			result, err := tpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred(),
+				"dict with 0 arguments (even) must succeed — "+
+					"zero is a valid even number of key-value pairs")
+			Expect(string(result)).To(Equal("0"),
+				"dict with no arguments must return an empty map (length 0)")
+		})
 	})
 
 	// ── Issue #884: Concurrent rendering safety ──────────────────────
