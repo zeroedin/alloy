@@ -83,7 +83,7 @@ func (r *hookNodeRenderer) renderFencedCodeBlock(
 
 	ctx := map[string]interface{}{
 		"markup": map[string]interface{}{
-			"language":   language,
+			"language":   html.EscapeString(language),
 			"inner":      escapeLiquidDelimiters(html.EscapeString(codeBuf.String())),
 			"attributes": attrs,
 		},
@@ -104,16 +104,13 @@ func (r *hookNodeRenderer) renderLink(
 	n := node.(*ast.Link)
 	destination := string(n.Destination)
 
-	var textBuf bytes.Buffer
-	extractText(&textBuf, n, source)
-
 	isExternal := strings.HasPrefix(destination, "http://") || strings.HasPrefix(destination, "https://")
 
 	ctx := map[string]interface{}{
 		"markup": map[string]interface{}{
-			"destination": destination,
-			"text":        textBuf.String(),
-			"title":       string(n.Title),
+			"destination": html.EscapeString(destination),
+			"text":        html.EscapeString(extractSourceSpan(n, source)),
+			"title":       html.EscapeString(string(n.Title)),
 			"is_external": isExternal,
 		},
 	}
@@ -171,14 +168,11 @@ func (r *hookNodeRenderer) renderImage(
 	}
 	n := node.(*ast.Image)
 
-	var altBuf bytes.Buffer
-	extractText(&altBuf, n, source)
-
 	ctx := map[string]interface{}{
 		"markup": map[string]interface{}{
-			"src":   string(n.Destination),
-			"alt":   altBuf.String(),
-			"title": string(n.Title),
+			"src":   html.EscapeString(string(n.Destination)),
+			"alt":   html.EscapeString(extractSourceSpan(n, source)),
+			"title": html.EscapeString(string(n.Title)),
 		},
 	}
 	rendered, err := r.renderHookTemplate(r.hooks["image"], ctx)
@@ -258,6 +252,52 @@ func extractNodeAttributes(node ast.Node) map[string]interface{} {
 		}
 	}
 	return attrs
+}
+
+// extractSourceSpan returns the raw source text covered by a node's
+// children. It finds the earliest and latest byte positions across all
+// Text and RawHTML segments, then reads the original source between
+// them. This preserves characters that AST transformers (e.g. the
+// typographer) replace with non-text node types.
+func extractSourceSpan(node ast.Node, source []byte) string {
+	first, last := sourceRange(node)
+	if first < 0 || last <= first {
+		return ""
+	}
+	return string(source[first:last])
+}
+
+func sourceRange(node ast.Node) (int, int) {
+	first, last := -1, -1
+	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
+		if t, ok := child.(*ast.Text); ok {
+			if first < 0 || t.Segment.Start < first {
+				first = t.Segment.Start
+			}
+			if t.Segment.Stop > last {
+				last = t.Segment.Stop
+			}
+		} else if r, ok := child.(*ast.RawHTML); ok {
+			for i := 0; i < r.Segments.Len(); i++ {
+				seg := r.Segments.At(i)
+				if first < 0 || seg.Start < first {
+					first = seg.Start
+				}
+				if seg.Stop > last {
+					last = seg.Stop
+				}
+			}
+		} else {
+			f, l := sourceRange(child)
+			if f >= 0 && (first < 0 || f < first) {
+				first = f
+			}
+			if l > last {
+				last = l
+			}
+		}
+	}
+	return first, last
 }
 
 func renderChildrenToHTML(r renderer.Renderer, source []byte, parent ast.Node) (string, error) {
