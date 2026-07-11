@@ -213,73 +213,73 @@
 
 ## v0.3.1 (2026-06-27)
 
-Make the plugins directory configurable via `structure.plugins` in the config file and `--plugins` flag in `alloy init`. Previously, the plugins directory was hardcoded to `plugins/` while all other managed directories were configurable. Also fixes plugin file changes not being detected by the dev server watcher, and a bug where nested plugin paths (e.g. `tools/plugins`) broke Node runtime project root derivation.
+- Make the plugins directory configurable via `structure.plugins` in the config file and `--plugins` flag in `alloy init`. Previously, the plugins directory was hardcoded to `plugins/` while all other managed directories were configurable. Also fixes plugin file changes not being detected by the dev server watcher, and a bug where nested plugin paths (e.g. `tools/plugins`) broke Node runtime project root derivation.
 
 ## v0.3.0 (2026-06-27)
 
 ### Minor Changes
 
-Custom elements (HTML tags with hyphens like `<alloy-code>`, `<wa-tab-group>`) are now treated as block-level HTML in Goldmark. Content inside is preserved verbatim — no markdown processing, no smart quotes, no `<p>` wrapping — and blank lines do not terminate the block.
+- Custom elements (HTML tags with hyphens like `<alloy-code>`, `<wa-tab-group>`) are now treated as block-level HTML in Goldmark. Content inside is preserved verbatim — no markdown processing, no smart quotes, no `<p>` wrapping — and blank lines do not terminate the block.
 
-Configurable via `content.markdown.goldmark.customElements` (default: `true`).
+  Configurable via `content.markdown.goldmark.customElements` (default: `true`).
 
-```yaml
-# alloy.config.yaml
-content:
-  markdown:
-    goldmark:
-      customElements: true     # treat custom elements as block-level HTML (default: true)
-```
+  ```yaml
+  # alloy.config.yaml
+  content:
+    markdown:
+      goldmark:
+        customElements: true     # treat custom elements as block-level HTML (default: true)
+  ```
 
-```markdown
-<!-- content/example.md -->
-<wa-tab-group>
-<wa-tab panel="one">Tab 1</wa-tab>
+  ```markdown
+  <!-- content/example.md -->
+  <wa-tab-group>
+  <wa-tab panel="one">Tab 1</wa-tab>
 
-<wa-tab-panel name="one">
-Panel content with "quotes" and blank lines — all preserved verbatim.
-</wa-tab-panel>
-</wa-tab-group>
-```
+  <wa-tab-panel name="one">
+  Panel content with "quotes" and blank lines — all preserved verbatim.
+  </wa-tab-panel>
+  </wa-tab-group>
+  ```
 
 ### Patch Changes
 
-Fix Liquid delimiters in code blocks being interpreted as template syntax when render hooks replace the default `<code>` element. Delimiters are now entity-encoded in `markup.inner` before reaching the hook template.
-Fix `alloy dev` not rebuilding pages when layout partials change. Editing files like `layouts/partials/header.liquid` now correctly triggers a full rebuild instead of silently skipping all pages.
-Fix spurious warnings during `alloy dev` and `alloy serve` when atomic-write editors create temp files that vanish before the debounced watcher copy runs. Transient `os.ErrNotExist` errors are now silently skipped.
+- Fix Liquid delimiters in code blocks being interpreted as template syntax when render hooks replace the default `<code>` element. Delimiters are now entity-encoded in `markup.inner` before reaching the hook template.
+- Fix `alloy dev` not rebuilding pages when layout partials change. Editing files like `layouts/partials/header.liquid` now correctly triggers a full rebuild instead of silently skipping all pages.
+- Fix spurious warnings during `alloy dev` and `alloy serve` when atomic-write editors create temp files that vanish before the debounced watcher copy runs. Transient `os.ErrNotExist` errors are now silently skipped.
 
 ## v0.2.0 (2026-06-25)
 
 ### Minor Changes
 
-Sections listed in the `collections:` config now declare collection membership without requiring date-token permalink patterns. Non-blog sections like releases or changelogs can participate in `collections.*` pagination and template loops.
+- Sections listed in the `collections:` config now declare collection membership without requiring date-token permalink patterns. Non-blog sections like releases or changelogs can participate in `collections.*` pagination and template loops.
 
-```yaml
-# alloy.config.yaml
-collections:
-  releases:             # declares releases/ as a collection — no date tokens needed
-    sortBy: date
-    order: desc
-```
+  ```yaml
+  # alloy.config.yaml
+  collections:
+    releases:             # declares releases/ as a collection — no date tokens needed
+      sortBy: date
+      order: desc
+  ```
 
-```yaml
-# content/releases/_data.yaml
-permalink: "/releases/:title/"
-```
+  ```yaml
+  # content/releases/_data.yaml
+  permalink: "/releases/:title/"
+  ```
 
-```liquid
-{% for release in collections.releases %}
-  <a href="{{ release.url }}">{{ release.title }}</a>
-{% endfor %}
-```
+  ```liquid
+  {% for release in collections.releases %}
+    <a href="{{ release.url }}">{{ release.title }}</a>
+  {% endfor %}
+  ```
 
 ### Patch Changes
 
-Fix race conditions in concurrent plugin hook execution and runtime initialization.
+- Fix race conditions in concurrent plugin hook execution and runtime initialization.
 
 ## v0.1.1 (2026-06-24)
 
-Reduce internal memory footprint by removing unused cascade data layers.
+- Reduce internal memory footprint by removing unused cascade data layers.
 
 ## v0.1.0 (2026-06-23)
 
