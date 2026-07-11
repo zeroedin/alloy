@@ -61,23 +61,11 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 		var paths []string
 
 		if useTemplatePermalink && perPage == 1 {
-			var renderer pagination.TemplateRenderer
-			if engine != nil {
-				renderer = func(source string, ctx map[string]interface{}) (string, error) {
-					tpl, err := engine.Parse("_permalink", []byte(source))
-					if err != nil {
-						return "", err
-					}
-					out, err := tpl.Render(ctx)
-					if err != nil {
-						return "", err
-					}
-					return string(out), nil
-				}
-			} else {
-				renderer = func(source string, ctx map[string]interface{}) (string, error) {
-					return tmpl.RenderTemplate(source, "_permalink", ctx)
-				}
+			// Wrap the base permalink renderer with *ordered.Map conversion
+			// so Go templates can access JSON data fields via .member.slug syntax.
+			baseRenderer := newPermalinkRenderer(engine)
+			var renderer pagination.TemplateRenderer = func(source string, ctx map[string]interface{}) (string, error) {
+				return baseRenderer(source, convertOrderedMaps(ctx))
 			}
 			contexts, paths, err = pagination.PaginateWithTemplatePermalink(resolved, permalinkStr, asVar, renderer)
 		} else {
@@ -118,15 +106,23 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 				"items":        pctx.Items,
 			}
 			vp.FrontMatter["_paginationAs"] = asVar
-			// Make the data items available under the 'as' variable name
+			// Make the data items available under the 'as' variable name.
+			// Convert *ordered.Map items to map[string]interface{} so both
+			// Liquid and Go template engines can access fields via dot syntax.
 			if perPage == 1 && len(pctx.Items) == 1 {
-				vp.FrontMatter["_paginationData"] = pctx.Items[0]
-				interpolateFrontMatter(vp, asVar, pctx.Items[0], engine)
+				item := convertOrderedValue(pctx.Items[0])
+				vp.FrontMatter["_paginationData"] = item
+				interpolateFrontMatter(vp, asVar, item, engine)
 			} else {
-				vp.FrontMatter["_paginationData"] = pctx.Items
+				converted := make([]interface{}, len(pctx.Items))
+				for ci, item := range pctx.Items {
+					converted[ci] = convertOrderedValue(item)
+				}
+				vp.FrontMatter["_paginationData"] = converted
 			}
 			result = append(result, vp)
 		}
 	}
 	return result
 }
+

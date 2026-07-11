@@ -1,6 +1,7 @@
 package permalink_test
 
 import (
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -384,6 +385,388 @@ var _ = Describe("Permalink", func() {
 			}
 			result := permalink.ResolveTokens("/static/path/", page)
 			Expect(result).To(Equal("/static/path/"))
+		})
+	})
+
+	// ── Template permalink rendering (issue #830) ────────────────────
+	// Front matter permalinks containing {{ }} are rendered through a
+	// PermalinkRenderer callback. Token syntax and template syntax are
+	// separate modes — when {{ is detected, tokens are not resolved.
+
+	Describe("Template permalink rendering (issue #830)", func() {
+
+		// ── Resolve with renderer ─────────────────────────────────────
+
+		Describe("Resolve with renderer", func() {
+			It("renders template permalink through renderer when {{ is present", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post", "permalink": "/{{ page.slug }}/"},
+					Slug:        "my-post",
+					Section:     "blog",
+					RelPath:     "blog/my-post.md",
+				}
+				called := false
+				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
+					called = true
+					Expect(source).To(Equal("/{{ page.slug }}/"),
+						"renderer must receive the raw permalink template string")
+					return "/my-post/", nil
+				})
+				result, err := permalink.Resolve("/:year/:slug/", page, renderer)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal("/my-post/"),
+					"Resolve must return the renderer's output when permalink contains {{")
+				Expect(called).To(BeTrue(),
+					"renderer must be invoked for template permalinks")
+			})
+
+			It("returns error when renderer returns error", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post", "permalink": "/{{ page.slug }}/"},
+					Section:     "blog",
+					RelPath:     "blog/my-post.md",
+				}
+				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
+					return "", fmt.Errorf("template parse error: unexpected EOF")
+				})
+				_, err := permalink.Resolve("/:year/:slug/", page, renderer)
+				Expect(err).To(HaveOccurred(),
+					"Resolve must propagate renderer errors")
+				Expect(err.Error()).To(ContainSubstring("template parse error"),
+					"error message must include the renderer's error")
+			})
+
+			It("returns error when renderer returns empty string", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post", "permalink": "/{{ page.nonexistent }}/"},
+					Section:     "blog",
+					RelPath:     "blog/my-post.md",
+				}
+				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
+					return "", nil // rendered to empty — not an engine error, but a content error
+				})
+				_, err := permalink.Resolve("/:year/:slug/", page, renderer)
+				Expect(err).To(HaveOccurred(),
+					"template permalink rendering to empty string must be a fatal error — "+
+						"distinct from permalink:false which returns (\"\", nil) with no error")
+			})
+
+			It("returns error when renderer returns whitespace-only string", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post", "permalink": "/{{ page.nonexistent }}/"},
+					Section:     "blog",
+					RelPath:     "blog/my-post.md",
+				}
+				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
+					return "   \n  ", nil
+				})
+				_, err := permalink.Resolve("/:year/:slug/", page, renderer)
+				Expect(err).To(HaveOccurred(),
+					"whitespace-only render result must be treated as empty — fatal error")
+			})
+
+			It("does not invoke renderer when permalink has no {{ (fast path)", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post", "permalink": "/static/path/"},
+					Section:     "blog",
+					RelPath:     "blog/my-post.md",
+				}
+				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
+					Fail("renderer must not be invoked for static permalinks — " +
+						"the {{ detection fast path should skip template rendering entirely")
+					return "", nil
+				})
+				result, err := permalink.Resolve("/:year/:slug/", page, renderer)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal("/static/path/"),
+					"static permalink must be returned verbatim without invoking renderer")
+			})
+
+			It("does not resolve tokens when permalink contains {{ (separate modes)", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post", "permalink": "/{{ page.section }}/:slug/"},
+					Slug:        "my-post",
+					Section:     "blog",
+					RelPath:     "blog/my-post.md",
+				}
+				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
+					// Return the source as-is to prove tokens weren't resolved before rendering
+					return source, nil
+				})
+				result, err := permalink.Resolve("/:year/:slug/", page, renderer)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring(":slug"),
+					"token syntax must NOT be resolved when {{ is present — "+
+						"template and token modes are mutually exclusive")
+			})
+
+			It("provides page context with front matter fields to renderer", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post", "permalink": "/{{ page.slug }}/", "lang": "en", "custom_field": "custom-value"},
+					Slug:        "my-post",
+					Section:     "blog",
+					Summary:     "A summary",
+					RelPath:     "blog/my-post.md",
+				}
+				var capturedCtx map[string]interface{}
+				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
+					capturedCtx = ctx
+					return "/my-post/", nil
+				})
+				_, err := permalink.Resolve("/:year/:slug/", page, renderer)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(capturedCtx).To(HaveKey("page"),
+					"renderer context must include a 'page' key")
+				pageCtx, ok := capturedCtx["page"].(map[string]interface{})
+				Expect(ok).To(BeTrue(), "page context must be a map")
+
+				Expect(pageCtx).To(HaveKeyWithValue("title", "My Post"),
+					"page context must include front matter title")
+				Expect(pageCtx).To(HaveKey("date"),
+					"page context must include page date")
+				Expect(pageCtx).To(HaveKeyWithValue("slug", "my-post"),
+					"page context must include slug")
+				Expect(pageCtx).To(HaveKeyWithValue("lang", "en"),
+					"page context must include custom front matter fields")
+				Expect(pageCtx).To(HaveKeyWithValue("custom_field", "custom-value"),
+					"page context must include arbitrary front matter fields")
+				Expect(pageCtx).To(HaveKeyWithValue("summary", "A summary"),
+					"page context must include summary")
+				Expect(pageCtx).To(HaveKeyWithValue("collection", "blog"),
+					"page context must include collection (section)")
+			})
+
+			It("does not include page.url in renderer context", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post", "permalink": "/{{ page.slug }}/"},
+					Slug:        "my-post",
+					Section:     "blog",
+					RelPath:     "blog/my-post.md",
+					// URL is empty at permalink resolution time — it's what we're computing
+				}
+				var capturedCtx map[string]interface{}
+				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
+					capturedCtx = ctx
+					return "/my-post/", nil
+				})
+				_, err := permalink.Resolve("/:year/:slug/", page, renderer)
+				Expect(err).NotTo(HaveOccurred())
+
+				pageCtx := capturedCtx["page"].(map[string]interface{})
+				Expect(pageCtx).NotTo(HaveKey("url"),
+					"page.url must NOT be in the template permalink context — "+
+						"it's the value being computed, including it would be a circular reference")
+			})
+
+			It("actively excludes page.url even when page.URL is set", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post", "permalink": "/{{ page.slug }}/"},
+					Slug:        "my-post",
+					Section:     "blog",
+					RelPath:     "blog/my-post.md",
+					URL:         "/some/previous/url/", // non-empty — could leak into context
+				}
+				var capturedCtx map[string]interface{}
+				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
+					capturedCtx = ctx
+					return "/my-post/", nil
+				})
+				_, err := permalink.Resolve("/:year/:slug/", page, renderer)
+				Expect(err).NotTo(HaveOccurred())
+
+				pageCtx := capturedCtx["page"].(map[string]interface{})
+				Expect(pageCtx).NotTo(HaveKey("url"),
+					"page.url must be actively excluded from the template permalink context — "+
+						"even when page.URL is non-empty (e.g., from a previous resolution), "+
+						"including it would create a circular reference or stale data")
+			})
+
+			It("returns error when template permalink present but no renderer provided", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post", "permalink": "/{{ page.slug }}/"},
+					Slug:        "my-post",
+					Section:     "blog",
+					RelPath:     "blog/my-post.md",
+				}
+				// No renderer passed — variadic is empty
+				_, err := permalink.Resolve("/:year/:slug/", page)
+				Expect(err).To(HaveOccurred(),
+					"template permalink with no renderer must return an error — "+
+						"if the pipeline forgets to wire a renderer, silently returning "+
+						"literal {{ }} in a URL would produce broken output")
+			})
+		})
+
+		// ── ResolveForSection with renderer ────────────────────────────
+
+		Describe("ResolveForSection with renderer", func() {
+			It("template permalink in front matter overrides section pattern", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post", "permalink": "/{{ page.slug }}/posts/"},
+					Slug:        "my-post",
+					Section:     "blog",
+					RelPath:     "blog/my-post.md",
+				}
+				permalinkCfg := map[string]string{
+					"blog": "/:year/:month/:slug/",
+				}
+				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
+					return "/my-post/posts/", nil
+				})
+				result, err := permalink.ResolveForSection(page, permalinkCfg, renderer)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal("/my-post/posts/"),
+					"template permalink in front matter must override section pattern from config")
+			})
+
+			It("does not invoke renderer for section pattern without {{ in front matter", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post"},
+					Slug:        "my-post",
+					Section:     "blog",
+					RelPath:     "blog/my-post.md",
+				}
+				permalinkCfg := map[string]string{
+					"blog": "/:year/:slug/",
+				}
+				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
+					Fail("renderer must not be invoked when front matter has no template permalink — " +
+						"section patterns use token resolution, not template rendering")
+					return "", nil
+				})
+				result, err := permalink.ResolveForSection(page, permalinkCfg, renderer)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal("/2026/my-post/"),
+					"section pattern must still resolve through token replacement")
+			})
+
+			It("does not render {{ in section config patterns through renderer", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post"},
+					Slug:        "my-post",
+					Section:     "blog",
+					RelPath:     "blog/my-post.md",
+				}
+				permalinkCfg := map[string]string{
+					"blog": "/{{ page.section }}/:slug/",
+				}
+				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
+					Fail("renderer must not be invoked for section config patterns — " +
+						"section/default config patterns use token resolution only, " +
+						"{{ in a config pattern is treated as literal text")
+					return "", nil
+				})
+				result, err := permalink.ResolveForSection(page, permalinkCfg, renderer)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("{{ page.section }}"),
+					"section config patterns do not support {{ }} — "+
+						"the string must pass through token resolution unchanged, "+
+						"leaving {{ page.section }} as literal text")
+			})
+		})
+
+		// ── ResolveFromCascade with renderer ───────────────────────────
+
+		Describe("ResolveFromCascade with renderer", func() {
+			It("template permalink in front matter overrides cascade pattern", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post", "permalink": "/{{ page.slug }}/"},
+					Slug:        "my-post",
+					Section:     "blog",
+					RelPath:     "blog/my-post.md",
+				}
+				cascadeData := map[string]interface{}{
+					"permalink": "/:year/:month/:slug/",
+				}
+				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
+					return "/my-post/", nil
+				})
+				result, err := permalink.ResolveFromCascade(page, cascadeData, renderer)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal("/my-post/"),
+					"template permalink in front matter must override cascade pattern")
+			})
+
+			It("returns error when cascade pattern renders to empty string", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post"},
+					Slug:        "my-post",
+					Section:     "blog",
+					RelPath:     "blog/my-post.md",
+				}
+				cascadeData := map[string]interface{}{
+					"permalink": "/{{ page.nonexistent }}/",
+				}
+				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
+					return "", nil
+				})
+				_, err := permalink.ResolveFromCascade(page, cascadeData, renderer)
+				Expect(err).To(HaveOccurred(),
+					"cascade template permalink rendering to empty string must be a fatal error — "+
+						"same rule as front matter template permalinks")
+			})
+
+			It("returns error when cascade pattern renders to whitespace", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post"},
+					Slug:        "my-post",
+					Section:     "blog",
+					RelPath:     "blog/my-post.md",
+				}
+				cascadeData := map[string]interface{}{
+					"permalink": "/{{ page.nonexistent }}/",
+				}
+				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
+					return "  \n  ", nil
+				})
+				_, err := permalink.ResolveFromCascade(page, cascadeData, renderer)
+				Expect(err).To(HaveOccurred(),
+					"cascade template permalink rendering to whitespace must be a fatal error — "+
+						"same rule as front matter template permalinks")
+			})
+
+			It("renders cascade pattern containing {{ through renderer", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post"},
+					Slug:        "my-post",
+					Section:     "blog",
+					RelPath:     "blog/my-post.md",
+				}
+				cascadeData := map[string]interface{}{
+					"permalink": "/{{ page.collection }}/{{ page.slug }}/",
+				}
+				called := false
+				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
+					called = true
+					Expect(source).To(Equal("/{{ page.collection }}/{{ page.slug }}/"),
+						"renderer must receive the cascade pattern as template source")
+					return "/blog/my-post/", nil
+				})
+				result, err := permalink.ResolveFromCascade(page, cascadeData, renderer)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal("/blog/my-post/"),
+					"cascade pattern with {{ must be rendered through the template engine")
+				Expect(called).To(BeTrue(),
+					"renderer must be invoked for cascade patterns containing {{")
+			})
 		})
 	})
 

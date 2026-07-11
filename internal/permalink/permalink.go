@@ -10,20 +10,27 @@ import (
 	"github.com/zeroedin/alloy/internal/content"
 )
 
+// PermalinkRenderer renders a template permalink string with a page context.
+type PermalinkRenderer func(source string, ctx map[string]interface{}) (string, error)
+
 // Resolve computes the output URL for a page using config patterns and front matter overrides.
-func Resolve(pattern string, page *content.Page) (string, error) {
+// When a front matter permalink contains {{ }}, it is rendered through the provided renderer.
+// Token syntax and template syntax are mutually exclusive — when {{ is detected, tokens
+// like :year and :slug are not resolved.
+func Resolve(pattern string, page *content.Page, renderers ...PermalinkRenderer) (string, error) {
 	// Check for permalink: false
 	if val, ok := page.FrontMatter["permalink"]; ok {
 		if b, ok := val.(bool); ok && !b {
 			return "", nil
 		}
-		// Static permalink string from front matter overrides pattern
 		if s, ok := val.(string); ok && s != "" {
+			if ContainsLiquidTags(s) {
+				return renderTemplatePermalink(s, page, renderers)
+			}
 			return s, nil
 		}
 	}
 
-	// Check for front matter slug override
 	result := ResolveTokens(pattern, page)
 	return result, nil
 }
@@ -103,17 +110,23 @@ func DefaultFromPath(relPath string) string {
 
 // ResolveForSection computes the output URL for a page using section-to-pattern
 // mapping from config. The lookup order is:
-//  1. Front matter permalink (static or Liquid)
-//  2. Section-specific pattern from permalinkCfg
-//  3. "default" pattern from permalinkCfg
+//  1. Front matter permalink (static or template)
+//  2. Section-specific pattern from permalinkCfg (token resolution only)
+//  3. "default" pattern from permalinkCfg (token resolution only)
 //  4. File path default (DefaultFromPath)
-func ResolveForSection(page *content.Page, permalinkCfg map[string]string) (string, error) {
+//
+// Template rendering ({{ }}) only applies to front matter permalinks.
+// Section config patterns are always resolved via token replacement.
+func ResolveForSection(page *content.Page, permalinkCfg map[string]string, renderers ...PermalinkRenderer) (string, error) {
 	// 1. Front matter permalink takes priority
 	if val, ok := page.FrontMatter["permalink"]; ok {
 		if b, ok := val.(bool); ok && !b {
 			return "", nil
 		}
 		if s, ok := val.(string); ok && s != "" {
+			if ContainsLiquidTags(s) {
+				return renderTemplatePermalink(s, page, renderers)
+			}
 			return s, nil
 		}
 	}
@@ -123,12 +136,12 @@ func ResolveForSection(page *content.Page, permalinkCfg map[string]string) (stri
 		return DefaultFromPath(page.RelPath), nil
 	}
 
-	// 2. Section-specific pattern
+	// 2. Section-specific pattern (token resolution only, no template rendering)
 	if pattern, ok := permalinkCfg[page.Section]; ok {
 		return ResolveTokens(pattern, page), nil
 	}
 
-	// 3. Default pattern
+	// 3. Default pattern (token resolution only)
 	if pattern, ok := permalinkCfg["default"]; ok {
 		return ResolveTokens(pattern, page), nil
 	}
@@ -139,15 +152,18 @@ func ResolveForSection(page *content.Page, permalinkCfg map[string]string) (stri
 
 // ResolveFromCascade computes the output URL for a page using permalink
 // patterns from the _data.yaml cascade. The lookup order is:
-//  1. Front matter permalink (static or Liquid)
-//  2. Cascade "permalink" pattern from _data.yaml
+//  1. Front matter permalink (static or template)
+//  2. Cascade "permalink" pattern from _data.yaml (supports both tokens and templates)
 //  3. File path default (DefaultFromPath)
-func ResolveFromCascade(page *content.Page, cascadeData map[string]interface{}) (string, error) {
+func ResolveFromCascade(page *content.Page, cascadeData map[string]interface{}, renderers ...PermalinkRenderer) (string, error) {
 	if val, ok := page.FrontMatter["permalink"]; ok {
 		if b, ok := val.(bool); ok && !b {
 			return "", nil
 		}
 		if s, ok := val.(string); ok && s != "" {
+			if ContainsLiquidTags(s) {
+				return renderTemplatePermalink(s, page, renderers)
+			}
 			return s, nil
 		}
 	}
@@ -157,6 +173,9 @@ func ResolveFromCascade(page *content.Page, cascadeData map[string]interface{}) 
 	}
 
 	if pattern, ok := cascadeData["permalink"].(string); ok && pattern != "" {
+		if ContainsLiquidTags(pattern) {
+			return renderTemplatePermalink(pattern, page, renderers)
+		}
 		return ResolveTokens(pattern, page), nil
 	}
 
@@ -171,6 +190,55 @@ func ResolveAliases(page *content.Page) ([]string, error) {
 		return nil, nil
 	}
 	return page.Aliases, nil
+}
+
+// renderTemplatePermalink renders a template permalink string through
+// the provided renderer. Returns an error if no renderer is provided,
+// the renderer fails, or the result is empty/whitespace.
+func renderTemplatePermalink(source string, page *content.Page, renderers []PermalinkRenderer) (string, error) {
+	if len(renderers) == 0 || renderers[0] == nil {
+		return "", fmt.Errorf("template permalink %q requires a renderer but none was provided", source)
+	}
+
+	ctx := buildPermalinkContext(page)
+	result, err := renderers[0](source, ctx)
+	if err != nil {
+		return "", fmt.Errorf("template permalink rendering: %w", err)
+	}
+
+	if strings.TrimSpace(result) == "" {
+		return "", fmt.Errorf("template permalink %q rendered to empty string for %s", source, page.RelPath)
+	}
+
+	return result, nil
+}
+
+// buildPermalinkContext builds the template context map for permalink rendering.
+// Includes all front matter fields, page date, slug, summary, and collection.
+// Actively excludes url to prevent circular references.
+func buildPermalinkContext(page *content.Page) map[string]interface{} {
+	pageCtx := make(map[string]interface{}, len(page.FrontMatter)+4)
+	for k, v := range page.FrontMatter {
+		pageCtx[k] = v
+	}
+	if !page.Date.IsZero() {
+		pageCtx["date"] = page.Date
+	}
+	if page.Slug != "" {
+		pageCtx["slug"] = page.Slug
+	}
+	if page.Summary != "" {
+		pageCtx["summary"] = page.Summary
+	}
+	if page.Section != "" {
+		pageCtx["collection"] = page.Section
+	}
+	delete(pageCtx, "url")
+	delete(pageCtx, "permalink")
+
+	return map[string]interface{}{
+		"page": pageCtx,
+	}
 }
 
 // resolveSlug determines the slug for a page. Priority:
