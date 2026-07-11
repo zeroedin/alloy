@@ -78,10 +78,13 @@ func (r *hookNodeRenderer) renderFencedCodeBlock(
 		codeBuf.Write(line.Value(source))
 	}
 
+	attrs := extractNodeAttributes(n)
+
 	ctx := map[string]interface{}{
 		"markup": map[string]interface{}{
-			"language": language,
-			"inner":    escapeLiquidDelimiters(codeBuf.String()),
+			"language":   language,
+			"inner":      escapeLiquidDelimiters(codeBuf.String()),
+			"attributes": attrs,
 		},
 	}
 	rendered, err := r.renderHookTemplate(hookTemplate, ctx)
@@ -138,20 +141,9 @@ func (r *hookNodeRenderer) renderHeading(
 	}
 
 	id := slugifyHeading(text)
-	attrs := make(map[string]interface{})
-	for _, attr := range n.Attributes() {
-		name := string(attr.Name)
-		switch v := attr.Value.(type) {
-		case []byte:
-			attrs[name] = string(v)
-		default:
-			attrs[name] = v
-		}
-		if name == "id" {
-			if s, ok := attrs[name].(string); ok {
-				id = s
-			}
-		}
+	attrs := extractNodeAttributes(n)
+	if s, ok := attrs["id"].(string); ok {
+		id = s
 	}
 
 	ctx := map[string]interface{}{
@@ -207,9 +199,12 @@ func (r *hookNodeRenderer) renderBlockquote(
 		return ast.WalkStop, err
 	}
 
+	attrs := extractNodeAttributes(node)
+
 	ctx := map[string]interface{}{
 		"markup": map[string]interface{}{
-			"inner": inner,
+			"inner":      inner,
+			"attributes": attrs,
 		},
 	}
 	rendered, err := r.renderHookTemplate(r.hooks["blockquote"], ctx)
@@ -231,9 +226,12 @@ func (r *hookNodeRenderer) renderTable(
 		return ast.WalkStop, err
 	}
 
+	attrs := extractNodeAttributes(node)
+
 	ctx := map[string]interface{}{
 		"markup": map[string]interface{}{
-			"inner": buf.String(),
+			"inner":      buf.String(),
+			"attributes": attrs,
 		},
 	}
 	rendered, err := r.renderHookTemplate(r.hooks["table"], ctx)
@@ -242,6 +240,23 @@ func (r *hookNodeRenderer) renderTable(
 	}
 	_, _ = w.WriteString(rendered)
 	return ast.WalkSkipChildren, nil
+}
+
+// extractNodeAttributes converts goldmark AST node attributes to a
+// map[string]interface{} suitable for template contexts. Returns an
+// empty (non-nil) map when no attributes are present.
+func extractNodeAttributes(node ast.Node) map[string]interface{} {
+	attrs := make(map[string]interface{})
+	for _, attr := range node.Attributes() {
+		name := string(attr.Name)
+		switch v := attr.Value.(type) {
+		case []byte:
+			attrs[name] = string(v)
+		default:
+			attrs[name] = v
+		}
+	}
+	return attrs
 }
 
 func renderChildrenToHTML(r renderer.Renderer, source []byte, parent ast.Node) (string, error) {
