@@ -531,6 +531,12 @@ var _ = Describe("Hooks", func() {
 			// This race is unobservable without -race because preHook
 			// is always a copy of current (identical data). The test
 			// serves as a regression guard under `go test -race`.
+			//
+			// The WaitGroup ensures all batch goroutines have finished
+			// capturing before assertions run. Without it, goroutines
+			// that haven't been scheduled by the time the 1ms timeout
+			// fires are still pending when the test checks captures,
+			// causing intermittent failures on loaded CI machines.
 			const iterations = 100
 			registry := plugin.NewHookRegistry()
 			registry.SetTimeout(1)
@@ -540,11 +546,13 @@ var _ = Describe("Hooks", func() {
 			}
 			var mu sync.Mutex
 			var captures []capture
+			var wg sync.WaitGroup
 
 			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
 				return p, nil
 			}
 			batchFn := func(ctx context.Context, ps []interface{}, _ plugin.BatchProgressFunc) ([]interface{}, error) {
+				defer wg.Done()
 				snap := make([]interface{}, len(ps))
 				copy(snap, ps)
 				mu.Lock()
@@ -556,6 +564,7 @@ var _ = Describe("Hooks", func() {
 			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchFn, 50)
 
 			for i := 0; i < iterations; i++ {
+				wg.Add(1)
 				input := []interface{}{fmt.Sprintf("item-%d", i)}
 				results, err := registry.RunBatchWithProgress(
 					plugin.OnPageRendered, input, nil)
@@ -563,17 +572,28 @@ var _ = Describe("Hooks", func() {
 				Expect(results).To(HaveLen(1))
 			}
 
+			wg.Wait() // block until all batch goroutines have captured
+
 			mu.Lock()
 			defer mu.Unlock()
 			Expect(captures).To(HaveLen(iterations),
 				"batchFn should be invoked once per call")
-			for i, c := range captures {
+
+			// Goroutine scheduling order is not guaranteed — on a loaded
+			// machine a later iteration's goroutine can run before an
+			// earlier one. Collect into a set and verify all items present.
+			seen := make(map[string]bool, iterations)
+			for _, c := range captures {
 				Expect(c.input).To(HaveLen(1),
-					fmt.Sprintf("iteration %d: batchFn received wrong-length "+
-						"input — possible torn slice header from closure-capture race", i))
-				Expect(c.input[0]).To(Equal(fmt.Sprintf("item-%d", i)),
-					fmt.Sprintf("iteration %d: batchFn received wrong input — "+
-						"goroutine may have captured a stale variable", i))
+					"batchFn received wrong-length input — "+
+						"possible torn slice header from closure-capture race")
+				seen[c.input[0].(string)] = true
+			}
+			for i := 0; i < iterations; i++ {
+				expected := fmt.Sprintf("item-%d", i)
+				Expect(seen).To(HaveKey(expected),
+					fmt.Sprintf("item-%d was never captured by batchFn — "+
+						"goroutine may have received a stale variable", i))
 			}
 		})
 	})
