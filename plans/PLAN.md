@@ -1155,6 +1155,8 @@ When building for a specific language, the active language's config block popula
 - `site.language.strings` → the active language's `strings` map
 - `site.language.code` → the language key (`"en"`, `"fr"`)
 
+**Language-specific `_data.yaml` cascade (issue #914)**: Each language's content tree has its own `_data.yaml` cascade — `content/en/blog/_data.yaml` and `content/fr/blog/_data.yaml` are independent entries. `LoadDirectoryCascade` loads the entire `content/` tree, so cascade keys include the language prefix (e.g., `content/es/blog/`). The pipeline must use the full language-prefixed `RelPath` (e.g., `es/blog/my-post.md`) when looking up cascade data via `FindCascadeData`, even though permalink resolution uses the stripped `RelPath` (e.g., `blog/my-post.md`) to avoid URL doubling. This applies to permalink patterns, layouts, and any other cascade data in language-specific `_data.yaml` files.
+
 This happens at step 7 (data cascade assembly). By the time templates render, language data is in the context like any other site data. No special translation layer — just a map lookup.
 
 ### Layouts — Shared, Not Duplicated
