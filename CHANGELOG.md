@@ -48,7 +48,14 @@
   Liquid:
 
   ```liquid
-  {% for post in collections.blog | limit: 5 %}
+  {% comment %} limit filter — assign first, then loop {% endcomment %}
+  {% assign recent = collections.blog | limit: 5 %}
+  {% for post in recent %}
+    <h2>{{ post.data.title }}</h2>
+  {% endfor %}
+
+  {% comment %} limit: is also a built-in parameter of the for tag {% endcomment %}
+  {% for post in collections.blog limit: 5 %}
     <h2>{{ post.data.title }}</h2>
   {% endfor %}
   ```
