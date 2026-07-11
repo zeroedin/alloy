@@ -2,10 +2,4 @@
 type: patch
 ---
 
-Tighten `{% inline %}` tag validation to match the PLAN.md specification. Two changes:
-
-1. **Path prefix required.** Paths must start with `./` or `../` — bare relative paths like `{% inline "diagram.svg" %}` are now rejected with a clear error message. Use `{% inline "./diagram.svg" %}` instead.
-
-2. **Allowlist replaces denylist.** Only the 12 text-based extensions listed in the spec are accepted: `.svg`, `.html`, `.htm`, `.txt`, `.css`, `.js`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`, `.md`. Previously, any extension not on a binary denylist was accepted, which allowed unintended file types like `.env` or extensionless files through.
-
-Binary file types (images, fonts, media, archives) now include usage guidance in the error message — e.g., "use `<img>` instead" for image extensions.
+Tighten `{% inline %}` tag validation. Paths must now start with `./` or `../` — bare paths like `{% inline "diagram.svg" %}` are rejected; use `{% inline "./diagram.svg" %}` instead. Only text-based extensions are accepted: `.svg`, `.html`, `.htm`, `.txt`, `.css`, `.js`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`, `.md`. Other file types produce a clear error, and binary types like `.png` suggest using `<img>` instead.

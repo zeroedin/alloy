@@ -79,10 +79,13 @@ func (t *inlineTag) resolve(context liquid.TagContext) (string, error) {
 	}
 
 	ext := strings.ToLower(filepath.Ext(relPath))
-	if binaryExtensions[ext] {
-		return "", fmt.Errorf("inline rejects binary file type %s: use <img> instead", ext)
-	}
 	if !allowedExtensions[ext] {
+		if ext == "" {
+			return "", fmt.Errorf("inline rejects extensionless file: %s", relPath)
+		}
+		if binaryExtensions[ext] {
+			return "", fmt.Errorf("inline rejects binary file type %s: use <img> instead", ext)
+		}
 		return "", fmt.Errorf("inline rejects file type: %s is not in the text-type allowlist", ext)
 	}
 
