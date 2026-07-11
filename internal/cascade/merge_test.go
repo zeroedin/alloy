@@ -205,9 +205,9 @@ var _ = Describe("DeepMerge", func() {
 
 		It("finds language-specific cascade data when given lang-prefixed relPath (issue #914)", func() {
 			cascadeData := map[string]map[string]interface{}{
-				"content/":          {"layout": "default"},
-				"content/en/blog/":  {"permalink": "/posts/:slug/"},
-				"content/es/blog/":  {"permalink": "/:slug/"},
+				"content/":         {"layout": "default"},
+				"content/en/blog/": {"permalink": "/posts/:slug/"},
+				"content/es/blog/": {"permalink": "/:slug/"},
 			}
 			// Spanish page with full lang-prefixed RelPath
 			esResult := cascade.FindCascadeData(cascadeData, "content", "es/blog/my-post.md")

@@ -447,8 +447,10 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
  5. cascade.LoadDirectoryCascade + FindCascadeData + PageContext ✅ done (was step 6, reordered for #302)
  6. permalink.ResolveFromCascade(page, cascadeData, renderer)  ← CHANGED (issues #830, #910, #914)
     For each page, look up per-page cascade data via
-    `cascade.FindCascadeData(ps.CascadeData, ps.ContentBase, page.RelPath)` and
-    pass it to `ResolveFromCascade`. `ResolveForSection` is dead code slated for removal in issue #915 —
+    `cascade.FindCascadeData(ps.CascadeData, ps.ContentBase, relPath)` and
+    pass it to `ResolveFromCascade` (`relPath` is `page.RelPath` in single-language
+    builds; in multi-language builds it is the original un-stripped path — see
+    issue #914 note below). `ResolveForSection` is dead code slated for removal in issue #915 —
     it flattened cascade data into a section-name-only map, silently dropping nested
     `_data.yaml` permalink patterns (issue #910). `buildPermalinkCfg` may still be
     needed for `BuildCollections` date-based section detection (step 8) but must no
@@ -816,8 +818,8 @@ for _, langCtx := range langContexts {
     // ORIGINAL relPath (without language prefix), not the prefixed
     // one. Resolve permalink first, then prefix RelPath.
     //
-    // IMPORTANT (issue #914): FindCascadeData must use the ORIGINAL
-    // (un-stripped) relPath so it finds language-specific _data.yaml
+    // IMPORTANT (issue #914): FindCascadeData must use the FULL
+    // (lang-prefixed) relPath so it finds language-specific _data.yaml
     // entries (e.g., content/es/blog/ for es/blog/my-post.md).
     // Only ResolveFromCascade receives the stripped relPath.
 
