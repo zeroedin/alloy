@@ -84,7 +84,7 @@ func (r *hookNodeRenderer) renderFencedCodeBlock(
 	ctx := map[string]interface{}{
 		"markup": map[string]interface{}{
 			"language":   html.EscapeString(language),
-			"inner":      escapeLiquidDelimiters(escapeHTMLContent(codeBuf.String())),
+			"inner":      escapeLiquidDelimiters(escapeHTMLText(codeBuf.String())),
 			"attributes": attrs,
 		},
 	}
@@ -367,18 +367,18 @@ func slugifyHeading(text string) string {
 	return s
 }
 
-// escapeHTMLContent escapes only the three characters that need encoding
+// escapeHTMLText escapes only the three characters that need encoding
 // in HTML element content: & < >. Unlike html.EscapeString, it does NOT
 // escape " or ' — those are safe in element content and escaping them
 // breaks downstream consumers (e.g. shiki) that don't decode &#34;/&#39;.
-var htmlContentReplacer = strings.NewReplacer(
+var htmlTextReplacer = strings.NewReplacer(
 	"&", "&amp;",
 	"<", "&lt;",
 	">", "&gt;",
 )
 
-func escapeHTMLContent(s string) string {
-	return htmlContentReplacer.Replace(s)
+func escapeHTMLText(s string) string {
+	return htmlTextReplacer.Replace(s)
 }
 
 // escapeLiquidDelimiters entity-encodes Liquid delimiters so the hook
