@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/zeroedin/alloy/internal/cache"
-	"github.com/zeroedin/alloy/internal/cascade"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/ordered"
@@ -274,11 +273,8 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 
 	plRenderer := newPermalinkRenderer(ps.Engine)
 
-	// Permalink resolution — uses per-page cascade data so nested
-	// _data.yaml permalink patterns are respected (issue #910).
 	for _, page := range allPages {
-		pageCascade := cascade.FindCascadeData(ps.CascadeData, ps.ContentBase, page.RelPath)
-		url, err := permalink.ResolveFromCascade(page, pageCascade, plRenderer)
+		url, err := resolvePagePermalink(page, ps, plRenderer)
 		if err != nil {
 			return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
 		}
