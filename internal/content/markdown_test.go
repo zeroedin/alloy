@@ -1223,7 +1223,7 @@ var _ = Describe("RenderMarkdown", func() {
 				"literal <a> must not appear in output")
 		})
 
-		It("HTML-escapes ampersands and quotes in codeblock render hook markup.inner (issue #947)", func() {
+		It("content-escapes ampersands and angle brackets but not quotes in codeblock markup.inner (issues #947, #962)", func() {
 			opts := content.MarkdownOptions{
 				Unsafe: true, Typographer: true, TemplateTags: true,
 				Hooks: map[string]string{
@@ -1236,14 +1236,83 @@ var _ = Describe("RenderMarkdown", func() {
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("&lt;p"),
-				"<p> tag must be escaped (issue #947)")
+				"<p> tag must be escaped — angle brackets need escaping "+
+					"in content context to prevent HTML injection (issue #947)")
 			Expect(html).To(ContainSubstring("&amp;amp;"),
 				"literal & in code must be escaped to &amp; — the source "+
 					"contains &amp; which must become &amp;amp; so it displays "+
 					"as the literal text &amp; in the browser (issue #947)")
-			Expect(html).To(ContainSubstring("&#34;"),
-				"double quotes in HTML attributes inside code must be escaped — "+
-					"html.EscapeString uses &#34; for quotes (issue #947)")
+			Expect(html).NotTo(ContainSubstring("&#34;"),
+				"double quotes must NOT be entity-encoded in codeblock "+
+					"markup.inner — codeblock inner is element content, not "+
+					"attribute context, so quotes do not need escaping; "+
+					"&#34; breaks downstream consumers like shiki that do not "+
+					"decode quote entities (issue #962)")
+			Expect(html).NotTo(ContainSubstring("&#39;"),
+				"single quotes must NOT be entity-encoded in codeblock "+
+					"markup.inner — same reasoning as double quotes (issue #962)")
+			Expect(html).To(ContainSubstring(`class="intro"`),
+				"double quotes in code content must appear as literal "+
+					"quote characters — they are safe in element content "+
+					"context and must be preserved for accurate code display")
+		})
+
+		It("codeblock markup.inner preserves double and single quotes without entity-encoding (issue #962 regression)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"codeblock": `<alloy-code lang="{{ markup.language }}">{{ markup.inner }}</alloy-code>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "```liquid\n{% youtube \"dQw4w9WgXcQ\" %}\n{% include 'partial.html' %}\n```"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).NotTo(ContainSubstring("&#34;"),
+				"double quotes must not be entity-encoded — the shiki "+
+					"decoder does not handle &#34; so it would display as "+
+					"literal &#34; text in the highlighted output (issue #962)")
+			Expect(html).NotTo(ContainSubstring("&#39;"),
+				"single quotes must not be entity-encoded — same issue "+
+					"as double quotes with the shiki decoder (issue #962)")
+			Expect(html).NotTo(ContainSubstring("&#x26;"),
+				"double-encoded ampersands (&amp;#34; → &#x26;#34;) must "+
+					"not appear — this is the symptom seen on alloyssg.dev "+
+					"where shiki re-escapes the & from &#34; (issue #962)")
+			Expect(html).To(ContainSubstring("&#123;%"),
+				"Liquid control tags must still be entity-encoded — "+
+					"quote escaping removal must not affect Liquid delimiter "+
+					"escaping (issue #785)")
+			Expect(html).To(ContainSubstring("&#123;&#123;"),
+				"Liquid expression tags must still be entity-encoded")
+		})
+
+		It("codeblock markup.inner with Go code preserves quotes in fmt.Println (issue #962 regression)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"codeblock": `<alloy-code lang="{{ markup.language }}">{{ markup.inner }}</alloy-code>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "```go\nfmt.Println(\"hello world\")\nname := 'x'\n```"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).NotTo(ContainSubstring("&#34;"),
+				"double quotes in Go string literals must not be "+
+					"entity-encoded — they appear in element content where "+
+					"escaping is unnecessary and breaks code display (issue #962)")
+			Expect(html).NotTo(ContainSubstring("&#39;"),
+				"single quotes (Go rune literals) must not be "+
+					"entity-encoded (issue #962)")
+			Expect(html).To(ContainSubstring(`fmt.Println("hello world")`),
+				"Go code with double-quoted strings must render with "+
+					"literal quote characters preserved")
+			Expect(html).To(ContainSubstring("name := 'x'"),
+				"Go code with single-quoted rune literals must render "+
+					"with literal quote characters preserved")
 		})
 
 		// ── HTML escaping of render hook context fields (issue #952) ──
