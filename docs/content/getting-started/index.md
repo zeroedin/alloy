@@ -18,11 +18,13 @@ This installs a prebuilt binary for macOS (Apple Silicon and Intel) or Linux (am
 alloy version
 ```
 
-Upgrades work the normal Homebrew way:
+To upgrade, run `brew update` first to refresh tap metadata, then upgrade:
 
 ```bash
-brew upgrade alloy-ssg
+brew update && brew upgrade alloy-ssg
 ```
+
+Homebrew caches tap formula definitions locally. Third-party taps like `zeroedin/alloy-ssg` can go stale if you haven't run `brew update` recently — `brew upgrade alloy-ssg` may report "already installed" even when a new version is available. Running `brew update` first forces a fresh pull of the formula.
 
 ## Windows
 
