@@ -108,48 +108,6 @@ func DefaultFromPath(relPath string) string {
 	return "/" + withoutExt + "/"
 }
 
-// ResolveForSection computes the output URL for a page using section-to-pattern
-// mapping from config. The lookup order is:
-//  1. Front matter permalink (static or template)
-//  2. Section-specific pattern from permalinkCfg (token resolution only)
-//  3. "default" pattern from permalinkCfg (token resolution only)
-//  4. File path default (DefaultFromPath)
-//
-// Template rendering ({{ }}) only applies to front matter permalinks.
-// Section config patterns are always resolved via token replacement.
-func ResolveForSection(page *content.Page, permalinkCfg map[string]string, renderers ...PermalinkRenderer) (string, error) {
-	// 1. Front matter permalink takes priority
-	if val, ok := page.FrontMatter["permalink"]; ok {
-		if b, ok := val.(bool); ok && !b {
-			return "", nil
-		}
-		if s, ok := val.(string); ok && s != "" {
-			if ContainsLiquidTags(s) {
-				return renderTemplatePermalink(s, page, renderers)
-			}
-			return s, nil
-		}
-	}
-
-	// Index files skip section/default patterns — resolve to directory path
-	if isIndexFile(page.RelPath) {
-		return DefaultFromPath(page.RelPath), nil
-	}
-
-	// 2. Section-specific pattern (token resolution only, no template rendering)
-	if pattern, ok := permalinkCfg[page.Section]; ok {
-		return ResolveTokens(pattern, page), nil
-	}
-
-	// 3. Default pattern (token resolution only)
-	if pattern, ok := permalinkCfg["default"]; ok {
-		return ResolveTokens(pattern, page), nil
-	}
-
-	// 4. File path default
-	return DefaultFromPath(page.RelPath), nil
-}
-
 // ResolveFromCascade computes the output URL for a page using permalink
 // patterns from the _data.yaml cascade. The lookup order is:
 //  1. Front matter permalink (static or template)
