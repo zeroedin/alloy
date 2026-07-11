@@ -1,6 +1,9 @@
 package template_test
 
 import (
+	"os"
+	"path/filepath"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -255,6 +258,79 @@ var _ = Describe("GoEngine", func() {
 				"FuncMap functions (filters) registered on the engine must be "+
 					"available inside includes — footer.html calls {{ upcase .site.title }}, "+
 					"which requires the upcase filter in the included file's FuncMap")
+		})
+	})
+
+	// ── Issue #880: Extensionless partial fallback removal ───────────
+	// resolveInclude must NOT resolve files without an extension.
+	// Only .html candidates are tried for the Go template engine.
+
+	Describe("Extensionless partial fallback removal (issue #880)", func() {
+		It("does not resolve an extensionless partial file", func() {
+			goEngine := tmpl.NewGoEngine()
+			setter, ok := goEngine.(interface{ SetIncludesDir(string) })
+			Expect(ok).To(BeTrue(),
+				"engine must implement SetIncludesDir for include tests")
+
+			tmpDir := GinkgoT().TempDir()
+			// Create an extensionless file — no .html suffix
+			err := os.WriteFile(
+				filepath.Join(tmpDir, "widget"),
+				[]byte(`<div>EXTENSIONLESS CONTENT</div>`),
+				0644,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			setter.SetIncludesDir(tmpDir)
+
+			tpl, err := goEngine.Parse("test", []byte(
+				`{{ include "widget" . }}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = tpl.Render(map[string]interface{}{})
+			Expect(err).To(HaveOccurred(),
+				"extensionless files must NOT be resolved by resolveInclude — "+
+					"only .html candidates should be tried (issue #880)")
+			Expect(err.Error()).To(ContainSubstring("widget"),
+				"error must reference the requested partial name")
+		})
+
+		It("resolves .html file when both extensionless and .html exist", func() {
+			goEngine := tmpl.NewGoEngine()
+			setter, ok := goEngine.(interface{ SetIncludesDir(string) })
+			Expect(ok).To(BeTrue(),
+				"engine must implement SetIncludesDir for include tests")
+
+			tmpDir := GinkgoT().TempDir()
+			// Extensionless file with distinct content
+			err := os.WriteFile(
+				filepath.Join(tmpDir, "info"),
+				[]byte(`EXTENSIONLESS-INFO`),
+				0644,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			// Properly-extensioned .html file
+			err = os.WriteFile(
+				filepath.Join(tmpDir, "info.html"),
+				[]byte(`<p>HTML-INFO</p>`),
+				0644,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			setter.SetIncludesDir(tmpDir)
+
+			tpl, err := goEngine.Parse("test", []byte(
+				`{{ include "info" . }}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			out, err := tpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(out)).To(ContainSubstring("HTML-INFO"),
+				".html file must be resolved when both extensionless and .html exist")
+			Expect(string(out)).NotTo(ContainSubstring("EXTENSIONLESS-INFO"),
+				"extensionless file content must NOT appear in output — "+
+					"the .html candidate is found and the extensionless "+
+					"fallback must not be in the candidate list (issue #880)")
 		})
 	})
 

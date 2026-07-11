@@ -198,6 +198,115 @@ var _ = Describe("LiquidEngine", func() {
 		})
 	})
 
+	// ── Issue #880: Extensionless partial fallback removal ───────────
+	// ReadTemplateFile must NOT resolve files without an extension.
+	// Only .liquid and .html candidates are tried.
+
+	Context("Extensionless partial fallback removal (issue #880)", func() {
+		setIncludesDir := func(engine tmpl.TemplateEngine, dir string) {
+			setter, ok := engine.(interface{ SetIncludesDir(string) })
+			Expect(ok).To(BeTrue(),
+				"engine must implement SetIncludesDir for include tests")
+			setter.SetIncludesDir(dir)
+		}
+
+		It("does not resolve an extensionless partial file", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+
+			tmpDir := GinkgoT().TempDir()
+			// Create an extensionless file — no .liquid, no .html suffix
+			err := os.WriteFile(
+				filepath.Join(tmpDir, "widget"),
+				[]byte(`<div>EXTENSIONLESS CONTENT</div>`),
+				0644,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			setIncludesDir(engine, tmpDir)
+
+			tpl, err := engine.Parse("test", []byte(`{% include "widget" %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = tpl.Render(map[string]interface{}{})
+			Expect(err).To(HaveOccurred(),
+				"extensionless files must NOT be resolved by ReadTemplateFile — "+
+					"only .liquid and .html candidates should be tried (issue #880)")
+			Expect(err.Error()).To(ContainSubstring("widget"),
+				"error must reference the requested partial name")
+		})
+
+		It("resolves .liquid file when both extensionless and .liquid exist", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+
+			tmpDir := GinkgoT().TempDir()
+			// Extensionless file with distinct content
+			err := os.WriteFile(
+				filepath.Join(tmpDir, "badge"),
+				[]byte(`EXTENSIONLESS-BADGE`),
+				0644,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			// Properly-extensioned .liquid file
+			err = os.WriteFile(
+				filepath.Join(tmpDir, "badge.liquid"),
+				[]byte(`LIQUID-BADGE`),
+				0644,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			setIncludesDir(engine, tmpDir)
+
+			tpl, err := engine.Parse("test", []byte(`{% include "badge" %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			out, err := tpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(out)).To(ContainSubstring("LIQUID-BADGE"),
+				".liquid file must be resolved when both extensionless and .liquid exist")
+			Expect(string(out)).NotTo(ContainSubstring("EXTENSIONLESS-BADGE"),
+				"extensionless file content must NOT appear in output — "+
+					"the .liquid candidate is found first and the extensionless "+
+					"fallback must not be in the candidate list at all (issue #880)")
+		})
+
+		It("resolves .html file when both extensionless and .html exist", func() {
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterBuiltinFilters(engine)
+
+			tmpDir := GinkgoT().TempDir()
+			// Extensionless file with distinct content
+			err := os.WriteFile(
+				filepath.Join(tmpDir, "card"),
+				[]byte(`EXTENSIONLESS-CARD`),
+				0644,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			// Properly-extensioned .html file (no .liquid exists)
+			err = os.WriteFile(
+				filepath.Join(tmpDir, "card.html"),
+				[]byte(`HTML-CARD`),
+				0644,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			setIncludesDir(engine, tmpDir)
+
+			tpl, err := engine.Parse("test", []byte(`{% include "card" %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			out, err := tpl.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(out)).To(ContainSubstring("HTML-CARD"),
+				".html fallback must still work when no .liquid exists")
+			Expect(string(out)).NotTo(ContainSubstring("EXTENSIONLESS-CARD"),
+				"extensionless file content must NOT appear in output — "+
+					"the .html candidate is found and the extensionless "+
+					"fallback must not be in the candidate list (issue #880)")
+		})
+	})
+
 	// ── Issue #376: Plugin filters in {% include %} partials ────────
 	// Plugin-registered filters must work inside {% include %} partials.
 	// The Liquid engine rewrites novel filter names during Parse(), but
