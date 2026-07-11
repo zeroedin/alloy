@@ -424,6 +424,9 @@ func CreateGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) gold
 		noHookOpts := opts
 		noHookOpts.Hooks = nil
 		childMD := CreateGoldmark(noHookOpts, extraParserOpts...)
+		childMD.Renderer().AddOptions(
+			renderer.WithNodeRenderers(util.Prioritized(&escapingRawHTMLRenderer{}, 999)),
+		)
 		hookRenderer := newHookNodeRenderer(opts.Hooks, childMD.Renderer(), opts.HookRenderer)
 		rendererOpts = append(rendererOpts, renderer.WithNodeRenderers(util.Prioritized(hookRenderer, 100)))
 	}

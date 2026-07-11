@@ -129,9 +129,7 @@ func (r *hookNodeRenderer) renderHeading(
 	}
 	n := node.(*ast.Heading)
 
-	var textBuf bytes.Buffer
-	extractText(&textBuf, n, source)
-	text := textBuf.String()
+	text := extractRawInline(n, source)
 
 	inner, err := renderChildrenToHTML(r.childRenderer, source, n)
 	if err != nil {
@@ -147,9 +145,9 @@ func (r *hookNodeRenderer) renderHeading(
 	ctx := map[string]interface{}{
 		"markup": map[string]interface{}{
 			"level":      n.Level,
-			"id":         id,
+			"id":         html.EscapeString(id),
 			"inner":      inner,
-			"text":       text,
+			"text":       html.EscapeString(text),
 			"attributes": attrs,
 		},
 	}
@@ -294,6 +292,30 @@ func extractRawInline(node ast.Node, source []byte) string {
 	var buf bytes.Buffer
 	extractRawInlineText(&buf, node, source)
 	return buf.String()
+}
+
+// escapingRawHTMLRenderer overrides goldmark's default raw HTML inline
+// renderer to HTML-escape the content instead of passing it through.
+// This is registered on the child renderer used for markup.inner in
+// hooks, so goldmark's own formatting (<strong>, <em>) renders normally
+// but user-supplied raw HTML (<beta>, <script>) is escaped.
+type escapingRawHTMLRenderer struct{}
+
+func (r *escapingRawHTMLRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
+	reg.Register(ast.KindRawHTML, r.renderRawHTML)
+}
+
+func (r *escapingRawHTMLRenderer) renderRawHTML(
+	w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		return ast.WalkSkipChildren, nil
+	}
+	n := node.(*ast.RawHTML)
+	for i := 0; i < n.Segments.Len(); i++ {
+		seg := n.Segments.At(i)
+		_, _ = w.WriteString(html.EscapeString(string(seg.Value(source))))
+	}
+	return ast.WalkSkipChildren, nil
 }
 
 func renderChildrenToHTML(r renderer.Renderer, source []byte, parent ast.Node) (string, error) {
