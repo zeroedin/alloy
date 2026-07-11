@@ -14,14 +14,14 @@ import (
 
 // ── Custom AST node for parsed attribute blocks ──────────────────────
 
-var KindAttributesBlock = ast.NewNodeKind("AttributesBlock")
+var kindAttributesBlock = ast.NewNodeKind("AttributesBlock")
 
 type attributesBlock struct {
 	ast.BaseBlock
 	Attrs parser.Attributes
 }
 
-func (n *attributesBlock) Kind() ast.NodeKind { return KindAttributesBlock }
+func (n *attributesBlock) Kind() ast.NodeKind { return kindAttributesBlock }
 func (n *attributesBlock) Dump(source []byte, level int) {
 	ast.DumpHelper(n, source, level, nil, nil)
 }
@@ -72,7 +72,7 @@ func (t *blockAttributeTransformer) Transform(node *ast.Document, reader text.Re
 			return ast.WalkContinue, nil
 		}
 		switch n.Kind() {
-		case KindAttributesBlock:
+		case kindAttributesBlock:
 			ab := n.(*attributesBlock)
 			prev := n.PreviousSibling()
 			if prev != nil && !n.HasBlankPreviousLines() {
@@ -116,17 +116,26 @@ func (t *blockAttributeTransformer) transformFencedCodeBlock(n *ast.FencedCodeBl
 
 // transformTable checks if the table's last row is actually an attribute
 // block that the table parser absorbed (e.g. {.striped} treated as a row).
+// Only matches when the first cell looks like {.class} and all other cells
+// are empty — a real data row with {.class} in its first column is left alone.
 func (t *blockAttributeTransformer) transformTable(n ast.Node, source []byte) {
-	var lastRow ast.Node
-	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
-		if child.Kind() == extast.KindTableRow {
-			lastRow = child
-		}
+	lastRow := n.LastChild()
+	for lastRow != nil && lastRow.Kind() != extast.KindTableRow {
+		lastRow = lastRow.PreviousSibling()
 	}
 	if lastRow == nil {
 		return
 	}
-	cellText := collectCellText(lastRow, source)
+	firstCell := lastRow.FirstChild()
+	if firstCell == nil || firstCell.Kind() != extast.KindTableCell {
+		return
+	}
+	for sibling := firstCell.NextSibling(); sibling != nil; sibling = sibling.NextSibling() {
+		if sibling.HasChildren() {
+			return
+		}
+	}
+	cellText := collectCellText(firstCell, source)
 	cellText = bytes.TrimSpace(cellText)
 	if !isAttributeBlock(cellText) {
 		return
@@ -139,15 +148,14 @@ func (t *blockAttributeTransformer) transformTable(n ast.Node, source []byte) {
 	n.RemoveChild(n, lastRow)
 }
 
-// collectCellText concatenates all text node values from a table row's first
-// cell. The '{' may be split into a separate node by inline parsing.
-func collectCellText(row ast.Node, source []byte) []byte {
-	firstCell := row.FirstChild()
-	if firstCell == nil || firstCell.Kind() != extast.KindTableCell {
-		return nil
-	}
+// collectCellText concatenates all text node values from a table cell.
+// Only collects *ast.Text nodes — attribute syntax ({.class #id key=value})
+// contains no characters that trigger goldmark inline parsers (code spans,
+// emphasis, autolinks), so non-text children indicate the cell is not an
+// attribute block.
+func collectCellText(cell ast.Node, source []byte) []byte {
 	var buf bytes.Buffer
-	for child := firstCell.FirstChild(); child != nil; child = child.NextSibling() {
+	for child := cell.FirstChild(); child != nil; child = child.NextSibling() {
 		if t, ok := child.(*ast.Text); ok {
 			buf.Write(t.Segment.Value(source))
 		}
