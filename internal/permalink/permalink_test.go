@@ -175,132 +175,6 @@ var _ = Describe("Permalink", func() {
 		})
 	})
 
-	// ── Config-level section-to-pattern lookup ────────────────────────
-
-	Describe("Section-to-pattern lookup", func() {
-		It("applies the section-specific permalink pattern from config", func() {
-			page := &content.Page{
-				Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
-				FrontMatter: map[string]interface{}{"title": "My First Post"},
-				Section:     "blog",
-				RelPath:     "blog/my-first-post.md",
-			}
-			permalinkCfg := map[string]string{
-				"blog":    "/:year/:month/:slug/",
-				"docs":    "/docs/:slug/",
-				"default": "/:slug/",
-			}
-			result, err := permalink.ResolveForSection(page, permalinkCfg)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal("/2026/04/my-first-post/"),
-				"blog section must use blog-specific permalink pattern")
-		})
-
-		It("falls back to default pattern when no section match", func() {
-			page := &content.Page{
-				Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
-				FrontMatter: map[string]interface{}{"title": "About"},
-				Section:     "pages",
-				RelPath:     "pages/about.md",
-			}
-			permalinkCfg := map[string]string{
-				"blog":    "/:year/:month/:slug/",
-				"default": "/:slug/",
-			}
-			result, err := permalink.ResolveForSection(page, permalinkCfg)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal("/about/"),
-				"unmatched section must fall back to default pattern")
-		})
-
-		It("falls back to file path when no config at all", func() {
-			page := &content.Page{
-				Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
-				FrontMatter: map[string]interface{}{"title": "About"},
-				Section:     "pages",
-				RelPath:     "pages/about.md",
-			}
-			// Empty config — no section match, no default
-			result, err := permalink.ResolveForSection(page, map[string]string{})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal("/pages/about/"),
-				"no config must fall back to file path default")
-		})
-
-		It("root index.md resolves to / even when default pattern exists", func() {
-			page := &content.Page{
-				Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
-				FrontMatter: map[string]interface{}{"title": "Home"},
-				Section:     "",
-				RelPath:     "index.md",
-			}
-			permalinkCfg := map[string]string{
-				"blog":    "/:year/:month/:slug/",
-				"default": "/:slug/",
-			}
-			result, err := permalink.ResolveForSection(page, permalinkCfg)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal("/"),
-				"index.md must resolve to / — default pattern must not produce /home/")
-		})
-
-		It("section index.md resolves to /blog/ even when blog pattern exists", func() {
-			page := &content.Page{
-				Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
-				FrontMatter: map[string]interface{}{"title": "Blog"},
-				Section:     "blog",
-				RelPath:     "blog/index.md",
-			}
-			permalinkCfg := map[string]string{
-				"blog":    "/:year/:month/:slug/",
-				"default": "/:slug/",
-			}
-			result, err := permalink.ResolveForSection(page, permalinkCfg)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal("/blog/"),
-				"blog/index.md is the section landing page — must not apply date pattern")
-		})
-
-		It("front matter permalink overrides index file default", func() {
-			page := &content.Page{
-				Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
-				FrontMatter: map[string]interface{}{"title": "Home", "permalink": "/docs/"},
-				Section:     "",
-				RelPath:     "index.md",
-			}
-			permalinkCfg := map[string]string{
-				"default": "/:slug/",
-			}
-			result, err := permalink.ResolveForSection(page, permalinkCfg)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal("/docs/"),
-				"front matter permalink must override index file default — enables subdirectory deployments")
-		})
-	})
-
-	// ── Permalink resolution fallback chain ───────────────────────────
-
-	Describe("Fallback chain", func() {
-		It("front matter permalink takes priority over section pattern", func() {
-			page := &content.Page{
-				Date: time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
-				FrontMatter: map[string]interface{}{
-					"title":     "My Post",
-					"permalink": "/custom/path/",
-				},
-				Section: "blog",
-				RelPath: "blog/my-post.md",
-			}
-			permalinkCfg := map[string]string{
-				"blog": "/:year/:month/:slug/",
-			}
-			result, err := permalink.ResolveForSection(page, permalinkCfg)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal("/custom/path/"),
-				"front matter permalink must override config pattern")
-		})
-	})
-
 	// ── Cascade permalink resolution (issue #302) ──────────────────
 	// Permalink patterns come from _data.yaml cascade, not site config.
 	// ResolveFromCascade reads the "permalink" key from cascade data.
@@ -372,6 +246,76 @@ var _ = Describe("Permalink", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).To(Equal("/blog/"),
 				"index files must skip cascade permalink and use DefaultFromPath")
+		})
+
+		It("root index.md resolves to / even when cascade permalink exists", func() {
+			page := &content.Page{
+				Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+				FrontMatter: map[string]interface{}{"title": "Home"},
+				Section:     "",
+				RelPath:     "index.md",
+			}
+			cascadeData := map[string]interface{}{
+				"permalink": "/:slug/",
+			}
+			result, err := permalink.ResolveFromCascade(page, cascadeData)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("/"),
+				"root index.md must resolve to / — cascade permalink pattern "+
+					"must not produce /home/ because isIndexFile fires before "+
+					"cascade pattern lookup")
+		})
+
+		It("front matter permalink overrides index file default", func() {
+			page := &content.Page{
+				Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+				FrontMatter: map[string]interface{}{"title": "Home", "permalink": "/docs/"},
+				Section:     "",
+				RelPath:     "index.md",
+			}
+			cascadeData := map[string]interface{}{
+				"permalink": "/:slug/",
+			}
+			result, err := permalink.ResolveFromCascade(page, cascadeData)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("/docs/"),
+				"front matter permalink must override index file default — "+
+					"FM check (step 1) fires before isIndexFile (step 2), "+
+					"enabling subdirectory deployments for root index pages")
+		})
+
+		It("permalink: false suppresses output through ResolveFromCascade", func() {
+			page := &content.Page{
+				Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+				FrontMatter: map[string]interface{}{"title": "Hidden Page", "permalink": false},
+				Section:     "blog",
+				RelPath:     "blog/hidden.md",
+			}
+			cascadeData := map[string]interface{}{
+				"permalink": "/:year/:slug/",
+			}
+			result, err := permalink.ResolveFromCascade(page, cascadeData)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeEmpty(),
+				"permalink: false must return empty string with no error — "+
+					"same semantics as Resolve, cascade pattern must not override it")
+		})
+
+		It("falls back to DefaultFromPath when cascadeData is nil", func() {
+			page := &content.Page{
+				Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+				FrontMatter: map[string]interface{}{"title": "About"},
+				Section:     "docs",
+				RelPath:     "docs/about.md",
+			}
+			// nil cascadeData — FindCascadeData returns nil when no ancestor
+			// directory has _data.yaml. This is the most common production path
+			// for sites without cascade data.
+			result, err := permalink.ResolveFromCascade(page, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("/docs/about/"),
+				"nil cascadeData must fall back to file path default — "+
+					"Go nil map access returns zero value without panic")
 		})
 	})
 
@@ -608,77 +552,6 @@ var _ = Describe("Permalink", func() {
 			})
 		})
 
-		// ── ResolveForSection with renderer ────────────────────────────
-
-		Describe("ResolveForSection with renderer", func() {
-			It("template permalink in front matter overrides section pattern", func() {
-				page := &content.Page{
-					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
-					FrontMatter: map[string]interface{}{"title": "My Post", "permalink": "/{{ page.slug }}/posts/"},
-					Slug:        "my-post",
-					Section:     "blog",
-					RelPath:     "blog/my-post.md",
-				}
-				permalinkCfg := map[string]string{
-					"blog": "/:year/:month/:slug/",
-				}
-				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
-					return "/my-post/posts/", nil
-				})
-				result, err := permalink.ResolveForSection(page, permalinkCfg, renderer)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal("/my-post/posts/"),
-					"template permalink in front matter must override section pattern from config")
-			})
-
-			It("does not invoke renderer for section pattern without {{ in front matter", func() {
-				page := &content.Page{
-					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
-					FrontMatter: map[string]interface{}{"title": "My Post"},
-					Slug:        "my-post",
-					Section:     "blog",
-					RelPath:     "blog/my-post.md",
-				}
-				permalinkCfg := map[string]string{
-					"blog": "/:year/:slug/",
-				}
-				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
-					Fail("renderer must not be invoked when front matter has no template permalink — " +
-						"section patterns use token resolution, not template rendering")
-					return "", nil
-				})
-				result, err := permalink.ResolveForSection(page, permalinkCfg, renderer)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal("/2026/my-post/"),
-					"section pattern must still resolve through token replacement")
-			})
-
-			It("does not render {{ in section config patterns through renderer", func() {
-				page := &content.Page{
-					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
-					FrontMatter: map[string]interface{}{"title": "My Post"},
-					Slug:        "my-post",
-					Section:     "blog",
-					RelPath:     "blog/my-post.md",
-				}
-				permalinkCfg := map[string]string{
-					"blog": "/{{ page.section }}/:slug/",
-				}
-				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
-					Fail("renderer must not be invoked for section config patterns — " +
-						"section/default config patterns use token resolution only, " +
-						"{{ in a config pattern is treated as literal text")
-					return "", nil
-				})
-				result, err := permalink.ResolveForSection(page, permalinkCfg, renderer)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("{{ page.section }}"),
-					"section config patterns do not support {{ }} — "+
-						"the string must pass through token resolution unchanged, "+
-						"leaving {{ page.section }} as literal text")
-			})
-		})
-
 		// ── ResolveFromCascade with renderer ───────────────────────────
 
 		Describe("ResolveFromCascade with renderer", func() {
@@ -740,6 +613,29 @@ var _ = Describe("Permalink", func() {
 				Expect(err).To(HaveOccurred(),
 					"cascade template permalink rendering to whitespace must be a fatal error — "+
 						"same rule as front matter template permalinks")
+			})
+
+			It("does not invoke renderer for token-only cascade pattern", func() {
+				page := &content.Page{
+					Date:        time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC),
+					FrontMatter: map[string]interface{}{"title": "My Post"},
+					Slug:        "my-post",
+					Section:     "blog",
+					RelPath:     "blog/my-post.md",
+				}
+				cascadeData := map[string]interface{}{
+					"permalink": "/:year/:slug/",
+				}
+				renderer := permalink.PermalinkRenderer(func(source string, ctx map[string]interface{}) (string, error) {
+					Fail("renderer must not be invoked for token-only cascade patterns — " +
+						"ContainsLiquidTags returns false for /:year/:slug/, " +
+						"so the token resolution path runs instead of template rendering")
+					return "", nil
+				})
+				result, err := permalink.ResolveFromCascade(page, cascadeData, renderer)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal("/2026/my-post/"),
+					"token-only cascade pattern must resolve through ResolveTokens, not renderer")
 			})
 
 			It("renders cascade pattern containing {{ through renderer", func() {

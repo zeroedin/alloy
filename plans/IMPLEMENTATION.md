@@ -83,7 +83,7 @@ Used by `LoadFile` and `LoadExternalFiles` for `.json` files only. Front matter,
 **File**: `internal/validation/conflicts.go`
 
 - `DetectConflicts`: Group `OutputPathEntry` by path, return conflicts where count > 1
-- `ValidatePermalinkAliases`: Error if page has no output URL (`p.URL == ""`) AND aliases. Must check the computed `URL` field (populated by `ResolveForSection`), not the front-matter `Permalink` field — pages without an explicit `permalink:` in front matter still have valid URLs from `_data.yaml` cascade patterns (issue #110). Permalink patterns come exclusively from `_data.yaml` cascade, not `Config.Permalinks` (issue #832).
+- `ValidatePermalinkAliases`: Error if page has no output URL (`p.URL == ""`) AND aliases. Must check the computed `URL` field (populated by `ResolveFromCascade`), not the front-matter `Permalink` field — pages without an explicit `permalink:` in front matter still have valid URLs from `_data.yaml` cascade patterns (issue #110). Permalink patterns come exclusively from `_data.yaml` cascade, not `Config.Permalinks` (issue #832).
 
 ### 1E: `internal/pagination` — 22 tests
 **File**: `internal/pagination/pagination.go`
@@ -238,7 +238,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
 
 ## Phase 3: Mid-Level Packages (~79 tests)
 
-### 3A: `internal/permalink` — 39 tests
+### 3A: `internal/permalink` — 44 tests
 **File**: `internal/permalink/permalink.go`
 
 - `ResolveTokens`: Replace `:year`, `:month`, `:day`, `:slug`, `:section`, `:filename`, `:title`
@@ -246,8 +246,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
 - `Resolve(pattern, page, renderer ...PermalinkRenderer)`: Front matter permalink > pattern with tokens. Handle `permalink: false`. **Template permalink rendering (issue #830)**: When a front matter permalink string contains `{{`, render it through the provided `PermalinkRenderer` callback instead of returning it verbatim. Token resolution (`:year`, `:slug`, etc.) is skipped entirely in template mode — the two modes are mutually exclusive. The renderer receives a `page` context built from `page.ToTemplateMap()`, wrapped as `map[string]interface{}{"page": pageMap}`. `page.url` is excluded from the context (circular reference — it is the value being computed). **Empty render is a fatal error**: if the renderer returns an empty or whitespace-only string (after trimming), return an error. This is distinct from `permalink: false` which returns `("", nil)` intentionally.
 - `ContainsLiquidTags`: Check for `{{` in string (name is legacy — detects both Liquid and Go template syntax since both use `{{`)
 - `DefaultFromPath`: `blog/my-post.md` -> `/blog/my-post/`. Handles index files: `index.md` → `/`, `blog/index.md` → `/blog/`, `blog/post/index.md` → `/blog/post/` (strips `/index` suffix).
-- `ResolveForSection(page, permalinkCfg, renderer ...PermalinkRenderer)`: Front matter > section pattern > default pattern > file path. **Template permalink rendering (issue #830)**: When the front matter permalink contains `{{`, render through the renderer. Section/default config patterns continue to use token resolution (they don't support `{{`). **Index file override (issue #39)**: Before applying section or default patterns (steps 2-3), check if the page is an index file (`isIndexFile(page.RelPath)`). If so, skip directly to `DefaultFromPath` (step 4). This prevents `default: "/:slug/"` from turning `index.md` (title: "Home") into `/home/` instead of `/`. Front matter `permalink:` (step 1) still overrides — allows configuring index path for subdirectory deployments. The `permalinkCfg` map must come from cascade data only (see §4D pipeline step 6, issue #832).
-- `ResolveFromCascade(page, cascadeData, renderer ...PermalinkRenderer)`: Same as `ResolveForSection` but also checks cascade permalink patterns for `{{` — cascade patterns with template syntax are rendered through the renderer, not through token resolution. Empty/whitespace render results produce the same fatal error as front matter template permalinks.
+- `ResolveFromCascade(page, cascadeData, renderer ...PermalinkRenderer)`: The production permalink resolution path. Lookup order: (1) front matter permalink — static string returned verbatim, `permalink: false` returns `("", nil)`, template `{{ }}` rendered through renderer; (2) index file bypass — `isIndexFile(page.RelPath)` skips to `DefaultFromPath`, preventing cascade patterns from turning `index.md` into `/home/` (issue #39); front matter `permalink:` (step 1) still overrides index bypass, enabling subdirectory deployments; (3) cascade `"permalink"` pattern from `_data.yaml` — token patterns resolved via `ResolveTokens`, template `{{ }}` patterns rendered through renderer; (4) `DefaultFromPath` fallback. Accepts nil `cascadeData` (common when `FindCascadeData` finds no ancestor `_data.yaml`). Empty/whitespace render results produce a fatal error, distinct from `permalink: false`. ~~`ResolveForSection`~~ is dead code slated for removal in issue #915 — it used a flat `map[string]string` section→pattern lookup that was superseded by per-page cascade resolution in issue #910.
 - `ResolveAliases`: Return page's Aliases slice
 
 ### 3B: `internal/collection` — 38 tests
@@ -449,12 +448,11 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
  6. permalink.ResolveFromCascade(page, cascadeData, renderer)  ← CHANGED (issues #830, #910)
     For each page, look up per-page cascade data via
     `cascade.FindCascadeData(ps.CascadeData, ps.ContentBase, page.RelPath)` and
-    pass it to `ResolveFromCascade`. This replaces the previous approach of
-    `buildPermalinkCfg(ps)` + `ResolveForSection` which flattened cascade data
-    into a section-name-only map, silently dropping nested `_data.yaml` permalink
-    patterns (issue #910). `buildPermalinkCfg` may still be needed for
-    `BuildCollections` date-based section detection (step 8) but must no longer be
-    used for permalink resolution. Config loaders (YAML/TOML/JSON) silently ignore
+    pass it to `ResolveFromCascade`. `ResolveForSection` is dead code slated for removal in issue #915 —
+    it flattened cascade data into a section-name-only map, silently dropping nested
+    `_data.yaml` permalink patterns (issue #910). `buildPermalinkCfg` may still be
+    needed for `BuildCollections` date-based section detection (step 8) but must no
+    longer be used for permalink resolution. Config loaders (YAML/TOML/JSON) silently ignore
     unknown `permalinks:` key in old config files — decoders do not reject unknown
     keys (issue #832).
     **Template permalink rendering (issue #830)**: The pipeline must construct a
