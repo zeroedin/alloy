@@ -2,4 +2,4 @@
 type: patch
 ---
 
-Fix HTML injection in render hook context fields. All raw AST values passed to hook templates (`markup.inner`, `markup.language`, `markup.destination`, `markup.text`, `markup.title`, `markup.src`, `markup.alt`) are HTML-escaped before the hook template runs. Tags like `<h2>` and `<script>` in code blocks, URLs with `&` characters, and quotes in alt text display as intended instead of being interpreted as markup by the browser.
+Fix render hook templates receiving unescaped HTML in context fields. Alloy HTML-escapes all `markup.*` values before the hook template runs, covering codeblock, link, and image hooks. A `<script>` tag inside a fenced code block, an `&` in a link URL, or `"` in image alt text display as code text instead of executing or rendering as HTML.
