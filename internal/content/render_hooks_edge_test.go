@@ -2,7 +2,6 @@ package content_test
 
 import (
 	"errors"
-	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -158,8 +157,7 @@ var _ = Describe("Render hook context edge cases (issue #896)", func() {
 			Unsafe: true, Typographer: true, TemplateTags: true,
 			AutoHeadingID: true,
 			Hooks: map[string]string{
-				"heading": fmt.Sprintf(
-					`<h{{ markup.level }} data-visible="{{ markup.attributes.visible }}" data-weight="{{ markup.attributes.weight }}">{{ markup.inner }}</h{{ markup.level }}>`),
+				"heading": `<h{{ markup.level }} data-visible="{{ markup.attributes.visible }}" data-weight="{{ markup.attributes.weight }}">{{ markup.inner }}</h{{ markup.level }}>`,
 			},
 			HookRenderer: hookRenderer,
 		}
