@@ -686,7 +686,8 @@ var _ = Describe("LiquidEngine", func() {
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(func() { os.RemoveAll(tmpDir) })
 
-			contentDir := filepath.Join(tmpDir, "content", "about")
+			contentRoot := filepath.Join(tmpDir, "content")
+			contentDir := filepath.Join(contentRoot, "about")
 			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
 			svgContent := `<svg xmlns="http://www.w3.org/2000/svg"><circle r="10"/></svg>`
 			Expect(os.WriteFile(filepath.Join(contentDir, "diagram.svg"), []byte(svgContent), 0644)).To(Succeed())
@@ -698,7 +699,8 @@ var _ = Describe("LiquidEngine", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			result, err := tpl.Render(map[string]interface{}{
-				"_contentDir": contentDir,
+				"_contentDir":  contentDir,
+				"_contentRoot": contentRoot,
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(result)).To(ContainSubstring(`<svg xmlns=`),
@@ -727,7 +729,8 @@ var _ = Describe("LiquidEngine", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			result, err := tpl.Render(map[string]interface{}{
-				"_contentDir": contentDir,
+				"_contentDir":  contentDir,
+				"_contentRoot": contentDir,
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(result)).To(ContainSubstring("{{value}}"),
@@ -786,7 +789,8 @@ var _ = Describe("LiquidEngine", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			_, err = tpl.Render(map[string]interface{}{
-				"_contentDir": tmpDir,
+				"_contentDir":  tmpDir,
+				"_contentRoot": tmpDir,
 			})
 			Expect(err).To(HaveOccurred(),
 				"inline must error when file is not found — not silently produce empty output")
@@ -839,6 +843,102 @@ var _ = Describe("LiquidEngine", func() {
 			Expect(err).To(HaveOccurred(),
 				"inline must reject paths that traverse outside the content root — "+
 					"this is a security boundary preventing arbitrary file reads")
+		})
+
+		// ── Fail-closed sandbox (issue #932) ──────────────────────────
+		// The path-traversal sandbox checks filepath.Rel(contentRoot, resolved).
+		// If _contentRoot is missing from the render context, the sandbox
+		// is silently skipped — any relative path that resolves on disk
+		// will be read, regardless of whether it's inside the content tree.
+		// The tag must fail closed: return an error when _contentRoot is
+		// empty rather than skipping the sandbox.
+
+		It("returns error when _contentRoot is not set (issue #932)", func() {
+			tmpDir, err := os.MkdirTemp("", "inline-test-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+			contentDir := filepath.Join(tmpDir, "content")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "data.json"),
+				[]byte(`{"key": "value"}`), 0644)).To(Succeed())
+
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterInlineTag(engine)
+
+			tpl, err := engine.Parse("test", []byte(`{% inline "./data.json" %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			// Render with _contentDir but WITHOUT _contentRoot — sandbox is bypassed
+			_, err = tpl.Render(map[string]interface{}{
+				"_contentDir": contentDir,
+			})
+			Expect(err).To(HaveOccurred(),
+				"inline must fail closed when _contentRoot is missing — "+
+					"without _contentRoot the path-traversal sandbox is silently skipped, "+
+					"allowing reads of any file reachable via relative path (issue #932)")
+			Expect(err.Error()).To(ContainSubstring("_contentRoot"),
+				"error message must mention _contentRoot so the developer "+
+					"knows which context key is missing")
+		})
+
+		// ── Case-insensitive extension matching (issue #931) ──────────
+		// The binary-extension blocklist check uses strings.ToLower on the
+		// file extension. Without a test using a mixed-case extension,
+		// removing ToLower would go undetected.
+
+		It("matches file extensions case-insensitively (issue #931)", func() {
+			tmpDir, err := os.MkdirTemp("", "inline-test-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+			contentRoot := filepath.Join(tmpDir, "content")
+			contentDir := filepath.Join(contentRoot, "about")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			svgContent := `<svg xmlns="http://www.w3.org/2000/svg"><circle r="5"/></svg>`
+			Expect(os.WriteFile(filepath.Join(contentDir, "diagram.SVG"), []byte(svgContent), 0644)).To(Succeed())
+
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterInlineTag(engine)
+
+			tpl, err := engine.Parse("test", []byte(`{% inline "./diagram.SVG" %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := tpl.Render(map[string]interface{}{
+				"_contentDir":  contentDir,
+				"_contentRoot": contentRoot,
+			})
+			Expect(err).NotTo(HaveOccurred(),
+				"inline must accept .SVG (uppercase) — extension matching is case-insensitive "+
+					"via strings.ToLower (issue #931)")
+			Expect(string(result)).To(ContainSubstring(`<svg xmlns=`),
+				"inline must read and insert the .SVG file content")
+		})
+
+		It("rejects binary file type with mixed-case extension (issue #931)", func() {
+			tmpDir, err := os.MkdirTemp("", "inline-test-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+			contentDir := filepath.Join(tmpDir, "content")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "photo.PNG"), []byte("fake png"), 0644)).To(Succeed())
+
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterInlineTag(engine)
+
+			tpl, err := engine.Parse("test", []byte(`{% inline "./photo.PNG" %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = tpl.Render(map[string]interface{}{
+				"_contentDir":  contentDir,
+				"_contentRoot": contentDir,
+			})
+			Expect(err).To(HaveOccurred(),
+				"inline must reject .PNG (uppercase) — binary extension check must be "+
+					"case-insensitive (issue #931)")
+			Expect(err.Error()).To(ContainSubstring(".png"),
+				"error must mention the normalized lowercase extension")
 		})
 
 		// ── Conformance tests (issue #833) ──────────────────────────────

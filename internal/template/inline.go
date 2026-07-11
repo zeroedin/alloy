@@ -98,12 +98,13 @@ func (t *inlineTag) resolve(context liquid.TagContext) (string, error) {
 	resolved = filepath.Clean(resolved)
 
 	contentRoot, _ := context.FindVariable("_contentRoot", false).(string)
-	if contentRoot != "" {
-		contentRoot = filepath.Clean(contentRoot)
-		rel, err := filepath.Rel(contentRoot, resolved)
-		if err != nil || strings.HasPrefix(rel, "..") {
-			return "", fmt.Errorf("inline path escapes content root: %s", relPath)
-		}
+	if contentRoot == "" {
+		return "", fmt.Errorf("inline tag requires _contentRoot in render context")
+	}
+	contentRoot = filepath.Clean(contentRoot)
+	rel, err := filepath.Rel(contentRoot, resolved)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", fmt.Errorf("inline path escapes content root: %s", relPath)
 	}
 
 	data, err := os.ReadFile(resolved)
