@@ -445,8 +445,10 @@ var _ = Describe("Server", func() {
 
 			body, err := io.ReadAll(resp.Body)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.StatusCode).To(SatisfyAny(Equal(http.StatusMovedPermanently), Equal(http.StatusNotFound)),
-				"traversal request must be rejected with 301 (ServeMux redirect) or 404, not 200")
+			Expect(resp.StatusCode).To(SatisfyAny(
+				Equal(http.StatusMovedPermanently), Equal(http.StatusTemporaryRedirect), Equal(http.StatusNotFound)),
+				"traversal request must be rejected with 301/307 (ServeMux path-clean redirect) or 404, not 200 — "+
+					"Go 1.26+ uses 307 instead of 301 for path-cleaning redirects (golang/go#50243)")
 			Expect(string(body)).NotTo(ContainSubstring("API_KEY"),
 				"path traversal via raw /../ must not leak files outside "+
 					"the output directory — raw TCP bypasses client-side URL "+
@@ -484,8 +486,10 @@ var _ = Describe("Server", func() {
 
 			body, err := io.ReadAll(resp.Body)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.StatusCode).To(SatisfyAny(Equal(http.StatusMovedPermanently), Equal(http.StatusNotFound)),
-				"traversal request must be rejected with 301 (ServeMux redirect) or 404, not 200")
+			Expect(resp.StatusCode).To(SatisfyAny(
+				Equal(http.StatusMovedPermanently), Equal(http.StatusTemporaryRedirect), Equal(http.StatusNotFound)),
+				"traversal request must be rejected with 301/307 (ServeMux path-clean redirect) or 404, not 200 — "+
+					"Go 1.26+ uses 307 instead of 301 for path-cleaning redirects (golang/go#50243)")
 			Expect(string(body)).NotTo(ContainSubstring("API_KEY"),
 				"deeper traversal /sub/../../secret.env must not leak files — "+
 					"filepath.Join neutralizes ../ but the handler must not "+
@@ -524,8 +528,9 @@ var _ = Describe("Server", func() {
 			body, err := io.ReadAll(resp.Body)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(SatisfyAny(
-				Equal(http.StatusMovedPermanently), Equal(http.StatusBadRequest), Equal(http.StatusNotFound)),
-				"traversal request must be rejected with 301, 400, or 404, not 200")
+				Equal(http.StatusMovedPermanently), Equal(http.StatusTemporaryRedirect),
+				Equal(http.StatusBadRequest), Equal(http.StatusNotFound)),
+				"traversal request must be rejected with 301/307, 400, or 404, not 200")
 			Expect(string(body)).NotTo(ContainSubstring("API_KEY"),
 				"percent-encoded traversal %%2e%%2e must not leak files — "+
 					"ServeMux decodes percent-encoding before routing, so the "+
