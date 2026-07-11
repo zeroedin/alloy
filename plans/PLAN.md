@@ -2593,10 +2593,10 @@ If a render hook template exists, Alloy registers a custom goldmark node rendere
 | Template | `markup.*` properties |
 |---|---|
 | `render-blockquote` | `inner` (rendered inner HTML), `attributes` |
-| `render-codeblock` | `inner` (raw code text), `language`, `attributes` |
-| `render-heading` | `inner` (rendered inner HTML), `level` (1-6), `id` (custom `{#id}` attribute if present, otherwise auto-generated slug via `slugify` — e.g., "My Section" → `my-section`), `text` (plain text, no HTML), `attributes` (map of goldmark-parsed attributes from `{.class #id key="value"}` syntax) |
-| `render-image` | `src`, `alt`, `title` |
-| `render-link` | `destination`, `text` (rendered inner HTML), `title`, `is_external` (boolean: starts with `http://` or `https://`) |
+| `render-codeblock` | `inner` (HTML-escaped code text — angle brackets, ampersands, and quotes are entity-encoded so HTML displays as text, not markup), `language` (HTML-escaped), `attributes` |
+| `render-heading` | `inner` (rendered inner HTML), `level` (1-6), `id` (HTML-escaped — custom `{id="..."}` attribute if present, otherwise auto-generated slug via `slugify`), `text` (HTML-escaped plain text), `attributes` (map of goldmark-parsed attributes from `{.class #id key="value"}` syntax) |
+| `render-image` | `src` (HTML-escaped), `alt` (HTML-escaped), `title` (HTML-escaped) |
+| `render-link` | `destination` (HTML-escaped), `text` (HTML-escaped plain text), `title` (HTML-escaped), `is_external` (boolean: starts with `http://` or `https://`) |
 | `render-table` | `inner` (rendered inner HTML — thead/tbody/tr/td), `attributes` |
 
 Render hooks receive only the `markup` object — `page.*` and `site.*` are not available. Page-aware behavior belongs in layouts or plugin hooks (`onPageRendered`).
@@ -2652,7 +2652,9 @@ The extensions are registered in `CreateGoldmark` when `parser.WithAttribute()` 
 {% endif %}
 ```
 
-**Template tag escaping** — The pipeline's `escapeTemplateTagsInCode` step protects `{{ }}`/`{% %}` inside `<code>` elements from Liquid processing. When a render hook replaces `<pre><code>` with a different structure (e.g., `<rh-code-block><script>`), the hook's `markup.inner` content is already escaped by goldmark. The hook template receives pre-escaped code content — no additional escaping needed.
+**Template tag escaping** — The pipeline's `escapeTemplateTagsInCode` step protects `{{ }}`/`{% %}` inside `<code>` elements from Liquid processing. When a render hook replaces `<pre><code>` with a different structure (e.g., `<rh-code-block><script>`), `escapeTemplateTagsInCode` cannot find `<code>` elements to protect. Instead, codeblock render hooks apply two escaping steps to `markup.inner` before passing it to the hook template: (1) HTML escaping via `html.EscapeString` — converts `<`, `>`, `&`, `"`, `'` to entities so HTML tags in code display as text, not markup (issue #947); (2) Liquid delimiter escaping via `escapeLiquidDelimiters` — converts `{{ }}` and `{% %}` to HTML entities so the template engine does not execute them. HTML escaping runs first, then Liquid delimiter escaping. This ensures code content is safe regardless of what HTML structure the hook template produces.
+
+**Render hook field escaping (issue #952)** — All render hook context fields that carry raw AST values must be HTML-escaped via `html.EscapeString` before passing to the hook template. This prevents markup injection when hook templates output field values in HTML attribute or text contexts. Fields requiring escaping: codeblock `language`; link `destination`, `text`, `title`; image `src`, `alt`, `title`; heading `text`, `id`. Fields that are already rendered HTML (`inner` in heading, blockquote, and table hooks) must NOT be escaped — they contain valid HTML from goldmark's child renderer. Fields that are safe by construction (`level` as integer, `is_external` as boolean) do not require escaping. Note: heading `id` is safe when it comes from `slugifyHeading` (strips non-alphanumeric chars), but unsafe when overridden by goldmark's quoted attribute syntax (`{id="..."}`) which preserves raw `&`, `<`, `"` in the value (issue #954). The escaping must be applied unconditionally since both paths feed the same field.
 
 **Implementation** — Custom goldmark node renderers are registered for each supported element type. At startup, the pipeline scans `layouts/_markup/` for render hook templates. For each found template, a custom renderer is registered that calls the Liquid engine with the node's context instead of emitting default HTML. The template is parsed once at startup and reused for every matching node.
 

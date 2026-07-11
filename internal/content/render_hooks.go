@@ -3,6 +3,7 @@ package content
 import (
 	"bytes"
 	"fmt"
+	"html"
 	"regexp"
 	"strings"
 	"unicode"
@@ -82,8 +83,8 @@ func (r *hookNodeRenderer) renderFencedCodeBlock(
 
 	ctx := map[string]interface{}{
 		"markup": map[string]interface{}{
-			"language":   language,
-			"inner":      escapeLiquidDelimiters(codeBuf.String()),
+			"language":   html.EscapeString(language),
+			"inner":      escapeLiquidDelimiters(html.EscapeString(codeBuf.String())),
 			"attributes": attrs,
 		},
 	}
@@ -103,16 +104,13 @@ func (r *hookNodeRenderer) renderLink(
 	n := node.(*ast.Link)
 	destination := string(n.Destination)
 
-	var textBuf bytes.Buffer
-	extractText(&textBuf, n, source)
-
 	isExternal := strings.HasPrefix(destination, "http://") || strings.HasPrefix(destination, "https://")
 
 	ctx := map[string]interface{}{
 		"markup": map[string]interface{}{
-			"destination": destination,
-			"text":        textBuf.String(),
-			"title":       string(n.Title),
+			"destination": html.EscapeString(destination),
+			"text":        html.EscapeString(extractRawInline(n, source)),
+			"title":       html.EscapeString(string(n.Title)),
 			"is_external": isExternal,
 		},
 	}
@@ -131,9 +129,7 @@ func (r *hookNodeRenderer) renderHeading(
 	}
 	n := node.(*ast.Heading)
 
-	var textBuf bytes.Buffer
-	extractText(&textBuf, n, source)
-	text := textBuf.String()
+	text := extractRawInline(n, source)
 
 	inner, err := renderChildrenToHTML(r.childRenderer, source, n)
 	if err != nil {
@@ -149,9 +145,9 @@ func (r *hookNodeRenderer) renderHeading(
 	ctx := map[string]interface{}{
 		"markup": map[string]interface{}{
 			"level":      n.Level,
-			"id":         id,
+			"id":         html.EscapeString(id),
 			"inner":      inner,
-			"text":       text,
+			"text":       html.EscapeString(text),
 			"attributes": attrs,
 		},
 	}
@@ -170,14 +166,11 @@ func (r *hookNodeRenderer) renderImage(
 	}
 	n := node.(*ast.Image)
 
-	var altBuf bytes.Buffer
-	extractText(&altBuf, n, source)
-
 	ctx := map[string]interface{}{
 		"markup": map[string]interface{}{
-			"src":   string(n.Destination),
-			"alt":   altBuf.String(),
-			"title": string(n.Title),
+			"src":   html.EscapeString(string(n.Destination)),
+			"alt":   html.EscapeString(extractRawInline(n, source)),
+			"title": html.EscapeString(string(n.Title)),
 		},
 	}
 	rendered, err := r.renderHookTemplate(r.hooks["image"], ctx)
@@ -257,6 +250,77 @@ func extractNodeAttributes(node ast.Node) map[string]interface{} {
 		}
 	}
 	return attrs
+}
+
+// typographerReplacer converts goldmark typographer HTML entities back
+// to their character equivalents so html.EscapeString handles them
+// correctly and slugifyHeading sees real characters, not entity names.
+// Goldmark stores replacements as HTML entity strings, not Unicode.
+var typographerReplacer = strings.NewReplacer(
+	"&ldquo;", "\"",
+	"&rdquo;", "\"",
+	"&lsquo;", "'",
+	"&rsquo;", "'",
+	"&ndash;", "–",
+	"&mdash;", "—",
+	"&hellip;", "…",
+	"&laquo;", "«",
+	"&raquo;", "»",
+)
+
+// extractRawInlineText collects text content from all inline node types
+// in a node's children. Unlike extractText, it also handles ast.String
+// (typographer replacements) and ast.RawHTML (inline HTML). Typographic
+// quotes are converted back to their ASCII originals so html.EscapeString
+// produces proper entities for attribute safety.
+func extractRawInlineText(buf *bytes.Buffer, node ast.Node, source []byte) {
+	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
+		switch n := child.(type) {
+		case *ast.Text:
+			buf.Write(n.Segment.Value(source))
+		case *ast.String:
+			buf.WriteString(typographerReplacer.Replace(string(n.Value)))
+		case *ast.RawHTML:
+			for i := 0; i < n.Segments.Len(); i++ {
+				seg := n.Segments.At(i)
+				buf.Write(seg.Value(source))
+			}
+		case *TemplateTagInline:
+			buf.Write(n.TagText)
+		default:
+			extractRawInlineText(buf, child, source)
+		}
+	}
+}
+
+func extractRawInline(node ast.Node, source []byte) string {
+	var buf bytes.Buffer
+	extractRawInlineText(&buf, node, source)
+	return buf.String()
+}
+
+// escapingRawHTMLRenderer overrides goldmark's default raw HTML inline
+// renderer to HTML-escape the content instead of passing it through.
+// This is registered on the child renderer used for markup.inner in
+// hooks, so goldmark's own formatting (<strong>, <em>) renders normally
+// but user-supplied raw HTML (<beta>, <script>) is escaped.
+type escapingRawHTMLRenderer struct{}
+
+func (r *escapingRawHTMLRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
+	reg.Register(ast.KindRawHTML, r.renderRawHTML)
+}
+
+func (r *escapingRawHTMLRenderer) renderRawHTML(
+	w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		return ast.WalkSkipChildren, nil
+	}
+	n := node.(*ast.RawHTML)
+	for i := 0; i < n.Segments.Len(); i++ {
+		seg := n.Segments.At(i)
+		_, _ = w.WriteString(html.EscapeString(string(seg.Value(source))))
+	}
+	return ast.WalkSkipChildren, nil
 }
 
 func renderChildrenToHTML(r renderer.Renderer, source []byte, parent ast.Node) (string, error) {
