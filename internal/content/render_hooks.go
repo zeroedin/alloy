@@ -109,7 +109,7 @@ func (r *hookNodeRenderer) renderLink(
 	ctx := map[string]interface{}{
 		"markup": map[string]interface{}{
 			"destination": html.EscapeString(destination),
-			"text":        html.EscapeString(extractSourceSpan(n, source)),
+			"text":        html.EscapeString(extractRawInline(n, source)),
 			"title":       html.EscapeString(string(n.Title)),
 			"is_external": isExternal,
 		},
@@ -171,7 +171,7 @@ func (r *hookNodeRenderer) renderImage(
 	ctx := map[string]interface{}{
 		"markup": map[string]interface{}{
 			"src":   html.EscapeString(string(n.Destination)),
-			"alt":   html.EscapeString(extractSourceSpan(n, source)),
+			"alt":   html.EscapeString(extractRawInline(n, source)),
 			"title": html.EscapeString(string(n.Title)),
 		},
 	}
@@ -254,50 +254,46 @@ func extractNodeAttributes(node ast.Node) map[string]interface{} {
 	return attrs
 }
 
-// extractSourceSpan returns the raw source text covered by a node's
-// children. It finds the earliest and latest byte positions across all
-// Text and RawHTML segments, then reads the original source between
-// them. This preserves characters that AST transformers (e.g. the
-// typographer) replace with non-text node types.
-func extractSourceSpan(node ast.Node, source []byte) string {
-	first, last := sourceRange(node)
-	if first < 0 || last <= first {
-		return ""
-	}
-	return string(source[first:last])
-}
+// typographerReplacer converts goldmark typographer HTML entities back
+// to ASCII equivalents so html.EscapeString produces the correct
+// entities (&#34;, &#39;) for HTML attribute safety. Goldmark stores
+// replacements as HTML entity strings (e.g. &ldquo;), not Unicode.
+var typographerReplacer = strings.NewReplacer(
+	"&ldquo;", "\"",
+	"&rdquo;", "\"",
+	"&lsquo;", "'",
+	"&rsquo;", "'",
+)
 
-func sourceRange(node ast.Node) (int, int) {
-	first, last := -1, -1
+// extractRawInlineText collects text content from all inline node types
+// in a node's children. Unlike extractText, it also handles ast.String
+// (typographer replacements) and ast.RawHTML (inline HTML). Typographic
+// quotes are converted back to their ASCII originals so html.EscapeString
+// produces proper entities for attribute safety.
+func extractRawInlineText(buf *bytes.Buffer, node ast.Node, source []byte) {
 	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
-		if t, ok := child.(*ast.Text); ok {
-			if first < 0 || t.Segment.Start < first {
-				first = t.Segment.Start
+		switch n := child.(type) {
+		case *ast.Text:
+			buf.Write(n.Segment.Value(source))
+		case *ast.String:
+			buf.WriteString(typographerReplacer.Replace(string(n.Value)))
+		case *ast.RawHTML:
+			for i := 0; i < n.Segments.Len(); i++ {
+				seg := n.Segments.At(i)
+				buf.Write(seg.Value(source))
 			}
-			if t.Segment.Stop > last {
-				last = t.Segment.Stop
-			}
-		} else if r, ok := child.(*ast.RawHTML); ok {
-			for i := 0; i < r.Segments.Len(); i++ {
-				seg := r.Segments.At(i)
-				if first < 0 || seg.Start < first {
-					first = seg.Start
-				}
-				if seg.Stop > last {
-					last = seg.Stop
-				}
-			}
-		} else {
-			f, l := sourceRange(child)
-			if f >= 0 && (first < 0 || f < first) {
-				first = f
-			}
-			if l > last {
-				last = l
-			}
+		case *TemplateTagInline:
+			buf.Write(n.TagText)
+		default:
+			extractRawInlineText(buf, child, source)
 		}
 	}
-	return first, last
+}
+
+func extractRawInline(node ast.Node, source []byte) string {
+	var buf bytes.Buffer
+	extractRawInlineText(&buf, node, source)
+	return buf.String()
 }
 
 func renderChildrenToHTML(r renderer.Renderer, source []byte, parent ast.Node) (string, error) {
