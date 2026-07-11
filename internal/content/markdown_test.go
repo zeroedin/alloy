@@ -94,6 +94,22 @@ var _ = Describe("RenderMarkdown", func() {
 			Expect(html).To(ContainSubstring("go"))
 			Expect(html).To(ContainSubstring("fmt.Println"))
 		})
+
+		It("escapes HTML tags inside fenced code blocks (issue #947)", func() {
+			source := []byte("```gotemplate\n{{ range limit .collections.blog 5 }}\n  <h2>{{ .data.title }}</h2>\n{{ end }}\n```\n")
+			out, _, err := content.RenderMarkdown(source, defaultMD)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("&lt;h2&gt;"),
+				"HTML tags inside fenced code blocks must be escaped by "+
+					"goldmark's default renderer — <h2> must display as code "+
+					"text, not render as an actual heading (issue #947)")
+			Expect(html).To(ContainSubstring("&lt;/h2&gt;"),
+				"closing HTML tags must also be escaped")
+			Expect(html).NotTo(ContainSubstring("<h2>"),
+				"literal <h2> must not appear in code block output — "+
+					"goldmark escapes HTML inside <pre><code> by default")
+		})
 	})
 
 	// ── CommonMark extensions ──────────────────────────────────────────
@@ -1103,6 +1119,130 @@ var _ = Describe("RenderMarkdown", func() {
 			html := string(out)
 			Expect(html).To(ContainSubstring("fmt.Println"),
 				"code without Liquid syntax must pass through unmodified")
+		})
+
+		// ── HTML escaping in codeblock render hooks (issue #947) ──────
+		// markup.inner must HTML-escape code content so HTML tags display
+		// as text, not render as markup. Without this, <h2> inside a
+		// fenced code block renders as an actual heading on the page.
+
+		It("HTML-escapes markup.inner in codeblock render hooks (issue #947)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"codeblock": `<pre><code>{{ markup.inner }}</code></pre>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "```gotemplate\n{{ range limit .collections.blog 5 }}\n  <h2>{{ .data.title }}</h2>\n{{ end }}\n```"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("&lt;h2&gt;"),
+				"<h2> inside a fenced code block must be HTML-escaped in "+
+					"markup.inner — without escaping, it renders as an actual "+
+					"heading element instead of displaying as code text (issue #947)")
+			Expect(html).To(ContainSubstring("&lt;/h2&gt;"),
+				"closing </h2> must also be HTML-escaped")
+			Expect(html).NotTo(ContainSubstring("<h2>"),
+				"literal <h2> must not appear in output — it would render "+
+					"as markup instead of displaying as code")
+		})
+
+		It("HTML-escapes script tags in codeblock render hook markup.inner (issue #947)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"codeblock": `<pre><code>{{ markup.inner }}</code></pre>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "```html\n<script>alert('xss')</script>\n<div class=\"container\">content</div>\n```"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("&lt;script&gt;"),
+				"<script> tags in code must be HTML-escaped — unescaped "+
+					"script tags execute JavaScript in the browser (issue #947)")
+			Expect(html).To(ContainSubstring("&lt;/script&gt;"),
+				"closing </script> must also be escaped")
+			Expect(html).NotTo(ContainSubstring("<script>"),
+				"literal <script> must not appear — it would execute as JS")
+			Expect(html).To(ContainSubstring("&lt;div"),
+				"<div> tags in code must be HTML-escaped (issue #947)")
+			Expect(html).NotTo(ContainSubstring("<div "),
+				"literal <div> must not appear in output")
+		})
+
+		It("HTML-escapes and Liquid-escapes markup.inner together (issue #947)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"codeblock": `<pre><code>{{ markup.inner }}</code></pre>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "```liquid\n{% for post in collections.blog %}\n  <h2>{{ post.title }}</h2>\n{% endfor %}\n```"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("&lt;h2&gt;"),
+				"HTML tags must be escaped even when mixed with Liquid "+
+					"syntax — both escaping steps must run (issue #947)")
+			Expect(html).NotTo(ContainSubstring("<h2>"),
+				"literal <h2> must not appear alongside Liquid code")
+			Expect(html).To(ContainSubstring("&#123;%"),
+				"Liquid control tags must still be entity-encoded "+
+					"when HTML escaping is also active")
+			Expect(html).To(ContainSubstring("&#123;&#123;"),
+				"Liquid expression tags must still be entity-encoded "+
+					"when HTML escaping is also active")
+		})
+
+		It("HTML-escapes markup.inner in language-specific codeblock hooks (issue #947)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"codeblock-html": `<div class="html-example">{{ markup.inner }}</div>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "```html\n<img src=\"photo.jpg\" />\n<a href=\"/about\">About</a>\n```"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("&lt;img"),
+				"self-closing HTML tags must be escaped in language-specific "+
+					"codeblock hooks — same escaping as generic hook (issue #947)")
+			Expect(html).To(ContainSubstring("&lt;a href="),
+				"anchor tags with attributes must be escaped (issue #947)")
+			Expect(html).NotTo(ContainSubstring("<img "),
+				"literal <img> must not appear in output")
+			Expect(html).NotTo(ContainSubstring("<a href"),
+				"literal <a> must not appear in output")
+		})
+
+		It("HTML-escapes ampersands and quotes in codeblock render hook markup.inner (issue #947)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"codeblock": `<pre><code>{{ markup.inner }}</code></pre>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "```html\n<p class=\"intro\">Tom &amp; Jerry</p>\n```"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("&lt;p"),
+				"<p> tag must be escaped (issue #947)")
+			Expect(html).To(ContainSubstring("&amp;amp;"),
+				"literal & in code must be escaped to &amp; — the source "+
+					"contains &amp; which must become &amp;amp; so it displays "+
+					"as the literal text &amp; in the browser (issue #947)")
+			Expect(html).To(ContainSubstring("&#34;"),
+				"double quotes in HTML attributes inside code must be escaped — "+
+					"html.EscapeString uses &#34; for quotes (issue #947)")
 		})
 
 		It("falls back to default rendering when no hook exists", func() {
