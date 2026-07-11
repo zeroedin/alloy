@@ -373,7 +373,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 		plRenderer := newPermalinkRenderer(engine)
 
-		// Permalink resolution
+		// Permalink resolution — uses per-page cascade data so nested
+		// _data.yaml permalink patterns are respected (issue #910).
 		prefix := i18n.OutputPrefix(lc.Code, lc.Root)
 		langPrefix := lc.Code + "/"
 		for _, page := range batchPages {
@@ -382,7 +383,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				// doesn't double it (e.g., /es/es/about/).
 				origRelPath := page.RelPath
 				page.RelPath = strings.TrimPrefix(page.RelPath, langPrefix)
-				url, err := permalink.ResolveForSection(page, permalinkCfg, plRenderer)
+				pageCascade := cascade.FindCascadeData(ps.CascadeData, ps.ContentBase, page.RelPath)
+				url, err := permalink.ResolveFromCascade(page, pageCascade, plRenderer)
 				page.RelPath = origRelPath
 				if err != nil {
 					return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
@@ -393,7 +395,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				}
 				page.URL = "/" + prefix + strings.TrimPrefix(url, "/")
 			} else {
-				url, err := permalink.ResolveForSection(page, permalinkCfg, plRenderer)
+				pageCascade := cascade.FindCascadeData(ps.CascadeData, ps.ContentBase, page.RelPath)
+				url, err := permalink.ResolveFromCascade(page, pageCascade, plRenderer)
 				if err != nil {
 					return nil, fmt.Errorf("permalink resolution: %s: %w", page.RelPath, err)
 				}
