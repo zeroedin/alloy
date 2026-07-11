@@ -85,12 +85,12 @@ HTML files without front matter are classified based on content: full documents 
 
 ## `layouts/`
 
-Template files rendered by the configured engine. The Liquid engine resolves `.liquid` files; the Go template engine (`engine: "gotemplate"`) resolves `.html` files. There is no cross-engine fallback.
+Template files rendered by the configured engine. The Liquid engine looks for `.liquid` files first, falling back to bare extensions (e.g., `.html`) when no `.liquid` file is found. The Go template engine (`engine: "gotemplate"` or `"go"`) resolves `.html` files only.
 
 Layout lookup follows an explicit chain:
 
 1. `layout:` from front matter or `_data.yaml` cascade
-2. Section or filename match (e.g., `post.liquid` for blog children)
+2. Convention match (e.g., `post.liquid` for blog children, section name for index pages)
 3. `default.liquid` fallback
 4. Build error if nothing matches
 

@@ -47,7 +47,7 @@ The `{{ content }}` variable holds the fully rendered body of the current page. 
 
 ## Layout resolution order
 
-Alloy resolves layouts through a predictable lookup chain. The configured engine determines the extension checked at each step: `.liquid` for the Liquid engine, `.html` for the Go template engine.
+Alloy resolves layouts through a predictable lookup chain. The configured engine determines the extension checked at each step: the Liquid engine tries `.liquid` first, then falls back to the bare extension (e.g., `.html`); the Go template engine checks `.html` only.
 
 ### Blog-like sections
 
@@ -56,36 +56,35 @@ Sections with date-based permalink patterns (containing `:year`, `:month`, or `:
 **Index file** (`content/blog/index.md`):
 
 1. `layout:` from front matter or `_data.yaml` cascade
-2. `layouts/blog.liquid` (section name)
-3. `layouts/index.liquid` (filename match)
-4. `layouts/default.liquid` (fallback)
-5. Build error
+2. `layouts/blog.liquid` → `layouts/blog.html` (section name)
+3. `layouts/default.liquid` → `layouts/default.html` (fallback)
+4. Build error
 
 **Child file** (`content/blog/my-post.md`):
 
 1. `layout:` from front matter or `_data.yaml` cascade
-2. `layouts/post.liquid` (child of date-based section)
-3. `layouts/my-post.liquid` (filename match)
-4. `layouts/default.liquid` (fallback)
-5. Build error
+2. `layouts/post.liquid` → `layouts/post.html` (child of date-based section)
+3. `layouts/default.liquid` → `layouts/default.html` (fallback)
+4. Build error
 
 ### Regular sections and standalone pages
 
-Pages in sections without date-based permalinks resolve through a simpler chain.
+Pages in sections without date-based permalinks resolve through a shorter chain.
 
 **Any file** (`content/docs/getting-started.md`):
 
 1. `layout:` from front matter or `_data.yaml` cascade
-2. `layouts/getting-started.liquid` (filename match)
-3. `layouts/default.liquid` (fallback)
-4. Build error
+2. `layouts/default.liquid` → `layouts/default.html` (fallback)
+3. Build error
+
+Layouts do not match by filename. If you relied on `layouts/getting-started.liquid` being picked up automatically, add `layout: "getting-started"` to the page's front matter or `_data.yaml`.
 
 ### Taxonomy pages
 
 Auto-generated taxonomy pages check their own path first:
 
-1. `layouts/taxonomies/<name>.liquid` (e.g., `layouts/taxonomies/tags.liquid`)
-2. `layouts/<name>.liquid`
+1. `layouts/taxonomies/<name>.liquid` → `layouts/taxonomies/<name>.html` (e.g., `layouts/taxonomies/tags.liquid`)
+2. `layouts/<name>.liquid` → `layouts/<name>.html`
 
 ## Specifying a layout
 
@@ -106,6 +105,20 @@ layout: "doc"
 ```
 
 All pages in `content/docs/` and subdirectories inherit this layout unless they override it in their own front matter. Front matter always takes priority over the cascade.
+
+### Extension-bearing layout names
+
+A layout name that includes a recognized extension (`.liquid`, `.html`, `.xml`, `.json`, `.txt`) is used as a literal filename -- no engine extension is appended:
+
+```yaml
+---
+layout: "base.html"   # resolves to layouts/base.html exactly
+---
+```
+
+Bare names (without an extension) get the engine-specific lookup: `base` → `layouts/base.liquid` → `layouts/base.html` for the Liquid engine.
+
+Extension-bearing layout names cannot be used with [output formats](/templates/output-formats/) -- `layout: "article.liquid"` with `outputs: ["html", "json"]` produces a build error with a fix-it message suggesting `layout: "article"` instead.
 
 ### Disabling layout wrapping
 
@@ -225,17 +238,17 @@ Partials are reusable template fragments stored in `layouts/partials/` (by conve
 Both tags resolve paths relative to the `layouts/` directory, trying `name.liquid`, then `name.html`, then the bare name. The difference: `{% include %}` shares the parent template's variable scope, while `{% render %}` creates an isolated scope (variables from the parent are not accessible unless explicitly passed).
 </wa-tab-panel>
 <wa-tab-panel name="partials-go">
-<alloy-code lang="html">{{ partial "partials/header" }}
-{{ partial "partials/footer" }}
-{{ partial "partials/social-links" }}</alloy-code>
+<alloy-code lang="html">{{ include "partials/header" }}
+{{ include "partials/footer" }}
+{{ include "partials/social-links" }}</alloy-code>
 
-The `partial` function resolves paths relative to the `layouts/` directory, trying `name.html`, then the bare name. Context is optional -- with no argument, the partial inherits the current template context (like Liquid's `{% include %}`). Pass an explicit context to narrow scope:
+The `include` function resolves paths relative to the `layouts/` directory, trying `name.html`. Context is optional -- with no argument, the include inherits the current template context (like Liquid's `{% include %}`). Pass an explicit context to narrow scope:
 
-<alloy-code lang="html">{{ partial "partials/card" (dict "item" . "compact" true) }}</alloy-code>
+<alloy-code lang="html">{{ include "partials/card" (dict "item" . "compact" true) }}</alloy-code>
 
-Unlike Go's built-in `{{ template }}` action, `partial` is a function -- its output can be captured in variables and used in pipelines:
+Unlike Go's built-in `{{ template }}` action, `include` is a function -- its output can be captured in variables and used in pipelines:
 
-<alloy-code lang="html">{{ $nav := partial "partials/nav" }}
+<alloy-code lang="html">{{ $nav := include "partials/nav" }}
 {{ if $nav }}&lt;div class="has-nav"&gt;{{ $nav }}&lt;/div&gt;{{ end }}</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>
@@ -245,7 +258,7 @@ Plugin-registered filters work inside partials in both engines -- the same filte
 
 ### Go template engine
 
-With the Go template engine (`engine: "gotemplate"`), layouts are `.html` files using Go syntax. The same context is available with a leading dot: `{{ .page.title }}`, `{{ .site.title }}`, `{{ .content }}`:
+With the Go template engine (`engine: "gotemplate"` or `"go"`), layouts are `.html` files using Go syntax. The same context is available with a leading dot: `{{ .page.title }}`, `{{ .site.title }}`, `{{ .content }}`:
 
 ```html
 <!-- layouts/default.html -->
@@ -258,7 +271,7 @@ With the Go template engine (`engine: "gotemplate"`), layouts are `.html` files 
 </html>
 ```
 
-Layout chaining works identically in both engines -- a `layout:` directive in the layout's front matter names the parent (see [Layout chaining](#layout-chaining)). Cross-file partials use the `{{ partial }}` function (see [Partials and includes](#partials-and-includes)). `{% include %}`, `{% render %}`, and `{% inline %}` are Liquid-only tags.
+Layout chaining works identically in both engines -- a `layout:` directive in the layout's front matter names the parent (see [Layout chaining](#layout-chaining)). Cross-file includes use the `{{ include }}` function (see [Partials and includes](#partials-and-includes)). `{% render %}` and `{% inline %}` are Liquid-only tags.
 
 Two helper functions are registered for working with ordered map data (JSON data files preserve key order via an ordered map type that Go's index syntax cannot address):
 
@@ -283,10 +296,14 @@ The `{% inline %}` tag reads a file relative to the current content file and ins
 This is useful for SVGs that need to respond to CSS custom properties and cannot be loaded as `<img>` tags.
 
 **Rules:**
-- Paths are resolved relative to the content file's directory; absolute paths are rejected
+- Paths must start with `./` or `../` -- bare paths like `{% inline "diagram.svg" %}` are rejected
 - The resolved path must stay within the content root directory
-- Binary file types (images, fonts, audio/video, archives, PDF) are rejected with a build error -- use `<img>` for images instead
+- Only text file types are accepted: `.svg`, `.html`, `.htm`, `.txt`, `.css`, `.js`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`, `.md`. Binary types like `.png` produce a build error suggesting `<img>` instead
 - `{% inline %}` is a Liquid tag; it is not available in the Go template engine
+
+### Symlinks in layouts
+
+Symlinks inside the `layouts/` directory are followed. A symlink at `layouts/partials/shared.liquid` pointing to a file outside the project root is valid -- `{% include %}` and `{{ include }}` read the symlink target. The path traversal check applies to the logical path within the layouts tree, not the symlink's physical target.
 
 ## Table of contents
 

@@ -170,12 +170,19 @@ Liquid's `{% for ... limit: 5 %}` clause still works -- the `limit` filter is an
   &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
 {{ end }}</alloy-code>
 
-Without `limit`, the Go template workaround requires index-guarding, which iterates the whole collection:
+Go templates also have a built-in `slice` function (from Go's standard library, not an Alloy filter) that supports both start and end indices:
 
-<alloy-code lang="html">&lt;!-- Without limit -- verbose and iterates every item --&gt;
-{{ range $i, $post := .collections.blog }}{{ if lt $i 5 }}
-  &lt;a href="{{ $post.url }}"&gt;{{ $post.title }}&lt;/a&gt;
-{{ end }}{{ end }}</alloy-code>
+<alloy-code lang="html">&lt;!-- slice: native Go built-in, equivalent to limit --&gt;
+{{ range slice .collections.blog 0 5 }}
+  &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
+{{ end }}
+
+&lt;!-- slice with offset: items 6-10 --&gt;
+{{ range slice .collections.blog 5 10 }}
+  &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
+{{ end }}</alloy-code>
+
+`slice` is a Go template built-in (not an Alloy filter) and is not available in Liquid. Use `limit` for cross-engine compatibility.
 </wa-tab-panel>
 </wa-tab-group>
 {% endraw %}

@@ -38,12 +38,14 @@ Each render hook template receives a `markup` object with properties specific to
 
 | Template | `markup.*` properties |
 |---|---|
-| `render-blockquote` | `inner` (rendered inner HTML) |
-| `render-codeblock` | `inner` (raw code text), `language` |
-| `render-heading` | `inner` (plain heading text), `level` (1–6), `id` (auto-generated slug) |
+| `render-blockquote` | `inner` (rendered inner HTML), `attributes` |
+| `render-codeblock` | `inner` (raw code text), `language`, `attributes` |
+| `render-heading` | `inner` (rendered HTML), `text` (plain text), `level` (1–6), `id` (auto-generated slug or `{#custom-id}` override), `attributes` |
 | `render-image` | `src`, `alt`, `title` |
-| `render-link` | `destination`, `text` (plain link text), `is_external` (boolean) |
-| `render-table` | `inner` (rendered inner HTML) |
+| `render-link` | `destination`, `text` (plain link text), `title` (from `[text](url "title")`), `is_external` (boolean) |
+| `render-table` | `inner` (rendered inner HTML), `attributes` |
+
+`markup.attributes` is a map of key-value pairs from [block-level attribute syntax](#block-level-attributes). It is an empty map (not nil) when no attributes are present on the element. `render-image` does not receive attributes -- images are inline elements and do not support attribute syntax.
 
 The `markup` object is the only context available inside a render hook -- `page.*` and `site.*` are not passed to hook templates. Hooks are pure element transformers.
 
@@ -54,7 +56,7 @@ Render hook templates follow the configured template engine:
 | Engine | Config value | Hook file extension | Syntax |
 |---|---|---|---|
 | Liquid | `"liquid"` (default) | `.liquid` | `{{ markup.language }}` |
-| Go templates | `"gotemplate"` | `.html` | `{{ .markup.language }}` |
+| Go templates | `"gotemplate"` or `"go"` | `.html` | `{{ .markup.language }}` |
 
 ## Language-specific code blocks
 
@@ -120,7 +122,7 @@ Standard code blocks still use the generic `render-codeblock.liquid` (or default
 
 ### Auto-linked headings
 
-Add anchor links to headings:
+Add anchor links to headings. `markup.inner` contains the rendered HTML (so `## Hello **world**` gives `Hello <strong>world</strong>`), while `markup.text` contains the plain text (`Hello world`):
 
 ```liquid
 <!-- layouts/_markup/render-heading.liquid -->
@@ -130,7 +132,47 @@ Add anchor links to headings:
 </h{{ markup.level }}>
 ```
 
-The `markup.id` is auto-generated from the heading text using Alloy's `slugify` function (e.g., "My Section" becomes `my-section`).
+The `markup.id` is auto-generated from the heading text using Alloy's `slugify` function (e.g., "My Section" becomes `my-section`). A `{#custom-id}` attribute overrides the auto-generated slug.
+
+### Styled code blocks with attributes
+
+Use `markup.attributes` to pass classes and IDs from Markdown to your hook output:
+
+```liquid
+<!-- layouts/_markup/render-codeblock.liquid -->
+<pre class="{{ markup.attributes.class }}"{% if markup.attributes.id %} id="{{ markup.attributes.id }}"{% endif %}>
+  <code data-lang="{{ markup.language }}">{{ markup.inner }}</code>
+</pre>
+```
+
+## Block-level attributes
+
+Alloy supports `{.class #id key=value}` attribute syntax on block elements. Attributes are automatically enabled when `autoHeadingID` is true (the default).
+
+Supported elements:
+
+- **Headings** -- on the same line: `## My Heading {.subtitle #intro}`
+- **Fenced code blocks** -- on the opening fence: `` ```go {.highlight #example} ``
+- **Blockquotes** -- trailing line after the quote: `{.callout}`
+- **Tables** -- trailing line after the table: `{.striped}`
+
+````markdown
+```go {.highlight #example}
+fmt.Println("hello")
+```
+
+> This is important
+{.callout}
+
+| Name  | Role     |
+| ----- | -------- |
+| Alice | Engineer |
+{.striped}
+````
+
+Attributes are exposed to render hooks via `markup.attributes`. When no attributes are present, `markup.attributes` is an empty map.
+
+Images and links are inline elements and do not support attribute syntax.
 
 ## Template tag escaping
 

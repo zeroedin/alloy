@@ -82,6 +82,10 @@ With `customElements: true` (the default), a block-level custom element (any tag
 
 Template tags in inline code and fenced code blocks always display as typed -- the `templateTags` setting only affects prose. Set `templateTags: false` to also show `{{ }}` and `{% %}` in prose as literal text instead of evaluating them, for sites that write *about* template syntax rather than with it. For a one-off literal tag, wrap it in `{% raw %}` instead. See [Literal template syntax](/templates/#literal-template-syntax) for the full rules.
 
+### Block-level attributes
+
+When `autoHeadingID` is true (the default), `{.class #id key=value}` attribute syntax is active on block elements: headings, fenced code blocks, blockquotes, and tables. See [Render Hooks — Block-level attributes](/templates/render-hooks/#block-level-attributes) for the full syntax and supported elements.
+
 ## Table of contents
 
 Alloy extracts the heading structure from each Markdown page during rendering and exposes it as `page.toc`:

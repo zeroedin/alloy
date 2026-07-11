@@ -10,7 +10,7 @@ Alloy uses the [Liquid](https://liquidmarkup.org/) template language by default.
 ```yaml
 # alloy.config.yaml
 templates:
-  engine: "liquid"   # default; also supports "gotemplate" (Go html/template)
+  engine: "liquid"   # default; also supports "gotemplate" or "go"
 ```
 
 {% raw %}
@@ -36,9 +36,9 @@ templates:
 &lt;html&gt;
 &lt;head&gt;&lt;title&gt;{{ .page.title }}&lt;/title&gt;&lt;/head&gt;
 &lt;body&gt;
-  {{ partial "partials/header" }}
+  {{ include "partials/header" }}
   {{ .content }}
-  {{ partial "partials/footer" }}
+  {{ include "partials/footer" }}
 &lt;/body&gt;
 &lt;/html&gt;</alloy-code>
 </wa-tab-panel>
@@ -54,13 +54,13 @@ Alloy supports two built-in (Tier 1) template engines. The engine is a global, p
 | Engine | Config value | File extension | Syntax |
 |---|---|---|---|
 | Liquid | `"liquid"` (default) | `.liquid` | `{{ var }}`, `{% tag %}` |
-| Go templates | `"gotemplate"` | `.html` | `{{ .var }}`, `{{ range }}` |
+| Go templates | `"gotemplate"` or `"go"` | `.html` | `{{ .var }}`, `{{ range }}` |
 
 Both engines receive the same `map[string]any` context from the data cascade. All built-in [filters](/templates/filters/) are registered in both engines at startup -- in Go templates, filters are called as functions (`{{ upcase .page.title }}`) rather than with pipe-and-colon syntax. See [Filter syntax by engine](/templates/filters/#filter-syntax-by-engine).
 
-The config value must be exactly `"gotemplate"` -- any other value falls back to Liquid.
+Set the engine to `"gotemplate"` (or the shorthand `"go"`) for Go templates. Any unrecognized value fails config validation with an error.
 
-Plugin-provided template engines (Nunjucks, EJS, Pug via the Node bridge) are an experimental design concept and are **not implemented** -- today the `engine` setting accepts only `"liquid"` and `"gotemplate"`, and any other value falls back to Liquid.
+Plugin-provided template engines (Nunjucks, EJS, Pug via the Node bridge) are an experimental design concept and are **not implemented** -- today the `engine` setting accepts only `"liquid"` and `"gotemplate"` (or `"go"`), and unrecognized values are rejected at startup.
 
 ## Template context
 
@@ -113,14 +113,14 @@ layouts/feed.xml.liquid         --> XML output
 layouts/api.json.liquid         --> JSON output
 ```
 
-The configured engine determines the layout extension: `.liquid` for Liquid, `.html` for Go templates. There is no cross-engine fallback -- with the Liquid engine, only `.liquid` layout files are resolved; with the Go engine, only `.html` files.
+The configured engine determines which extensions are checked first. The Liquid engine looks for `.liquid` files and falls back to bare extensions (e.g., `default.html`) when no `.liquid` file is found, parsing the bare file as Liquid. The Go template engine resolves `.html` files only.
 
 ```
 layouts/
 ├── default.liquid       <-- used when engine: "liquid"
-├── default.html         <-- used when engine: "gotemplate"
+├── default.html         <-- used when engine: "gotemplate" (or Liquid fallback)
 ├── feed.xml.liquid      <-- XML format layout (Liquid)
-└── feed.xml.html        <-- XML format layout (Go templates)
+└── feed.xml             <-- XML format layout (Go templates, or Liquid fallback)
 ```
 
 If a file contains syntax for the wrong engine, the build fails with a parse error. Alloy does not inspect file contents to determine the engine.
