@@ -1245,6 +1245,156 @@ var _ = Describe("RenderMarkdown", func() {
 					"html.EscapeString uses &#34; for quotes (issue #947)")
 		})
 
+		// ── HTML escaping of render hook context fields (issue #952) ──
+		// All render hook context fields that carry raw AST values must be
+		// HTML-escaped before passing to the hook template. Without this,
+		// a crafted info string, URL, or title can inject markup when the
+		// hook template outputs the value in an HTML attribute or text
+		// context. Same vulnerability class as issue #947 (markup.inner).
+
+		It("HTML-escapes markup.language in codeblock render hooks (issue #952)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"codeblock": `<pre data-lang="{{ markup.language }}"><code>{{ markup.inner }}</code></pre>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "```\"><script>alert(1)</script>\nconsole.log('safe');\n```"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).NotTo(ContainSubstring("<script>"),
+				"markup.language must be HTML-escaped — a malicious info "+
+					"string like \"><script>alert(1)</script> must not inject "+
+					"a script tag into the rendered output (issue #952)")
+			Expect(html).To(ContainSubstring("&#34;"),
+				"double quote in info string must be escaped to &#34; so it "+
+					"cannot break out of an HTML attribute context")
+			Expect(html).To(ContainSubstring("&lt;script&gt;"),
+				"angle brackets in info string must be escaped to entities")
+		})
+
+		It("HTML-escapes markup.language with angle brackets in codeblock hooks (issue #952)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"codeblock": `<pre class="language-{{ markup.language }}"><code>{{ markup.inner }}</code></pre>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "```<img/onerror=alert(1)>\ncode here\n```"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).NotTo(ContainSubstring("<img"),
+				"markup.language must not pass through HTML tags — "+
+					"<img/onerror=alert(1)> in the info string must be "+
+					"escaped, not rendered as an element (issue #952)")
+			Expect(html).To(ContainSubstring("&lt;img"),
+				"angle brackets must be entity-encoded")
+		})
+
+		It("HTML-escapes markup.destination in link render hooks (issue #952)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"link": `<a href="{{ markup.destination }}">{{ markup.text }}</a>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := `[click](https://example.com/path?a=1&b=2)`
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("&amp;"),
+				"ampersand in URL must be escaped to &amp; so it does not "+
+					"start an HTML entity reference in the href attribute "+
+					"(issue #952)")
+			Expect(html).NotTo(ContainSubstring("&b=2"),
+				"bare &b must not appear — it could be interpreted as an "+
+					"HTML entity reference by the browser")
+		})
+
+		It("HTML-escapes markup.title in link render hooks (issue #952)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"link": `<a href="{{ markup.destination }}" title="{{ markup.title }}">{{ markup.text }}</a>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "[click](https://example.com \"title with <b>bold</b>\")"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("&lt;b&gt;"),
+				"HTML tags in link title must be escaped — a title "+
+					"containing <b> must not inject bold markup (issue #952)")
+			Expect(html).NotTo(ContainSubstring("<b>bold</b>"),
+				"literal <b> tags must not appear in the rendered title")
+		})
+
+		It("HTML-escapes markup.text in link render hooks (issue #952)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"link": `<a href="{{ markup.destination }}">{{ markup.text }}</a>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "[Tom & Jerry](https://example.com)"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("&amp;"),
+				"ampersand in link text must be HTML-escaped — raw & in "+
+					"text context can start unintended entity references "+
+					"(issue #952)")
+		})
+
+		It("HTML-escapes markup.src in image render hooks (issue #952)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"image": `<img src="{{ markup.src }}" alt="{{ markup.alt }}" title="{{ markup.title }}" />`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := `![photo](https://example.com/img?w=100&h=200 "a <b>bold</b> caption")`
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("&amp;h=200"),
+				"ampersand in image src must be escaped — bare & in "+
+					"an attribute value can start entity references (issue #952)")
+			Expect(html).To(ContainSubstring("&lt;b&gt;"),
+				"HTML tags in image title must be escaped (issue #952)")
+			Expect(html).NotTo(ContainSubstring("<b>bold</b>"),
+				"literal <b> must not appear in image title output")
+		})
+
+		It("HTML-escapes markup.alt in image render hooks (issue #952)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"image": `<img src="{{ markup.src }}" alt="{{ markup.alt }}" />`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := `![A "quoted" & <special> photo](/photo.jpg)`
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("&#34;"),
+				"double quotes in alt text must be escaped to &#34; — "+
+					"unescaped quotes break out of the alt attribute (issue #952)")
+			Expect(html).To(ContainSubstring("&amp;"),
+				"ampersand in alt text must be escaped (issue #952)")
+			Expect(html).To(ContainSubstring("&lt;special&gt;"),
+				"angle brackets in alt text must be escaped (issue #952)")
+		})
+
 		It("falls back to default rendering when no hook exists", func() {
 			opts := content.MarkdownOptions{
 				Unsafe: true, Typographer: true, TemplateTags: true,
