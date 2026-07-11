@@ -10,6 +10,12 @@ import (
 	"github.com/Notifuse/liquidgo/liquid/tags"
 )
 
+var allowedExtensions = map[string]bool{
+	".svg": true, ".html": true, ".htm": true, ".txt": true,
+	".css": true, ".js": true, ".json": true, ".xml": true,
+	".toml": true, ".yaml": true, ".yml": true, ".md": true,
+}
+
 var binaryExtensions = map[string]bool{
 	".png": true, ".jpg": true, ".jpeg": true, ".gif": true,
 	".webp": true, ".avif": true, ".ico": true, ".bmp": true,
@@ -68,9 +74,19 @@ func (t *inlineTag) resolve(context liquid.TagContext) (string, error) {
 		return "", fmt.Errorf("inline rejects absolute path: %s", relPath)
 	}
 
+	if !strings.HasPrefix(relPath, "./") && !strings.HasPrefix(relPath, "../") {
+		return "", fmt.Errorf("inline path must start with ./ or ../: %s", relPath)
+	}
+
 	ext := strings.ToLower(filepath.Ext(relPath))
-	if binaryExtensions[ext] {
-		return "", fmt.Errorf("inline rejects binary file type: %s", ext)
+	if !allowedExtensions[ext] {
+		if ext == "" {
+			return "", fmt.Errorf("inline rejects extensionless file: %s", relPath)
+		}
+		if binaryExtensions[ext] {
+			return "", fmt.Errorf("inline rejects binary file type %s: use <img> instead", ext)
+		}
+		return "", fmt.Errorf("inline rejects file type: %s is not in the text-type allowlist", ext)
 	}
 
 	contentDir, _ := context.FindVariable("_contentDir", false).(string)

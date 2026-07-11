@@ -940,6 +940,158 @@ var _ = Describe("LiquidEngine", func() {
 			Expect(err.Error()).To(ContainSubstring(".png"),
 				"error must mention the normalized lowercase extension")
 		})
+
+		// ── Conformance tests (issue #833) ──────────────────────────────
+		// The spec (PLAN.md) requires:
+		//   1. Paths MUST start with ./ or ../ — bare relative paths are rejected
+		//   2. File extension allowlist (not denylist) — only listed types are permitted
+		//   3. Binary type errors include "use <img> instead" guidance
+
+		It("rejects bare relative paths without ./ or ../ prefix", func() {
+			tmpDir, err := os.MkdirTemp("", "inline-test-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+			contentDir := filepath.Join(tmpDir, "content")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			// File exists — so any error is about the path format, not file-not-found
+			Expect(os.WriteFile(filepath.Join(contentDir, "diagram.svg"),
+				[]byte(`<svg><circle r="5"/></svg>`), 0644)).To(Succeed())
+
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterInlineTag(engine)
+
+			tpl, err := engine.Parse("test", []byte(`{% inline "diagram.svg" %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = tpl.Render(map[string]interface{}{
+				"_contentDir":  contentDir,
+				"_contentRoot": contentDir,
+			})
+			Expect(err).To(HaveOccurred(),
+				"inline must reject bare relative paths — PLAN.md requires ./ or ../ prefix")
+			Expect(err.Error()).To(ContainSubstring("./"),
+				"error must mention the required ./ prefix so users know how to fix it")
+		})
+
+		It("rejects file types not in the text-type allowlist", func() {
+			tmpDir, err := os.MkdirTemp("", "inline-test-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+			contentDir := filepath.Join(tmpDir, "content")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "secrets.env"),
+				[]byte("API_KEY=hunter2"), 0644)).To(Succeed())
+
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterInlineTag(engine)
+
+			tpl, err := engine.Parse("test", []byte(`{% inline "./secrets.env" %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = tpl.Render(map[string]interface{}{
+				"_contentDir":  contentDir,
+				"_contentRoot": contentDir,
+			})
+			Expect(err).To(HaveOccurred(),
+				"inline must reject .env — it is not in the text-type allowlist "+
+					"(PLAN.md specifies allowlist, not denylist)")
+			Expect(err.Error()).To(ContainSubstring(".env"),
+				"error must mention the rejected extension")
+		})
+
+		It("rejects files with no extension", func() {
+			tmpDir, err := os.MkdirTemp("", "inline-test-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+			contentDir := filepath.Join(tmpDir, "content")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "Makefile"),
+				[]byte("all: build"), 0644)).To(Succeed())
+
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterInlineTag(engine)
+
+			tpl, err := engine.Parse("test", []byte(`{% inline "./Makefile" %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = tpl.Render(map[string]interface{}{
+				"_contentDir":  contentDir,
+				"_contentRoot": contentDir,
+			})
+			Expect(err).To(HaveOccurred(),
+				"inline must reject extensionless files — no extension means "+
+					"not in the allowlist")
+		})
+
+		It("accepts all text-type allowlisted extensions", func() {
+			tmpDir, err := os.MkdirTemp("", "inline-test-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+			contentDir := filepath.Join(tmpDir, "content")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+
+			// Full allowlist from PLAN.md — every extension must be accepted
+			allowedExts := []string{
+				".svg", ".html", ".htm", ".txt", ".css", ".js",
+				".json", ".xml", ".toml", ".yaml", ".yml", ".md",
+			}
+			Expect(allowedExts).To(HaveLen(12),
+				"test must cover all 12 allowlisted extensions from PLAN.md")
+
+			for _, ext := range allowedExts {
+				filename := "testfile" + ext
+				Expect(os.WriteFile(filepath.Join(contentDir, filename),
+					[]byte("content-for-"+ext), 0644)).To(Succeed())
+
+				engine := tmpl.NewLiquidEngine()
+				tmpl.RegisterInlineTag(engine)
+
+				tpl, err := engine.Parse("test", []byte(fmt.Sprintf(`{%% inline "./%s" %%}`, filename)))
+				Expect(err).NotTo(HaveOccurred())
+
+				result, err := tpl.Render(map[string]interface{}{
+					"_contentDir":  contentDir,
+					"_contentRoot": contentDir,
+				})
+				Expect(err).NotTo(HaveOccurred(),
+					fmt.Sprintf("allowlisted extension %s must be accepted", ext))
+				Expect(string(result)).To(Equal("content-for-"+ext),
+					fmt.Sprintf("inlined content for %s must match file contents exactly", ext))
+			}
+		})
+
+		It("includes usage guidance in error for binary file types", func() {
+			tmpDir, err := os.MkdirTemp("", "inline-test-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+			contentDir := filepath.Join(tmpDir, "content")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(contentDir, "photo.png"),
+				[]byte("fake png"), 0644)).To(Succeed())
+
+			engine := tmpl.NewLiquidEngine()
+			tmpl.RegisterInlineTag(engine)
+
+			tpl, err := engine.Parse("test", []byte(`{% inline "./photo.png" %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = tpl.Render(map[string]interface{}{
+				"_contentDir":  contentDir,
+				"_contentRoot": contentDir,
+			})
+			Expect(err).To(HaveOccurred(),
+				"inline must reject binary file types")
+			Expect(err.Error()).To(And(
+				ContainSubstring(".png"),
+				ContainSubstring("<img>"),
+			), "error for binary types must mention the extension and suggest <img> — "+
+				"PLAN.md: 'use <img> instead'")
+		})
 	})
 
 	// ── Plugin filter rewriting correctness (issue #362) ────────────
