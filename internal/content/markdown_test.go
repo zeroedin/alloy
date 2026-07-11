@@ -1395,6 +1395,99 @@ var _ = Describe("RenderMarkdown", func() {
 				"angle brackets in alt text must be escaped (issue #952)")
 		})
 
+		It("HTML-escapes markup.text in heading render hooks (issue #953)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				AutoHeadingID: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }} id="{{ markup.id }}" aria-label="{{ markup.text }}">{{ markup.inner }}</h{{ markup.level }}>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			out, _, err := content.RenderMarkdown(
+				[]byte(`## "Hello" & World`),
+				content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("&#34;Hello&#34;"),
+				"double quotes in heading text must be escaped to &#34; — "+
+					"unescaped quotes in an attribute context like aria-label "+
+					"break out of the attribute value (issue #953)")
+			Expect(html).To(ContainSubstring("&amp;"),
+				"ampersand in heading text must be escaped to &amp; — "+
+					"bare & starts an HTML entity reference (issue #953)")
+			Expect(html).NotTo(ContainSubstring(`aria-label=""Hello"`),
+				"unescaped quotes must not break the aria-label attribute")
+		})
+
+		It("HTML-escapes markup.text with angle brackets in heading hooks (issue #953)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				AutoHeadingID: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }}><span class="sr-only">{{ markup.text }}</span>{{ markup.inner }}</h{{ markup.level }}>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			out, _, err := content.RenderMarkdown(
+				[]byte("## Config <beta>"),
+				content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("&lt;beta&gt;"),
+				"angle brackets in heading text must be escaped — "+
+					"<beta> in plain text context must not render as an "+
+					"HTML element (issue #953)")
+			Expect(html).NotTo(ContainSubstring("<beta>"),
+				"literal <beta> must not appear in the text output")
+		})
+
+		It("HTML-escapes markup.id when attribute-overridden via quoted syntax (issue #954)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				AutoHeadingID: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }} id="{{ markup.id }}">{{ markup.inner }}</h{{ markup.level }}>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			out, _, err := content.RenderMarkdown(
+				[]byte(`## My Section {id="test&id"}`),
+				content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("&amp;"),
+				"ampersand in attribute-overridden id must be escaped — "+
+					"goldmark's quoted attribute syntax {id=\"test&id\"} "+
+					"preserves raw & which must be entity-encoded before "+
+					"output in an HTML id attribute (issue #954)")
+			Expect(html).NotTo(ContainSubstring(`id="test&id"`),
+				"raw & must not appear in the id attribute value — "+
+					"it could start an unintended entity reference")
+		})
+
+		It("HTML-escapes markup.id with angle brackets from quoted attribute (issue #954)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				AutoHeadingID: true,
+				Hooks: map[string]string{
+					"heading": `<h{{ markup.level }} id="{{ markup.id }}">{{ markup.inner }}</h{{ markup.level }}>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			out, _, err := content.RenderMarkdown(
+				[]byte(`## Heading {id="a<b"}`),
+				content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("&lt;"),
+				"angle bracket in attribute-overridden id must be escaped — "+
+					"goldmark's quoted {id=\"a<b\"} preserves the raw < "+
+					"(issue #954)")
+			Expect(html).NotTo(ContainSubstring(`id="a<b"`),
+				"raw < must not appear in the id attribute")
+		})
+
 		It("falls back to default rendering when no hook exists", func() {
 			opts := content.MarkdownOptions{
 				Unsafe: true, Typographer: true, TemplateTags: true,
