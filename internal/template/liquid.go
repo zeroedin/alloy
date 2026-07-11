@@ -200,16 +200,8 @@ func (t *liquidTemplate) Render(ctx map[string]interface{}) ([]byte, error) {
 		}
 	}
 	result := t.tpl.Render(ctx, opts)
-	errs := t.tpl.Errors()
-	if t.includesDir != "" {
-		for _, err := range errs {
-			if fsErr, ok := err.(*liquid.FileSystemError); ok {
-				return nil, fmt.Errorf("liquid render error in %s: %s", t.name, fsErr.Error())
-			}
-		}
-	}
-	for _, err := range errs {
-		if _, ok := err.(*liquid.FileSystemError); ok {
+	for _, err := range t.tpl.Errors() {
+		if _, ok := err.(*liquid.FileSystemError); ok && t.includesDir == "" {
 			continue
 		}
 		return nil, fmt.Errorf("liquid render error in %s: %s", t.name, err.Error())
@@ -273,7 +265,7 @@ type alloyFileSystem struct {
 func (fs *alloyFileSystem) ReadTemplateFile(templatePath string) (string, error) {
 	absRoot, err := filepath.Abs(fs.root)
 	if err != nil {
-		return "", liquid.NewFileSystemError(fmt.Sprintf("illegal template path %q", templatePath))
+		return "", liquid.NewFileSystemError(fmt.Sprintf("cannot resolve includes root for %q", templatePath))
 	}
 	candidates := []string{
 		filepath.Join(fs.root, templatePath+".liquid"),
@@ -286,7 +278,7 @@ func (fs *alloyFileSystem) ReadTemplateFile(templatePath string) (string, error)
 		}
 		rel, relErr := filepath.Rel(absRoot, abs)
 		if relErr != nil || strings.HasPrefix(rel, "..") {
-			return "", liquid.NewFileSystemError(fmt.Sprintf("illegal template path %q", templatePath))
+			return "", liquid.NewFileSystemError(fmt.Sprintf("illegal template path %q: traversal outside includes directory", templatePath))
 		}
 		data, err := os.ReadFile(path)
 		if err == nil {
