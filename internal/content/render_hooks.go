@@ -3,6 +3,7 @@ package content
 import (
 	"bytes"
 	"fmt"
+	"html"
 	"regexp"
 	"strings"
 	"unicode"
@@ -83,7 +84,7 @@ func (r *hookNodeRenderer) renderFencedCodeBlock(
 	ctx := map[string]interface{}{
 		"markup": map[string]interface{}{
 			"language":   language,
-			"inner":      escapeLiquidDelimiters(codeBuf.String()),
+			"inner":      escapeLiquidDelimiters(html.EscapeString(codeBuf.String())),
 			"attributes": attrs,
 		},
 	}
