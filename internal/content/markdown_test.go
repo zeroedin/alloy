@@ -1489,6 +1489,98 @@ var _ = Describe("RenderMarkdown", func() {
 				"raw < must not appear in the id attribute")
 		})
 
+		// ── Block-level raw HTML escaping in markup.inner (issue #955) ──
+		// escapingRawHTMLRenderer handles inline raw HTML (ast.KindRawHTML)
+		// but not block-level HTML (ast.KindHTMLBlock). Block HTML inside
+		// blockquote content passes through unescaped in markup.inner.
+
+		It("escapes block-level raw HTML in blockquote markup.inner (issue #955)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"blockquote": `<aside>{{ markup.inner }}</aside>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "> <script>alert('xss')</script>\n"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).NotTo(ContainSubstring("<script>"),
+				"block-level <script> inside a blockquote must be escaped "+
+					"in markup.inner — escapingRawHTMLRenderer handles inline "+
+					"raw HTML (ast.KindRawHTML) but must also handle block-level "+
+					"raw HTML (ast.KindHTMLBlock) (issue #955)")
+			Expect(html).To(ContainSubstring("&lt;script&gt;"),
+				"<script> must be entity-encoded in markup.inner")
+		})
+
+		It("escapes multi-line block HTML in blockquote markup.inner (issue #955)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"blockquote": `<aside>{{ markup.inner }}</aside>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "> <div class=\"box\">\n>   <p>injected</p>\n> </div>\n"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).NotTo(ContainSubstring("<div"),
+				"multi-line block HTML inside a blockquote must be escaped "+
+					"in markup.inner — the ast.KindHTMLBlock handler must "+
+					"iterate all Lines() segments (issue #955)")
+			Expect(html).To(ContainSubstring("&lt;div"),
+				"opening tag must be entity-encoded")
+			Expect(html).To(ContainSubstring("&lt;/div&gt;"),
+				"closing tag must be entity-encoded — all line segments "+
+					"must be processed, not just the first")
+		})
+
+		It("escapes block-level div in blockquote markup.inner (issue #955)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"blockquote": `<aside>{{ markup.inner }}</aside>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "> <div class=\"evil\">injected</div>\n"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).NotTo(ContainSubstring("<div"),
+				"block-level <div> inside a blockquote must be escaped "+
+					"in markup.inner — not just <script>, all block HTML "+
+					"elements must be escaped (issue #955)")
+			Expect(html).To(ContainSubstring("&lt;div"),
+				"<div> must be entity-encoded in markup.inner")
+		})
+
+		It("preserves goldmark formatting while escaping block HTML in markup.inner (issue #955)", func() {
+			opts := content.MarkdownOptions{
+				Unsafe: true, Typographer: true, TemplateTags: true,
+				Hooks: map[string]string{
+					"blockquote": `<aside>{{ markup.inner }}</aside>`,
+				},
+				HookRenderer: hookRenderer,
+			}
+			md := "> **bold** text\n>\n> <script>alert(1)</script>\n"
+			out, _, err := content.RenderMarkdown([]byte(md), content.CreateGoldmark(opts))
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<strong>bold</strong>"),
+				"goldmark's own formatting elements must render normally — "+
+					"only user-supplied raw HTML must be escaped, not goldmark's "+
+					"<strong>, <em>, etc. (issue #955)")
+			Expect(html).NotTo(ContainSubstring("<script>"),
+				"block-level <script> must be escaped even when mixed with "+
+					"goldmark formatting (issue #955)")
+			Expect(html).To(ContainSubstring("&lt;script&gt;"),
+				"<script> must appear as entity-encoded text")
+		})
+
 		It("falls back to default rendering when no hook exists", func() {
 			opts := content.MarkdownOptions{
 				Unsafe: true, Typographer: true, TemplateTags: true,

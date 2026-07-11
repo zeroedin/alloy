@@ -308,6 +308,7 @@ type escapingRawHTMLRenderer struct{}
 
 func (r *escapingRawHTMLRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(ast.KindRawHTML, r.renderRawHTML)
+	reg.Register(ast.KindHTMLBlock, r.renderHTMLBlock)
 }
 
 func (r *escapingRawHTMLRenderer) renderRawHTML(
@@ -319,6 +320,24 @@ func (r *escapingRawHTMLRenderer) renderRawHTML(
 	for i := 0; i < n.Segments.Len(); i++ {
 		seg := n.Segments.At(i)
 		_, _ = w.WriteString(html.EscapeString(string(seg.Value(source))))
+	}
+	return ast.WalkSkipChildren, nil
+}
+
+func (r *escapingRawHTMLRenderer) renderHTMLBlock(
+	w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		return ast.WalkSkipChildren, nil
+	}
+	n := node.(*ast.HTMLBlock)
+	lines := n.Lines()
+	for i := 0; i < lines.Len(); i++ {
+		line := lines.At(i)
+		_, _ = w.WriteString(html.EscapeString(string(line.Value(source))))
+	}
+	if n.HasClosure() {
+		closure := n.ClosureLine
+		_, _ = w.WriteString(html.EscapeString(string(closure.Value(source))))
 	}
 	return ast.WalkSkipChildren, nil
 }
