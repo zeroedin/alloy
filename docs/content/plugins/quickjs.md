@@ -198,7 +198,7 @@ See [Node Plugins](/plugins/node/) for details on Tier 3 plugins.
 - No network access (`fetch`, `http`)
 - No Node.js APIs or npm packages
 - No `require()` or `import` of external modules
-- `alloy.data` is read-only -- mutations do not propagate to templates
+- The `alloy.data` accessor is a read-only snapshot -- assigning to it inside a filter or shortcode doesn't change what templates see. To add or modify data templates can read, mutate and return the `data` payload in a data hook like `onDataFetched` (shown above).
 
 For any of these capabilities, use a [Node plugin](/plugins/node/) instead.
 
