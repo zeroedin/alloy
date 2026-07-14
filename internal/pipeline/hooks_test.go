@@ -653,6 +653,329 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── addPages return shape for onPagesReady (issue #971) ──────────────────
+	// onPagesReady supports two return shapes: { pages: [...] } (existing full-array
+	// behavior) and { addPages: [...] } (injection-only, no round-trip of existing
+	// pages). When pages: false is set in the scope, the payload omits pages from
+	// serialization — only siteData is sent. The two return shapes are mutually
+	// exclusive. Unrecognized return shapes produce an error.
+
+	Describe("addPages return shape for onPagesReady (issue #971)", func() {
+
+		It("addPages with pages: false injects virtual pages without receiving existing pages", func() {
+			cfg := &config.Config{
+				Title:   "addPages Injection Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"data/elements.json": `[{"name":"Button","slug":"button"},{"name":"Card","slug":"card"}]`,
+				"content/index.md":   "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				// Plugin declares pages: false — must NOT receive existing pages in payload.
+				// If pages are sent despite pages: false, the plugin throws an error.
+				// Returns { addPages: [...] } to inject virtual pages.
+				"plugins/add-pages.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { data: ["elements"], pages: false }, function(payload) {
+    if (payload.pages && payload.pages.length > 0) {
+      throw new Error('pages: false must not send pages to plugin, got ' + payload.pages.length);
+    }
+    var elements = payload.siteData.elements || [];
+    var newPages = [];
+    for (var i = 0; i < elements.length; i++) {
+      var el = elements[i];
+      newPages.push({
+        path: 'demos/' + el.slug + '.md',
+        url: '/demos/' + el.slug + '/',
+        frontMatter: { title: el.name + ' Demo', layout: 'default' },
+        content: '# ' + el.name
+      });
+    }
+    return { addPages: newPages };
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"addPages with pages: false must not error — "+
+					"if this fails with 'pages: false must not send pages', "+
+					"runOnPagesReady is ignoring Pages.Mode and serializing "+
+					"all pages even when scope is PagesScopeNone (issue #971)")
+			Expect(result).NotTo(BeNil())
+
+			Expect(result.PageCount).To(Equal(3),
+				"1 real page + 2 data-driven virtual pages via addPages = 3 total (issue #971)")
+			Expect(result.RenderedContent).To(HaveKey("demos/button.md"),
+				"virtual page 'button' injected via addPages must appear in output (issue #971)")
+			Expect(result.RenderedContent).To(HaveKey("demos/card.md"),
+				"virtual page 'card' injected via addPages must appear in output (issue #971)")
+		})
+
+		It("addPages virtual pages participate in taxonomy collection", func() {
+			renderFalse := false
+			cfg := &config.Config{
+				Title:   "addPages Taxonomy Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Taxonomies: map[string]*config.TaxonomyConfig{
+					"tags": {Render: &renderFalse},
+				},
+			}
+			contentMap := map[string]string{
+				"content/index.md": "---\ntitle: Home\nlayout: default\ntags: [\"core\"]\n---\n{% for p in taxonomies.tags.component %}<span class=\"vp\">{{ p.title }}</span>{% endfor %}",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/add-tagged.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function(payload) {
+    return { addPages: [
+      {
+        path: 'demos/accordion.md',
+        url: '/demos/accordion/',
+        frontMatter: { title: 'Accordion', layout: 'default', tags: ['component'] },
+        content: '# Accordion'
+      },
+      {
+        path: 'demos/tabs.md',
+        url: '/demos/tabs/',
+        frontMatter: { title: 'Tabs', layout: 'default', tags: ['component'] },
+        content: '# Tabs'
+      }
+    ]};
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"addPages with taxonomy terms must not error (issue #971)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring(`class="vp"`),
+				"taxonomies.tags.component must be iterable — "+
+					"addPages virtual pages must participate in taxonomy collection (issue #971)")
+			Expect(html).To(ContainSubstring("Accordion"),
+				"virtual page 'Accordion' tagged 'component' must appear in taxonomy collection (issue #971)")
+			Expect(html).To(ContainSubstring("Tabs"),
+				"virtual page 'Tabs' tagged 'component' must appear in taxonomy collection (issue #971)")
+		})
+
+		It("addPages virtual page content is rendered through the markdown pipeline", func() {
+			cfg := &config.Config{
+				Title:   "addPages Markdown Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/add-md.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function(payload) {
+    return { addPages: [{
+      path: 'demos/widget.md',
+      url: '/demos/widget/',
+      frontMatter: { title: 'Widget', layout: 'default' },
+      content: '## Widget Component\n\nA **bold** widget with [a link](https://example.com).'
+    }]};
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"addPages with markdown content must not error (issue #971)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["demos/widget.md"]
+			Expect(html).To(ContainSubstring("<h2"),
+				"markdown ## heading must be rendered to <h2> — "+
+					"addPages virtual pages must flow through content rendering (issue #971)")
+			Expect(html).To(ContainSubstring("<strong>bold</strong>"),
+				"markdown **bold** must be rendered to <strong> — "+
+					"raw content from addPages must be processed by goldmark (issue #971)")
+		})
+
+		It("addPages works with pages: true for read-then-inject pattern", func() {
+			cfg := &config.Config{
+				Title:   "addPages Read-Inject Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"content/about.md":      "---\ntitle: About\nlayout: default\n---\n# About",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				// Plugin with pages: true reads existing pages and uses addPages to inject.
+				// This proves addPages is not gated by pages: false — it works with any scope.
+				"plugins/read-inject.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: true, pageFields: ["*"] }, function(payload) {
+    if (!payload.pages || payload.pages.length === 0) {
+      throw new Error('pages: true must send pages to plugin');
+    }
+    return { addPages: [{
+      path: 'generated/sitemap-data.md',
+      url: '/sitemap-data/',
+      frontMatter: { title: 'Sitemap Data (' + payload.pages.length + ' pages)', layout: 'default' },
+      content: '# Sitemap'
+    }]};
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"addPages with pages: true must work — addPages is not gated "+
+					"by pages: false (issue #971)")
+			Expect(result).NotTo(BeNil())
+
+			Expect(result.PageCount).To(Equal(3),
+				"2 real pages + 1 addPages virtual page = 3 total (issue #971)")
+			Expect(result.RenderedContent).To(HaveKey("generated/sitemap-data.md"),
+				"virtual page from addPages with pages: true must appear in output (issue #971)")
+
+			html := result.RenderedContent["generated/sitemap-data.md"]
+			Expect(html).To(ContainSubstring("Sitemap Data (2 pages)"),
+				"plugin with pages: true must receive existing pages and use the count — "+
+					"if title says '0 pages' then pages were not sent despite pages: true (issue #971)")
+		})
+
+		It("addPages with empty array is a no-op", func() {
+			cfg := &config.Config{
+				Title:   "addPages Empty Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/empty-add.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function(payload) {
+    return { addPages: [] };
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"addPages with empty array must not error — "+
+					"an empty addPages is a valid no-op (issue #971)")
+			Expect(result).NotTo(BeNil())
+
+			Expect(result.PageCount).To(Equal(1),
+				"no virtual pages added — PageCount must be 1 (issue #971)")
+		})
+
+		It("addPages URL collision with existing page produces error", func() {
+			cfg := &config.Config{
+				Title:   "addPages Collision Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/collide-add.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function(payload) {
+    return { addPages: [{
+      path: 'virtual-index.md',
+      url: '/',
+      frontMatter: { title: 'Collision', layout: 'default' },
+      content: '# Collision'
+    }]};
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"addPages virtual page URL collision with existing page must produce error (issue #971)")
+			Expect(err.Error()).To(ContainSubstring("collide"),
+				"collision error message must mention the conflict — "+
+					"helps plugin authors diagnose which virtual page URL conflicts (issue #971)")
+		})
+
+		It("addPages virtual page missing path produces validation error", func() {
+			cfg := &config.Config{
+				Title:   "addPages Validation Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/bad-add.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function(payload) {
+    return { addPages: [{
+      frontMatter: { title: 'No Path' },
+      content: '# Missing fields'
+    }]};
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"addPages virtual page without path/url must produce a validation error — "+
+					"same validation as the pages return path (issue #971)")
+			Expect(err.Error()).To(ContainSubstring("path"),
+				"validation error must mention the missing field (issue #971)")
+		})
+
+		It("returning both pages and addPages produces an error", func() {
+			cfg := &config.Config{
+				Title:   "Both Keys Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/both-keys.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: true, pageFields: ["*"] }, function(payload) {
+    return {
+      pages: payload.pages,
+      addPages: [{
+        path: 'extra.md',
+        url: '/extra/',
+        frontMatter: { title: 'Extra', layout: 'default' },
+        content: '# Extra'
+      }]
+    };
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"returning both 'pages' and 'addPages' must produce an error — "+
+					"the two return shapes are mutually exclusive (issue #971)")
+			Expect(err.Error()).To(ContainSubstring("addPages"),
+				"error message must mention 'addPages' so plugin authors know which "+
+					"return shape to use (issue #971)")
+		})
+
+		It("unrecognized return shape produces an error", func() {
+			cfg := &config.Config{
+				Title:   "Unrecognized Shape Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/wrong-key.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function(payload) {
+    return { newPages: [{
+      path: 'demos/button.md',
+      url: '/demos/button/',
+      frontMatter: { title: 'Button' },
+      content: '# Button'
+    }]};
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"returning a map with no recognized keys (neither 'pages' nor 'addPages') "+
+					"must produce an error — silent no-op causes data loss (issue #971)")
+			Expect(err.Error()).To(ContainSubstring("addPages"),
+				"error message must mention 'addPages' as one of the expected keys — "+
+					"guides the plugin author to the correct return shape (issue #971)")
+		})
+	})
+
 	// ── Template tags in <code> not escaped for HTML content (#352) ─
 	// escapeTemplateTagsInCode must only run on .md files, not .html.
 })

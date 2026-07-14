@@ -2029,7 +2029,24 @@ The options object is required on `alloy.hook()` and `alloy.on()`. It declares w
 
 **Taxonomy filtering rules**: Multiple terms within the same taxonomy are OR'd (union) — a page tagged `component` OR `form` matches. Multiple taxonomies are AND'd (intersection) — `{ tags: ["component"], category: ["ui"] }` matches pages tagged `component` AND categorized `ui`. Taxonomy filtering is only available on hooks that fire after taxonomy collection (see hook availability matrix below).
 
-**`addPages` return shape**: When a hook declares `pages: false` and needs to inject virtual pages (e.g., `onPagesReady` generating pages from site data), the return value uses `{ addPages: [...] }` instead of returning a full pages array. This avoids round-tripping hundreds of existing pages through the plugin bridge:
+**`addPages` return shape (issue #971)**: `onPagesReady` supports two return shapes for virtual page injection:
+
+| Return shape | Behavior | When to use |
+|---|---|---|
+| `{ addPages: [...] }` | Appends virtual pages to the existing page set. Existing pages are not modified. | Injection-only — the common case. Pair with `pages: false` to avoid serializing existing pages entirely. |
+| `{ pages: [...] }` | Full-array return — existing pages may be mutated in-place, virtual pages appended at indices `>= originalCount`. | Mutation + injection. Requires `pages: true` or a glob filter so the plugin receives existing pages. |
+
+**Return shape dispatch**: The pipeline inspects the top-level keys of the returned map:
+
+- **`addPages` only** → append each entry as a virtual page (same validation as the `pages` path: `path` and `url` required, output-path collision check).
+- **`pages` only** → existing full-array behavior (mutation + append, `len(returned) >= originalCount` check).
+- **Both `pages` and `addPages`** → build error. The two shapes are mutually exclusive — combining them creates ambiguity about whether existing pages are mutated.
+- **Map with neither key** → build error: `onPagesReady returned unrecognized shape — expected "pages" or "addPages"`. This catches typos and silent data loss from returning the wrong key name.
+- **Nil / non-map result** (hook returned nothing) → no-op. Compatible with side-effect-only hooks.
+
+**Send-side optimization**: When `pages: false` is set on all hooks for this event (union scope resolves to `PagesScopeNone`), the pipeline omits pages from the serialized payload — only `siteData` is sent. This eliminates the serialization cost entirely. The plugin uses `{ addPages: [...] }` to inject virtual pages without receiving or returning existing pages.
+
+`addPages` is valid regardless of the `pages` scope mode. A plugin with `pages: true` can read existing pages for inspection and return `{ addPages: [...] }` to inject without modifying existing pages. The performance benefit of `addPages` + `pages: false` is that neither send nor return round-trips existing pages.
 
 ```javascript
 alloy.hook('onPagesReady', { data: ["elements"], pages: false }, function(payload) {
@@ -2383,7 +2400,7 @@ Fires **once per language batch** after data cascade but before taxonomy collect
 
 | Event | Payload | Returns | When |
 |---|---|---|---|
-| `onPagesReady` | `{ pages: [{ path, url, frontMatter: { ... }, content: "..." }, ...], siteData: { ... } }` | Same shape (may include additional virtual pages appended to `pages`) | After data cascade, before taxonomy collection. Plugin injects virtual pages with front matter (including taxonomy terms). Per-batch firing avoids #521. |
+| `onPagesReady` | `{ pages: [{ path, url, frontMatter: { ... }, content: "..." }, ...], siteData: { ... } }` — `pages` is omitted when all hooks use `pages: false` | `{ pages: [...] }` (mutation + injection) or `{ addPages: [...] }` (injection only, issue #971). Mutually exclusive — returning both is an error. | After data cascade, before taxonomy collection. Plugin injects virtual pages with front matter (including taxonomy terms). Per-batch firing avoids #521. |
 
 ```javascript
 // plugins/data-pages.js — Generate per-element demo pages from data
@@ -2433,7 +2450,7 @@ Fire **once per build**. Payload is a JSON-serializable representation of the Go
 
 **Data mutation via hooks** — To modify site data that templates see, use per-build hooks. The hook receives the data object, modifies it, and returns it. The pipeline applies the returned value. This is the only way to add or change data that flows into templates — `alloy.data` in filters/shortcodes is read-only.
 
-**Virtual page injection (issues #518, #525)** — `onPagesReady` is the only hook that supports virtual page injection. Virtual pages are appended to the `pages` array in the returned payload. Required fields: `path` (source-relative identifier, e.g. `demos/button.md` — used as `RelPath` and `RenderedContent` key) and `url` (permalink, e.g. `/demos/button/` — used for output path computation). Optional: `frontMatter` (including `layout` and taxonomy terms like `tags`), `content` (raw markdown — rendered through the content pipeline). Virtual pages flow through the full remaining pipeline: taxonomy collection, content rendering, layout resolution, template rendering, and output writing. `layout: false` skips layout wrapping. Output-path collisions between a virtual page and a real page produce a build error (e.g., `/demos/button/` and an existing page that writes to the same output file). Missing `path`/`url` produces a validation error. Virtual pages are included in `PageCount`. `onContentLoaded` cannot inject virtual pages — it is limited to modifying `frontMatter` and `html` on existing pages.
+**Virtual page injection (issues #518, #525, #971)** — `onPagesReady` is the only hook that supports virtual page injection. Two return shapes are supported: `{ pages: [...] }` appends virtual pages at indices `>= originalCount` of the returned array (existing behavior — plugin mutates existing pages and/or appends); `{ addPages: [...] }` appends all entries as virtual pages without touching existing pages (injection-only, issue #971). Required fields on each virtual page: `path` (source-relative identifier, e.g. `demos/button.md` — used as `RelPath` and `RenderedContent` key) and `url` (permalink, e.g. `/demos/button/` — used for output path computation). Optional: `frontMatter` (including `layout` and taxonomy terms like `tags`), `content` (raw markdown — rendered through the content pipeline). Virtual pages flow through the full remaining pipeline: taxonomy collection, content rendering, layout resolution, template rendering, and output writing. `layout: false` skips layout wrapping. Output-path collisions between a virtual page and a real page produce a build error (e.g., `/demos/button/` and an existing page that writes to the same output file). Missing `path`/`url` produces a validation error. Virtual pages are included in `PageCount`. `onContentLoaded` cannot inject virtual pages — it is limited to modifying `frontMatter` and `html` on existing pages.
 
 ```javascript
 // plugins/enrich-data.js
