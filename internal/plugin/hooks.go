@@ -392,6 +392,9 @@ func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface
 	copy(current, payloads)
 
 	for _, h := range hooks {
+		if len(current) == 0 {
+			continue
+		}
 		if h.batchFn != nil {
 			preHook := make([]interface{}, len(current))
 			copy(preHook, current)

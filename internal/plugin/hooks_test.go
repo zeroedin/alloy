@@ -473,6 +473,134 @@ var _ = Describe("Hooks", func() {
 		})
 	})
 
+	// ── Zero-item batch dispatch (issue #972) ────────────────────────
+	// When RunBatchWithTimeout / RunBatchWithProgress is called with 0
+	// payloads, the effective timeout is timeout × 0 = 0ms, which
+	// expires instantly and generates a spurious warning. The 0-item
+	// case must be a no-op — skip the hook entirely. No timeout, no
+	// warning, no subprocess dispatch.
+
+	Describe("Zero-item batch dispatch (issue #972)", func() {
+		It("batch hook with 0 payloads returns empty slice without warning", func() {
+			registry := plugin.NewHookRegistry()
+			registry.SetTimeout(5000) // nonzero timeout — proves the fix is in the 0-item guard, not the timeout value
+
+			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+			batchFn := func(_ context.Context, ps []interface{}, _ plugin.BatchProgressFunc) ([]interface{}, error) {
+				return ps, nil
+			}
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchFn, 50)
+
+			results, err := registry.RunBatchWithTimeout(plugin.OnPageRendered, []interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(Equal([]interface{}{}),
+				"0-item batch must return empty slice")
+			Expect(registry.Warnings()).To(BeEmpty(),
+				"0-item batch must not produce a timeout warning — "+
+					"multiply-by-zero timeout would fire instantly without the guard")
+		})
+
+		It("batch hook with 0 payloads does not invoke the batch function", func() {
+			registry := plugin.NewHookRegistry()
+			registry.SetTimeout(5000)
+
+			batchCalled := false
+			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+			batchFn := func(_ context.Context, ps []interface{}, _ plugin.BatchProgressFunc) ([]interface{}, error) {
+				batchCalled = true
+				return ps, nil
+			}
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchFn, 50)
+
+			_, err := registry.RunBatchWithTimeout(plugin.OnPageRendered, []interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(batchCalled).To(BeFalse(),
+				"batch function must not be invoked for 0 items — "+
+					"calling into subprocess IPC for an empty payload is wasteful")
+		})
+
+		It("multiple batch hooks with 0 payloads — none are invoked", func() {
+			registry := plugin.NewHookRegistry()
+			registry.SetTimeout(5000)
+
+			var invoked []string
+			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+			batchA := func(_ context.Context, ps []interface{}, _ plugin.BatchProgressFunc) ([]interface{}, error) {
+				invoked = append(invoked, "A")
+				return ps, nil
+			}
+			batchB := func(_ context.Context, ps []interface{}, _ plugin.BatchProgressFunc) ([]interface{}, error) {
+				invoked = append(invoked, "B")
+				return ps, nil
+			}
+
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchA, 10)
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchB, 20)
+
+			results, err := registry.RunBatchWithTimeout(plugin.OnPageRendered, []interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(Equal([]interface{}{}))
+			Expect(invoked).To(BeEmpty(),
+				"every batch hook in the chain must be skipped for 0 items, "+
+					"not just the first one — the continue must apply to each hook iteration")
+			Expect(registry.Warnings()).To(BeEmpty())
+		})
+
+		It("progress callback is not invoked for 0 payloads", func() {
+			registry := plugin.NewHookRegistry()
+			registry.SetTimeout(5000)
+
+			singleFn := func(_ context.Context, p interface{}) (interface{}, error) {
+				return p, nil
+			}
+			batchFn := func(_ context.Context, ps []interface{}, onProgress plugin.BatchProgressFunc) ([]interface{}, error) {
+				for i := range ps {
+					onProgress(i+1, len(ps))
+				}
+				return ps, nil
+			}
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchFn, 50)
+
+			progressCalled := false
+			progress := func(completed, total int) {
+				progressCalled = true
+			}
+
+			results, err := registry.RunBatchWithProgress(plugin.OnPageRendered, []interface{}{}, progress)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(Equal([]interface{}{}))
+			Expect(progressCalled).To(BeFalse(),
+				"progress callback must not fire for 0 items — "+
+					"the batch function is never invoked so no progress is possible")
+		})
+
+		It("per-item fallback with 0 payloads produces no warning", func() {
+			registry := plugin.NewHookRegistry()
+			registry.SetTimeout(5000)
+
+			singleCalled := false
+			registry.Register(plugin.OnPageRendered, func(_ context.Context, p interface{}) (interface{}, error) {
+				singleCalled = true
+				return p, nil
+			})
+
+			results, err := registry.RunBatchWithTimeout(plugin.OnPageRendered, []interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(Equal([]interface{}{}),
+				"per-item fallback with 0 items must return empty slice")
+			Expect(singleCalled).To(BeFalse(),
+				"per-item fallback must not invoke the single hook for 0 items")
+			Expect(registry.Warnings()).To(BeEmpty(),
+				"per-item fallback with 0 items must not produce warnings")
+		})
+	})
+
 	// ── Race safety (issue #768) ─────────────────────────────────────
 	// RunBatchWithProgress appends to the shared HookRegistry.warnings
 	// slice without synchronization (in the batch timeout path). When

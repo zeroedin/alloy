@@ -2475,7 +2475,7 @@ Fire **once per event**. Plugins observe but cannot modify.
 ### Performance Safeguards
 
 - **Timeout**: Each plugin hook has a configurable timeout (default 5s). If exceeded, build continues without that plugin's modifications and logs a warning. Hook functions receive a `context.Context` as their first parameter carrying the timeout deadline. Hooks should check `ctx.Done()` for cooperative cancellation — a timed-out hook's goroutine will not be forcefully killed, but the context signals that its result will be discarded.
-- **Batching**: Pages are sent to Node plugins in batches (not one-at-a-time) to amortize IPC overhead. WASM plugins process in-process so batching is unnecessary.
+- **Batching**: Pages are sent to Node plugins in batches (not one-at-a-time) to amortize IPC overhead. WASM plugins process in-process so batching is unnecessary. **Zero-item guard (issue #972)**: When a batch hook is called with 0 items (e.g., all pages were filtered by scope or skipped during incremental rebuild), the hook is skipped entirely — no timeout calculation, no subprocess dispatch, no warning. Without this guard, the effective timeout is `timeout × 0 = 0ms`, which expires instantly and produces a spurious warning.
 - **Caching**: Node plugin results are cached by content hash. If content hasn't changed, skip the IPC call.
 - **Lazy start**: Node process only spawns if Node plugins exist. WASM plugins load in ~1ms.
 - **Process reuse**: In dev mode, Node process stays alive between rebuilds.
