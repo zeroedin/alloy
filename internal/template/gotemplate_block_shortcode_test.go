@@ -282,6 +282,170 @@ var _ = Describe("Go template block shortcode preprocessor", func() {
 		})
 	})
 
+	// ── Depth guard: callback output containing shortcode syntax (issue #1009) ──
+
+	Describe("depth guard for recursive shortcode output", func() {
+		It("returns an error when callback output produces infinite shortcode expansion", func() {
+			// A callback that returns output containing a new block shortcode
+			// of the same name — this creates an infinite expansion loop.
+			// The maxShortcodeIterations depth guard must catch this.
+			callback := func(name string, args []string, content string) (string, error) {
+				// Output contains another block shortcode — will recurse
+				return `{{% recursive %}}` + content + `{{% /recursive %}}`, nil
+			}
+
+			input := []byte("{{% recursive %}}seed content{{% /recursive %}}")
+			_, err := tmpl.ProcessBlockShortcodes(input, callback)
+			Expect(err).To(HaveOccurred(),
+				"callback output that generates new block shortcodes must "+
+					"trigger the iteration depth guard to prevent infinite loops")
+			Expect(err.Error()).To(ContainSubstring("iteration"),
+				"error message must indicate the iteration limit was exceeded")
+		})
+
+		It("terminates when callback output contains non-matching {{% markers", func() {
+			// A callback returns output that contains `{{% ` but does NOT form
+			// a valid opening tag (no closing `%}}`). Processing must terminate
+			// normally without infinite looping.
+			callCount := 0
+			callback := func(name string, args []string, content string) (string, error) {
+				callCount++
+				return "<div>See {{% for syntax info</div>", nil
+			}
+
+			input := []byte(`{{% widget %}}content{{% /widget %}}`)
+			result, err := tmpl.ProcessBlockShortcodes(input, callback)
+			Expect(err).NotTo(HaveOccurred(),
+				"callback output with incomplete {{% markers (no closing %%}}) "+
+					"must not cause infinite iteration — the markers don't match "+
+					"the opening tag regex so processing terminates normally")
+			Expect(callCount).To(Equal(1),
+				"callback must be invoked exactly once")
+			Expect(string(result)).To(ContainSubstring("See {{% for syntax info"),
+				"non-shortcode {{% markers in callback output must be preserved as-is")
+		})
+	})
+
+	// ── Interleaved mismatched tags (issue #1009) ─────────────────────
+
+	Describe("interleaved mismatched tags", func() {
+		It("returns an error for interleaved tags {{% a %}}{{% b %}}{{% /a %}}{{% /b %}}", func() {
+			callback := func(name string, args []string, content string) (string, error) {
+				return "<div>" + content + "</div>", nil
+			}
+
+			// Interleaved: a opens, b opens, a closes (mismatch — b is on top of stack)
+			input := []byte("{{% alpha %}}{{% beta %}}{{% /alpha %}}{{% /beta %}}")
+			_, err := tmpl.ProcessBlockShortcodes(input, callback)
+			Expect(err).To(HaveOccurred(),
+				"interleaved mismatched tags must produce an error — "+
+					"the nearest opening tag before {{% /alpha %}} is {{% beta %}}, not {{% alpha %}}")
+			Expect(err.Error()).To(ContainSubstring("beta"),
+				"error message must reference the opening tag name that was actually found (beta)")
+			Expect(err.Error()).To(ContainSubstring("alpha"),
+				"error message must reference the closing tag name (alpha)")
+		})
+	})
+
+	// ── Split code region exclusion (issue #1009) ─────────────────────
+
+	Describe("split code region exclusion", func() {
+		It("treats opening tag inside <code> as literal even if closing tag is outside", func() {
+			callback := func(name string, args []string, content string) (string, error) {
+				Fail("callback must not be invoked when the opening tag is inside a code region")
+				return "", nil
+			}
+
+			// Opening tag is inside <code>, closing tag is outside —
+			// the opening tag must be treated as literal text (skipped
+			// by the code region check). The closing tag alone becomes
+			// an unexpected closing tag error.
+			input := []byte(`<code>{{% widget %}}</code>some content{{% /widget %}}`)
+			_, err := tmpl.ProcessBlockShortcodes(input, callback)
+			Expect(err).To(HaveOccurred(),
+				"when the opening tag is inside <code>, it's literal text — "+
+					"the closing tag outside has no matching opening tag")
+			Expect(err.Error()).To(ContainSubstring("widget"),
+				"error message must reference the orphaned closing tag name")
+		})
+	})
+
+	// ── Escaped quotes in arguments (issue #1008) ─────────────────────
+
+	Describe("escaped quotes in arguments", func() {
+		It("parses escaped double quotes inside quoted arguments", func() {
+			var calls []shortcodeCall
+			callback := func(name string, args []string, content string) (string, error) {
+				calls = append(calls, shortcodeCall{Name: name, Args: args, Content: content})
+				return "<div>" + content + "</div>", nil
+			}
+
+			// Backslash-escaped quotes inside a quoted argument
+			input := []byte(`{{% tag "she said \"hello\"" %}}body{{% /tag %}}`)
+			result, err := tmpl.ProcessBlockShortcodes(input, callback)
+			Expect(err).NotTo(HaveOccurred(),
+				"escaped quotes inside quoted arguments must be parsed correctly")
+			Expect(calls).To(HaveLen(1))
+			Expect(calls[0].Args).To(Equal([]string{`she said "hello"`}),
+				"backslash-escaped double quotes must be unescaped in the extracted argument — "+
+					"the argument regex must handle \\\" within quoted strings")
+			Expect(calls[0].Content).To(Equal("body"))
+			Expect(string(result)).To(Equal("<div>body</div>"))
+		})
+
+		It("parses escaped backslashes inside quoted arguments", func() {
+			var calls []shortcodeCall
+			callback := func(name string, args []string, content string) (string, error) {
+				calls = append(calls, shortcodeCall{Name: name, Args: args, Content: content})
+				return "<div>" + content + "</div>", nil
+			}
+
+			// Double backslash represents a literal backslash
+			input := []byte(`{{% tag "path\\to\\file" %}}body{{% /tag %}}`)
+			result, err := tmpl.ProcessBlockShortcodes(input, callback)
+			Expect(err).NotTo(HaveOccurred(),
+				"escaped backslashes inside quoted arguments must be parsed correctly")
+			Expect(calls).To(HaveLen(1))
+			Expect(calls[0].Args).To(Equal([]string{`path\to\file`}),
+				"double backslash must be unescaped to a single backslash in the extracted argument")
+			Expect(string(result)).To(Equal("<div>body</div>"))
+		})
+
+		It("handles mix of escaped and unescaped quotes across multiple arguments", func() {
+			var calls []shortcodeCall
+			callback := func(name string, args []string, content string) (string, error) {
+				calls = append(calls, shortcodeCall{Name: name, Args: args, Content: content})
+				return "<div>" + content + "</div>", nil
+			}
+
+			input := []byte(`{{% tag "normal" "has \"quotes\"" "also normal" %}}body{{% /tag %}}`)
+			result, err := tmpl.ProcessBlockShortcodes(input, callback)
+			Expect(err).NotTo(HaveOccurred(),
+				"mixed escaped and unescaped arguments must parse correctly")
+			Expect(calls).To(HaveLen(1))
+			Expect(calls[0].Args).To(Equal([]string{"normal", `has "quotes"`, "also normal"}),
+				"each argument must be independently parsed with escape handling")
+			Expect(string(result)).To(Equal("<div>body</div>"))
+		})
+
+		It("does not break existing unescaped argument parsing", func() {
+			var calls []shortcodeCall
+			callback := func(name string, args []string, content string) (string, error) {
+				calls = append(calls, shortcodeCall{Name: name, Args: args, Content: content})
+				return "<div>" + content + "</div>", nil
+			}
+
+			// Standard arguments without escapes — must still work
+			input := []byte(`{{% tag "simple" "args" %}}body{{% /tag %}}`)
+			result, err := tmpl.ProcessBlockShortcodes(input, callback)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(calls).To(HaveLen(1))
+			Expect(calls[0].Args).To(Equal([]string{"simple", "args"}),
+				"existing unescaped argument parsing must not regress")
+			Expect(string(result)).To(Equal("<div>body</div>"))
+		})
+	})
+
 	// ── Content without block shortcodes ──────────────────────────────
 
 	Describe("passthrough behavior", func() {
