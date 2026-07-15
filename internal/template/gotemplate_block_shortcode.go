@@ -18,6 +18,8 @@ var (
 // inner HTML content. It returns the rendered replacement HTML.
 type BlockShortcodeCallback func(name string, args []string, content string) (string, error)
 
+const maxShortcodeIterations = 100
+
 // ProcessBlockShortcodes scans post-Goldmark HTML for Go template block
 // shortcode pairs ({{% tag "args" %}}...{{% /tag %}}) and replaces each with
 // the callback's output. Nesting is resolved innermost-first. Tags inside
@@ -29,15 +31,19 @@ func ProcessBlockShortcodes(input []byte, callback BlockShortcodeCallback) ([]by
 		return input, nil
 	}
 
-	for {
-		excluded := findCodeRegions(s)
+	for iterations := 0; ; iterations++ {
+		if iterations >= maxShortcodeIterations {
+			return nil, fmt.Errorf("block shortcode processing exceeded %d iterations (possible shortcode output loop)", maxShortcodeIterations)
+		}
+
+		codeRegions := findCodeRegions(s)
 
 		// Find the first (leftmost) closing tag not inside code
 		closeMatches := blockShortcodeCloseRe.FindAllStringSubmatchIndex(s, -1)
 		var firstClose []int
 		var closeName string
 		for _, m := range closeMatches {
-			if !inCodeRegion(m[0], excluded) {
+			if !inCodeRegion(m[0], codeRegions) {
 				firstClose = m
 				closeName = s[m[2]:m[3]]
 				break
@@ -47,7 +53,7 @@ func ProcessBlockShortcodes(input []byte, callback BlockShortcodeCallback) ([]by
 		if firstClose == nil {
 			openMatches := blockShortcodeOpenRe.FindAllStringSubmatchIndex(s, -1)
 			for _, m := range openMatches {
-				if !inCodeRegion(m[0], excluded) {
+				if !inCodeRegion(m[0], codeRegions) {
 					return nil, fmt.Errorf("unclosed block shortcode {%% %s %%}", s[m[2]:m[3]])
 				}
 			}
@@ -59,7 +65,7 @@ func ProcessBlockShortcodes(input []byte, callback BlockShortcodeCallback) ([]by
 		var nearestOpen []int
 		var openName string
 		for i := len(openMatches) - 1; i >= 0; i-- {
-			if !inCodeRegion(openMatches[i][0], excluded) {
+			if !inCodeRegion(openMatches[i][0], codeRegions) {
 				nearestOpen = openMatches[i]
 				openName = s[nearestOpen[2]:nearestOpen[3]]
 				break
