@@ -2,7 +2,7 @@
 type: minor
 ---
 
-`onAssetProcess` now fires once per asset file with `{path, content}` instead of once per build with directory paths. The return value's `content` key replaces the asset content written to the output directory.
+`onAssetProcess` fires once per asset file with `{path, content}` instead of once per build with directory paths. The returned `content` key replaces the file in the output directory.
 
 ```javascript
 alloy.hook("onAssetProcess", {}, (asset) => {
@@ -13,6 +13,6 @@ alloy.hook("onAssetProcess", {}, (asset) => {
 });
 ```
 
-Returning `null`, `undefined`, or an object without a `content` key preserves the original file content. The `path` key in the return value is ignored — only `content` is applied back. Hook errors halt the build.
+Return `null`, `undefined`, or an object without a `content` key to keep the original file. The build ignores any `path` key you return. Hook errors stop the build.
 
-Previously the hook received `{assetsDir, outputDir}` directory paths and discarded the return value, making every plugin written from the docs a silent no-op.
+Before this change, the hook received `{assetsDir, outputDir}` directory paths and discarded the return value. Plugins that followed the docs were silent no-ops.
