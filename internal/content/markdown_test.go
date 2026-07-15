@@ -2413,4 +2413,98 @@ var _ = Describe("RenderMarkdown", func() {
 			})
 		})
 	})
+
+	// ── Go template {{% %}} block shortcode delimiters (issue #1002) ───
+	// Go template block shortcodes use {{% tag %}}...{{% /tag %}} syntax.
+	// Goldmark must preserve these delimiters verbatim (same as {% %} and
+	// {{ }}) and process inner content as normal Markdown.
+
+	Context("Go template block shortcode delimiters ({{% %}})", func() {
+		It("{{% tag %}} on its own line is block-level, not wrapped in <p>", func() {
+			source := []byte("{{% callout \"warning\" %}}\nSome content.\n{{% /callout %}}\n")
+			out, _, err := content.RenderMarkdown(source, defaultMD)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).NotTo(ContainSubstring("<p>{{% callout"),
+				"Go template opening tag on its own line must be block-level, not wrapped in <p>")
+			Expect(html).To(ContainSubstring("{{% callout \"warning\" %}}"),
+				"Go template opening tag must be preserved verbatim through Markdown")
+		})
+
+		It("{{% /tag %}} closing tag on its own line is block-level, not wrapped in <p>", func() {
+			source := []byte("{{% callout %}}\nContent here.\n{{% /callout %}}\n")
+			out, _, err := content.RenderMarkdown(source, defaultMD)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).NotTo(ContainSubstring("<p>{{% /callout"),
+				"Go template closing tag on its own line must be block-level, not wrapped in <p>")
+			Expect(html).To(ContainSubstring("{{% /callout %}}"),
+				"Go template closing tag must be preserved verbatim through Markdown")
+		})
+
+		It("content between {{% %}} paired tags is Markdown-processed", func() {
+			source := []byte("{{% note %}}\n\nThis has **bold** and a [link](https://example.com).\n\n{{% /note %}}\n")
+			out, _, err := content.RenderMarkdown(source, defaultMD)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<strong>bold</strong>"),
+				"Markdown inside Go template block shortcode must be rendered to HTML")
+			Expect(html).To(ContainSubstring(`<a href="https://example.com">link</a>`),
+				"links inside Go template block shortcode must be rendered")
+			Expect(html).To(ContainSubstring("{{% note %}}"),
+				"opening tag must be preserved")
+			Expect(html).To(ContainSubstring("{{% /note %}}"),
+				"closing tag must be preserved")
+		})
+
+		It("{{% tag %}} with multiple quoted arguments preserves them", func() {
+			source := []byte("{{% callout \"warning\" \"dismissible\" %}}\nBody.\n{{% /callout %}}\n")
+			out, _, err := content.RenderMarkdown(source, defaultMD)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring(`{{% callout "warning" "dismissible" %}}`),
+				"Go template tag with multiple arguments must be preserved verbatim")
+		})
+
+		It("{{% tag %}} with list content renders the list correctly", func() {
+			source := []byte("{{% steps %}}\n\n- Step one\n- Step two\n- Step three\n\n{{% /steps %}}\n")
+			out, _, err := content.RenderMarkdown(source, defaultMD)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<ul>"),
+				"list inside Go template block shortcode must render as <ul>")
+			Expect(html).To(ContainSubstring("<li>Step one</li>"),
+				"list items must render correctly inside Go template block shortcode")
+			Expect(html).NotTo(ContainSubstring("<p>{{% steps"),
+				"Go template block shortcode must not wrap list content in <p>")
+		})
+
+		It("{{% tag %}} is preserved when unsafe is false", func() {
+			safeOpts := content.MarkdownOptions{
+				Unsafe: false, Typographer: true, TemplateTags: true, AutoHeadingID: true,
+			}
+			safeMD := content.CreateGoldmark(safeOpts)
+			source := []byte("{{% callout %}}\nSafe content.\n{{% /callout %}}\n")
+			out, _, err := content.RenderMarkdown(source, safeMD)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("{{% callout %}}"),
+				"Go template tags must be preserved regardless of unsafe setting")
+			Expect(html).To(ContainSubstring("{{% /callout %}}"),
+				"Go template closing tags must be preserved regardless of unsafe setting")
+		})
+
+		It("{{% tag %}} with heading content contributes to rendered HTML", func() {
+			source := []byte("{{% section %}}\n\n### Important Heading\n\nParagraph text.\n\n{{% /section %}}\n")
+			out, _, err := content.RenderMarkdown(source, defaultMD)
+			Expect(err).NotTo(HaveOccurred())
+			html := string(out)
+			Expect(html).To(ContainSubstring("<h3"),
+				"headings inside Go template block shortcode must be rendered")
+			Expect(html).To(ContainSubstring("Important Heading"),
+				"heading text must be present in output")
+			Expect(html).To(ContainSubstring("<p>Paragraph text.</p>"),
+				"paragraphs inside Go template block shortcode must be rendered")
+		})
+	})
 })

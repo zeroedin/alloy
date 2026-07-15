@@ -1844,16 +1844,30 @@ templates:
 **Usage in content:**
 
 ```liquid
-<!-- Liquid -->
+<!-- Liquid — inline shortcode -->
 {% youtube "dQw4w9WgXcQ" %}
+
+<!-- Liquid — block shortcode -->
 {% callout "warning" %}Don't do this in production.{% endcallout %}
 ```
 
 ```html
-<!-- Go -->
+<!-- Go template — inline shortcode -->
 {{ youtube "dQw4w9WgXcQ" }}
-{{ callout "warning" "Don't do this in production." }}
+
+<!-- Go template — block shortcode -->
+{{% callout "warning" %}}Don't do this in production.{{% /callout %}}
 ```
+
+**Go template block shortcodes** use `{{% tag "args" %}}...{{% /tag %}}` syntax. The `{{% %}}` delimiters are distinct from Go's `{{ }}` expression syntax and Liquid's `{% %}` control syntax. The closing tag uses `/tagname` (e.g., `{{% /callout %}}`), not `endtagname`.
+
+**Content between paired `{{% %}}` tags is Markdown-processed.** Goldmark's template tag extension preserves `{{% %}}` delimiters verbatim (same as `{% %}` and `{{ }}`), and content between them is rendered as normal Markdown. A block shortcode preprocessor runs after Goldmark but before Go template rendering — it scans the post-Goldmark HTML for paired `{{% tag %}}...{{% /tag %}}` sequences, extracts the inner HTML, calls `CallShortcode(name, args, innerContent)`, and replaces the block with the plugin's output.
+
+**Nesting** is supported. Block shortcodes can appear inside other block shortcodes' content. The preprocessor resolves from innermost to outermost — inner shortcodes are expanded first, then their rendered output becomes part of the outer shortcode's content. Same-name nesting is handled via depth tracking.
+
+**Error handling**: An unclosed `{{% tag %}}` (no matching `{{% /tag %}}`) is a build error. A mismatched closing tag name is a build error. Error messages include the tag name. Plugin callback errors propagate as build errors.
+
+**Passthrough**: The preprocessor only processes `{{% %}}` tags. Liquid-style `{% %}` tags and Go template `{{ }}` expressions are not touched. Content without any `{{% %}}` tags passes through unchanged.
 
 **Tier 3 (Node plugin):**
 
@@ -2578,9 +2592,9 @@ Published on {{ page.date | date: "%B %d, %Y" }}.
 
 Two custom goldmark extensions handle template tags in markdown:
 
-**Inline TemplateTags extension** — An inline parser that recognizes `{{ }}` and `{% %}` patterns and emits them as custom `TemplateTagInline` AST nodes (not `ast.RawHTML` — template tags must be preserved regardless of the `unsafe` setting). A custom renderer outputs the tag text verbatim, bypassing goldmark's HTML sanitization. Works for inline shortcodes (`{% youtube "id" %}`) and output tags (`{{ page.title }}`).
+**Inline TemplateTags extension** — An inline parser that recognizes `{{ }}`, `{% %}`, and `{{% %}}` patterns and emits them as custom `TemplateTagInline` AST nodes (not `ast.RawHTML` — template tags must be preserved regardless of the `unsafe` setting). A custom renderer outputs the tag text verbatim, bypassing goldmark's HTML sanitization. Works for inline shortcodes (`{% youtube "id" %}`), Go template inline shortcodes (`{{ youtube "id" }}`), Go template block shortcode delimiters (`{{% callout "warning" %}}`), and output tags (`{{ page.title }}`).
 
-**Block TemplateBlocks extension** — A block parser that treats any `{% ... %}` tag occupying a line by itself as a block-level node. Each such line becomes an independent single-line block — the parser does not track open/close pairing. Tag pairing (`{% tagname %}` / `{% endtagname %}`) is semantic and resolved by the Liquid template engine, not by goldmark. The tags are emitted as custom AST block nodes (not `ast.RawHTML` — template tags must be preserved regardless of the `unsafe` setting). A custom renderer outputs the tag text verbatim, bypassing goldmark's HTML sanitization. Content between paired tags is normal markdown (bold, lists, etc. work). This prevents block shortcodes that produce `<div>`, `<section>`, or other block-level HTML from being invalidly nested inside `<p>` tags.
+**Block TemplateBlocks extension** — A block parser that treats any `{% ... %}` or `{{% ... %}}` tag occupying a line by itself as a block-level node. Each such line becomes an independent single-line block — the parser does not track open/close pairing. Tag pairing (`{% tagname %}` / `{% endtagname %}` for Liquid, `{{% tagname %}}` / `{{% /tagname %}}` for Go templates) is semantic and resolved by the template engine or block shortcode preprocessor, not by goldmark. The tags are emitted as custom AST block nodes (not `ast.RawHTML` — template tags must be preserved regardless of the `unsafe` setting). A custom renderer outputs the tag text verbatim, bypassing goldmark's HTML sanitization. Content between paired tags is normal markdown (bold, lists, etc. work). This prevents block shortcodes that produce `<div>`, `<section>`, or other block-level HTML from being invalidly nested inside `<p>` tags.
 
 ```markdown
 <!-- Each {% %} line is an independent block node — goldmark doesn't pair them -->
