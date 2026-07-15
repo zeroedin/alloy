@@ -725,4 +725,87 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Subdirectory data files accessible in templates (issue #983) ──
+	// Data files in subdirectories of data/ must be accessible in templates
+	// as nested namespaces: data/nav/main.yaml → site.data.nav.main
+
+	Describe("Subdirectory data files in templates (issue #983)", func() {
+		It("templates access nested data directory files via site.data.subdir.key", func() {
+			cfg := &config.Config{
+				Title:   "Nested Data Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			files := map[string]string{
+				"data/nav/main.yaml":    "items:\n  - label: Home\n    url: /\n  - label: About\n    url: /about/",
+				"data/nav/footer.yaml":  "links:\n  - label: Privacy\n    url: /privacy/",
+				"data/settings.yaml":    "site_name: Test Site",
+				"layouts/default.liquid": "<html><body>NAV:{{ site.data.nav.main.items[0].label }}|FOOTER:{{ site.data.nav.footer.links[0].label }}|SITE:{{ site.data.settings.site_name }}</body></html>",
+				"content/index.md":      "---\ntitle: Home\nlayout: default\n---\n# Home",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).NotTo(HaveOccurred(),
+				"build with nested data subdirectories must succeed — "+
+					"LoadDirectory must recurse into data/nav/ (issue #983)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("NAV:Home"),
+				"site.data.nav.main.items[0].label must resolve to 'Home' — "+
+					"data/nav/main.yaml creates the nested namespace site.data.nav.main "+
+					"(issue #983). If this fails, subdirectory data files are not "+
+					"being loaded into nested namespaces")
+			Expect(html).To(ContainSubstring("FOOTER:Privacy"),
+				"site.data.nav.footer.links[0].label must resolve to 'Privacy' — "+
+					"multiple files in the same subdirectory must coexist under "+
+					"the same parent namespace")
+			Expect(html).To(ContainSubstring("SITE:Test Site"),
+				"root-level data files must still work alongside nested subdirectory data")
+		})
+
+		It("deeply nested data directories are accessible in templates", func() {
+			cfg := &config.Config{
+				Title:   "Deep Nested Data Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			files := map[string]string{
+				"data/api/v2/endpoints.yaml": "users:\n  path: /api/v2/users\n  method: GET",
+				"layouts/default.liquid":     "<html><body>PATH:{{ site.data.api.v2.endpoints.users.path }}</body></html>",
+				"content/index.md":           "---\ntitle: Home\nlayout: default\n---\n# Home",
+			}
+			result, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).NotTo(HaveOccurred(),
+				"build with deeply nested data directories must succeed")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("PATH:/api/v2/users"),
+				"site.data.api.v2.endpoints.users.path must resolve through "+
+					"three levels of directory nesting — data/api/v2/endpoints.yaml "+
+					"→ site.data.api.v2.endpoints (issue #983)")
+		})
+
+		It("directory-file stem collision in data/ is a build error", func() {
+			cfg := &config.Config{
+				Title:   "Dir-File Collision Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			files := map[string]string{
+				"data/nav.yaml":         "items:\n  - Home",
+				"data/nav/main.yaml":    "items:\n  - label: Home\n    url: /",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"content/index.md":      "---\ntitle: Home\nlayout: default\n---\n# Home",
+			}
+			_, err := pipeline.BuildWithContent(cfg, files)
+			Expect(err).To(HaveOccurred(),
+				"data/nav.yaml and data/nav/ both claim the key \"nav\" — "+
+					"the build must fail with a collision error, same semantics "+
+					"as two files sharing a stem (issue #983)")
+			Expect(err.Error()).To(ContainSubstring("nav"),
+				"error must name the colliding key")
+		})
+	})
+
 })

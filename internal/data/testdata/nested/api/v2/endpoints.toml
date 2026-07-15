@@ -1,0 +1,7 @@
+[users]
+path = "/api/v2/users"
+method = "GET"
+
+[posts]
+path = "/api/v2/posts"
+method = "GET"
