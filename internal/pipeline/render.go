@@ -15,6 +15,7 @@ import (
 	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/i18n"
 	"github.com/zeroedin/alloy/internal/pagination"
+	"github.com/zeroedin/alloy/internal/plugin"
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
@@ -91,6 +92,13 @@ func renderPages(pages []*content.Page, rc *RenderContext, reporter ProgressRepo
 
 		if ext == ".md" {
 			html = escapeTemplateTagsInCode(html)
+		}
+
+		if engineName == "gotemplate" && rc.Registry != nil {
+			html, err = processGoTemplateBlockShortcodes(html, rc.Registry)
+			if err != nil {
+				return nil, fmt.Errorf("block shortcode: %s: %w", page.RelPath, err)
+			}
 		}
 
 		if hasTemplateSyntax(html) {
@@ -193,6 +201,23 @@ func interpolateFrontMatter(vp *content.Page, asVar string, item interface{}, en
 // nested <code> elements — inline code and fenced code blocks each emit a
 // single <code>…</code> pair.
 var codeBlockPattern = regexp.MustCompile(`(?s)<code[^>]*>.*?</code>`)
+
+// processGoTemplateBlockShortcodes runs ProcessBlockShortcodes with a callback
+// that routes through the plugin registry's CallShortcode. Each registered
+// runtime is tried in order until one owns the shortcode name.
+func processGoTemplateBlockShortcodes(html []byte, registry *plugin.Registry) ([]byte, error) {
+	callback := func(name string, args []string, content string) (string, error) {
+		for _, rt := range registry.Runtimes() {
+			for _, sc := range rt.RegisteredShortcodes() {
+				if sc == name {
+					return rt.CallShortcode(name, args, content)
+				}
+			}
+		}
+		return "", fmt.Errorf("shortcode %q not registered by any plugin", name)
+	}
+	return tmpl.ProcessBlockShortcodes(html, callback)
+}
 
 // escapeTemplateTagsInCode replaces {{ }}, {% %} inside <code> elements with
 // HTML entities so Liquid won't process them. This preserves template syntax

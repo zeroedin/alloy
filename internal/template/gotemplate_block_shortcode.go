@@ -7,9 +7,9 @@ import (
 )
 
 var (
-	blockShortcodeOpenRe  = regexp.MustCompile(`\{\{%\s+([a-zA-Z][a-zA-Z0-9_-]*)((?:\s+"[^"]*")*)\s*%\}\}`)
+	blockShortcodeOpenRe  = regexp.MustCompile(`\{\{%\s+([a-zA-Z][a-zA-Z0-9_-]*)((?:\s+"(?:[^"\\]|\\.)*")*)\s*%\}\}`)
 	blockShortcodeCloseRe = regexp.MustCompile(`\{\{%\s*/([a-zA-Z][a-zA-Z0-9_-]*)\s*%\}\}`)
-	blockShortcodeArgRe   = regexp.MustCompile(`"([^"]*)"`)
+	blockShortcodeArgRe   = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`)
 	preRegionRe           = regexp.MustCompile(`(?si)<pre[^>]*>.*?</pre>`)
 	codeRegionRe          = regexp.MustCompile(`(?si)<code[^>]*>.*?</code>`)
 )
@@ -105,9 +105,17 @@ func parseShortcodeArgs(s string) []string {
 	}
 	args := make([]string, len(matches))
 	for i, m := range matches {
-		args[i] = m[1]
+		args[i] = unescapeArg(m[1])
 	}
 	return args
+}
+
+func unescapeArg(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	r := strings.NewReplacer(`\"`, `"`, `\\`, `\`)
+	return r.Replace(s)
 }
 
 func findCodeRegions(s string) [][2]int {

@@ -323,6 +323,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		TemplateUsage:  templateUsage,
 		LayoutCache:    make(map[string]tmpl.Template),
 		PermalinkCfg:   permalinkCfg,
+		Registry:       ps.Registry,
 	}
 	rendered, renderErr := renderPages(pagesToRender, rc, nil)
 	if renderErr != nil {
