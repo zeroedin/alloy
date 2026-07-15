@@ -97,6 +97,7 @@ type RenderContext struct {
 	LayoutCache    map[string]tmpl.Template
 	Goldmark       goldmark.Markdown
 	PermalinkCfg   map[string]string
+	Registry       *plugin.Registry
 }
 
 // Build runs the complete build pipeline (Phase 0 through Phase 3).
@@ -525,6 +526,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			TemplateUsage:  templateUsage,
 			Goldmark:       sharedGoldmark,
 			PermalinkCfg:   permalinkCfg,
+			Registry:       registry,
 		}
 		batchRendered, renderErr := renderPages(batches[i].pages, rc, reporter)
 		if renderErr != nil {
@@ -684,6 +686,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			TemplateUsage:  templateUsage,
 			LayoutCache:    layoutCache,
 			PermalinkCfg:   permalinkCfg,
+			Registry:       registry,
 		}
 		for _, page := range batch.pages {
 			var pageStart time.Time
