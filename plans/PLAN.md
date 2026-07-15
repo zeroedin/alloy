@@ -2868,7 +2868,7 @@ All asset processing is handled by plugins via the `onAssetProcess` lifecycle ho
 | Task | Plugin approach |
 |---|---|
 | CSS minification | PostCSS + cssnano (Node plugin) |
-| Tailwind CSS | Tailwind CLI (Node plugin) |
+| CSS transforms | Lightning CSS (Node plugin) |
 | JS bundling | esbuild/Rollup (Node plugin) |
 | Image optimization | Sharp (Node plugin) |
 | Fingerprinting | Content hash plugin (WASM or Node) |

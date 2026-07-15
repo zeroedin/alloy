@@ -42,7 +42,7 @@ Alloy routes plugin execution to the appropriate tier based on what the plugin n
 
 **Tier 3 -- Node (subprocess plugins)** runs in a Node.js subprocess with full system access. Best for:
 
-- PostCSS, Tailwind, cssnano (npm packages)
+- PostCSS, Lightning CSS, cssnano (npm packages)
 - Image optimization with Sharp (native addons)
 - Lit SSR (Node VM module)
 - External API calls, database queries
