@@ -376,6 +376,48 @@ func (r *HookRegistry) RunWithTimeout(event HookName, payload interface{}) (inte
 	return current, nil
 }
 
+// RunEachWithTimeout runs each hook for an event individually with timeout
+// enforcement. Before each hook, payloadFn builds the per-hook payload
+// (receiving the hook index and scope). After each hook, resultFn processes
+// the result. If resultFn returns an error, execution stops. Timed-out hooks
+// are skipped with a warning (resultFn is not called).
+func (r *HookRegistry) RunEachWithTimeout(event HookName,
+	payloadFn func(i int, scope *HookScope) interface{},
+	resultFn func(i int, scope *HookScope, result interface{}) error,
+) error {
+	hooks := r.hooks[event]
+	for i, h := range hooks {
+		payload := payloadFn(i, h.scope)
+		timeout := time.Duration(r.timeout) * time.Millisecond
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+
+		type hookResult struct {
+			val interface{}
+			err error
+		}
+		ch := make(chan hookResult, 1)
+		go func() {
+			result, err := h.fn(ctx, payload)
+			ch <- hookResult{result, err}
+		}()
+
+		select {
+		case res := <-ch:
+			cancel()
+			if res.err != nil {
+				return res.err
+			}
+			if err := resultFn(i, h.scope, res.val); err != nil {
+				return err
+			}
+		case <-ctx.Done():
+			cancel()
+			r.addWarning(fmt.Sprintf("hook timeout: %s exceeded %dms", string(event), r.timeout))
+		}
+	}
+	return nil
+}
+
 // RunBatchWithTimeout dispatches multiple payloads through all hooks for an event.
 // Hooks with a batchFn use batch dispatch (distributing across workers).
 // Hooks without batchFn fall back to per-item dispatch with timeout enforcement.
