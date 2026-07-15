@@ -161,12 +161,18 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		registry.Close()
 	}()
 
-	// Fire onConfig hook — plugins can mutate config before validation.
-	// Must run before output dir resolution and worker pool spawn so
-	// plugins can change cfg.Build.Output, cfg.Structure.*, cfg.Passthrough,
-	// and cfg.Plugins.Workers.
-	if _, err := hooks.RunWithTimeout(plugin.OnConfig, cfg); err != nil {
-		return nil, fmt.Errorf("plugin hook onConfig: %w", err)
+	// Fire onConfig hook — plugins can mutate config via the mutable allowlist
+	// (see PLAN.md §onConfig mutation semantics). Must run before output dir
+	// resolution and worker pool spawn.
+	if hooks.HasHooks(plugin.OnConfig) {
+		result, err := hooks.RunWithTimeout(plugin.OnConfig, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("plugin hook onConfig: %w", err)
+		}
+		if err := applyOnConfigResult(cfg, result); err != nil {
+			return nil, fmt.Errorf("plugin hook onConfig: %w", err)
+		}
+		hooks.SetTimeout(cfg.Plugins.Timeout)
 	}
 
 	// Spawn worker pools asynchronously so bridge startup overlaps with pipeline init.
