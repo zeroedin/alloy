@@ -11,19 +11,24 @@ import (
 // pipeline config. Only fields in the mutable allowlist are applied; all
 // other fields are silently preserved. Returns an error if the result is
 // not a map[string]interface{} or *ordered.Map (i.e., non-object return from JS).
+//
+// When RunWithTimeout times out, it returns the original *config.Config payload.
+// That case is treated as a no-op (the timed-out hook's mutations are discarded).
 func applyOnConfigResult(cfg *config.Config, result interface{}) error {
 	if result == nil {
-		return fmt.Errorf("onConfig hook must return an object, got nil")
+		return fmt.Errorf("hook must return an object, got nil")
 	}
 
 	var m map[string]interface{}
 	switch v := result.(type) {
+	case *config.Config:
+		return nil
 	case map[string]interface{}:
 		m = v
 	case *ordered.Map:
 		m = v.ToGoMap()
 	default:
-		return fmt.Errorf("onConfig hook must return an object, got %T", result)
+		return fmt.Errorf("hook must return an object, got %T", result)
 	}
 
 	if build, ok := m["build"].(map[string]interface{}); ok {
@@ -64,6 +69,9 @@ func applyOnConfigResult(cfg *config.Config, result interface{}) error {
 			if from, ok := pm["from"].(string); ok {
 				mapping.From = from
 			}
+			if mapping.From == "" {
+				continue
+			}
 			if to, ok := pm["to"].(string); ok {
 				mapping.To = to
 			}
@@ -83,8 +91,17 @@ func applyOnConfigResult(cfg *config.Config, result interface{}) error {
 		if workers, exists := plugins["workers"]; exists {
 			cfg.Plugins.Workers = workers
 		}
-		if timeout, ok := plugins["timeout"].(float64); ok {
-			cfg.Plugins.Timeout = int(timeout)
+		if raw, exists := plugins["timeout"]; exists {
+			var timeout int
+			switch v := raw.(type) {
+			case float64:
+				timeout = int(v)
+			case int:
+				timeout = v
+			}
+			if timeout > 0 {
+				cfg.Plugins.Timeout = timeout
+			}
 		}
 	}
 
