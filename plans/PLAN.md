@@ -2450,10 +2450,39 @@ Fire **once per build**. Payload is a JSON-serializable representation of the Go
 
 | Event | Payload | Returns | When |
 |---|---|---|---|
-| `onConfig` | `{ title, baseURL, build: { output, clean }, ... }` | Same shape | After config loaded. Plugin mutates config. |
+| `onConfig` | `{ title, baseURL, build: { output, clean }, structure: { ... }, passthrough: [...], plugins: { workers, timeout }, ... }` | Same shape (mutable allowlist applied — see below) | After config loaded, before validation. Plugin mutates config fields in the mutable allowlist. |
 | `onBeforeValidation` | `{ paths: ["/about/", "/blog/", ...] }` | Same + additions | Before conflict detection. Plugin adds output paths. |
 | `onAfterValidation` | `{ paths: [...], cascade: { ... } }` | Cascade portion only | After validation. Plugin injects cascade data. |
 | `onDataFetched` | `{ <sourceName>: <data>, ... }` | Same shape | After external data fetched. Plugin modifies fetched data. |
+
+**onConfig mutation semantics (issue #973)** — `onConfig` fires after config loading and defaults but before validation, output-dir resolution, and worker-pool spawn. The plugin receives the full config as a JSON object and returns a modified copy. The pipeline applies returned changes back to `cfg` for a **mutable allowlist** only:
+
+| Mutable field | JSON path | Notes |
+|---|---|---|
+| Output directory | `build.output` | Redirects where the pipeline writes files |
+| Clean before build | `build.clean` | Controls output directory cleanup |
+| Content directory | `structure.content` | Redirects where content files are discovered |
+| Layouts directory | `structure.layouts` | Redirects where layout files are resolved |
+| Assets directory | `structure.assets` | Redirects where asset files are processed |
+| Static directory | `structure.static` | Redirects where static files are copied from |
+| Data directory | `structure.data` | Redirects where data files are loaded from |
+| Passthrough mappings | `passthrough` | Modifies external-path-to-output-path mappings |
+| Worker pool size | `plugins.workers` | Controls hook worker pool size (before spawn) |
+| Hook timeout | `plugins.timeout` | Controls timeout for subsequent hook calls |
+
+**Not mutable via onConfig:** `title`, `baseURL`, `language`, `templates.engine`, `content`, `data`, `taxonomies`, `pagination`, `sitemap`, `collections`, `watch`, `sources`, `ssr`, `languages`, `structure.plugins` (plugins are already loaded before `onConfig` fires — changing the directory has no effect). Changes to non-mutable fields are ignored; the pipeline preserves the original values for those fields. Internal fields (`projectRoot`, `verbose`, `quiet`, `refetch`, `includeDrafts`) have `json:"-"` tags and are never visible to plugins.
+
+**Return type enforcement:** `onConfig` must return a JSON object (same shape as the input). Returning a non-object (string, number, array, null) produces a build error identifying `onConfig` as the source. This prevents silent data loss from plugins that forget to return the config.
+
+**Multiple hooks chain correctly:** When multiple plugins (or the same plugin) register multiple `onConfig` hooks, they execute in priority order. Each hook receives the return value of the previous hook (not the original config). The pipeline applies the final chained result to `cfg` via the mutable allowlist. This allows composable config transformations across plugins.
+
+```javascript
+// Example: redirect output directory via onConfig
+alloy.hook("onConfig", {}, (config) => {
+  config.build.output = "dist";
+  return config;
+});
+```
 
 **Data mutation via hooks** — To modify site data that templates see, use per-build hooks. The hook receives the data object, modifies it, and returns it. The pipeline applies the returned value. This is the only way to add or change data that flows into templates — `alloy.data` in filters/shortcodes is read-only.
 
