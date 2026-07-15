@@ -488,4 +488,314 @@ var _ = Describe("onAssetProcess per-asset dispatch (issue #974)", func() {
 			"plugin returning { content: '' } must write an empty file — "+
 				"return value must not be discarded (issue #974)")
 	})
+
+	// ── Empty assets directory ───────────────────────────────────────
+	// When assets/ exists but contains no files, hook does not fire.
+
+	It("hook does not fire when assets directory exists but is empty", func() {
+		tmpDir := GinkgoT().TempDir()
+		contentDir := filepath.Join(tmpDir, "content")
+		layoutDir := filepath.Join(tmpDir, "layouts")
+		assetsDir := filepath.Join(tmpDir, "assets")
+		pluginsDir := filepath.Join(tmpDir, "plugins")
+		outputDir := filepath.Join(tmpDir, "_site")
+
+		Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+		Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+		Expect(os.MkdirAll(assetsDir, 0755)).To(Succeed()) // empty dir
+		Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
+
+		Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+			[]byte("---\ntitle: Home\nlayout: default\n---\n# Home"), 0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+			[]byte("<html><body>{{ content }}</body></html>"), 0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(pluginsDir, "empty-check.js"),
+			[]byte(`export default function(alloy) {
+  let called = false;
+  alloy.hook('onAssetProcess', {}, (asset) => {
+    called = true;
+    return asset;
+  });
+  alloy.hook('onBuildComplete', {}, (stats) => {
+    if (called) {
+      throw new Error('onAssetProcess must not fire when assets directory is empty');
+    }
+    return stats;
+  });
+}`), 0644)).To(Succeed())
+
+		cfg := &config.Config{
+			Title:       "Empty Assets Dir Test",
+			BaseURL:     "https://example.com",
+			ProjectRoot: tmpDir,
+			Build:       config.BuildConfig{Output: outputDir},
+			Structure: config.StructureConfig{
+				Content: "content",
+				Layouts: "layouts",
+				Assets:  "assets",
+				Plugins: "plugins",
+			},
+		}
+
+		_, err := pipeline.Build(cfg)
+		Expect(err).NotTo(HaveOccurred(),
+			"build must succeed when assets directory exists but is empty — "+
+				"onAssetProcess must not fire for directories with no files")
+	})
+
+	// ── Zero-pages early-return path ─────────────────────────────────
+	// build.go has an early-return path when len(pages)==0 that also copies
+	// assets. Per-asset hooks must fire on that path too.
+
+	It("fires per-asset hooks on zero-pages early-return path", func() {
+		tmpDir := GinkgoT().TempDir()
+		assetsDir := filepath.Join(tmpDir, "assets")
+		pluginsDir := filepath.Join(tmpDir, "plugins")
+		outputDir := filepath.Join(tmpDir, "_site")
+
+		Expect(os.MkdirAll(assetsDir, 0755)).To(Succeed())
+		Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
+		// No content/ dir — zero pages triggers early-return path
+
+		Expect(os.WriteFile(filepath.Join(assetsDir, "style.css"),
+			[]byte("body { color: red; }"), 0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(pluginsDir, "transform.js"),
+			[]byte(`export default function(alloy) {
+  alloy.hook('onAssetProcess', {}, (asset) => {
+    if (asset.path === 'style.css') {
+      return { content: 'body{color:red}' };
+    }
+    return asset;
+  });
+}`), 0644)).To(Succeed())
+
+		cfg := &config.Config{
+			Title:       "Zero Pages Asset Test",
+			BaseURL:     "https://example.com",
+			ProjectRoot: tmpDir,
+			Build:       config.BuildConfig{Output: outputDir},
+			Structure: config.StructureConfig{
+				Content: "content",
+				Layouts: "layouts",
+				Assets:  "assets",
+				Plugins: "plugins",
+			},
+		}
+
+		_, err := pipeline.Build(cfg)
+		Expect(err).NotTo(HaveOccurred())
+
+		outCSS, err := os.ReadFile(filepath.Join(outputDir, "style.css"))
+		Expect(err).NotTo(HaveOccurred(),
+			"asset must exist in output on zero-pages early-return path")
+		Expect(string(outCSS)).To(Equal("body{color:red}"),
+			"onAssetProcess must fire and apply return value even on the zero-pages "+
+				"early-return path — build.go has two CopyAssets call sites, both must "+
+				"be wired for per-asset dispatch (issue #974)")
+	})
+
+	// ── Null/undefined return preserves original content ─────────────
+	// When a plugin returns null or undefined, the original asset content
+	// must be preserved (graceful degradation).
+
+	It("preserves original content when plugin returns null", func() {
+		tmpDir := GinkgoT().TempDir()
+		contentDir := filepath.Join(tmpDir, "content")
+		layoutDir := filepath.Join(tmpDir, "layouts")
+		assetsDir := filepath.Join(tmpDir, "assets")
+		pluginsDir := filepath.Join(tmpDir, "plugins")
+		outputDir := filepath.Join(tmpDir, "_site")
+
+		Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+		Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+		Expect(os.MkdirAll(assetsDir, 0755)).To(Succeed())
+		Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
+
+		cssContent := "body { color: blue; }"
+		Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+			[]byte("---\ntitle: Home\nlayout: default\n---\n# Home"), 0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+			[]byte("<html><body>{{ content }}</body></html>"), 0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(assetsDir, "style.css"),
+			[]byte(cssContent), 0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(pluginsDir, "null-return.js"),
+			[]byte(`export default function(alloy) {
+  let receivedPerAsset = false;
+  alloy.hook('onAssetProcess', {}, (asset) => {
+    if (typeof asset === 'object' && asset !== null && typeof asset.path === 'string') {
+      receivedPerAsset = true;
+    }
+    return null;
+  });
+  alloy.hook('onBuildComplete', {}, (stats) => {
+    if (!receivedPerAsset) {
+      throw new Error('onAssetProcess was not called with per-asset payload — cannot test null return behavior without per-asset dispatch');
+    }
+    return stats;
+  });
+}`), 0644)).To(Succeed())
+
+		cfg := &config.Config{
+			Title:       "Null Return Test",
+			BaseURL:     "https://example.com",
+			ProjectRoot: tmpDir,
+			Build:       config.BuildConfig{Output: outputDir},
+			Structure: config.StructureConfig{
+				Content: "content",
+				Layouts: "layouts",
+				Assets:  "assets",
+				Plugins: "plugins",
+			},
+		}
+
+		_, err := pipeline.Build(cfg)
+		Expect(err).NotTo(HaveOccurred(),
+			"null return from onAssetProcess must not crash the build — "+
+				"if this fails with 'not called with per-asset payload', "+
+				"the hook is not wired for per-asset dispatch (issue #974)")
+
+		outCSS, err := os.ReadFile(filepath.Join(outputDir, "style.css"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(outCSS)).To(Equal(cssContent),
+			"when plugin returns null, original asset content must be preserved")
+	})
+
+	// ── Missing content key preserves original ───────────────────────
+	// Return value without a "content" key preserves the original content.
+
+	It("preserves original content when return value has no content key", func() {
+		tmpDir := GinkgoT().TempDir()
+		contentDir := filepath.Join(tmpDir, "content")
+		layoutDir := filepath.Join(tmpDir, "layouts")
+		assetsDir := filepath.Join(tmpDir, "assets")
+		pluginsDir := filepath.Join(tmpDir, "plugins")
+		outputDir := filepath.Join(tmpDir, "_site")
+
+		Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+		Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+		Expect(os.MkdirAll(assetsDir, 0755)).To(Succeed())
+		Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
+
+		jsContent := "const x = 42;"
+		Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+			[]byte("---\ntitle: Home\nlayout: default\n---\n# Home"), 0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+			[]byte("<html><body>{{ content }}</body></html>"), 0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(assetsDir, "app.js"),
+			[]byte(jsContent), 0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(pluginsDir, "no-content-key.js"),
+			[]byte(`export default function(alloy) {
+  let receivedPerAsset = false;
+  alloy.hook('onAssetProcess', {}, (asset) => {
+    if (typeof asset === 'object' && asset !== null && typeof asset.path === 'string') {
+      receivedPerAsset = true;
+    }
+    return { path: asset.path, metadata: 'extra' };
+  });
+  alloy.hook('onBuildComplete', {}, (stats) => {
+    if (!receivedPerAsset) {
+      throw new Error('onAssetProcess was not called with per-asset payload — cannot test missing content key behavior without per-asset dispatch');
+    }
+    return stats;
+  });
+}`), 0644)).To(Succeed())
+
+		cfg := &config.Config{
+			Title:       "No Content Key Test",
+			BaseURL:     "https://example.com",
+			ProjectRoot: tmpDir,
+			Build:       config.BuildConfig{Output: outputDir},
+			Structure: config.StructureConfig{
+				Content: "content",
+				Layouts: "layouts",
+				Assets:  "assets",
+				Plugins: "plugins",
+			},
+		}
+
+		_, err := pipeline.Build(cfg)
+		Expect(err).NotTo(HaveOccurred(),
+			"return value without content key must not crash the build — "+
+				"if this fails with 'not called with per-asset payload', "+
+				"the hook is not wired for per-asset dispatch (issue #974)")
+
+		outJS, err := os.ReadFile(filepath.Join(outputDir, "app.js"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(outJS)).To(Equal(jsContent),
+			"when return value has no content key, original asset content must be preserved — "+
+				"only the content key triggers replacement per spec")
+	})
+
+	// ── Path modification in return value is ignored ─────────────────
+	// Spec says only "content" is applied back. Returning a different path
+	// must not rename the output file.
+
+	It("ignores path changes in return value", func() {
+		tmpDir := GinkgoT().TempDir()
+		contentDir := filepath.Join(tmpDir, "content")
+		layoutDir := filepath.Join(tmpDir, "layouts")
+		assetsDir := filepath.Join(tmpDir, "assets")
+		pluginsDir := filepath.Join(tmpDir, "plugins")
+		outputDir := filepath.Join(tmpDir, "_site")
+
+		Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+		Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+		Expect(os.MkdirAll(assetsDir, 0755)).To(Succeed())
+		Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
+
+		cssContent := "body { color: green; }"
+		Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+			[]byte("---\ntitle: Home\nlayout: default\n---\n# Home"), 0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+			[]byte("<html><body>{{ content }}</body></html>"), 0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(assetsDir, "original.css"),
+			[]byte(cssContent), 0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(pluginsDir, "rename-path.js"),
+			[]byte(`export default function(alloy) {
+  let receivedPerAsset = false;
+  alloy.hook('onAssetProcess', {}, (asset) => {
+    if (typeof asset === 'object' && asset !== null && typeof asset.path === 'string') {
+      receivedPerAsset = true;
+    }
+    return { path: 'renamed.css', content: asset.content };
+  });
+  alloy.hook('onBuildComplete', {}, (stats) => {
+    if (!receivedPerAsset) {
+      throw new Error('onAssetProcess was not called with per-asset payload — cannot test path ignore behavior without per-asset dispatch');
+    }
+    return stats;
+  });
+}`), 0644)).To(Succeed())
+
+		cfg := &config.Config{
+			Title:       "Path Ignore Test",
+			BaseURL:     "https://example.com",
+			ProjectRoot: tmpDir,
+			Build:       config.BuildConfig{Output: outputDir},
+			Structure: config.StructureConfig{
+				Content: "content",
+				Layouts: "layouts",
+				Assets:  "assets",
+				Plugins: "plugins",
+			},
+		}
+
+		_, err := pipeline.Build(cfg)
+		Expect(err).NotTo(HaveOccurred(),
+			"path changes in return value must be silently ignored — "+
+				"if this fails with 'not called with per-asset payload', "+
+				"the hook is not wired for per-asset dispatch (issue #974)")
+
+		// Original path must still exist in output
+		outCSS, err := os.ReadFile(filepath.Join(outputDir, "original.css"))
+		Expect(err).NotTo(HaveOccurred(),
+			"original asset path must exist in output — path changes in return value are ignored")
+		Expect(string(outCSS)).To(Equal(cssContent),
+			"content must be preserved at the original path")
+
+		// Renamed path must NOT exist
+		_, err = os.Stat(filepath.Join(outputDir, "renamed.css"))
+		Expect(os.IsNotExist(err)).To(BeTrue(),
+			"renamed path must not exist in output — only content is applied back, not path")
+	})
 })
