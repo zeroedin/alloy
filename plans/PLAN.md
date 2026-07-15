@@ -2385,7 +2385,7 @@ alloy.hook("onPageRendered", {}, (html) => {
 
 #### Per-asset hook (path + content object)
 
-Fires **once per asset file**. Payload is a JSON object with `path` and `content`. Return value replaces the asset content.
+Fires **once per asset file** during asset copy. Payload is a JSON object with `path` (relative within the assets directory, e.g. `css/main.css`) and `content` (file content as a string). Return value's `content` key replaces the asset content written to the output directory. The hook does not fire when the assets directory does not exist or contains no files. If the return value is `null`/`undefined` or has no `content` key, the original content is preserved. The `path` key in the return value is ignored — only `content` is applied back.
 
 | Event | Payload | Returns | When |
 |---|---|---|---|
