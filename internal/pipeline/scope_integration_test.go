@@ -41,9 +41,11 @@ var _ = Describe("Scope-aware pipeline integration (issue #539)", func() {
 		Expect(result).NotTo(BeNil())
 	})
 
-	It("onPagesReady with pages: false still provides the pages array for injection", func() {
+	// Updated for #971: pages: false no longer sends pages — virtual page
+	// injection uses { addPages: [...] } instead of payload.pages.push().
+	It("onPagesReady with pages: false omits pages and injects via addPages (issues #539, #971)", func() {
 		cfg := &config.Config{
-			Title:   "Pages False Test",
+			Title:   "Pages False addPages Test",
 			BaseURL: "https://example.com",
 			Build:   config.BuildConfig{Output: "_site"},
 		}
@@ -59,30 +61,33 @@ var _ = Describe("Scope-aware pipeline integration (issue #539)", func() {
     if (payload.siteData.tokens) {
       throw new Error('siteData.tokens must not be present when data scope is ["elements"]');
     }
-    if (!payload.pages || typeof payload.pages.push !== 'function') {
-      throw new Error('pages array must be present for virtual page injection');
+    if (payload.pages !== null) {
+      throw new Error('pages: false must send null pages, got ' + JSON.stringify(payload.pages));
     }
     var elements = payload.siteData.elements;
+    var newPages = [];
     for (var i = 0; i < elements.length; i++) {
-      payload.pages.push({
+      newPages.push({
         path: 'generated/' + elements[i].slug + '.md',
         url: '/generated/' + elements[i].slug + '/',
         frontMatter: { title: elements[i].name, layout: 'default' },
         content: '# ' + elements[i].name
       });
     }
-    return payload;
+    return { addPages: newPages };
   });
 }`,
 		}
 		result, err := pipeline.BuildWithContent(cfg, contentMap)
 		Expect(err).NotTo(HaveOccurred(),
-			"onPagesReady always sends the pages array regardless of pages scope — "+
-				"runOnPagesReady does not check Pages.Mode because the hook needs "+
-				"the array for virtual page injection (issue #539)")
+			"onPagesReady with pages: false must not send pages — "+
+				"if this fails with 'pages: false must not send pages', "+
+				"runOnPagesReady is ignoring Pages.Mode (issues #539, #971)")
 		Expect(result).NotTo(BeNil())
 		Expect(result.PageCount).To(Equal(2),
-			"1 real page + 1 data-driven virtual page = 2 total (issue #539)")
+			"1 real page + 1 data-driven virtual page via addPages = 2 total (issues #539, #971)")
+		Expect(result.RenderedContent).To(HaveKey("generated/button.md"),
+			"virtual page 'button' injected via addPages must appear in output (issues #539, #971)")
 	})
 
 	It("onContentTransformed with pages scope none skips hook entirely", func() {
