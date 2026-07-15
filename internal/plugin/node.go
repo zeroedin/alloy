@@ -75,7 +75,7 @@ func DecodeMessage(data []byte) (*Message, error) {
 		if len(snippet) > 80 {
 			snippet = snippet[:80] + "..."
 		}
-		return nil, fmt.Errorf("plugin bridge protocol error: expected frame header, got %q — a plugin or one of its dependencies wrote non-protocol output to stdout", snippet)
+		return nil, fmt.Errorf("plugin bridge protocol error: expected Content-Length header, got %q — a plugin or one of its dependencies wrote non-protocol output to stdout", snippet)
 	}
 
 	parts := strings.SplitN(raw, "\r\n\r\n", 2)
@@ -623,7 +623,7 @@ func (b *NodeBridge) Send(msg *Message) (*Message, error) {
 		if len(snippet) > 80 {
 			snippet = snippet[:80] + "..."
 		}
-		return nil, fmt.Errorf("plugin bridge protocol error: expected frame header, got %q — a plugin or one of its dependencies wrote non-protocol output to stdout", snippet)
+		return nil, fmt.Errorf("plugin bridge protocol error: expected Content-Length header, got %q — a plugin or one of its dependencies wrote non-protocol output to stdout", snippet)
 	}
 	lenStr := strings.TrimSpace(strings.TrimPrefix(headerLine, "Content-Length:"))
 	contentLen, err := strconv.Atoi(lenStr)
