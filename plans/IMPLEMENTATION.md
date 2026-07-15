@@ -62,7 +62,7 @@ In-house ordered map type that preserves JSON key insertion order. ~100 lines, z
 
 Used by `LoadFile` and `LoadExternalFiles` for `.json` files only. Front matter, config, cascade, and collections do not use this type.
 
-### 1B: `internal/data` — 14 tests
+### 1B: `internal/data` — 16 tests
 **File**: `internal/data/loader.go`
 
 - `LoadFile`: Detect format by extension (.yaml/.yml, .toml, .json), parse with appropriate library. **JSON files return `*ordered.Map`** (issue #453) — the value inside `siteData["filename"]` is an `*ordered.Map` preserving key insertion order. The `LoadFile` return type stays `map[string]interface{}` for YAML/TOML; for JSON, the top-level object is an `*ordered.Map` stored as `interface{}` in the result.

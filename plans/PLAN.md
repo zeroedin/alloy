@@ -237,7 +237,7 @@ All formats parse into `map[string]any` — the rest of the pipeline (data casca
 
 **Subdirectories create nested namespaces (issue #983).** `LoadDirectory` recurses into subdirectories. Each subdirectory becomes a nested map key, and files within it are keyed by stem name within that namespace:
 
-```
+```text
 data/
 ├── navigation.yaml          → site.data.navigation
 ├── nav/
