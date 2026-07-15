@@ -338,58 +338,16 @@ func deserializeTOC(items []interface{}) []content.TOCEntry {
 	return entries
 }
 
+// knownPagesReadyKeys are keys recognized in the onPagesReady return map.
+var knownPagesReadyKeys = map[string]bool{
+	"pages":    true,
+	"addPages": true,
+	"siteData": true,
+}
+
 func runOnPagesReady(pages []*content.Page, ps *PipelineState) ([]*content.Page, error) {
-	originalCount := len(pages)
-	scope := computeUnionScope(ps.Hooks.ScopeFor(plugin.OnPagesReady))
-	// Pages.Mode intentionally ignored — virtual page injection needs the full set.
-	serialized := make([]plugin.HookPagePayload, len(pages))
-	for i, page := range pages {
-		p := plugin.HookPagePayload{
-			Path: page.RelPath,
-			URL:  page.URL,
-		}
-		if scope == nil || scope.WantsField("frontMatter") {
-			p.FrontMatter = convertOrderedMaps(page.FrontMatter)
-		}
-		if scope == nil || scope.WantsField("content") {
-			p.Content = string(page.Body)
-		}
-		serialized[i] = p
-	}
-	payload := plugin.HookPagesReadyPayload{
-		Pages: serialized,
-	}
-	if scope == nil || scope.Data == nil || scope.WantsAllData() {
-		payload.SiteData = ps.SiteData
-	} else if len(scope.Data) > 0 {
-		filtered := make(map[string]interface{})
-		for _, key := range scope.Data {
-			if v, ok := ps.SiteData[key]; ok {
-				filtered[key] = v
-			}
-		}
-		payload.SiteData = filtered
-	}
+	unionScope := computeUnionScope(ps.Hooks.ScopeFor(plugin.OnPagesReady))
 
-	result, err := ps.Hooks.RunWithTimeout(plugin.OnPagesReady, payload)
-	if err != nil {
-		return nil, fmt.Errorf("plugin hook onPagesReady: %w", err)
-	}
-
-	resultMap, ok := toGoMap(result)
-	if !ok {
-		return pages, nil
-	}
-	returnedPages, ok := resultMap["pages"].([]interface{})
-	if !ok {
-		return pages, nil
-	}
-	if len(returnedPages) < originalCount {
-		return nil, fmt.Errorf("plugin hook onPagesReady: returned %d pages but input had %d — plugins must not remove pages", len(returnedPages), originalCount)
-	}
-
-	// urlIndex tracks all known URLs. Seeded with original pages, then updated as
-	// each virtual page is appended — so virtual-to-virtual collisions are caught too.
 	urlIndex := make(map[string]string, len(pages))
 	for _, p := range pages {
 		if p.URL != "" {
@@ -397,25 +355,127 @@ func runOnPagesReady(pages []*content.Page, ps *PipelineState) ([]*content.Page,
 		}
 	}
 
-	for i := originalCount; i < len(returnedPages); i++ {
-		pageMap, ok := toGoMap(returnedPages[i])
-		if !ok {
-			return nil, fmt.Errorf("plugin hook onPagesReady: virtual page %d: expected map, got %T", i-originalCount, returnedPages[i])
-		}
-		vp, err := virtualPageFromMap(pageMap)
-		if err != nil {
-			return nil, fmt.Errorf("plugin hook onPagesReady: virtual page %d: %w", i-originalCount, err)
-		}
-		if rawContent, ok := pageMap["content"].(string); ok {
-			vp.Content = []byte(rawContent)
-			vp.Body = []byte(rawContent)
-		}
-		if existingPath, ok := urlIndex[vp.URL]; ok {
-			return nil, fmt.Errorf("plugin hook onPagesReady: virtual page URL %q collides with existing page %s", vp.URL, existingPath)
-		}
-		urlIndex[vp.URL] = vp.RelPath
-		pages = append(pages, vp)
+	err := ps.Hooks.RunEachWithTimeout(plugin.OnPagesReady,
+		func(_ int, _ *plugin.HookScope) interface{} {
+			return buildPagesReadyPayload(pages, unionScope, ps.SiteData)
+		},
+		func(_ int, _ *plugin.HookScope, result interface{}) error {
+			resultMap, ok := toGoMap(result)
+			if !ok {
+				return nil
+			}
+
+			pagesArr, pagesOK := resultMap["pages"].([]interface{})
+			addPagesRaw, addPagesExists := resultMap["addPages"]
+			addPagesExists = addPagesExists && addPagesRaw != nil
+
+			if pagesOK && addPagesExists {
+				return fmt.Errorf("returned both 'pages' and 'addPages' — use one or the other")
+			}
+
+			if pagesOK {
+				preHookCount := len(pages)
+				if len(pagesArr) < preHookCount {
+					return fmt.Errorf("returned %d pages but input had %d — plugins must not remove pages", len(pagesArr), preHookCount)
+				}
+				for j := preHookCount; j < len(pagesArr); j++ {
+					vp, err := extractVirtualPage(pagesArr[j], j-preHookCount)
+					if err != nil {
+						return err
+					}
+					if existingPath, ok := urlIndex[vp.URL]; ok {
+						return fmt.Errorf("virtual page URL %q collides with existing page %s", vp.URL, existingPath)
+					}
+					urlIndex[vp.URL] = vp.RelPath
+					pages = append(pages, vp)
+				}
+				return nil
+			}
+
+			if addPagesExists {
+				addPagesArr, ok := addPagesRaw.([]interface{})
+				if !ok {
+					return fmt.Errorf("addPages must be an array, got %T", addPagesRaw)
+				}
+				for j, entry := range addPagesArr {
+					vp, err := extractVirtualPage(entry, j)
+					if err != nil {
+						return err
+					}
+					if existingPath, ok := urlIndex[vp.URL]; ok {
+						return fmt.Errorf("virtual page URL %q collides with existing page %s", vp.URL, existingPath)
+					}
+					urlIndex[vp.URL] = vp.RelPath
+					pages = append(pages, vp)
+				}
+				return nil
+			}
+
+			for key := range resultMap {
+				if !knownPagesReadyKeys[key] {
+					return fmt.Errorf("returned unrecognized shape — expected \"pages\" or \"addPages\"")
+				}
+			}
+			return nil
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("plugin hook onPagesReady: %w", err)
 	}
 
 	return pages, nil
+}
+
+func extractVirtualPage(raw interface{}, index int) (*content.Page, error) {
+	pageMap, ok := toGoMap(raw)
+	if !ok {
+		return nil, fmt.Errorf("virtual page %d: expected map, got %T", index, raw)
+	}
+	vp, err := virtualPageFromMap(pageMap)
+	if err != nil {
+		return nil, fmt.Errorf("virtual page %d: %w", index, err)
+	}
+	if rawContent, ok := pageMap["content"].(string); ok {
+		vp.Content = []byte(rawContent)
+		vp.Body = []byte(rawContent)
+	}
+	return vp, nil
+}
+
+func buildPagesReadyPayload(pages []*content.Page, scope *plugin.HookScope, siteData map[string]interface{}) plugin.HookPagesReadyPayload {
+	var serialized []plugin.HookPagePayload
+	if scope == nil || scope.Pages.Mode != plugin.PagesScopeNone {
+		serialized = make([]plugin.HookPagePayload, len(pages))
+		for i, page := range pages {
+			p := plugin.HookPagePayload{
+				Path: page.RelPath,
+				URL:  page.URL,
+			}
+			if scope == nil || scope.WantsField("frontMatter") {
+				p.FrontMatter = convertOrderedMaps(page.FrontMatter)
+			}
+			if scope == nil || scope.WantsField("content") {
+				p.Content = string(page.Body)
+			}
+			serialized[i] = p
+		}
+	}
+
+	payload := plugin.HookPagesReadyPayload{
+		Pages: serialized,
+	}
+
+	if scope == nil || scope.Data == nil || scope.WantsAllData() {
+		payload.SiteData = siteData
+	} else if len(scope.Data) > 0 {
+		filtered := make(map[string]interface{})
+		for _, key := range scope.Data {
+			if v, ok := siteData[key]; ok {
+				filtered[key] = v
+			}
+		}
+		payload.SiteData = filtered
+	}
+
+	return payload
 }
