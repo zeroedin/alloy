@@ -1,6 +1,10 @@
 package plugin
 
-import "path/filepath"
+import (
+	"bufio"
+	"io"
+	"path/filepath"
+)
 
 var ParseScopeJSON = parseScopeJSON
 var ParseScopeMap = parseScopeMap
@@ -32,4 +36,20 @@ func HookPriorities(r *HookRegistry, event HookName) []int {
 		priorities[i] = h.priority
 	}
 	return priorities
+}
+
+// nopWriteCloser wraps an io.Writer to satisfy io.WriteCloser.
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
+
+// NewBridgeWithReader creates a NodeBridge wired to the given reader
+// for testing Send's error-path diagnostic without a live subprocess.
+// The bridge is set to BridgeRunning state with stdin going to io.Discard.
+func NewBridgeWithReader(reader *bufio.Reader) *NodeBridge {
+	return &NodeBridge{
+		state:  BridgeRunning,
+		stdout: reader,
+		stdin:  nopWriteCloser{io.Discard},
+	}
 }

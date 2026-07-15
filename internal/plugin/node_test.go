@@ -3,6 +3,7 @@
 package plugin_test
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,6 +15,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/zeroedin/alloy/internal/ordered"
 	"github.com/zeroedin/alloy/internal/plugin"
 )
 
@@ -471,6 +473,127 @@ var _ = Describe("NodeBridge", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(bridge.PID()).To(Equal(0),
 				"PID should be 0 after process is stopped")
+		})
+	})
+
+	// ── Stdout isolation (#968) ──────────────────────────────────────
+
+	Describe("Stdout isolation (#968)", func() {
+		var tmpDir string
+		var rt *plugin.NodeRuntime
+
+		BeforeEach(func() {
+			var err error
+			tmpDir, err = os.MkdirTemp("", "alloy-stdout-isolation-*")
+			Expect(err).NotTo(HaveOccurred())
+			plugin.ResetStalePIDCleanup(tmpDir)
+			rt = plugin.NewNodeRuntime()
+			rt.SetProjectRoot(tmpDir)
+		})
+
+		AfterEach(func() {
+			if rt != nil {
+				rt.Close()
+			}
+			os.RemoveAll(tmpDir)
+		})
+
+		It("filter calling process.stdout.write returns correct result without protocol corruption", func() {
+			fixturePath, err := filepath.Abs("testdata/single-files/stdout-write-filter.js")
+			Expect(err).NotTo(HaveOccurred())
+
+			err = rt.EvalFile(fixturePath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rt.RegisteredFilters()).To(ContainElement("noisyFilter"),
+				"filter should be registered despite no stdout write during eval")
+
+			result, err := rt.CallFilter("noisyFilter", "hello world")
+			Expect(err).NotTo(HaveOccurred(),
+				"filter call must succeed — process.stdout.write must not corrupt the protocol")
+			Expect(result).To(Equal("HELLO WORLD"),
+				"filter should return correct transformed value despite stdout.write call")
+		})
+
+		It("top-level process.stdout.write during eval does not corrupt the registration handshake", func() {
+			fixturePath, err := filepath.Abs("testdata/single-files/stdout-write-toplevel.js")
+			Expect(err).NotTo(HaveOccurred())
+
+			err = rt.EvalFile(fixturePath)
+			Expect(err).NotTo(HaveOccurred(),
+				"eval should succeed despite top-level stdout.write during module load")
+			Expect(rt.RegisteredFilters()).To(ContainElement("cleanFilter"),
+				"filter from the plugin should be registered after successful handshake")
+
+			result, err := rt.CallFilter("cleanFilter", "test")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("test-processed"),
+				"filter should return correct value proving the handshake completed intact")
+		})
+
+		It("console.log in a hook does not corrupt the protocol (regression)", func() {
+			fixturePath, err := filepath.Abs("testdata/single-files/console-log-hook.js")
+			Expect(err).NotTo(HaveOccurred())
+
+			err = rt.EvalFile(fixturePath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rt.RegisteredHooks()).To(ContainElement("onBuildComplete"),
+				"hook should be registered after eval")
+
+			payload := map[string]interface{}{"key": "value"}
+			result, err := rt.CallHook("onBuildComplete", payload)
+			Expect(err).NotTo(HaveOccurred(),
+				"hook call must succeed — console.log must be redirected to stderr, not stdout")
+
+			resultMap, ok := result.(*ordered.Map)
+			Expect(ok).To(BeTrue(),
+				"hook result should be an *ordered.Map after JSON round-trip rewrap")
+			Expect(resultMap.Get("hookProcessed")).To(Equal(true),
+				"hook should return modified payload proving it executed and round-tripped correctly")
+			Expect(resultMap.Get("key")).To(Equal("value"),
+				"original payload fields should be preserved through the hook")
+		})
+	})
+
+	// ── Malformed frame diagnostic (#968) ────────────────────────────
+
+	Describe("Malformed frame diagnostic (#968)", func() {
+		It("DecodeMessage names stdout pollution as the likely cause when non-frame bytes are received", func() {
+			garbage := []byte("some debug output from a plugin\nmore output")
+			_, err := plugin.DecodeMessage(garbage)
+			Expect(err).To(HaveOccurred())
+			errMsg := err.Error()
+			Expect(errMsg).To(ContainSubstring("stdout"),
+				"error should name stdout pollution as the likely cause")
+			Expect(errMsg).To(ContainSubstring("some debug output"),
+				"error should include a snippet of the offending bytes for diagnosis")
+		})
+
+		It("DecodeMessage truncates long non-frame content in the diagnostic snippet", func() {
+			longGarbage := make([]byte, 500)
+			for i := range longGarbage {
+				longGarbage[i] = 'x'
+			}
+			_, err := plugin.DecodeMessage(longGarbage)
+			Expect(err).To(HaveOccurred())
+			errMsg := err.Error()
+			Expect(errMsg).To(ContainSubstring("stdout"),
+				"error should name stdout pollution as the likely cause")
+			Expect(len(errMsg)).To(BeNumerically("<", 300),
+				"error message should be bounded, not echo 500 bytes of garbage verbatim")
+		})
+
+		It("Send reports stdout pollution diagnostic when non-frame bytes arrive on stdout", func() {
+			garbage := "plugin debug output\n"
+			reader := bufio.NewReader(strings.NewReader(garbage))
+			bridge := plugin.NewBridgeWithReader(reader)
+
+			_, err := bridge.Send(&plugin.Message{Type: "filter", Name: "test"})
+			Expect(err).To(HaveOccurred())
+			errMsg := err.Error()
+			Expect(errMsg).To(ContainSubstring("stdout"),
+				"Send error should name stdout pollution as the likely cause")
+			Expect(errMsg).To(ContainSubstring("plugin debug output"),
+				"Send error should include a snippet of the non-frame bytes")
 		})
 	})
 })
