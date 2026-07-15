@@ -1136,6 +1136,215 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── onConfig return value applied to pipeline config (issue #973) ────────
+	// onConfig is documented as mutable ("Plugin mutates config") but the
+	// return value is silently discarded at the Build() call site. The pipeline
+	// must apply the returned config back to cfg for the mutable allowlist:
+	//   build.output, build.clean, structure.content, structure.layouts,
+	//   structure.assets, structure.static, structure.data, passthrough,
+	//   plugins.workers, plugins.timeout
+	// Fields outside the allowlist (e.g. title, baseURL) are NOT applied.
+	// Non-object returns produce a build error.
+
+	Describe("onConfig return value applied to pipeline config (issue #973)", func() {
+
+		It("plugin can change build.output via onConfig and pipeline writes to the new directory", func() {
+			cfg := &config.Config{
+				Title:   "Config Mutation Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/change-output.js": `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.build.output = "custom_dist";
+    return config;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onConfig hook must not error when returning modified config (issue #973)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.OutputDir).To(Equal("custom_dist"),
+				"onConfig return value must be applied — build.output should be "+
+					"'custom_dist', not the original '_site'. Currently the return "+
+					"value is discarded at the Build() call site (issue #973)")
+		})
+
+		It("plugin can redirect structure.content via onConfig", func() {
+			cfg := &config.Config{
+				Title:   "Content Redirect Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// Content files are under "pages/", not the default "content/".
+			// Without the onConfig mutation, the pipeline looks in "content/"
+			// and finds nothing → 0 pages.
+			contentMap := map[string]string{
+				"pages/index.md":         "---\ntitle: From Pages Dir\nlayout: default\n---\n# From Pages Dir",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/redirect-content.js": `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.structure.content = "pages";
+    return config;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onConfig structure.content redirection must not error (issue #973)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(1),
+				"structure.content redirected to 'pages/' — pipeline must find "+
+					"index.md there. If PageCount is 0, the onConfig mutation "+
+					"was not applied and the pipeline looked in 'content/' (issue #973)")
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("From Pages Dir"),
+				"content from the redirected directory must be rendered (issue #973)")
+		})
+
+		It("plugin can redirect structure.layouts via onConfig", func() {
+			cfg := &config.Config{
+				Title:   "Layouts Redirect Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// Both "layouts/" and "templates/" have default.liquid with different markers.
+			// If the onConfig mutation is applied, the pipeline uses "templates/" → "REDIRECTED".
+			// If not applied, it uses "layouts/" → "ORIGINAL".
+			contentMap := map[string]string{
+				"content/index.md":            "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid":      "<html><body>ORIGINAL_LAYOUT {{ content }}</body></html>",
+				"templates/default.liquid":    "<html><body>REDIRECTED_LAYOUT {{ content }}</body></html>",
+				"plugins/redirect-layouts.js": `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.structure.layouts = "templates";
+    return config;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onConfig structure.layouts redirection must not error (issue #973)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("REDIRECTED_LAYOUT"),
+				"structure.layouts redirected to 'templates/' — pipeline must use "+
+					"layouts from the new directory. If output contains 'ORIGINAL_LAYOUT', "+
+					"the onConfig mutation was not applied (issue #973)")
+			Expect(html).NotTo(ContainSubstring("ORIGINAL_LAYOUT"),
+				"layouts from the original directory must NOT be used after "+
+					"structure.layouts is redirected via onConfig (issue #973)")
+		})
+
+		It("onConfig mutations outside the mutable allowlist are not applied", func() {
+			cfg := &config.Config{
+				Title:   "Original Title",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// Plugin attempts to change title (not in the mutable allowlist).
+			// site.title in templates must still show the original value.
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body><span class=\"site-title\">{{ site.title }}</span>{{ content }}</body></html>",
+				"plugins/change-title.js": `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.title = "Mutated Title";
+    return config;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onConfig with immutable field mutation must not error — "+
+					"immutable changes are silently ignored or produce a warning, "+
+					"not an error (issue #973)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("Original Title"),
+				"site.title must still be 'Original Title' — title is outside "+
+					"the mutable allowlist and must not be applied back to cfg (issue #973)")
+			Expect(html).NotTo(ContainSubstring("Mutated Title"),
+				"mutated title must NOT appear in output — if it does, the "+
+					"pipeline is applying all returned fields without filtering "+
+					"through the mutable allowlist (issue #973)")
+		})
+
+		It("multiple onConfig hooks from separate plugins chain mutations correctly", func() {
+			cfg := &config.Config{
+				Title:   "Chain Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// Two separate plugins each register an onConfig hook.
+			// The bridge uses hooks[name] = fn per plugin (one handler per event per plugin),
+			// but the hook registry chains results across plugins in priority order.
+			// Plugin A (priority 10) runs first, sets build.output to "step_one".
+			// Plugin B (priority 50) runs second, receives the mutated config and appends "_step_two".
+			// The final result must be "step_one_step_two".
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/aaa-step-one.js": `export default function(alloy) {
+  alloy.hook('onConfig', { priority: 10 }, (config) => {
+    config.build.output = "step_one";
+    return config;
+  });
+}`,
+				"plugins/bbb-step-two.js": `export default function(alloy) {
+  alloy.hook('onConfig', { priority: 50 }, (config) => {
+    config.build.output = config.build.output + "_step_two";
+    return config;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"chained onConfig hooks from separate plugins must not error (issue #973)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.OutputDir).To(Equal("step_one_step_two"),
+				"multiple onConfig hooks must chain — plugin A sets 'step_one', "+
+					"plugin B appends '_step_two'. If OutputDir is '_site', "+
+					"neither hook's return was applied. If 'step_one', only the "+
+					"last hook's return was applied without chaining (issue #973)")
+		})
+
+		It("onConfig hook returning a non-object produces a build error", func() {
+			cfg := &config.Config{
+				Title:   "Non-Object Return Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// Plugin returns a string instead of a config object.
+			// The pipeline must reject this with an error, not silently ignore it.
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/bad-return.js": `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    return "not-a-config-object";
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"onConfig returning a non-object must produce a build error — "+
+					"the pipeline must type-check the return value and reject "+
+					"strings, numbers, arrays, and null. Currently the return "+
+					"is discarded silently (issue #973)")
+			Expect(err.Error()).To(ContainSubstring("onConfig"),
+				"error message must identify onConfig as the source — "+
+					"helps plugin authors locate the problematic hook (issue #973)")
+		})
+	})
+
 	// ── Template tags in <code> not escaped for HTML content (#352) ─
 	// escapeTemplateTagsInCode must only run on .md files, not .html.
 })
