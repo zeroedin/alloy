@@ -61,8 +61,8 @@ var _ = Describe("Scope-aware pipeline integration (issue #539)", func() {
     if (payload.siteData.tokens) {
       throw new Error('siteData.tokens must not be present when data scope is ["elements"]');
     }
-    if (payload.pages && payload.pages.length > 0) {
-      throw new Error('pages: false must not send pages to plugin, got ' + payload.pages.length);
+    if (payload.pages !== null) {
+      throw new Error('pages: false must send null pages, got ' + JSON.stringify(payload.pages));
     }
     var elements = payload.siteData.elements;
     var newPages = [];
