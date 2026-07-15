@@ -4,6 +4,14 @@
 
 import { pathToFileURL } from 'node:url';
 
+// Capture the real stdout.write before any plugin code can run.
+// sendMessage is the ONLY code path that uses it — everything else
+// (plugin code, npm dependencies, console.*) sees the redirected version
+// that writes to stderr, keeping the JSON-RPC framing on stdout clean.
+const realStdoutWrite = process.stdout.write.bind(process.stdout);
+process.stdout.write = (chunk, encoding, callback) =>
+  process.stderr.write(chunk, encoding, callback);
+
 // Redirect console output to stderr so plugin console.log() doesn't corrupt the JSON-RPC framing on stdout.
 const origConsole = { log: console.log, warn: console.warn, error: console.error, info: console.info, debug: console.debug };
 console.log = (...args) => process.stderr.write(args.join(' ') + '\n');
@@ -45,7 +53,7 @@ const alloy = {
 function sendMessage(msg) {
   const body = JSON.stringify(msg);
   const frame = `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
-  process.stdout.write(frame);
+  realStdoutWrite(frame);
 }
 
 let buffer = Buffer.alloc(0);
