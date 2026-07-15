@@ -1175,24 +1175,35 @@ func validateOutputDir(cfg *config.Config) error {
 
 // assetHookFn returns a per-asset hook callback for ProcessAssets. If no
 // onAssetProcess hooks are registered, returns nil (plain copy). Otherwise each
-// asset is dispatched through the hook chain and the returned "content" key
-// replaces the file content. Path changes in the return value are ignored.
+// asset is dispatched through the hook chain via RunEachWithTimeout — the path
+// is preserved across chained hooks so every plugin receives {path, content}
+// regardless of what the previous hook returned. Only "content" from the return
+// value is applied; path changes are ignored.
 func assetHookFn(hooks *plugin.HookRegistry) func(assets.AssetFile) (assets.AssetFile, error) {
 	if hooks == nil || !hooks.HasHooks(plugin.OnAssetProcess) {
 		return nil
 	}
 	return func(af assets.AssetFile) (assets.AssetFile, error) {
-		payload := map[string]interface{}{
-			"path":    af.Path,
-			"content": string(af.Content),
-		}
-		result, err := hooks.RunWithTimeout(plugin.OnAssetProcess, payload)
+		currentContent := string(af.Content)
+
+		err := hooks.RunEachWithTimeout(plugin.OnAssetProcess,
+			func(i int, scope *plugin.HookScope) interface{} {
+				return plugin.HookAssetPayload{
+					Path:    af.Path,
+					Content: currentContent,
+				}
+			},
+			func(i int, scope *plugin.HookScope, result interface{}) error {
+				if newContent, ok := extractAssetContent(result); ok {
+					currentContent = newContent
+				}
+				return nil
+			},
+		)
 		if err != nil {
 			return af, fmt.Errorf("plugin hook onAssetProcess: %w", err)
 		}
-		if newContent, ok := extractAssetContent(result); ok {
-			af.Content = []byte(newContent)
-		}
+		af.Content = []byte(currentContent)
 		return af, nil
 	}
 }
@@ -1207,12 +1218,14 @@ func extractAssetContent(result interface{}) (string, bool) {
 			if s, ok := c.(string); ok {
 				return s, true
 			}
+			log.Printf("warning: onAssetProcess: content key exists but is %T, not string — original content preserved", c)
 		}
 	case *ordered.Map:
 		if c, exists := m.GetValue("content"); exists {
 			if s, ok := c.(string); ok {
 				return s, true
 			}
+			log.Printf("warning: onAssetProcess: content key exists but is %T, not string — original content preserved", c)
 		}
 	}
 	return "", false
