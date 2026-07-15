@@ -1856,7 +1856,9 @@ templates:
 {{ youtube "dQw4w9WgXcQ" }}
 
 <!-- Go template — block shortcode -->
-{{% callout "warning" %}}Don't do this in production.{{% /callout %}}
+{{% callout "warning" %}}
+Don't do this in production.
+{{% /callout %}}
 ```
 
 **Go template block shortcodes** use `{{% tag "args" %}}...{{% /tag %}}` syntax. The `{{% %}}` delimiters are distinct from Go's `{{ }}` expression syntax and Liquid's `{% %}` control syntax. The closing tag uses `/tagname` (e.g., `{{% /callout %}}`), not `endtagname`.
