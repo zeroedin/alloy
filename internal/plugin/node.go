@@ -15,9 +15,24 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/zeroedin/alloy/internal/ordered"
 )
+
+const stdoutPollutionErrFmt = "plugin bridge protocol error: expected Content-Length header, got %q — a plugin or one of its dependencies wrote non-protocol output to stdout"
+
+func truncateSnippet(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	// Truncate at a rune boundary to avoid splitting multi-byte UTF-8.
+	truncated := s[:maxLen]
+	for !utf8.ValidString(truncated) && len(truncated) > 0 {
+		truncated = truncated[:len(truncated)-1]
+	}
+	return truncated + "..."
+}
 
 //go:embed bridge.js
 var bridgeScript string
@@ -71,11 +86,7 @@ func DecodeMessage(data []byte) (*Message, error) {
 	raw := string(data)
 
 	if !strings.HasPrefix(raw, "Content-Length: ") {
-		snippet := raw
-		if len(snippet) > 80 {
-			snippet = snippet[:80] + "..."
-		}
-		return nil, fmt.Errorf("plugin bridge protocol error: expected Content-Length header, got %q — a plugin or one of its dependencies wrote non-protocol output to stdout", snippet)
+		return nil, fmt.Errorf(stdoutPollutionErrFmt, truncateSnippet(raw, 80))
 	}
 
 	parts := strings.SplitN(raw, "\r\n\r\n", 2)
@@ -613,17 +624,13 @@ func (b *NodeBridge) Send(msg *Message) (*Message, error) {
 	}
 
 	// Read response: Content-Length header + body
-	headerLine, err := b.stdout.ReadString('\n')
-	if err != nil {
-		return nil, fmt.Errorf("reading response header: %w", err)
-	}
+	headerLine, readErr := b.stdout.ReadString('\n')
 	headerLine = strings.TrimSpace(headerLine)
-	if !strings.HasPrefix(headerLine, "Content-Length:") {
-		snippet := headerLine
-		if len(snippet) > 80 {
-			snippet = snippet[:80] + "..."
-		}
-		return nil, fmt.Errorf("plugin bridge protocol error: expected Content-Length header, got %q — a plugin or one of its dependencies wrote non-protocol output to stdout", snippet)
+	if headerLine != "" && !strings.HasPrefix(headerLine, "Content-Length:") {
+		return nil, fmt.Errorf(stdoutPollutionErrFmt, truncateSnippet(headerLine, 80))
+	}
+	if readErr != nil {
+		return nil, fmt.Errorf("reading response header: %w", readErr)
 	}
 	lenStr := strings.TrimSpace(strings.TrimPrefix(headerLine, "Content-Length:"))
 	contentLen, err := strconv.Atoi(lenStr)
