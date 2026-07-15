@@ -801,7 +801,7 @@ var _ = Describe("Build Pipeline", func() {
 			contentMap := map[string]string{
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"content/about.md":      "---\ntitle: About\nlayout: default\n---\n# About",
-				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"layouts/default.liquid": "<html><body><h1>{{ page.title }}</h1>{{ content }}</body></html>",
 				// Plugin with pages: true reads existing pages and uses addPages to inject.
 				// This proves addPages is not gated by pages: false — it works with any scope.
 				"plugins/read-inject.js": `export default function(alloy) {
@@ -973,6 +973,166 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(err.Error()).To(ContainSubstring("addPages"),
 				"error message must mention 'addPages' as one of the expected keys — "+
 					"guides the plugin author to the correct return shape (issue #971)")
+		})
+
+		It("addPages virtual-to-virtual URL collision within same array produces error", func() {
+			cfg := &config.Config{
+				Title:   "addPages V2V Collision Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/v2v-collide.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function(payload) {
+    return { addPages: [
+      { path: 'demos/button-a.md', url: '/demos/button/', frontMatter: { title: 'Button A', layout: 'default' }, content: '# A' },
+      { path: 'demos/button-b.md', url: '/demos/button/', frontMatter: { title: 'Button B', layout: 'default' }, content: '# B' }
+    ]};
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"two addPages entries sharing the same URL must produce a collision error — "+
+					"the urlIndex must be updated per entry, not just seeded from existing pages (issue #971)")
+			Expect(err.Error()).To(ContainSubstring("collide"),
+				"collision error must mention the conflict (issue #971)")
+		})
+
+		It("non-array addPages value produces an error", func() {
+			cfg := &config.Config{
+				Title:   "addPages Type Error Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/bad-type.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function(payload) {
+    return { addPages: "not-an-array" };
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"addPages with a non-array value must produce an error — "+
+					"string, number, or object values are not valid page lists (issue #971)")
+		})
+
+		It("addPages virtual page missing url (but with path) produces validation error", func() {
+			cfg := &config.Config{
+				Title:   "addPages Missing URL Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/no-url.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function(payload) {
+    return { addPages: [{
+      path: 'demos/button.md',
+      frontMatter: { title: 'No URL' },
+      content: '# Missing URL'
+    }]};
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"addPages virtual page with path but no url must produce a validation error — "+
+					"both fields are independently required (issue #971)")
+			Expect(err.Error()).To(ContainSubstring("url"),
+				"validation error must mention the missing url field (issue #971)")
+		})
+
+		It("hook with pages: false returning payload unchanged is a no-op", func() {
+			cfg := &config.Config{
+				Title:   "addPages Echo Payload Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				// A side-effect-only hook naturally does `return payload`.
+				// With pages: false, payload is {pages: null, siteData: {...}}.
+				// The null-valued "pages" key must be treated as absent, not
+				// as the full-array "pages" return shape.
+				"plugins/echo.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function(payload) {
+    return payload;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"hook with pages: false returning payload unchanged must be a no-op — "+
+					"payload contains {pages: null, siteData: {...}}, and a null-valued "+
+					"'pages' key must be treated as absent (issue #971)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(1),
+				"echo payload must not add or remove pages (issue #971)")
+		})
+
+		It("multiple hooks returning addPages both inject their virtual pages", func() {
+			cfg := &config.Config{
+				Title:   "addPages Multi-Hook Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				// Two plugins both register onPagesReady with addPages.
+				// Each hook must receive the canonical {pages, siteData} payload,
+				// NOT the previous hook's return value. RunWithTimeout chains
+				// results (current = result), but addPages return shape != payload
+				// shape, so the pipeline must invoke hooks individually and rebuild
+				// the canonical payload between invocations.
+				"plugins/hook-a.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { data: ["*"], pages: false, priority: 10 }, function(payload) {
+    if (!payload.siteData) {
+      throw new Error('hook A: siteData missing — received previous hook return instead of canonical payload');
+    }
+    return { addPages: [{
+      path: 'from-a.md',
+      url: '/from-a/',
+      frontMatter: { title: 'From Hook A', layout: 'default' },
+      content: '# From A'
+    }]};
+  });
+}`,
+				"plugins/hook-b.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { data: ["*"], pages: false, priority: 50 }, function(payload) {
+    if (!payload.siteData) {
+      throw new Error('hook B: siteData missing — received previous hook return instead of canonical payload');
+    }
+    return { addPages: [{
+      path: 'from-b.md',
+      url: '/from-b/',
+      frontMatter: { title: 'From Hook B', layout: 'default' },
+      content: '# From B'
+    }]};
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"multiple hooks returning addPages must not error — "+
+					"each hook receives the canonical payload, not the previous "+
+					"hook's return value (issue #971)")
+			Expect(result).NotTo(BeNil())
+
+			Expect(result.PageCount).To(Equal(3),
+				"1 real + 1 from hook A + 1 from hook B = 3 total (issue #971)")
+			Expect(result.RenderedContent).To(HaveKey("from-a.md"),
+				"virtual page from hook A must appear in output (issue #971)")
+			Expect(result.RenderedContent).To(HaveKey("from-b.md"),
+				"virtual page from hook B must appear in output (issue #971)")
 		})
 	})
 
