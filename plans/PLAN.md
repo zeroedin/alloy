@@ -2320,6 +2320,10 @@ export default function(alloy) {
 }
 ```
 
+**Stdout isolation (issue #968)**: The bridge script patches `process.stdout.write` at startup, before any plugin code runs, to redirect all writes to `process.stderr`. The bridge holds the only reference to the real `process.stdout.write` and uses it exclusively for sending protocol frames via `sendMessage`. This guarantees that plugin code — including npm dependencies that call `process.stdout.write` directly (progress bars, debug logging, etc.) — cannot inject non-protocol bytes into the stdout channel and desync the frame reader. The existing `console.log/warn/info/debug` patches (which redirect to `process.stderr.write`) remain in place for formatting convenience but are no longer the sole line of defense. **Known limitation**: child processes spawned by a plugin with inherited stdio can still write to the real stdout fd; the only fix for that is a channel change (Unix socket / named pipe), tracked under #490.
+
+**Malformed frame diagnostic (issue #968)**: When the Go-side frame reader encounters non-frame bytes on stdout (i.e., bytes that don't start with `Content-Length:`), the error message must include a bounded snippet of the offending bytes and name stdout pollution as the likely cause. Example: `plugin bridge protocol error: expected Content-Length header, got "some debug output..." — a plugin or one of its dependencies wrote non-protocol output to stdout`. This applies to both `DecodeMessage` and the inline frame reader in `NodeBridge.Send`. No resync or recovery is attempted — fail loudly with an actionable pointer.
+
 **Message protocol** — length-prefixed JSON over stdin/stdout (LSP-style):
 
 Each message is framed with a `Content-Length` header followed by `\r\n\r\n` and the JSON body. This avoids the newline-delimited JSON problem where HTML payloads containing literal newlines would break the framing. Plugin `console.log` output goes to stderr (redirected to `.alloy/plugin.log`), keeping stdout clean for the protocol.
