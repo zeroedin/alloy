@@ -64,15 +64,25 @@ func ProcessAssets(assetsDir, outputDir string, hookFn func(AssetFile) (AssetFil
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
-			return nil
-		}
 
 		rel, err := filepath.Rel(assetsDir, path)
 		if err != nil {
 			return err
 		}
+
+		dest := filepath.Join(outputDir, rel)
+
+		if d.IsDir() {
+			return os.MkdirAll(dest, 0o755)
+		}
+
 		rel = filepath.ToSlash(rel)
+
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		mode := info.Mode()
 
 		content, err := os.ReadFile(path)
 		if err != nil {
@@ -84,22 +94,24 @@ func ProcessAssets(assetsDir, outputDir string, hookFn func(AssetFile) (AssetFil
 			Content: content,
 		}
 
-		// Apply hook if provided
+		// Apply hook if provided — only content may change; path is fixed.
 		if hookFn != nil {
-			asset, err = hookFn(asset)
+			result, err := hookFn(asset)
 			if err != nil {
 				return err
 			}
+			asset.Content = result.Content
 		}
 
-		// Write to output
-		dest := filepath.Join(outputDir, filepath.FromSlash(asset.Path))
-		dir := filepath.Dir(dest)
+		// Write to output using the original relative path (path changes in
+		// hook return values are ignored per spec).
+		outPath := filepath.Join(outputDir, filepath.FromSlash(rel))
+		dir := filepath.Dir(outPath)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
 
-		return os.WriteFile(dest, asset.Content, 0o644)
+		return os.WriteFile(outPath, asset.Content, mode.Perm())
 	})
 }
 

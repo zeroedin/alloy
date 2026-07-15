@@ -544,8 +544,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		if err := static.CopyStatic(staticDir, outputDir); err != nil {
 			return nil, fmt.Errorf("copying static files: %w", err)
 		}
-		if err := assets.CopyAssets(assetsDir, outputDir); err != nil {
-			return nil, fmt.Errorf("copying asset files: %w", err)
+		if err := assets.ProcessAssets(assetsDir, outputDir, assetHookFn(ps.Hooks)); err != nil {
+			return nil, fmt.Errorf("processing asset files: %w", err)
 		}
 		if len(cfg.Passthrough) > 0 {
 			managedDirs := []string{
@@ -863,9 +863,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		reportEndStage(reporter)
 		return nil, fmt.Errorf("copying static files: %w", err)
 	}
-	if err := assets.CopyAssets(assetsDir, outputDir); err != nil {
+	if err := assets.ProcessAssets(assetsDir, outputDir, assetHookFn(ps.Hooks)); err != nil {
 		reportEndStage(reporter)
-		return nil, fmt.Errorf("copying asset files: %w", err)
+		return nil, fmt.Errorf("processing asset files: %w", err)
 	}
 	if len(cfg.Passthrough) > 0 {
 		managedDirs := []string{
@@ -881,16 +881,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			reportEndStage(reporter)
 			return nil, fmt.Errorf("copying passthrough files: %w", err)
 		}
-	}
-
-	// Fire onAssetProcess hook — assets are now in output dir, safe to transform.
-	assetInfo := map[string]interface{}{
-		"assetsDir": assetsDir,
-		"outputDir": outputDir,
-	}
-	if _, err := ps.Hooks.RunWithTimeout(plugin.OnAssetProcess, assetInfo); err != nil {
-		reportEndStage(reporter)
-		return nil, fmt.Errorf("plugin hook onAssetProcess: %w", err)
 	}
 
 	// Copy content-colocated passthrough files (depends on content discovery)
@@ -1181,4 +1171,62 @@ func validateOutputDir(cfg *config.Config) error {
 	}
 
 	return nil
+}
+
+// assetHookFn returns a per-asset hook callback for ProcessAssets. If no
+// onAssetProcess hooks are registered, returns nil (plain copy). Otherwise each
+// asset is dispatched through the hook chain via RunEachWithTimeout — the path
+// is preserved across chained hooks so every plugin receives {path, content}
+// regardless of what the previous hook returned. Only "content" from the return
+// value is applied; path changes are ignored.
+func assetHookFn(hooks *plugin.HookRegistry) func(assets.AssetFile) (assets.AssetFile, error) {
+	if hooks == nil || !hooks.HasHooks(plugin.OnAssetProcess) {
+		return nil
+	}
+	return func(af assets.AssetFile) (assets.AssetFile, error) {
+		currentContent := string(af.Content)
+
+		err := hooks.RunEachWithTimeout(plugin.OnAssetProcess,
+			func(i int, scope *plugin.HookScope) interface{} {
+				return plugin.HookAssetPayload{
+					Path:    af.Path,
+					Content: currentContent,
+				}
+			},
+			func(i int, scope *plugin.HookScope, result interface{}) error {
+				if newContent, ok := extractAssetContent(result); ok {
+					currentContent = newContent
+				}
+				return nil
+			},
+		)
+		if err != nil {
+			return af, fmt.Errorf("plugin hook onAssetProcess: %w", err)
+		}
+		af.Content = []byte(currentContent)
+		return af, nil
+	}
+}
+
+// extractAssetContent extracts the "content" key from a hook result.
+// Handles both map[string]interface{} (QuickJS/WASM) and *ordered.Map (Node bridge).
+// Returns ("", false) when the result is nil, not a map, or has no "content" key.
+func extractAssetContent(result interface{}) (string, bool) {
+	switch m := result.(type) {
+	case map[string]interface{}:
+		if c, exists := m["content"]; exists {
+			if s, ok := c.(string); ok {
+				return s, true
+			}
+			log.Printf("warning: onAssetProcess: content key exists but is %T, not string — original content preserved", c)
+		}
+	case *ordered.Map:
+		if c, exists := m.GetValue("content"); exists {
+			if s, ok := c.(string); ok {
+				return s, true
+			}
+			log.Printf("warning: onAssetProcess: content key exists but is %T, not string — original content preserved", c)
+		}
+	}
+	return "", false
 }

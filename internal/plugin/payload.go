@@ -33,9 +33,9 @@ type HookCascadePayload struct {
 	Data map[string]interface{} `json:"data"`
 }
 
-// HookAssetPayload is the target outbound payload for per-asset onAssetProcess dispatch.
-// Not yet wired — the pipeline currently sends directory-level info to this hook.
-// Defined here for spec compliance; will be wired when per-asset dispatch is implemented.
+// HookAssetPayload is the outbound payload for per-asset onAssetProcess dispatch.
+// Sent once per asset file with the relative path and file content as a string.
+// Return value's "content" key replaces the asset content written to the output directory.
 type HookAssetPayload struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`
