@@ -131,16 +131,27 @@ func (p *templateTagBlockParser) Open(parent ast.Node, reader text.Reader, pc pa
 	line, _ := reader.PeekLine()
 	trimmed := bytes.TrimSpace(line)
 
-	if len(trimmed) < 4 || trimmed[0] != '{' || trimmed[1] != '%' {
+	var tagStart int
+	var closeSeq []byte
+
+	// {{% %}} — Go template block shortcode delimiters
+	if len(trimmed) >= 5 && trimmed[0] == '{' && trimmed[1] == '{' && trimmed[2] == '%' {
+		tagStart = 3
+		closeSeq = []byte("%}}")
+	} else if len(trimmed) >= 4 && trimmed[0] == '{' && trimmed[1] == '%' {
+		// {% %} — Liquid control tag delimiters
+		tagStart = 2
+		closeSeq = []byte("%}")
+	} else {
 		return nil, parser.NoChildren
 	}
 
-	closeIdx := bytes.Index(trimmed[2:], []byte("%}"))
+	closeIdx := bytes.Index(trimmed[tagStart:], closeSeq)
 	if closeIdx == -1 {
 		return nil, parser.NoChildren
 	}
 
-	tagEnd := 2 + closeIdx + 2
+	tagEnd := tagStart + closeIdx + len(closeSeq)
 	remaining := bytes.TrimSpace(trimmed[tagEnd:])
 	if len(remaining) > 0 {
 		return nil, parser.NoChildren
