@@ -99,6 +99,7 @@ func renderPages(pages []*content.Page, rc *RenderContext, reporter ProgressRepo
 			if err != nil {
 				return nil, fmt.Errorf("block shortcode: %s: %w", page.RelPath, err)
 			}
+			html = escapeTemplateTagsInCode(html)
 		}
 
 		if hasTemplateSyntax(html) {
@@ -203,18 +204,21 @@ func interpolateFrontMatter(vp *content.Page, asVar string, item interface{}, en
 var codeBlockPattern = regexp.MustCompile(`(?s)<code[^>]*>.*?</code>`)
 
 // processGoTemplateBlockShortcodes runs ProcessBlockShortcodes with a callback
-// that routes through the plugin registry's CallShortcode. Each registered
-// runtime is tried in order until one owns the shortcode name.
+// that routes through the plugin registry's CallShortcode. A shortcode-to-runtime
+// map is built once and used for O(1) lookup in the callback.
 func processGoTemplateBlockShortcodes(html []byte, registry *plugin.Registry) ([]byte, error) {
-	callback := func(name string, args []string, content string) (string, error) {
-		for _, rt := range registry.Runtimes() {
-			for _, sc := range rt.RegisteredShortcodes() {
-				if sc == name {
-					return rt.CallShortcode(name, args, content)
-				}
-			}
+	scRuntimes := make(map[string]plugin.PluginFilterRuntime)
+	for _, rt := range registry.Runtimes() {
+		for _, name := range rt.RegisteredShortcodes() {
+			scRuntimes[name] = rt
 		}
-		return "", fmt.Errorf("shortcode %q not registered by any plugin", name)
+	}
+	callback := func(name string, args []string, content string) (string, error) {
+		rt, ok := scRuntimes[name]
+		if !ok {
+			return "", fmt.Errorf("shortcode %q not registered by any plugin", name)
+		}
+		return rt.CallShortcode(name, args, content)
 	}
 	return tmpl.ProcessBlockShortcodes(html, callback)
 }

@@ -110,12 +110,13 @@ func parseShortcodeArgs(s string) []string {
 	return args
 }
 
+var argUnescaper = strings.NewReplacer(`\"`, `"`, `\\`, `\`)
+
 func unescapeArg(s string) string {
 	if !strings.Contains(s, `\`) {
 		return s
 	}
-	r := strings.NewReplacer(`\"`, `"`, `\\`, `\`)
-	return r.Replace(s)
+	return argUnescaper.Replace(s)
 }
 
 func findCodeRegions(s string) [][2]int {
