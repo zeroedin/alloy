@@ -3,6 +3,7 @@
 package plugin_test
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -556,7 +557,7 @@ var _ = Describe("NodeBridge", func() {
 	// ── Malformed frame diagnostic (#968) ────────────────────────────
 
 	Describe("Malformed frame diagnostic (#968)", func() {
-		It("names stdout pollution as the likely cause when non-frame bytes are received", func() {
+		It("DecodeMessage names stdout pollution as the likely cause when non-frame bytes are received", func() {
 			garbage := []byte("some debug output from a plugin\nmore output")
 			_, err := plugin.DecodeMessage(garbage)
 			Expect(err).To(HaveOccurred())
@@ -567,7 +568,7 @@ var _ = Describe("NodeBridge", func() {
 				"error should include a snippet of the offending bytes for diagnosis")
 		})
 
-		It("truncates long non-frame content in the diagnostic snippet", func() {
+		It("DecodeMessage truncates long non-frame content in the diagnostic snippet", func() {
 			longGarbage := make([]byte, 500)
 			for i := range longGarbage {
 				longGarbage[i] = 'x'
@@ -579,6 +580,20 @@ var _ = Describe("NodeBridge", func() {
 				"error should name stdout pollution as the likely cause")
 			Expect(len(errMsg)).To(BeNumerically("<", 300),
 				"error message should be bounded, not echo 500 bytes of garbage verbatim")
+		})
+
+		It("Send reports stdout pollution diagnostic when non-frame bytes arrive on stdout", func() {
+			garbage := "plugin debug output\n"
+			reader := bufio.NewReader(strings.NewReader(garbage))
+			bridge := plugin.NewBridgeWithReader(reader)
+
+			_, err := bridge.Send(&plugin.Message{Type: "filter", Name: "test"})
+			Expect(err).To(HaveOccurred())
+			errMsg := err.Error()
+			Expect(errMsg).To(ContainSubstring("stdout"),
+				"Send error should name stdout pollution as the likely cause")
+			Expect(errMsg).To(ContainSubstring("plugin debug output"),
+				"Send error should include a snippet of the non-frame bytes")
 		})
 	})
 })

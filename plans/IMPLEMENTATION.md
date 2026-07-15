@@ -752,14 +752,14 @@ At this point, `alloy build` works end-to-end on test fixtures.
 
 ---
 
-## Phase 5: Plugin + Fetch + I18n + CLI (~116 tests)
+## Phase 5: Plugin + Fetch + I18n + CLI (~117 tests)
 
-### 5A: `internal/plugin` — 68 tests
+### 5A: `internal/plugin` — 69 tests
 **Files**: `hooks.go`, `registry.go`, `node.go`, `wasm.go`
 
 - **hooks.go**: Hook registry with timeout, chained execution, warnings. `HookFunc` signature is `func(ctx context.Context, payload interface{}) (interface{}, error)` — context carries timeout deadline for cooperative cancellation (issue #13). `Run()` passes `context.Background()`. `RunWithTimeout()` uses `context.WithTimeout()` and passes the derived context to each hook.
 - **registry.go**: Plugin classification by file type, discovery, filter registration, conflict warnings
-- **node.go**: LSP-style message encoding/decoding, bridge state management, stdout isolation (issue #968, 5 tests — 3 integration tests via fixture plugins proving process.stdout.write/console.log don't corrupt the protocol, 2 unit tests proving DecodeMessage includes actionable diagnostic for non-frame bytes)
+- **node.go**: LSP-style message encoding/decoding, bridge state management, stdout isolation (issue #968, 6 tests — 3 integration tests via fixture plugins proving process.stdout.write/console.log don't corrupt the protocol, 2 unit tests proving DecodeMessage includes actionable diagnostic for non-frame bytes, 1 unit test proving NodeBridge.Send includes the same diagnostic for non-frame bytes)
 - **wasm.go**: QuickJS/WASM runtime with filter/shortcode/hook registration and execution.
   - `EvalFile()` parses `alloy.filter()`, `alloy.shortcode()`, and `alloy.hook()`/`alloy.on()` registrations
   - `CallFilter()` must execute the actual JS filter function and return the transformed value — not passthrough, not pattern-matching. The current `simulateJSFilter` approach only handles known patterns (word count); arbitrary JS like `toUpperCase()` returns input unchanged. Real QuickJS execution via wazero is required (issue #103).
