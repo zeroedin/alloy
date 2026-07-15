@@ -84,16 +84,18 @@ func ProcessAssets(assetsDir, outputDir string, hookFn func(AssetFile) (AssetFil
 			Content: content,
 		}
 
-		// Apply hook if provided
+		// Apply hook if provided — only content may change; path is fixed.
 		if hookFn != nil {
-			asset, err = hookFn(asset)
+			result, err := hookFn(asset)
 			if err != nil {
 				return err
 			}
+			asset.Content = result.Content
 		}
 
-		// Write to output
-		dest := filepath.Join(outputDir, filepath.FromSlash(asset.Path))
+		// Write to output using the original relative path (path changes in
+		// hook return values are ignored per spec).
+		dest := filepath.Join(outputDir, filepath.FromSlash(rel))
 		dir := filepath.Dir(dest)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
