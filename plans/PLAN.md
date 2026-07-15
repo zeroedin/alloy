@@ -1869,7 +1869,7 @@ Don't do this in production.
 
 **Error handling**: An unclosed `{{% tag %}}` (no matching `{{% /tag %}}`) is a build error. A mismatched closing tag name is a build error. Error messages include the tag name. Plugin callback errors propagate as build errors.
 
-**Passthrough**: The preprocessor only processes `{{% %}}` tags. Liquid-style `{% %}` tags and Go template `{{ }}` expressions are not touched. Content without any `{{% %}}` tags passes through unchanged.
+**Passthrough**: The preprocessor only processes `{{% %}}` tags. Liquid-style `{% %}` tags and Go template `{{ }}` expressions are not touched. Delimiters inside `<pre>` and `<code>` elements (code blocks) are treated as literal text, not shortcode invocations. Content without any `{{% %}}` tags passes through unchanged.
 
 **Tier 3 (Node plugin):**
 

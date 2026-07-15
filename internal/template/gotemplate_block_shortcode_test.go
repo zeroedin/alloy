@@ -323,5 +323,35 @@ var _ = Describe("Go template block shortcode preprocessor", func() {
 			Expect(string(result)).To(Equal(string(input)),
 				"Go template {{ }} expression tags must not be processed by the block preprocessor")
 		})
+
+		It("does not process {{% %}} delimiters inside <pre> elements", func() {
+			callback := func(name string, args []string, content string) (string, error) {
+				Fail("callback must not be invoked for delimiters inside code blocks")
+				return "", nil
+			}
+
+			input := []byte(`<p>Before.</p>
+<pre><code>{{% callout "warning" %}}
+example content
+{{% /callout %}}</code></pre>
+<p>After.</p>`)
+			result, err := tmpl.ProcessBlockShortcodes(input, callback)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(result)).To(Equal(string(input)),
+				"{{% %}} delimiters inside <pre>/<code> elements are literal text, not shortcode invocations")
+		})
+
+		It("does not process {{% %}} delimiters inside inline <code> elements", func() {
+			callback := func(name string, args []string, content string) (string, error) {
+				Fail("callback must not be invoked for delimiters inside inline code")
+				return "", nil
+			}
+
+			input := []byte(`<p>Use <code>{{% callout %}}</code> for block shortcodes.</p>`)
+			result, err := tmpl.ProcessBlockShortcodes(input, callback)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(result)).To(Equal(string(input)),
+				"{{% %}} delimiters inside <code> elements are literal text, not shortcode invocations")
+		})
 	})
 })

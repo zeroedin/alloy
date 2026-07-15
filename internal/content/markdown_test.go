@@ -2432,7 +2432,8 @@ var _ = Describe("RenderMarkdown", func() {
 		})
 
 		It("{{% /tag %}} closing tag on its own line is block-level, not wrapped in <p>", func() {
-			source := []byte("{{% callout %}}\nContent here.\n{{% /callout %}}\n")
+			// Blank lines separate tags from content — each tag is its own block
+			source := []byte("{{% callout %}}\n\nContent here.\n\n{{% /callout %}}\n")
 			out, _, err := content.RenderMarkdown(source, defaultMD)
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
