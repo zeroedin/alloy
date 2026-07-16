@@ -63,16 +63,24 @@ func LoadFileAny(path string) (interface{}, error) {
 }
 
 // LoadDirectory loads all data files from a directory, keyed by filename stem.
-// Returns an error if two files share a stem name (e.g., team.csv and team.yaml).
+// Subdirectories are recursed into and produce nested namespace maps:
+// data/nav/main.yaml → result["nav"]["main"].
+// Returns an error if two files share a stem name (e.g., team.csv and team.yaml)
+// or if a file and subdirectory share the same stem (e.g., nav.yaml and nav/).
 func LoadDirectory(dir string) (map[string]interface{}, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
 	result := make(map[string]interface{})
-	seen := make(map[string]string) // stem → first filename
+	seen := make(map[string]string) // stem → first filename or dirname
+
+	// Process files first, then directories, so collision detection
+	// catches file-vs-directory conflicts regardless of readdir order.
+	var dirs []os.DirEntry
 	for _, entry := range entries {
 		if entry.IsDir() {
+			dirs = append(dirs, entry)
 			continue
 		}
 		ext := strings.ToLower(filepath.Ext(entry.Name()))
@@ -101,6 +109,24 @@ func LoadDirectory(dir string) (map[string]interface{}, error) {
 			result[name] = rows
 		}
 	}
+
+	for _, entry := range dirs {
+		name := entry.Name()
+		if prev, ok := seen[name]; ok {
+			return nil, fmt.Errorf("data file stem conflict: %q and directory %q both produce key %q", prev, name+"/", name)
+		}
+		subDir := filepath.Join(dir, name)
+		sub, err := LoadDirectory(subDir)
+		if err != nil {
+			return nil, err
+		}
+		if len(sub) == 0 {
+			continue
+		}
+		seen[name] = name + "/"
+		result[name] = sub
+	}
+
 	return result, nil
 }
 

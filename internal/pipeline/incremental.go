@@ -230,10 +230,8 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				}
 			}
 		} else {
-			// freshData is nil with no error: either the data directory was
-			// deleted or it contains only malformed files (loadSiteData swallows
-			// parse errors with a warning log). Check whether the directory
-			// still exists to disambiguate.
+			// freshData is nil with no error: the data directory was deleted
+			// or is empty. Check whether it still exists to disambiguate.
 			dataDirAbs := resolveDir(cfg.ProjectRoot, dataDir)
 			if _, statErr := os.Stat(dataDirAbs); os.IsNotExist(statErr) {
 				ps.SiteData = nil

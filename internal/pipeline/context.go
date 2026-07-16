@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log"
 	"sort"
 
 	"github.com/zeroedin/alloy/internal/collection"
@@ -26,7 +25,7 @@ func loadSiteData(cfg *config.Config) (map[string]interface{}, error) {
 		loaded, err := data.LoadDirectory(dataDir)
 		if err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
-				log.Printf("warning: failed to load data directory %s: %v", dataDir, err)
+				return nil, fmt.Errorf("data directory %s: %w", dataDir, err)
 			}
 		} else {
 			result = loaded
