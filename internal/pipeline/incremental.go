@@ -236,8 +236,8 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 			if _, statErr := os.Stat(dataDirAbs); os.IsNotExist(statErr) {
 				ps.SiteData = nil
 			}
-			// Directory exists but loadSiteData returned nil — a parse error
-			// was already logged; keep stale data so pagination doesn't break.
+			// Directory exists but contains no recognized data files;
+			// keep stale data so pagination doesn't break.
 		}
 		// Invalidate paginated pages that reference site.data — their content
 		// hash is unchanged but their data source has, so they must re-render.
