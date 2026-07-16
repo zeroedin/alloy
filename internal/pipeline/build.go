@@ -278,7 +278,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				}
 				fetched, fetchErr = fetch.FetchPluginSource(src.Plugin, configMap)
 				if fetchErr == nil {
-					_ = fetch.SaveCache(src.Plugin, cacheDir, fetched)
+					if cacheErr := fetch.SaveCache(src.Plugin, cacheDir, fetched); cacheErr != nil {
+						log.Printf("warning: caching plugin source %s: %v", src.Plugin, cacheErr)
+					}
 				}
 			default:
 				log.Printf("warning: unknown source type %q for %s", src.Type, name)
