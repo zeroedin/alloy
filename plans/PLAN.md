@@ -2518,6 +2518,12 @@ Fire **once per build**. Payload is a JSON-serializable representation of the Go
 
 **Multiple hooks chain correctly:** When multiple plugins (or the same plugin) register multiple `onConfig` hooks, they execute in priority order. Each hook receives the return value of the previous hook (not the original config). The pipeline applies the final chained result to `cfg` via the mutable allowlist. This allows composable config transformations across plugins.
 
+**Edge cases (issue #999):**
+- **Null/nil return**: Returning null from an `onConfig` hook produces a build error identifying `onConfig` as the source. Plugins must return the config object.
+- **Hook timeout**: When an `onConfig` hook exceeds the configured timeout, `RunWithTimeout` returns the original `*config.Config` payload. `applyOnConfigResult` treats `*config.Config` as a no-op — the timed-out hook's mutations are discarded and the original config is preserved.
+- **Timeout value constraints**: `plugins.timeout` values ≤ 0 are not applied — the original timeout is preserved. Only positive values update `cfg.Plugins.Timeout`. This prevents a plugin from accidentally disabling all hook timeouts.
+- **Passthrough empty `from`**: Passthrough entries with empty `from` are silently skipped during `applyOnConfigResult` — they are filtered out of the applied `cfg.Passthrough` slice. The JS hook chain sees all entries (filtering is Go-side only).
+
 ```javascript
 // Example: redirect output directory via onConfig
 alloy.hook("onConfig", {}, (config) => {
