@@ -68,6 +68,8 @@ var _ = Describe("onConfig path traversal validation (issue #998)", func() {
 					"the pipeline would read content from /etc instead of the project (issue #998)")
 			Expect(err.Error()).To(ContainSubstring("structure.content"),
 				"error must identify structure.content as the offending field (issue #998)")
+			Expect(err.Error()).To(ContainSubstring("absolute"),
+				"error must indicate an absolute path was the reason for rejection (issue #998)")
 		})
 
 		It("rejects absolute path for structure.layouts", func() {
@@ -82,6 +84,8 @@ var _ = Describe("onConfig path traversal validation (issue #998)", func() {
 				"structure.layouts set to an absolute path must be rejected (issue #998)")
 			Expect(err.Error()).To(ContainSubstring("structure.layouts"),
 				"error must identify structure.layouts as the offending field (issue #998)")
+			Expect(err.Error()).To(ContainSubstring("absolute"),
+				"error must indicate an absolute path was the reason for rejection (issue #998)")
 		})
 
 		It("rejects absolute path for structure.assets", func() {
@@ -96,6 +100,8 @@ var _ = Describe("onConfig path traversal validation (issue #998)", func() {
 				"structure.assets set to an absolute path must be rejected (issue #998)")
 			Expect(err.Error()).To(ContainSubstring("structure.assets"),
 				"error must identify structure.assets as the offending field (issue #998)")
+			Expect(err.Error()).To(ContainSubstring("absolute"),
+				"error must indicate an absolute path was the reason for rejection (issue #998)")
 		})
 
 		It("rejects absolute path for structure.static", func() {
@@ -110,6 +116,8 @@ var _ = Describe("onConfig path traversal validation (issue #998)", func() {
 				"structure.static set to an absolute path must be rejected (issue #998)")
 			Expect(err.Error()).To(ContainSubstring("structure.static"),
 				"error must identify structure.static as the offending field (issue #998)")
+			Expect(err.Error()).To(ContainSubstring("absolute"),
+				"error must indicate an absolute path was the reason for rejection (issue #998)")
 		})
 
 		It("rejects absolute path for structure.data", func() {
@@ -124,6 +132,8 @@ var _ = Describe("onConfig path traversal validation (issue #998)", func() {
 				"structure.data set to an absolute path must be rejected (issue #998)")
 			Expect(err.Error()).To(ContainSubstring("structure.data"),
 				"error must identify structure.data as the offending field (issue #998)")
+			Expect(err.Error()).To(ContainSubstring("absolute"),
+				"error must indicate an absolute path was the reason for rejection (issue #998)")
 		})
 	})
 
@@ -167,6 +177,8 @@ var _ = Describe("onConfig path traversal validation (issue #998)", func() {
 					"the pipeline would discover content from ../../etc (issue #998)")
 			Expect(err.Error()).To(ContainSubstring("structure.content"),
 				"error must identify structure.content as the offending field (issue #998)")
+			Expect(err.Error()).To(ContainSubstring("travers"),
+				"error must indicate path traversal was the reason for rejection (issue #998)")
 		})
 
 		It("rejects traversal path for structure.layouts", func() {
@@ -181,6 +193,8 @@ var _ = Describe("onConfig path traversal validation (issue #998)", func() {
 				"structure.layouts with .. traversal above project root must be rejected (issue #998)")
 			Expect(err.Error()).To(ContainSubstring("structure.layouts"),
 				"error must identify structure.layouts as the offending field (issue #998)")
+			Expect(err.Error()).To(ContainSubstring("travers"),
+				"error must indicate path traversal was the reason for rejection (issue #998)")
 		})
 
 		It("rejects traversal path for structure.assets", func() {
@@ -195,6 +209,8 @@ var _ = Describe("onConfig path traversal validation (issue #998)", func() {
 				"structure.assets with .. traversal above project root must be rejected (issue #998)")
 			Expect(err.Error()).To(ContainSubstring("structure.assets"),
 				"error must identify structure.assets as the offending field (issue #998)")
+			Expect(err.Error()).To(ContainSubstring("travers"),
+				"error must indicate path traversal was the reason for rejection (issue #998)")
 		})
 
 		It("rejects traversal path for structure.static", func() {
@@ -209,6 +225,8 @@ var _ = Describe("onConfig path traversal validation (issue #998)", func() {
 				"structure.static with .. traversal above project root must be rejected (issue #998)")
 			Expect(err.Error()).To(ContainSubstring("structure.static"),
 				"error must identify structure.static as the offending field (issue #998)")
+			Expect(err.Error()).To(ContainSubstring("travers"),
+				"error must indicate path traversal was the reason for rejection (issue #998)")
 		})
 
 		It("rejects traversal path for structure.data", func() {
@@ -223,6 +241,8 @@ var _ = Describe("onConfig path traversal validation (issue #998)", func() {
 				"structure.data with .. traversal above project root must be rejected (issue #998)")
 			Expect(err.Error()).To(ContainSubstring("structure.data"),
 				"error must identify structure.data as the offending field (issue #998)")
+			Expect(err.Error()).To(ContainSubstring("travers"),
+				"error must indicate path traversal was the reason for rejection (issue #998)")
 		})
 	})
 
@@ -265,6 +285,50 @@ var _ = Describe("onConfig path traversal validation (issue #998)", func() {
 				"build.output set to '..' must be rejected — it resolves to the "+
 					"parent of the project root. With clean: true, CleanOutputDir "+
 					"would delete sibling project directories (issue #998)")
+			Expect(err.Error()).To(ContainSubstring("build.output"),
+				"error must identify build.output as the offending field (issue #998)")
+			Expect(err.Error()).To(ContainSubstring("travers"),
+				"error must indicate path traversal was the reason for rejection — "+
+					"a bare '..' is a traversal, not an absolute path (issue #998)")
+		})
+
+		It("rejects current directory . as build.output", func() {
+			// filepath.Clean("") returns ".". "." is not absolute and does
+			// not start with "..", but it resolves to the project root itself.
+			// With clean: true (default), CleanOutputDir would run os.RemoveAll
+			// on every entry in the project root — deleting content, layouts,
+			// plugins, and all source files.
+			contentMap := baseContent("dot-output.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.build.output = ".";
+    return config;
+  });
+}`)
+			_, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).To(HaveOccurred(),
+				"build.output set to '.' must be rejected — it resolves to the "+
+					"project root itself. With clean: true (default), CleanOutputDir "+
+					"would delete all project source files including content, layouts, "+
+					"and plugins (issue #998)")
+			Expect(err.Error()).To(ContainSubstring("build.output"),
+				"error must identify build.output as the offending field (issue #998)")
+		})
+
+		It("rejects empty string as build.output", func() {
+			// filepath.Clean("") returns "." — same vulnerability as
+			// explicitly setting ".". An empty string from a buggy plugin
+			// must not silently target the project root.
+			contentMap := baseContent("empty-output.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.build.output = "";
+    return config;
+  });
+}`)
+			_, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).To(HaveOccurred(),
+				"build.output set to '' (empty string) must be rejected — "+
+					"filepath.Clean('') returns '.' which resolves to the project "+
+					"root itself. Same destructive behavior as '.' (issue #998)")
 			Expect(err.Error()).To(ContainSubstring("build.output"),
 				"error must identify build.output as the offending field (issue #998)")
 		})
