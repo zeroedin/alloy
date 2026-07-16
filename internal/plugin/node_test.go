@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -626,8 +627,8 @@ var _ = Describe("NodeBridge", func() {
 				"error should name stdout pollution as the likely cause")
 			Expect(len(errMsg)).To(BeNumerically("<", 300),
 				"error message should be bounded, not echo 500 bytes of garbage verbatim")
-			Expect(errMsg).To(ContainSubstring("..."),
-				"truncated snippet should end with ellipsis indicating truncation")
+			Expect(errMsg).To(ContainSubstring(strings.Repeat("x", 80)+"..."),
+				"snippet should contain exactly 80 chars of input followed by ellipsis")
 		})
 
 		It("Send diagnostic snippet handles binary/non-UTF8 data without panicking", func() {
@@ -644,6 +645,10 @@ var _ = Describe("NodeBridge", func() {
 				"error should name stdout pollution as the likely cause")
 			Expect(len(errMsg)).To(BeNumerically("<", 300),
 				"error message should be bounded even with binary content")
+			Expect(errMsg).To(ContainSubstring("BINARY:..."),
+				"invalid bytes should be stripped at a valid UTF-8 rune boundary, preserving ASCII prefix")
+			Expect(utf8.ValidString(errMsg)).To(BeTrue(),
+				"error message must be valid UTF-8 after rune-boundary walk-back")
 		})
 	})
 })
