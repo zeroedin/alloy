@@ -141,7 +141,7 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			// Two data files sharing the stem "team" — team.yaml and team.json
 			// both claim the key "team" in site.data.
-			_, err := pipeline.BuildWithContent(cfg, map[string]string{
+			result, err := pipeline.BuildWithContent(cfg, map[string]string{
 				"data/team.yaml": "name: Alice\nrole: Lead\n",
 				"data/team.json": `{"name": "Bob", "role": "Dev"}`,
 			})
@@ -154,6 +154,8 @@ var _ = Describe("Build Pipeline", func() {
 				ContainSubstring("conflict"),
 			), "error must name the conflicting stem and mention 'conflict' — "+
 				"the user needs to know which files collided to fix the problem")
+			Expect(result).To(BeNil(),
+				"failed build must not return partial result")
 		})
 
 		It("malformed YAML in data directory fails the build", func() {
@@ -162,7 +164,7 @@ var _ = Describe("Build Pipeline", func() {
 				Build: config.BuildConfig{Output: "_site"},
 			}
 			// Invalid YAML: unterminated flow sequence
-			_, err := pipeline.BuildWithContent(cfg, map[string]string{
+			result, err := pipeline.BuildWithContent(cfg, map[string]string{
 				"data/broken.yaml": "invalid: [yaml: {unterminated",
 			})
 			Expect(err).To(HaveOccurred(),
@@ -172,6 +174,8 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(err.Error()).To(ContainSubstring("broken.yaml"),
 				"error must name the file that failed to parse so the user "+
 					"can locate and fix the problem")
+			Expect(result).To(BeNil(),
+				"failed build must not return partial result")
 		})
 
 		It("malformed JSON in data directory fails the build", func() {
@@ -180,7 +184,7 @@ var _ = Describe("Build Pipeline", func() {
 				Build: config.BuildConfig{Output: "_site"},
 			}
 			// Invalid JSON: unterminated object
-			_, err := pipeline.BuildWithContent(cfg, map[string]string{
+			result, err := pipeline.BuildWithContent(cfg, map[string]string{
 				"data/broken.json": `{"invalid json`,
 			})
 			Expect(err).To(HaveOccurred(),
@@ -190,6 +194,8 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(err.Error()).To(ContainSubstring("broken.json"),
 				"error must name the file that failed to parse so the user "+
 					"can locate and fix the problem")
+			Expect(result).To(BeNil(),
+				"failed build must not return partial result")
 		})
 
 		It("non-existent data directory is not an error", func() {
@@ -209,20 +215,25 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(result).NotTo(BeNil())
 		})
 
-		It("valid data files load without error", func() {
+		It("valid data files load and are accessible in templates", func() {
 			cfg := &config.Config{
 				Title: "Valid Data Test",
 				Build: config.BuildConfig{Output: "_site"},
 			}
-			// Valid YAML data file alongside a content page
+			// Valid YAML data file alongside a content page — the layout
+			// renders site.data.navigation to prove the data reached templates.
 			result, err := pipeline.BuildWithContent(cfg, map[string]string{
 				"data/navigation.yaml":   "items:\n  - name: Home\n    url: /\n",
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\nhello",
-				"layouts/default.liquid": "{{ content }}",
+				"layouts/default.liquid": "NAV:{{ site.data.navigation.items[0].name }}|{{ content }}",
 			})
 			Expect(err).NotTo(HaveOccurred(),
 				"valid data files must load without error")
 			Expect(result).NotTo(BeNil())
+			Expect(result.RenderedContent["index.md"]).To(ContainSubstring("NAV:Home"),
+				"site.data.navigation.items[0].name must resolve to 'Home' — "+
+					"if this fails, data loaded successfully but was not injected "+
+					"into the template context (issue #982 core behavior)")
 		})
 
 		It("healthy data files are not dropped when build aborts on error", func() {
@@ -234,7 +245,7 @@ var _ = Describe("Build Pipeline", func() {
 			// The bug in issue #982: the warning path drops ALL data files,
 			// not just the conflicting ones. After the fix, the build must
 			// abort entirely — no partial data loading.
-			_, err := pipeline.BuildWithContent(cfg, map[string]string{
+			result, err := pipeline.BuildWithContent(cfg, map[string]string{
 				"data/navigation.yaml": "items:\n  - name: Home\n    url: /\n",
 				"data/team.yaml":       "name: Alice\n",
 				"data/team.json":       `{"name": "Bob"}`,
@@ -245,6 +256,8 @@ var _ = Describe("Build Pipeline", func() {
 				"build must abort when data directory has a stem collision — "+
 					"the current bug silently drops ALL data (including valid "+
 					"navigation.yaml) behind a success exit code (issue #982)")
+			Expect(result).To(BeNil(),
+				"failed build must not return partial result — no partial deploys")
 		})
 	})
 
