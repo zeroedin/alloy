@@ -112,9 +112,6 @@ func LoadDirectory(dir string) (map[string]interface{}, error) {
 
 	for _, entry := range dirs {
 		name := entry.Name()
-		if prev, ok := seen[name]; ok {
-			return nil, fmt.Errorf("data file stem conflict: %q and directory %q both produce key %q", prev, name+"/", name)
-		}
 		subDir := filepath.Join(dir, name)
 		sub, err := LoadDirectory(subDir)
 		if err != nil {
@@ -122,6 +119,9 @@ func LoadDirectory(dir string) (map[string]interface{}, error) {
 		}
 		if len(sub) == 0 {
 			continue
+		}
+		if prev, ok := seen[name]; ok {
+			return nil, fmt.Errorf("data file stem conflict: %q and directory %q both produce key %q", prev, name+"/", name)
 		}
 		seen[name] = name + "/"
 		result[name] = sub
