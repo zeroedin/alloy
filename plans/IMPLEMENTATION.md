@@ -62,11 +62,11 @@ In-house ordered map type that preserves JSON key insertion order. ~100 lines, z
 
 Used by `LoadFile` and `LoadExternalFiles` for `.json` files only. Front matter, config, cascade, and collections do not use this type.
 
-### 1B: `internal/data` — 8 tests
+### 1B: `internal/data` — 16 tests
 **File**: `internal/data/loader.go`
 
 - `LoadFile`: Detect format by extension (.yaml/.yml, .toml, .json), parse with appropriate library. **JSON files return `*ordered.Map`** (issue #453) — the value inside `siteData["filename"]` is an `*ordered.Map` preserving key insertion order. The `LoadFile` return type stays `map[string]interface{}` for YAML/TOML; for JSON, the top-level object is an `*ordered.Map` stored as `interface{}` in the result.
-- `LoadDirectory`: Walk dir, `LoadFile` each, key by filename without extension. **Stem collision detection**: Track seen stem names. If two files share a stem (e.g., `team.csv` and `team.yaml`), return an error listing both files. No silent overwrites — consistent with output path conflict philosophy (§2).
+- `LoadDirectory`: Recursively walk dir and subdirectories, `LoadFile` each, key by filename without extension. **Subdirectories create nested namespace maps (issue #983)**: when an entry is a directory, recurse into it; the directory name becomes a key whose value is a `map[string]interface{}` containing the subdirectory's entries. Example: `data/nav/main.yaml` → `result["nav"]["main"]`. Nesting depth is unlimited. Empty subdirectories (no data files at any depth) must not produce a key. **Stem collision detection**: Track seen stem names per directory level. If two files share a stem (e.g., `team.csv` and `team.yaml`), return an error listing both files. **Directory-file stem collision (issue #983)**: if a file and subdirectory share the same stem (e.g., `nav.yaml` and `nav/`), return an error — both claim the same key. Collision detection applies recursively within subdirectories. No silent overwrites — consistent with output path conflict philosophy (§2).
 - `LoadCSV`: `encoding/csv`, first row = headers, subsequent rows = `[]map[string]string`
 - **External data files (issue #271)**: `loadSiteData` in `build.go` must also load files from `cfg.Data.Files` (a `map[string]string` of key → path). For each entry, resolve the path relative to `cfg.ProjectRoot`, call `data.LoadFile`, and add the result to `siteData[key]`. Check for collisions with `data/` directory keys. File not found is a build error. Add `DataConfig` struct to `config.go` with `Files map[string]string` field.
 
