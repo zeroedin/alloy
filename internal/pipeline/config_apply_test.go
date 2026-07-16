@@ -334,3 +334,496 @@ var _ = Describe("onConfig path traversal validation (issue #998)", func() {
 		})
 	})
 })
+
+var _ = Describe("onConfig passthrough path validation (issues #1031, #1034)", func() {
+	// Passthrough from/to fields are filesystem paths that can be set by
+	// plugins via onConfig hooks. Config-file passthrough intentionally
+	// supports absolute from paths and ../relative for cross-project
+	// asset sharing (§1h). But plugin-sourced paths are untrusted — a
+	// malicious plugin could set from: "/etc/shadow" to exfiltrate files,
+	// or to: "../../evil" to write outside the output directory. The same
+	// path-containment rules used for build.output and structure.* fields
+	// apply to plugin-sourced passthrough paths.
+	//
+	// Key difference from build.output/structure.*: passthrough to: "."
+	// and to: "" are valid (they mean "copy to the root of the output
+	// directory"), whereas build.output = "." is dangerous (it targets
+	// the project root for CleanOutputDir deletion).
+
+	baseConfig := func() *config.Config {
+		return &config.Config{
+			Title:   "Passthrough Path Test",
+			BaseURL: "https://example.com",
+			Build:   config.BuildConfig{Output: "_site"},
+		}
+	}
+
+	baseContent := func(pluginName, pluginCode string) map[string]string {
+		return map[string]string{
+			"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+			"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			"plugins/" + pluginName:  pluginCode,
+		}
+	}
+
+	// ── passthrough[].from: absolute path rejection ─────────────────
+
+	Describe("passthrough from absolute path rejection", func() {
+		It("rejects absolute path for passthrough[].from", func() {
+			contentMap := baseContent("abs-from.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: "/etc/shadow", to: "exfil" }];
+    return config;
+  });
+}`)
+			_, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).To(HaveOccurred(),
+				"passthrough from set to an absolute path must be rejected — "+
+					"a plugin could exfiltrate /etc/shadow into the output directory "+
+					"by setting from to an absolute path. Config-file passthrough "+
+					"allows absolute from by design, but plugin-sourced paths are "+
+					"untrusted (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("passthrough"),
+				"error must identify passthrough as the source so plugin authors "+
+					"know which onConfig field was rejected (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("from"),
+				"error must identify the from field specifically — passthrough "+
+					"has both from and to fields and the plugin author needs to "+
+					"know which one failed (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("absolute"),
+				"error must indicate an absolute path was the reason for rejection — "+
+					"distinguishes from traversal rejection (issues #1031, #1034)")
+		})
+	})
+
+	// ── passthrough[].to: absolute path rejection ───────────────────
+
+	Describe("passthrough to absolute path rejection", func() {
+		It("rejects absolute path for passthrough[].to", func() {
+			contentMap := baseContent("abs-to.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: "vendor/assets", to: "/var/www/public" }];
+    return config;
+  });
+}`)
+			_, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).To(HaveOccurred(),
+				"passthrough to set to an absolute path must be rejected — "+
+					"an absolute to path would cause CopyPassthrough to write "+
+					"files outside the output directory (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("passthrough"),
+				"error must identify passthrough as the source (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("to"),
+				"error must identify the to field specifically — plugin author "+
+					"needs to know which field in the mapping failed "+
+					"(issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("absolute"),
+				"error must indicate an absolute path was the reason for "+
+					"rejection (issues #1031, #1034)")
+		})
+	})
+
+	// ── passthrough[].from: relative traversal rejection ────────────
+
+	Describe("passthrough from traversal rejection", func() {
+		It("rejects traversal path for passthrough[].from", func() {
+			contentMap := baseContent("trav-from.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: "../../etc", to: "exfil" }];
+    return config;
+  });
+}`)
+			_, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).To(HaveOccurred(),
+				"passthrough from with .. traversal above project root must be "+
+					"rejected — the pipeline would read files from ../../etc and "+
+					"copy them to the output directory. Config-file passthrough "+
+					"allows ../relative for cross-project asset sharing, but "+
+					"plugin-sourced paths are untrusted (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("passthrough"),
+				"error must identify passthrough as the source (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("from"),
+				"error must identify the from field (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("travers"),
+				"error must indicate path traversal was the reason for "+
+					"rejection — distinguishes from absolute-path rejection "+
+					"(issues #1031, #1034)")
+		})
+
+		It("rejects single .. for passthrough[].from", func() {
+			contentMap := baseContent("dotdot-from.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: "..", to: "parent" }];
+    return config;
+  });
+}`)
+			_, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).To(HaveOccurred(),
+				"passthrough from set to '..' must be rejected — it resolves "+
+					"to the parent of the project root, allowing a plugin to "+
+					"read files above the project (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("passthrough"),
+				"error must identify passthrough as the source (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("from"),
+				"error must identify the from field (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("travers"),
+				"a bare '..' is a traversal, not an absolute path "+
+					"(issues #1031, #1034)")
+		})
+
+		It("rejects embedded .. in passthrough[].from that escapes project root", func() {
+			contentMap := baseContent("embedded-escape-from.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: "a/../../etc", to: "exfil" }];
+    return config;
+  });
+}`)
+			_, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).To(HaveOccurred(),
+				"passthrough from 'a/../../etc' cleans to '../etc' which "+
+					"escapes the project root — must be rejected even though "+
+					"the raw path starts with a safe component (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("passthrough"),
+				"error must identify passthrough as the source (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("from"),
+				"error must identify the from field (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("travers"),
+				"error must indicate path traversal — after filepath.Clean, "+
+					"'a/../../etc' becomes '../etc' which starts with '..' "+
+					"(issues #1031, #1034)")
+		})
+	})
+
+	// ── passthrough[].to: relative traversal rejection ──────────────
+
+	Describe("passthrough to traversal rejection", func() {
+		It("rejects traversal path for passthrough[].to", func() {
+			contentMap := baseContent("trav-to.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: "vendor/assets", to: "../../evil" }];
+    return config;
+  });
+}`)
+			_, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).To(HaveOccurred(),
+				"passthrough to with .. traversal must be rejected — "+
+					"filepath.Join(outputDir, '../../evil') resolves outside "+
+					"the output directory, writing files to an arbitrary "+
+					"filesystem location (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("passthrough"),
+				"error must identify passthrough as the source (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("to"),
+				"error must identify the to field (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("travers"),
+				"error must indicate path traversal was the reason for "+
+					"rejection (issues #1031, #1034)")
+		})
+
+		It("rejects single .. for passthrough[].to", func() {
+			contentMap := baseContent("dotdot-to.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: "vendor/assets", to: ".." }];
+    return config;
+  });
+}`)
+			_, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).To(HaveOccurred(),
+				"passthrough to set to '..' must be rejected — files would be "+
+					"written to the parent of the output directory "+
+					"(issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("passthrough"),
+				"error must identify passthrough as the source (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("to"),
+				"error must identify the to field (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("travers"),
+				"a bare '..' is a traversal (issues #1031, #1034)")
+		})
+	})
+
+	// ── passthrough[].from: project root rejection ──────────────────
+
+	Describe("passthrough from project root rejection", func() {
+		It("rejects . for passthrough[].from", func() {
+			contentMap := baseContent("dot-from.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: ".", to: "root-copy" }];
+    return config;
+  });
+}`)
+			_, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).To(HaveOccurred(),
+				"passthrough from set to '.' must be rejected — it would copy "+
+					"the entire project root (including _site itself) into the "+
+					"output directory, risking recursive copy and unbounded output "+
+					"(issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("passthrough"),
+				"error must identify passthrough as the source (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("from"),
+				"error must identify the from field (issues #1031, #1034)")
+		})
+	})
+
+	// ── passthrough[].to: allow . and empty ─────────────────────────
+	// Unlike build.output and structure.* fields, passthrough to: "."
+	// and to: "" are valid. They mean "copy files to the root of the
+	// output directory" — equivalent to filepath.Join(outputDir, ".").
+
+	Describe("passthrough to allows . and empty", func() {
+		It("allows . for passthrough[].to", func() {
+			contentMap := baseContent("dot-to.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: "vendor/assets", to: "." }];
+    return config;
+  });
+}`)
+			// Provide the vendor/assets directory so the build does not
+			// fail with "passthrough source does not exist".
+			contentMap["vendor/assets/style.css"] = "body { color: red; }"
+			result, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"passthrough to set to '.' must be accepted — it means 'copy "+
+					"files to the root of the output directory'. Unlike build.output "+
+					"where '.' targets the project root for CleanOutputDir deletion, "+
+					"passthrough to is relative to the output directory and '.' is "+
+					"a valid destination (issues #1031, #1034)")
+			Expect(result).NotTo(BeNil())
+		})
+
+		It("allows ./ for passthrough[].to (cleans to .)", func() {
+			contentMap := baseContent("dotslash-to.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: "vendor/assets", to: "./" }];
+    return config;
+  });
+}`)
+			contentMap["vendor/assets/style.css"] = "body { color: blue; }"
+			result, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"passthrough to set to './' must be accepted — filepath.Clean('./') "+
+					"returns '.' which is a valid output-root destination. The raw "+
+					"value './' is not literally '.' but cleans to it — the "+
+					"implementation must clean before comparing, not compare the "+
+					"raw value (issue #1040)")
+			Expect(result).NotTo(BeNil())
+		})
+
+		It("allows subdir/.. for passthrough[].to (cleans to .)", func() {
+			contentMap := baseContent("subdir-dotdot-to.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: "vendor/assets", to: "subdir/.." }];
+    return config;
+  });
+}`)
+			contentMap["vendor/assets/script.js"] = "console.log('hi');"
+			result, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"passthrough to set to 'subdir/..' must be accepted — "+
+					"filepath.Clean('subdir/..') returns '.' which is a valid "+
+					"output-root destination. Without cleaning before comparing, "+
+					"this path would be sent to validateOnConfigPath which rejects "+
+					"'.' for build.output/structure.* fields (issue #1040)")
+			Expect(result).NotTo(BeNil())
+		})
+
+		It("allows empty string for passthrough[].to", func() {
+			contentMap := baseContent("empty-to.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: "vendor/assets", to: "" }];
+    return config;
+  });
+}`)
+			contentMap["vendor/assets/script.js"] = "console.log('hello');"
+			result, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"passthrough to set to '' (empty string) must be accepted — "+
+					"empty to is the default behavior meaning 'root of output "+
+					"directory'. It must not be rejected as a project-root "+
+					"path (issues #1031, #1034)")
+			Expect(result).NotTo(BeNil())
+		})
+	})
+
+	// ── Safe relative paths accepted ────────────────────────────────
+
+	Describe("safe relative paths accepted", func() {
+		It("allows safe relative from and to paths", func() {
+			contentMap := baseContent("safe-paths.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: "vendor/assets", to: "assets/vendor" }];
+    return config;
+  });
+}`)
+			contentMap["vendor/assets/lib.js"] = "// lib"
+			result, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"passthrough with safe relative from and to paths must be "+
+					"accepted — 'vendor/assets' is within the project root "+
+					"and 'assets/vendor' is a valid output subdirectory "+
+					"(issues #1031, #1034)")
+			Expect(result).NotTo(BeNil())
+		})
+
+		It("allows from with embedded .. that resolves within project root", func() {
+			contentMap := baseContent("safe-dotdot-from.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: "subdir/../vendor", to: "vendor-out" }];
+    return config;
+  });
+}`)
+			contentMap["vendor/data.json"] = `{"key": "value"}`
+			result, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"passthrough from 'subdir/../vendor' cleans to 'vendor' which "+
+					"is a valid relative path within the project root — must be "+
+					"accepted, same as the build.output edge case (issues #1031, #1034)")
+			Expect(result).NotTo(BeNil())
+		})
+
+		It("allows to with embedded .. that resolves safely", func() {
+			contentMap := baseContent("safe-dotdot-to.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: "vendor/assets", to: "subdir/../assets" }];
+    return config;
+  });
+}`)
+			contentMap["vendor/assets/main.css"] = "body{}"
+			result, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"passthrough to 'subdir/../assets' cleans to 'assets' which "+
+					"is a valid output subdirectory — must be accepted "+
+					"(issues #1031, #1034)")
+			Expect(result).NotTo(BeNil())
+		})
+	})
+
+	// ── Empty from filtering ────────────────────────────────────────
+	// The existing passthrough deserialization filters out entries with
+	// empty from values before validation runs. This means from: "" is
+	// silently skipped (not rejected as ".") — it never reaches
+	// validateOnConfigPath. This is safe: no files are copied for an
+	// entry with no source path.
+
+	Describe("empty from filtering", func() {
+		It("silently skips passthrough entries with empty from", func() {
+			contentMap := baseContent("empty-from.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [
+      { from: "", to: "should-skip" },
+      { from: "vendor/assets", to: "assets/vendor" }
+    ];
+    return config;
+  });
+}`)
+			contentMap["vendor/assets/lib.js"] = "// lib"
+			result, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"passthrough entry with from: '' must be silently skipped — "+
+					"the existing empty-from filter removes the entry before "+
+					"validation runs. filepath.Clean('') returns '.' which "+
+					"would be rejected, but the filter prevents that path. "+
+					"This is safe: no files are copied when from is empty "+
+					"(issues #1031, #1034)")
+			Expect(result).NotTo(BeNil())
+		})
+	})
+
+	// ── Atomicity ───────────────────────────────────────────────────
+	// Bad passthrough validation must prevent ALL config mutations,
+	// including build.output and structure.* fields set in the same
+	// hook return. This maintains the existing atomicity guarantee:
+	// no partial config mutation on failure.
+	//
+	// This test calls applyOnConfigResult directly (via export_test.go)
+	// rather than going through BuildWithContent, because BuildWithContent
+	// does a struct copy of *cfg before passing it to Build — the test's
+	// original cfg pointer is never mutated regardless of atomicity
+	// implementation. Direct invocation ensures we observe whether the
+	// validate-then-apply pattern actually prevents partial mutation.
+
+	Describe("atomicity", func() {
+		It("prevents all config mutations when passthrough validation fails", func() {
+			cfg := baseConfig()
+			resultMap := map[string]interface{}{
+				"build": map[string]interface{}{
+					"output": "dist",
+				},
+				"passthrough": []interface{}{
+					map[string]interface{}{
+						"from": "/etc/shadow",
+						"to":   "exfil",
+					},
+				},
+			}
+			err := pipeline.ApplyOnConfigResult(cfg, resultMap)
+			Expect(err).To(HaveOccurred(),
+				"passthrough from set to absolute path must be rejected — "+
+					"applyOnConfigResult must validate passthrough paths "+
+					"before applying any config mutations "+
+					"(issues #1031, #1034)")
+			Expect(cfg.Build.Output).To(Equal("_site"),
+				"build.output must remain '_site' (the original value) — "+
+					"a passthrough validation failure must prevent ALL config "+
+					"mutations, not just the passthrough field. The atomicity "+
+					"guarantee requires that no structure/build fields are "+
+					"applied when any validation fails (issues #1031, #1034)")
+		})
+	})
+
+	// ── Error indexing ──────────────────────────────────────────────
+	// When multiple passthrough mappings are present and a later mapping
+	// has a bad path, the error message must include the zero-based
+	// array index so the plugin author knows which entry to fix.
+
+	Describe("error indexing", func() {
+		It("includes the array index in error message for the failing mapping", func() {
+			contentMap := baseContent("index-error.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [
+      { from: "valid/dir", to: "valid" },
+      { from: "also-valid/dir", to: "also-valid" },
+      { from: "../../etc", to: "exfil" }
+    ];
+    return config;
+  });
+}`)
+			_, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).To(HaveOccurred(),
+				"third mapping (index 2) has traversal in from — must be "+
+					"rejected (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("passthrough[2]"),
+				"error must include the zero-based array index so plugin "+
+					"authors know which mapping entry caused the failure — "+
+					"'passthrough[2]' for the third entry (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("from"),
+				"error must identify the from field within the failing "+
+					"mapping (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("travers"),
+				"error must indicate traversal as the violation type "+
+					"(issues #1031, #1034)")
+		})
+
+		It("includes the array index for to field failures", func() {
+			contentMap := baseContent("index-to-error.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [
+      { from: "valid/dir", to: "valid" },
+      { from: "another/dir", to: "/absolute/evil" }
+    ];
+    return config;
+  });
+}`)
+			_, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).To(HaveOccurred(),
+				"second mapping (index 1) has absolute to — must be rejected "+
+					"(issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("passthrough[1]"),
+				"error must include 'passthrough[1]' for the second entry "+
+					"(zero-indexed) (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("to"),
+				"error must identify the to field (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("absolute"),
+				"error must indicate absolute path as the violation "+
+					"(issues #1031, #1034)")
+		})
+	})
+})
