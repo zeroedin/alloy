@@ -311,7 +311,7 @@ var _ = Describe("Fetch", func() {
 
 			_, err := fetch.FetchPluginSource("failing-source", nil)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("API returned 503"),
+			Expect(err).To(MatchError("API returned 503"),
 				"handler error message must propagate to the caller unchanged")
 		})
 

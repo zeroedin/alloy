@@ -751,16 +751,11 @@ var _ = Describe("NodeBridge", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			warnings := rt.EvalWarnings()
-			found := false
-			for _, w := range warnings {
-				if strings.Contains(w, "dup-source") && strings.Contains(w, "duplicate") {
-					found = true
-					break
-				}
-			}
-			Expect(found).To(BeTrue(),
-				"registering the same source name twice must produce a warning — "+
-					"same pattern as duplicate hook registration")
+			Expect(warnings).To(ContainElement(And(
+				ContainSubstring("dup-source"),
+				ContainSubstring("duplicate"),
+			)), "registering the same source name twice must produce a warning — "+
+				"same pattern as duplicate hook registration")
 		})
 	})
 })

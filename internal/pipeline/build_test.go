@@ -953,6 +953,9 @@ var _ = Describe("Build Pipeline", func() {
 	// handler invocation mechanics.
 
 	Describe("Plugin source dispatch (issue #979)", func() {
+		BeforeEach(func() {
+			fetch.ResetPluginSources()
+		})
 		AfterEach(func() {
 			fetch.ResetPluginSources()
 		})
@@ -996,6 +999,8 @@ var _ = Describe("Build Pipeline", func() {
 		})
 
 		It("Build uses source name as data key when 'as' is omitted", func() {
+			// Use distinct source key ("calendar") and plugin name ("events")
+			// to verify the default key comes from the source map key, not Plugin.
 			fetch.RegisterPluginSource("events", func(config map[string]interface{}) (interface{}, error) {
 				return []interface{}{
 					map[string]interface{}{"name": "Conference", "date": "2026-09-01"},
@@ -1007,16 +1012,16 @@ var _ = Describe("Build Pipeline", func() {
 				BaseURL: "https://example.com",
 				Build:   config.BuildConfig{Output: "_site"},
 				Sources: map[string]*config.SourceConfig{
-					"events": {
+					"calendar": {
 						Type:   "plugin",
 						Plugin: "events",
-						// As is omitted — should default to source name "events"
+						// As is omitted — should default to source name "calendar"
 					},
 				},
 			}
 			contentMap := map[string]string{
 				"content/index.md":       "---\ntitle: Events\nlayout: default\n---\n# Events",
-				"layouts/default.liquid": "<html><body>{{ content }}<p>Count: {{ site.data.events.size }}</p></body></html>",
+				"layouts/default.liquid": "<html><body>{{ content }}<p>Count: {{ site.data.calendar.size }}</p></body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred())
@@ -1024,8 +1029,8 @@ var _ = Describe("Build Pipeline", func() {
 
 			html := result.RenderedContent["index.md"]
 			Expect(html).To(ContainSubstring("Count: 1"),
-				"when 'as' is omitted, source name must be used as the data key — "+
-					"template must access site.data.events.size and get 1 event")
+				"when 'as' is omitted, source name (map key 'calendar') must be used as the data key, "+
+					"not the plugin name ('events') — template must access site.data.calendar.size and get 1 event")
 		})
 
 		It("Build aborts when plugin source handler is not registered", func() {

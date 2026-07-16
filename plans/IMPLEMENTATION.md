@@ -734,9 +734,12 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
           hooks.Register(HookName(name), wrap(rt.CallHook))
       }
       // Bridge sources — register Go-level handlers backed by bridge RPC
-      if sr, ok := rt.(interface{ RegisteredSources() []string }); ok {
+      if sr, ok := rt.(interface {
+          RegisteredSources() []string
+          CallSource(string, map[string]interface{}) (interface{}, error)
+      }); ok {
           for _, name := range sr.RegisteredSources() {
-              fetch.RegisterPluginSource(name, wrapSource(rt.CallSource))
+              fetch.RegisterPluginSource(name, wrapSource(sr.CallSource))
           }
       }
   }
