@@ -1881,6 +1881,23 @@ Don't do this in production.
 {{% /callout %}}
 ```
 
+**Shortcode calling convention (issue #981):**
+
+Shortcodes receive arguments as `[]string` and inner content as `string`. The calling convention defines how arguments are extracted and how empty returns are handled — identically across both engines.
+
+**Argument resolution:**
+- **Quoted arguments** are literal strings in both engines. `{% youtube "dQw4w9WgXcQ" %}` passes `["dQw4w9WgXcQ"]` regardless of template context.
+- **Unquoted arguments in Liquid** resolve as Liquid expressions against the template context. `{% youtube page.videoId %}` evaluates `page.videoId` from the render context and passes the resolved value. This matches Go template behavior where `{{ youtube .page.videoId }}` naturally resolves `.page.videoId` before calling the function.
+- **Fallback to literal:** If an unquoted Liquid argument does not resolve to any context variable, it is passed as a literal string. This preserves backward compatibility — existing shortcodes using unquoted strings that happen not to match any variable continue to work.
+- **Type conversion:** Resolved non-string values (integers, booleans, etc.) are converted to strings via `fmt.Sprint()` before passing to `TagFunc`. The `TagFunc` signature is `func(args []string, content string) string` — all arguments are strings.
+- **Mixed arguments:** `{% card "primary" page.size %}` passes `["primary", "large"]` when `page.size` is `"large"` — quoted args stay literal, unquoted args resolve.
+- **Implementation:** In `alloyInlineTag.Render` and `alloyBlockTag.Render`, unquoted argument tokens are resolved via `context.Evaluate()` (the `liquid.TagContext` already provides this method). `parseTagArgs` must distinguish quoted from unquoted tokens and pass them to the render methods with their quoted/unquoted status preserved. The render methods then resolve unquoted tokens against the context.
+
+**Empty return behavior:**
+- When a `TagFunc` returns `""` (empty string), both engines emit nothing — no output, no wrapper, no placeholder.
+- The Liquid engine must NOT emit `<alloy-shortcode data-tag="name"></alloy-shortcode>` for empty returns. That placeholder was undocumented, leaked internal implementation details into production HTML, and diverged from Go engine behavior. It is removed.
+- A shortcode that conditionally returns `""` (e.g., a conditional embed) simply produces no output in the rendered page.
+
 **Go template block shortcodes** use `{{% tag "args" %}}...{{% /tag %}}` syntax. The `{{% %}}` delimiters are distinct from Go's `{{ }}` expression syntax and Liquid's `{% %}` control syntax. The closing tag uses `/tagname` (e.g., `{{% /callout %}}`), not `endtagname`.
 
 **Content between paired `{{% %}}` tags is Markdown-processed.** Goldmark's template tag extension preserves `{{% %}}` delimiters verbatim (same as `{% %}` and `{{ }}`), and content between them is rendered as normal Markdown. A block shortcode preprocessor runs after Goldmark but before Go template rendering — it scans the post-Goldmark HTML for paired `{{% tag %}}...{{% /tag %}}` sequences, extracts the inner HTML, calls `CallShortcode(name, args, innerContent)`, and replaces the block with the plugin's output.
