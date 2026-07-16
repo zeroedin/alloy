@@ -277,7 +277,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			}
 			if fetchErr != nil {
 				if src.Type == "plugin" {
-					return nil, fmt.Errorf("source %q: %w", name, fetchErr)
+					return nil, fmt.Errorf("source %q (plugin %q): %w", name, src.Plugin, fetchErr)
 				}
 				log.Printf("warning: fetching source %s: %v", name, fetchErr)
 				continue
