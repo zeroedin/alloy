@@ -1732,11 +1732,13 @@ var _ = Describe("Build Pipeline", func() {
 				Title:   "Zero Timeout Test",
 				BaseURL: "https://example.com",
 				Build:   config.BuildConfig{Output: "_site"},
+				Plugins: config.PluginsConfig{Timeout: 500}, // explicit baseline
 			}
 			// Plugin sets plugins.timeout to 0. The implementation only applies
 			// timeout values > 0, so 0 should be treated as "keep original".
-			// A chained hook that takes a small amount of time should still
-			// complete successfully under the original (default 5000ms) timeout.
+			// The verification hook runs a 25ms delay — if 0 is incorrectly
+			// applied as a literal 0ms timeout, the hook always times out.
+			// With the correct 500ms baseline preserved, 25ms completes easily.
 			contentMap := map[string]string{
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
@@ -1748,6 +1750,8 @@ var _ = Describe("Build Pipeline", func() {
 }`,
 				"plugins/bbb-verify-hook-runs.js": `export default function(alloy) {
   alloy.hook('onContentTransformed', {}, (page) => {
+    var start = Date.now();
+    while (Date.now() - start < 25) {}
     page.html = page.html + '<!-- HOOK_RAN -->';
     return page;
   });
@@ -1771,9 +1775,12 @@ var _ = Describe("Build Pipeline", func() {
 				Title:   "Negative Timeout Test",
 				BaseURL: "https://example.com",
 				Build:   config.BuildConfig{Output: "_site"},
+				Plugins: config.PluginsConfig{Timeout: 500}, // explicit baseline
 			}
 			// Plugin sets plugins.timeout to -1. Like zero, negative values
 			// must not be applied — the original timeout is preserved.
+			// The verification hook runs a 25ms delay — if -1 is incorrectly
+			// applied, the hook times out. With 500ms baseline, 25ms completes.
 			contentMap := map[string]string{
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
@@ -1785,6 +1792,8 @@ var _ = Describe("Build Pipeline", func() {
 }`,
 				"plugins/bbb-verify-hook-runs.js": `export default function(alloy) {
   alloy.hook('onContentTransformed', {}, (page) => {
+    var start = Date.now();
+    while (Date.now() - start < 25) {}
     page.html = page.html + '<!-- HOOK_RAN -->';
     return page;
   });

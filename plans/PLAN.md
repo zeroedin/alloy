@@ -2520,8 +2520,8 @@ Fire **once per build**. Payload is a JSON-serializable representation of the Go
 
 **Edge cases (issue #999):**
 - **Null/nil return**: Returning null from an `onConfig` hook produces a build error identifying `onConfig` as the source. Plugins must return the config object.
-- **Hook timeout**: When an `onConfig` hook exceeds the configured timeout, `RunWithTimeout` returns the original `*config.Config` payload. `applyOnConfigResult` treats `*config.Config` as a no-op — the timed-out hook's mutations are discarded and the original config is preserved.
-- **Timeout value constraints**: `plugins.timeout` values ≤ 0 are not applied — the original timeout is preserved. Only positive values update `cfg.Plugins.Timeout`. This prevents a plugin from accidentally disabling all hook timeouts.
+- **Hook timeout**: When an `onConfig` hook exceeds the configured timeout, `RunWithTimeout` restores the payload that was passed to that hook (`preHook`). The timed-out hook's mutations are discarded while earlier successful hooks' mutations are preserved. For a single-hook chain, this restores the original `*config.Config`; `applyOnConfigResult` treats `*config.Config` as a no-op.
+- **Timeout value constraints**: `plugins.timeout` values ≤ 0 are ignored — only positive values update `cfg.Plugins.Timeout`. This prevents a plugin from accidentally causing immediate timeout enforcement on subsequent hooks.
 - **Passthrough empty `from`**: Passthrough entries with empty `from` are silently skipped during `applyOnConfigResult` — they are filtered out of the applied `cfg.Passthrough` slice. The JS hook chain sees all entries (filtering is Go-side only).
 
 ```javascript
