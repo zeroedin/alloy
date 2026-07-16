@@ -1241,6 +1241,13 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(result1).NotTo(BeNil())
 			Expect(callCount).To(Equal(1))
 
+			// Re-register since Close() cleared the global plugin source map
+			// (production re-registers via DiscoverPlugins → registerRuntime)
+			fetch.RegisterPluginSource("refetch-api", func(config map[string]interface{}) (interface{}, error) {
+				callCount++
+				return map[string]interface{}{"gen": float64(callCount)}, nil
+			})
+
 			// Second build with --refetch — must bypass cache even though
 			// the cache file exists in the same project root
 			cfg2 := *cfg
