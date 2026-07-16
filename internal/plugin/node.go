@@ -110,6 +110,7 @@ type NodeRuntime struct {
 	filters        []string
 	shortcodes     []string
 	hooks          []string
+	sources        []string
 	hookScopes     map[string]*HookScope // hook name → scope from bridge
 	hookPriorities map[string]int        // hook name → priority from bridge
 	pluginPaths    []string              // paths loaded via EvalFile, for worker replication
@@ -214,6 +215,13 @@ func (r *NodeRuntime) EvalFile(path string) error {
 				r.hookScopes[name] = scope
 			}
 		}
+		if sr, ok := resultMap["sources"].([]interface{}); ok {
+			for _, v := range sr {
+				if s, ok := v.(string); ok {
+					r.sources = append(r.sources, s)
+				}
+			}
+		}
 		if ws, ok := resultMap["warnings"].([]interface{}); ok {
 			for _, w := range ws {
 				if s, ok := w.(string); ok {
@@ -313,6 +321,37 @@ func (r *NodeRuntime) RegisteredHookDetails() []HookRegistration {
 		regs = append(regs, HookRegistration{Name: name, Priority: priority, Scope: scope})
 	}
 	return regs
+}
+
+// RegisteredSources returns the names of data sources registered by the Node plugin.
+func (r *NodeRuntime) RegisteredSources() []string {
+	return r.sources
+}
+
+// CallSource invokes a registered data source handler in the Node subprocess.
+func (r *NodeRuntime) CallSource(name string, config map[string]interface{}) (interface{}, error) {
+	if r.bridge == nil {
+		return nil, fmt.Errorf("source %q: bridge not started", name)
+	}
+	found := false
+	for _, s := range r.sources {
+		if s == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("source %q not registered", name)
+	}
+	resp, err := r.bridge.Send(&Message{
+		Type:    "source",
+		Name:    name,
+		Payload: config,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("node source %q: %w", name, err)
+	}
+	return resp.Result, nil
 }
 
 // EvalWarnings returns warnings collected during EvalFile calls.

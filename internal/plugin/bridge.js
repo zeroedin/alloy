@@ -23,6 +23,7 @@ const filters = {};
 const shortcodes = {};
 const hooks = {};
 const hookScopes = {};
+const sources = {};
 const warnings = [];
 
 const alloy = {
@@ -48,6 +49,12 @@ const alloy = {
     };
   },
   on(name, options, fn) { alloy.hook(name, options, fn); },
+  source(name, fn) {
+    if (Object.hasOwn(sources, name)) {
+      warnings.push(`duplicate source registration: "${name}" registered multiple times, last registration wins`);
+    }
+    sources[name] = fn;
+  },
 };
 
 function sendMessage(msg) {
@@ -110,6 +117,7 @@ async function handleMessage(msg) {
             shortcodes: Object.keys(shortcodes),
             hooks: Object.keys(hooks),
             hookScopes: hookScopes,
+            sources: Object.keys(sources),
             warnings: warnings.splice(0),
           },
         });
@@ -137,6 +145,13 @@ async function handleMessage(msg) {
         const scArgs = (msg.payload && msg.payload.args) || [];
         const scContent = (msg.payload && msg.payload.content) || '';
         const result = await fn(scArgs, scContent);
+        sendMessage({ id: msg.id, result });
+        break;
+      }
+      case 'source': {
+        const fn = sources[msg.name];
+        if (!fn) { sendMessage({ id: msg.id, error: `source "${msg.name}" not found` }); return; }
+        const result = await fn(msg.payload);
         sendMessage({ id: msg.id, result });
         break;
       }

@@ -263,11 +263,22 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				fetched, fetchErr = fetch.FetchRESTWithRefetch(src.URL, cacheDir, cfg.Refetch)
 			case "graphql":
 				fetched, fetchErr = fetch.FetchGraphQL(src.Endpoint, src.Query)
+			case "plugin":
+				configMap := map[string]interface{}{
+					"type":   src.Type,
+					"plugin": src.Plugin,
+					"cache":  src.Cache,
+					"as":     src.As,
+				}
+				fetched, fetchErr = fetch.FetchPluginSource(src.Plugin, configMap)
 			default:
 				log.Printf("warning: unknown source type %q for %s", src.Type, name)
 				continue
 			}
 			if fetchErr != nil {
+				if src.Type == "plugin" {
+					return nil, fmt.Errorf("source %q: %w", name, fetchErr)
+				}
 				log.Printf("warning: fetching source %s: %v", name, fetchErr)
 				continue
 			}
