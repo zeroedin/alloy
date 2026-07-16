@@ -247,6 +247,35 @@ var _ = Describe("Data Loader", func() {
 					"only directories containing data files (at any depth) should appear")
 		})
 
+		It("file + empty directory with same stem does not collision-error (issue #1019)", func() {
+			// Regression test: nav.yaml coexisting with an empty nav/
+			// directory must NOT trigger a false collision error. The empty
+			// directory produces no key, so there is no conflict.
+			dir := filepath.Join(testdataDir(), "file-empty-dir-same-stem")
+			result, err := data.LoadDirectory(dir)
+			Expect(err).NotTo(HaveOccurred(),
+				"LoadDirectory must succeed when a file and empty directory share "+
+					"the same stem — the empty directory produces no key, so no "+
+					"collision exists (issue #1019)")
+
+			// The file's data must be present under the stem key
+			Expect(result).To(HaveKey("nav"),
+				"nav.yaml must produce the \"nav\" key even when an empty nav/ "+
+					"directory coexists — the empty directory is a no-op")
+			navData, ok := result["nav"].(map[string]interface{})
+			Expect(ok).To(BeTrue(),
+				"nav.yaml content must be a map, not a nested directory namespace")
+			Expect(navData).To(HaveKey("items"),
+				"nav.yaml parsed content must be accessible — the file was loaded, "+
+					"not skipped or overwritten by the empty directory")
+			items, ok := navData["items"].([]interface{})
+			Expect(ok).To(BeTrue(),
+				"items field must be a slice")
+			Expect(items).To(HaveLen(3),
+				"nav.yaml has 3 items (Home, About, Contact) — verifies the "+
+					"complete file content was loaded, not a partial or empty result")
+		})
+
 		It("errors on directory-file stem collision", func() {
 			dir := filepath.Join(testdataErrorsDir(), "dir-file-collision")
 			_, err := data.LoadDirectory(dir)
