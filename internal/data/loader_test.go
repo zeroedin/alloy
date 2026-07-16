@@ -18,6 +18,16 @@ func testdataDir() string {
 	return filepath.Join(filepath.Dir(file), "testdata")
 }
 
+// testdataErrorsDir returns the absolute path to the testdata-errors
+// directory, which contains fixture directories with intentional error
+// conditions (stem collisions, dir-file collisions). Separated from
+// testdata/ so that root-level LoadDirectory tests can load testdata/
+// without hitting error fixtures during recursive traversal.
+func testdataErrorsDir() string {
+	_, file, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(file), "testdata-errors")
+}
+
 var _ = Describe("Data Loader", func() {
 
 	// ── YAML data files ────────────────────────────────────────────────
@@ -129,7 +139,7 @@ var _ = Describe("Data Loader", func() {
 
 	Context("Data file stem collisions", func() {
 		It("returns error when two files share a stem name (team.csv and team.yaml)", func() {
-			dir := filepath.Join(testdataDir(), "collision")
+			dir := filepath.Join(testdataErrorsDir(), "collision")
 			_, err := data.LoadDirectory(dir)
 			Expect(err).To(HaveOccurred(),
 				"LoadDirectory must error when two files share a stem name")
@@ -238,7 +248,7 @@ var _ = Describe("Data Loader", func() {
 		})
 
 		It("errors on directory-file stem collision", func() {
-			dir := filepath.Join(testdataDir(), "dir-file-collision")
+			dir := filepath.Join(testdataErrorsDir(), "dir-file-collision")
 			_, err := data.LoadDirectory(dir)
 			Expect(err).To(HaveOccurred(),
 				"LoadDirectory must error when a file and subdirectory share the same stem — "+
@@ -251,7 +261,7 @@ var _ = Describe("Data Loader", func() {
 		})
 
 		It("applies stem collision detection within subdirectories", func() {
-			dir := filepath.Join(testdataDir(), "nested-collision")
+			dir := filepath.Join(testdataErrorsDir(), "nested-collision")
 			_, err := data.LoadDirectory(dir)
 			Expect(err).To(HaveOccurred(),
 				"stem collision rules must apply recursively within subdirectories — "+
