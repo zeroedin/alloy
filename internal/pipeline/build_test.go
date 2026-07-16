@@ -1378,8 +1378,8 @@ var _ = Describe("Build Pipeline", func() {
 				"config map must include the plugin name")
 			Expect(receivedConfig).To(HaveKeyWithValue("as", "api_data"),
 				"config map must include the 'as' key for data namespace binding")
-			Expect(receivedConfig).To(HaveKey("cache"),
-				"config map must include the cache TTL setting")
+			Expect(receivedConfig).To(HaveKeyWithValue("cache", 3600),
+				"config map must forward the cache TTL value, not just the key")
 		})
 	})
 
