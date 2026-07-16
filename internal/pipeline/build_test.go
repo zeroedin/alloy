@@ -2,6 +2,8 @@ package pipeline_test
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -1143,6 +1145,19 @@ var _ = Describe("Build Pipeline", func() {
 			fetch.ResetPluginSources()
 		})
 
+		// writeProjectFiles writes content and layout files into an existing
+		// project root directory for use with Build() directly.
+		// BuildWithContent creates and destroys a fresh tmpDir per call,
+		// so cache written by build 1 is removed before build 2 starts.
+		// Using Build() with a shared project root preserves cache across builds.
+		writeProjectFiles := func(projectRoot string, files map[string]string) {
+			for path, body := range files {
+				fullPath := filepath.Join(projectRoot, path)
+				Expect(os.MkdirAll(filepath.Dir(fullPath), 0755)).To(Succeed())
+				Expect(os.WriteFile(fullPath, []byte(body), 0644)).To(Succeed())
+			}
+		}
+
 		It("Build uses cached plugin source data when TTL has not expired", func() {
 			callCount := 0
 			fetch.RegisterPluginSource("cached-api", func(config map[string]interface{}) (interface{}, error) {
@@ -1152,10 +1167,17 @@ var _ = Describe("Build Pipeline", func() {
 				}, nil
 			})
 
+			projectRoot := GinkgoT().TempDir()
+			writeProjectFiles(projectRoot, map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html>{{ content }}</html>",
+			})
+
 			cfg := &config.Config{
-				Title:   "Cache Hit Test",
-				BaseURL: "https://example.com",
-				Build:   config.BuildConfig{Output: "_site"},
+				Title:       "Cache Hit Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
 				Sources: map[string]*config.SourceConfig{
 					"blog": {
 						Type:   "plugin",
@@ -1165,20 +1187,18 @@ var _ = Describe("Build Pipeline", func() {
 					},
 				},
 			}
-			contentMap := map[string]string{
-				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
-				"layouts/default.liquid": "<html>{{ content }}</html>",
-			}
 
 			// First build — handler must be called (cache miss)
-			result1, err := pipeline.BuildWithContent(cfg, contentMap)
+			result1, err := pipeline.Build(cfg)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result1).NotTo(BeNil())
 			Expect(callCount).To(Equal(1),
 				"first build must call the handler (cache miss)")
 
-			// Second build — handler must NOT be called (cache hit, TTL=3600s)
-			result2, err := pipeline.BuildWithContent(cfg, contentMap)
+			// Second build — same project root, cache persists on disk.
+			// Handler must NOT be called (cache hit, TTL=3600s).
+			cfg2 := *cfg
+			result2, err := pipeline.Build(&cfg2)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result2).NotTo(BeNil())
 			Expect(callCount).To(Equal(1),
@@ -1194,10 +1214,17 @@ var _ = Describe("Build Pipeline", func() {
 				return map[string]interface{}{"gen": float64(callCount)}, nil
 			})
 
+			projectRoot := GinkgoT().TempDir()
+			writeProjectFiles(projectRoot, map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html>{{ content }}</html>",
+			})
+
 			cfg := &config.Config{
-				Title:   "Refetch Test",
-				BaseURL: "https://example.com",
-				Build:   config.BuildConfig{Output: "_site"},
+				Title:       "Refetch Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
 				Sources: map[string]*config.SourceConfig{
 					"data": {
 						Type:   "plugin",
@@ -1207,20 +1234,18 @@ var _ = Describe("Build Pipeline", func() {
 					},
 				},
 			}
-			contentMap := map[string]string{
-				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
-				"layouts/default.liquid": "<html>{{ content }}</html>",
-			}
 
-			// First build — populates cache
-			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			// First build — populates cache in shared projectRoot
+			result1, err := pipeline.Build(cfg)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(result1).NotTo(BeNil())
 			Expect(callCount).To(Equal(1))
 
-			// Second build with --refetch — must bypass cache
-			cfgRefetch := *cfg
-			cfgRefetch.Refetch = true
-			_, err = pipeline.BuildWithContent(&cfgRefetch, contentMap)
+			// Second build with --refetch — must bypass cache even though
+			// the cache file exists in the same project root
+			cfg2 := *cfg
+			cfg2.Refetch = true
+			_, err = pipeline.Build(&cfg2)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(callCount).To(Equal(2),
 				"--refetch must bypass plugin source cache and invoke the handler again — "+
@@ -1232,10 +1257,16 @@ var _ = Describe("Build Pipeline", func() {
 				return []interface{}{"item1", "item2"}, nil
 			})
 
+			projectRoot := GinkgoT().TempDir()
+			writeProjectFiles(projectRoot, map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html>{{ content }}</html>",
+			})
+
 			cfg := &config.Config{
 				Title:       "Cache Populate Test",
 				BaseURL:     "https://example.com",
-				ProjectRoot: GinkgoT().TempDir(),
+				ProjectRoot: projectRoot,
 				Build:       config.BuildConfig{Output: "_site"},
 				Sources: map[string]*config.SourceConfig{
 					"items": {
@@ -1246,17 +1277,14 @@ var _ = Describe("Build Pipeline", func() {
 					},
 				},
 			}
-			contentMap := map[string]string{
-				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
-				"layouts/default.liquid": "<html>{{ content }}</html>",
-			}
 
-			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			result, err := pipeline.Build(cfg)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 
-			// Verify cache was populated by checking the cache directory
-			cacheDir := fetch.CacheDir(cfg.ProjectRoot)
+			// Verify cache was populated — check the same project root
+			// that Build() used (no tmpDir indirection)
+			cacheDir := fetch.CacheDir(projectRoot)
 			_, found := fetch.GetCached("cache-populate", cacheDir, 3600)
 			Expect(found).To(BeTrue(),
 				"Build must call SaveCache after a successful plugin source fetch — "+

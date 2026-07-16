@@ -418,7 +418,7 @@ var _ = Describe("Fetch", func() {
 				"cached data must preserve string values")
 		})
 
-		It("--refetch bypasses cache for plugin sources", func() {
+		It("caching infrastructure supports plugin source refetch workflow", func() {
 			callCount := 0
 			fetch.RegisterPluginSource("refetch-src", func(config map[string]interface{}) (interface{}, error) {
 				callCount++
