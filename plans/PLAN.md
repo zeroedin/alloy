@@ -2547,6 +2547,12 @@ Fire **once per build**. Payload is a JSON-serializable representation of the Go
 - **Timeout value constraints**: `plugins.timeout` values ≤ 0 are ignored — only positive values update `cfg.Plugins.Timeout`. This prevents a plugin from accidentally causing immediate timeout enforcement on subsequent hooks.
 - **Passthrough empty `from`**: Passthrough entries with empty `from` are silently skipped during `applyOnConfigResult` — they are filtered out of the applied `cfg.Passthrough` slice. The JS hook chain sees all entries (filtering is Go-side only).
 
+**Path-containment validation (issue #998)** — All directory path fields in the mutable allowlist (`build.output`, `structure.content`, `structure.layouts`, `structure.assets`, `structure.static`, `structure.data`) are validated against path traversal before being written to `cfg`. Validation rejects:
+- **Absolute paths** (e.g., `/tmp/evil`, `/etc`) — `resolveDir` returns absolute paths as-is, bypassing project-root sandboxing entirely. With `clean: true` (default), `CleanOutputDir` would run `os.RemoveAll` on arbitrary filesystem locations.
+- **Relative paths that traverse above the project root** (e.g., `../../etc`, `..`) — after `filepath.Clean`, any path starting with `..` escapes the project root. `resolveDir` would resolve these to directories outside the project tree.
+
+Validation normalizes paths via `filepath.Clean` before the traversal check and before storing the value in `cfg`. This means `subdir/../dist` is accepted (cleans to `dist`, which is a valid relative path) while `../../etc` is rejected (cleans to `../../etc`, which starts with `..`). Paths that fail validation produce a build error identifying the field name (e.g., `"build.output"`, `"structure.content"`) and the type of violation (absolute path or path traversal). The validation runs inside `applyOnConfigResult` before writing each string field to `cfg` — this ensures no downstream code (`resolveDir`, `validateOutputDir`, `CleanOutputDir`, `CopyPassthrough`) ever sees an unsafe path. Non-path fields (`build.clean`, `passthrough`, `plugins.workers`, `plugins.timeout`) are not subject to path validation.
+
 ```javascript
 // Example: redirect output directory via onConfig
 alloy.hook("onConfig", {}, (config) => {
