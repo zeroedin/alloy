@@ -263,7 +263,7 @@ Nesting depth is unlimited. Root-level files and subdirectory namespaces coexist
 
 This follows the same principle as output path conflicts (§2): no silent overwrites, no priority system. The user must resolve collisions explicitly. Stem collision detection applies recursively within subdirectories — `data/sub/team.yaml` and `data/sub/team.json` is also a collision.
 
-**Directory-file stem collisions are build errors (issue #983).** If a file and a subdirectory share the same stem (e.g., `data/nav.yaml` and `data/nav/`), the build fails. Both claim the key `"nav"` — the file would produce a data value, the directory would produce a nested namespace map. Same collision semantics: no priority system, the user must resolve it by renaming.
+**Directory-file stem collisions are build errors (issue #983).** If a file and a non-empty subdirectory share the same stem (e.g., `data/nav.yaml` and `data/nav/` containing data files), the build fails. Both claim the key `"nav"` — the file would produce a data value, the directory would produce a nested namespace map. Same collision semantics: no priority system, the user must resolve it by renaming. **Exception:** a file coexisting with an empty directory of the same stem (e.g., `nav.yaml` + empty `nav/`) is not a collision — the empty directory produces no key (issue #1019).
 
 **External data files** — Files outside the `data/` directory can be mapped into the data namespace via config:
 
