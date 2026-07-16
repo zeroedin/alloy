@@ -1,6 +1,7 @@
 package pipeline_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 
@@ -1084,8 +1085,9 @@ var _ = Describe("Build Pipeline", func() {
 
 			// External data file referenced via data.files config.
 			// Will be deleted before the incremental rebuild to trigger
-			// a loadSiteData error (the only way loadSiteData returns a
-			// non-nil error is via external data file failures).
+			// a loadSiteData error. loadSiteData returns errors from
+			// data directory parse failures, missing external files,
+			// and external-vs-directory key collisions.
 			Expect(os.WriteFile(filepath.Join(extDir, "extra.json"),
 				[]byte(`{"version": 1}`),
 				0644)).To(Succeed())
@@ -1218,8 +1220,10 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(psErr).NotTo(HaveOccurred())
 
 			// Sanity: initial data has both keys without collision.
-			Expect(pipelineState.SiteData).To(HaveKey("items"))
-			Expect(pipelineState.SiteData).To(HaveKey("widgets"))
+			Expect(pipelineState.SiteData).To(HaveKey("items"),
+				"sanity: InitPipelineState must load data directory 'items' key")
+			Expect(pipelineState.SiteData).To(HaveKey("widgets"),
+				"sanity: InitPipelineState must load external 'widgets' key from data.files config")
 
 			// Full build — establishes baseline.
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
@@ -1249,11 +1253,24 @@ var _ = Describe("Build Pipeline", func() {
 				"when loadSiteData returns a collision error, ps.SiteData "+
 					"must be preserved — pages render with stale data (issue #1018)")
 
-			// SiteData must retain original values from before the collision.
+			// SiteData must retain original values from before the collision —
+			// not the collision data ("Gear"), but the original external data ("Sprocket").
+			// Serialize to JSON for type-safe inspection (*ordered.Map implements
+			// json.Marshaler, so this works regardless of internal type).
 			Expect(pipelineState.SiteData).To(HaveKey("items"),
 				"stale SiteData must retain 'items' after collision error (issue #1018)")
 			Expect(pipelineState.SiteData).To(HaveKey("widgets"),
 				"stale SiteData must retain original 'widgets' after collision error (issue #1018)")
+			widgetsJSON, jsonErr := json.Marshal(pipelineState.SiteData["widgets"])
+			Expect(jsonErr).NotTo(HaveOccurred(),
+				"stale 'widgets' value must be JSON-serializable")
+			Expect(string(widgetsJSON)).To(ContainSubstring("Sprocket"),
+				"stale 'widgets' value must be the original external data ('Sprocket'), "+
+					"not the collision data ('Gear') — the error branch must not "+
+					"partially update ps.SiteData (issue #1018)")
+			Expect(string(widgetsJSON)).NotTo(ContainSubstring("Gear"),
+				"stale 'widgets' must not contain collision data — "+
+					"the error branch discards the entire fresh load (issue #1018)")
 		})
 
 		It("collections-based pagination is not invalidated by data file changes", func() {
