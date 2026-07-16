@@ -2,6 +2,8 @@ package pipeline_test
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -1128,6 +1130,256 @@ var _ = Describe("Build Pipeline", func() {
 			first, ok := products[0].(map[string]interface{})
 			Expect(ok).To(BeTrue())
 			Expect(first["name"]).To(Equal("Widget"))
+		})
+	})
+
+	// ── Plugin source caching through pipeline (issue #1044) ─────────
+	// PLAN.md §5: "All source data (built-in and plugin) is cached to
+	// .alloy/fetch-cache/ on disk." The case "plugin" branch in Build()
+	// must check GetCached before calling FetchPluginSource, and SaveCache
+	// after a successful fetch. Currently it calls the handler directly
+	// on every build, re-executing expensive API calls unnecessarily.
+
+	Describe("Plugin source caching through pipeline (issue #1044)", func() {
+		BeforeEach(func() {
+			fetch.ResetPluginSources()
+		})
+
+		// writeProjectFiles writes content and layout files into an existing
+		// project root directory for use with Build() directly.
+		// BuildWithContent creates and destroys a fresh tmpDir per call,
+		// so cache written by build 1 is removed before build 2 starts.
+		// Using Build() with a shared project root preserves cache across builds.
+		writeProjectFiles := func(projectRoot string, files map[string]string) {
+			for path, body := range files {
+				fullPath := filepath.Join(projectRoot, path)
+				Expect(os.MkdirAll(filepath.Dir(fullPath), 0755)).To(Succeed())
+				Expect(os.WriteFile(fullPath, []byte(body), 0644)).To(Succeed())
+			}
+		}
+
+		It("Build uses cached plugin source data when TTL has not expired", func() {
+			callCount := 0
+			fetch.RegisterPluginSource("cached-api", func(config map[string]interface{}) (interface{}, error) {
+				callCount++
+				return []interface{}{
+					map[string]interface{}{"title": fmt.Sprintf("Post (gen %d)", callCount)},
+				}, nil
+			})
+
+			projectRoot := GinkgoT().TempDir()
+			writeProjectFiles(projectRoot, map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html>{{ content }}</html>",
+			})
+
+			cfg := &config.Config{
+				Title:       "Cache Hit Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+				Sources: map[string]*config.SourceConfig{
+					"blog": {
+						Type:   "plugin",
+						Plugin: "cached-api",
+						Cache:  3600,
+						As:     "posts",
+					},
+				},
+			}
+
+			// First build — handler must be called (cache miss)
+			result1, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result1).NotTo(BeNil())
+			Expect(callCount).To(Equal(1),
+				"first build must call the handler (cache miss)")
+
+			// Second build — same project root, cache persists on disk.
+			// Handler must NOT be called (cache hit, TTL=3600s).
+			cfg2 := *cfg
+			result2, err := pipeline.Build(&cfg2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result2).NotTo(BeNil())
+			Expect(callCount).To(Equal(1),
+				"second build must serve plugin source from cache when TTL has not "+
+					"expired — currently the case 'plugin' branch in build.go calls "+
+					"FetchPluginSource directly without checking GetCached first (issue #1044)")
+		})
+
+		It("Build with --refetch bypasses plugin source cache", func() {
+			callCount := 0
+			fetch.RegisterPluginSource("refetch-api", func(config map[string]interface{}) (interface{}, error) {
+				callCount++
+				return map[string]interface{}{"gen": float64(callCount)}, nil
+			})
+
+			projectRoot := GinkgoT().TempDir()
+			writeProjectFiles(projectRoot, map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html>{{ content }}</html>",
+			})
+
+			cfg := &config.Config{
+				Title:       "Refetch Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+				Sources: map[string]*config.SourceConfig{
+					"data": {
+						Type:   "plugin",
+						Plugin: "refetch-api",
+						Cache:  3600,
+						As:     "data",
+					},
+				},
+			}
+
+			// First build — populates cache in shared projectRoot
+			result1, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result1).NotTo(BeNil())
+			Expect(callCount).To(Equal(1))
+
+			// Second build with --refetch — must bypass cache even though
+			// the cache file exists in the same project root
+			cfg2 := *cfg
+			cfg2.Refetch = true
+			_, err = pipeline.Build(&cfg2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(callCount).To(Equal(2),
+				"--refetch must bypass plugin source cache and invoke the handler again — "+
+					"same behavior as FetchRESTWithRefetch for REST sources")
+		})
+
+		It("Build populates cache after first successful plugin source fetch", func() {
+			fetch.RegisterPluginSource("cache-populate", func(config map[string]interface{}) (interface{}, error) {
+				return []interface{}{"item1", "item2"}, nil
+			})
+
+			projectRoot := GinkgoT().TempDir()
+			writeProjectFiles(projectRoot, map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html>{{ content }}</html>",
+			})
+
+			cfg := &config.Config{
+				Title:       "Cache Populate Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+				Sources: map[string]*config.SourceConfig{
+					"items": {
+						Type:   "plugin",
+						Plugin: "cache-populate",
+						Cache:  3600,
+						As:     "items",
+					},
+				},
+			}
+
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			// Verify cache was populated — check the same project root
+			// that Build() used (no tmpDir indirection)
+			cacheDir := fetch.CacheDir(projectRoot)
+			_, found := fetch.GetCached("cache-populate", cacheDir, 3600)
+			Expect(found).To(BeTrue(),
+				"Build must call SaveCache after a successful plugin source fetch — "+
+					"currently the case 'plugin' branch never calls SaveCache, "+
+					"so the cache is never populated (issue #1044)")
+		})
+	})
+
+	// ── Plugin source end-to-end pipeline dispatch (issue #1045) ─────
+	// Full end-to-end test verifying the pipeline dispatch path:
+	// fetch.RegisterPluginSource → config source → Build() dispatch →
+	// site.data injection → template rendering.
+
+	Describe("Plugin source end-to-end pipeline dispatch (issue #1045)", func() {
+		BeforeEach(func() {
+			fetch.ResetPluginSources()
+		})
+
+		It("plugin source data flows through Build to template output", func() {
+			fetch.RegisterPluginSource("e2e-cms", func(config map[string]interface{}) (interface{}, error) {
+				return []interface{}{
+					map[string]interface{}{"title": "Alpha Post", "slug": "alpha"},
+					map[string]interface{}{"title": "Beta Post", "slug": "beta"},
+				}, nil
+			})
+
+			cfg := &config.Config{
+				Title:   "E2E Source Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Sources: map[string]*config.SourceConfig{
+					"blog": {
+						Type:   "plugin",
+						Plugin: "e2e-cms",
+						As:     "posts",
+					},
+				},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Blog\nlayout: blog\n---\n# Blog Index",
+				"layouts/blog.liquid":    "{% for post in site.data.posts %}TITLE:{{ post.title }}|{% endfor %}{{ content }}",
+			}
+
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			// Verify plugin source data reached the template context
+			rendered := result.RenderedContent["index.md"]
+			Expect(rendered).To(ContainSubstring("TITLE:Alpha Post|"),
+				"plugin source data must flow through the full pipeline: "+
+					"fetch.RegisterPluginSource → config source dispatch → "+
+					"site.data injection → template rendering (issue #1045)")
+			Expect(rendered).To(ContainSubstring("TITLE:Beta Post|"),
+				"all source items must be accessible in the template loop")
+			Expect(rendered).To(ContainSubstring("Blog Index"),
+				"page content must render alongside source data")
+		})
+
+		It("plugin source config map is forwarded to the handler", func() {
+			var receivedConfig map[string]interface{}
+			fetch.RegisterPluginSource("config-forward", func(config map[string]interface{}) (interface{}, error) {
+				receivedConfig = config
+				return []interface{}{"ok"}, nil
+			})
+
+			cfg := &config.Config{
+				Title:   "Config Forward Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Sources: map[string]*config.SourceConfig{
+					"api": {
+						Type:   "plugin",
+						Plugin: "config-forward",
+						Cache:  3600,
+						As:     "api_data",
+					},
+				},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\nhello",
+				"layouts/default.liquid": "{{ content }}",
+			}
+
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(receivedConfig).NotTo(BeNil(),
+				"handler must receive the config map from build.go dispatch")
+			Expect(receivedConfig).To(HaveKeyWithValue("plugin", "config-forward"),
+				"config map must include the plugin name")
+			Expect(receivedConfig).To(HaveKeyWithValue("as", "api_data"),
+				"config map must include the 'as' key for data namespace binding")
+			Expect(receivedConfig).To(HaveKeyWithValue("cache", 3600),
+				"config map must forward the cache TTL value, not just the key")
 		})
 	})
 

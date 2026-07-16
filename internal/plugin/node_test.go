@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unicode/utf8"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -756,6 +757,78 @@ var _ = Describe("NodeBridge", func() {
 				ContainSubstring("duplicate"),
 			)), "registering the same source name twice must produce a warning — "+
 				"same pattern as duplicate hook registration")
+		})
+	})
+
+	// ── Plugin source error paths (issues #1043, #1045) ──────────────
+	// CallSource must handle error conditions cleanly:
+	// - bridge==nil (runtime not started) → descriptive error (#1045)
+	// - slow handler → timeout error, not infinite hang (#1043)
+
+	Describe("Plugin source error paths (issues #1043, #1045)", func() {
+
+		It("CallSource returns error when bridge has not been started (issue #1045)", func() {
+			// A NodeRuntime that has never had EvalFile called has bridge==nil.
+			// CallSource must produce a descriptive error, not panic.
+			rt := plugin.NewNodeRuntime()
+			DeferCleanup(func() { rt.Close() })
+
+			_, err := rt.CallSource("any-source", map[string]interface{}{"key": "val"})
+			Expect(err).To(HaveOccurred(),
+				"CallSource on a runtime with no bridge must return an error")
+			Expect(err.Error()).To(SatisfyAll(
+				ContainSubstring("any-source"),
+				SatisfyAny(
+					ContainSubstring("bridge"),
+					ContainSubstring("not started"),
+					ContainSubstring("not initialized"),
+				),
+			), "error must identify the source name and indicate the bridge is not started — "+
+				"this distinguishes 'runtime not ready' from 'source not registered'")
+		})
+
+		It("CallSource returns timeout error for a slow source handler (issue #1043)", NodeTimeout(15*time.Second), func(_ SpecContext) {
+			tmpDir, err := os.MkdirTemp("", "alloy-source-timeout-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+			plugin.ResetStalePIDCleanup(tmpDir)
+
+			rt := plugin.NewNodeRuntime()
+			rt.SetProjectRoot(tmpDir)
+			DeferCleanup(func() { rt.Close() })
+
+			fixturePath, err := filepath.Abs("testdata/single-files/source-slow.js")
+			Expect(err).NotTo(HaveOccurred())
+
+			err = rt.EvalFile(fixturePath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rt.RegisteredSources()).To(ContainElement("slow-source"))
+
+			// CallSource must apply a timeout (cfg.Plugins.Timeout, default 5s)
+			// and return a timeout error — NOT hang indefinitely.
+			done := make(chan struct{})
+			var callErr error
+			go func() {
+				_, callErr = rt.CallSource("slow-source", nil)
+				close(done)
+			}()
+
+			// The plugin timeout default is 5s. Allow 8s for overhead.
+			// If CallSource has no timeout, this Eventually fails because
+			// done never closes within 8 seconds.
+			Eventually(done, "8s").Should(BeClosed(),
+				"CallSource must not hang indefinitely — it should apply "+
+					"cfg.Plugins.Timeout and return within the timeout window")
+
+			Expect(callErr).To(HaveOccurred(),
+				"slow source handler must produce an error, not succeed after timeout")
+			Expect(callErr.Error()).To(SatisfyAny(
+				ContainSubstring("timeout"),
+				ContainSubstring("deadline exceeded"),
+				ContainSubstring("context canceled"),
+			), "error must indicate the source call timed out — currently CallSource "+
+				"uses bridge.Send() with no timeout, unlike hook calls which go through "+
+				"RunWithTimeout with context.WithTimeout")
 		})
 	})
 })
