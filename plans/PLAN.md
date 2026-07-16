@@ -73,7 +73,10 @@ my-site/
 │   └── img/
 ├── static/                    # Copied as-is to output
 ├── data/                      # Global data files (YAML, JSON, CSV)
-│   └── navigation.yaml
+│   ├── navigation.yaml        # → site.data.navigation
+│   └── nav/                   # Subdirectories create nested namespaces
+│       ├── main.yaml          # → site.data.nav.main
+│       └── footer.json        # → site.data.nav.footer
 └── plugins/                   # Plugins (opt-in)
     ├── word-count.js          # JS plugin — runs on embedded QuickJS (Tier 2)
     ├── custom-slugify.wasm    # WASM plugin — compiled from Rust/AS/Go (Tier 2)
@@ -232,6 +235,21 @@ During content discovery, `DiscoverWithPassthrough` collects two lists: content 
 
 All formats parse into `map[string]any` — the rest of the pipeline (data cascade, template context, plugin hooks) is format-agnostic.
 
+**Subdirectories create nested namespaces (issue #983).** `LoadDirectory` recurses into subdirectories. Each subdirectory becomes a nested map key, and files within it are keyed by stem name within that namespace:
+
+```text
+data/
+├── navigation.yaml          → site.data.navigation
+├── nav/
+│   ├── main.yaml            → site.data.nav.main
+│   └── footer.json          → site.data.nav.footer
+└── api/
+    └── v2/
+        └── endpoints.toml   → site.data.api.v2.endpoints
+```
+
+Nesting depth is unlimited. Root-level files and subdirectory namespaces coexist in the same result map. Empty subdirectories (containing no data files at any depth) produce no key — they are silently skipped.
+
 **Data file name collisions are build errors.** Data files are keyed by stem name (filename without extension), so `team.csv` and `team.yaml` both claim the key `"team"`. If two or more data files in the same directory share a stem name, the build fails:
 
 ```
@@ -243,7 +261,9 @@ All formats parse into `map[string]any` — the rest of the pipeline (data casca
         Build aborted.
 ```
 
-This follows the same principle as output path conflicts (§2): no silent overwrites, no priority system. The user must resolve collisions explicitly.
+This follows the same principle as output path conflicts (§2): no silent overwrites, no priority system. The user must resolve collisions explicitly. Stem collision detection applies recursively within subdirectories — `data/sub/team.yaml` and `data/sub/team.json` is also a collision.
+
+**Directory-file stem collisions are build errors (issue #983).** If a file and a subdirectory share the same stem (e.g., `data/nav.yaml` and `data/nav/`), the build fails. Both claim the key `"nav"` — the file would produce a data value, the directory would produce a nested namespace map. Same collision semantics: no priority system, the user must resolve it by renaming.
 
 **External data files** — Files outside the `data/` directory can be mapped into the data namespace via config:
 
