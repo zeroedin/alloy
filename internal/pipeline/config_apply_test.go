@@ -589,6 +589,42 @@ var _ = Describe("onConfig passthrough path validation (issues #1031, #1034)", f
 			Expect(result).NotTo(BeNil())
 		})
 
+		It("allows ./ for passthrough[].to (cleans to .)", func() {
+			contentMap := baseContent("dotslash-to.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: "vendor/assets", to: "./" }];
+    return config;
+  });
+}`)
+			contentMap["vendor/assets/style.css"] = "body { color: blue; }"
+			result, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"passthrough to set to './' must be accepted — filepath.Clean('./') "+
+					"returns '.' which is a valid output-root destination. The raw "+
+					"value './' is not literally '.' but cleans to it — the "+
+					"implementation must clean before comparing, not compare the "+
+					"raw value (issue #1040)")
+			Expect(result).NotTo(BeNil())
+		})
+
+		It("allows subdir/.. for passthrough[].to (cleans to .)", func() {
+			contentMap := baseContent("subdir-dotdot-to.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: "vendor/assets", to: "subdir/.." }];
+    return config;
+  });
+}`)
+			contentMap["vendor/assets/script.js"] = "console.log('hi');"
+			result, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"passthrough to set to 'subdir/..' must be accepted — "+
+					"filepath.Clean('subdir/..') returns '.' which is a valid "+
+					"output-root destination. Without cleaning before comparing, "+
+					"this path would be sent to validateOnConfigPath which rejects "+
+					"'.' for build.output/structure.* fields (issue #1040)")
+			Expect(result).NotTo(BeNil())
+		})
+
 		It("allows empty string for passthrough[].to", func() {
 			contentMap := baseContent("empty-to.js", `export default function(alloy) {
   alloy.hook('onConfig', {}, (config) => {

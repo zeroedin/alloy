@@ -2573,7 +2573,8 @@ Note: entries with empty `from` values are silently skipped by the existing pass
 Validation rules for `passthrough[N].to`:
 - Reject absolute paths (e.g., `/var/www/public`)
 - Reject `..` traversal (e.g., `../../evil`, `..`)
-- Accept `.` and empty string `""` — both mean "root of the output directory", which is a valid destination. This differs from `build.output` where `.` is dangerous (targets the project root for `CleanOutputDir` deletion).
+- Accept any value whose `filepath.Clean` result is `"."` — this includes `"."`, `"./"`, `"subdir/.."`, and similar equivalent forms. All mean "root of the output directory", which is a valid destination. This differs from `build.output` where `"."` is dangerous (targets the project root for `CleanOutputDir` deletion). The implementation must clean the value first, then compare — not compare the raw value.
+- Accept empty string `""` — means "root of the output directory" (default behavior). Empty `to` bypasses validation entirely.
 - Accept safe relative paths (e.g., `assets/vendor`)
 - Accept paths with embedded `..` that resolve safely (e.g., `subdir/../assets` → `assets`)
 
