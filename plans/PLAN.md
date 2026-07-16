@@ -2563,10 +2563,12 @@ Validation normalizes paths via `filepath.Clean` before the traversal check and 
 
 Validation rules for `passthrough[N].from`:
 - Reject absolute paths (e.g., `/etc/shadow`)
-- Reject `..` traversal above project root (e.g., `../../etc`, `..`)
+- Reject `..` traversal above project root (e.g., `../../etc`, `..`, `a/../../etc`)
 - Reject `.` (project root — would copy the entire project including `_site` into output)
 - Accept safe relative paths (e.g., `vendor/assets`)
 - Accept paths with embedded `..` that resolve within the project root (e.g., `subdir/../vendor` → `vendor`)
+
+Note: entries with empty `from` values are silently skipped by the existing passthrough deserialization filter *before* validation runs. This means `from: ""` is never validated (never reaches `validateOnConfigPath`), so `filepath.Clean("")` → `"."` rejection does not apply. This is safe — no files are copied for an entry with no source path.
 
 Validation rules for `passthrough[N].to`:
 - Reject absolute paths (e.g., `/var/www/public`)

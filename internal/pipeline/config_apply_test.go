@@ -464,8 +464,32 @@ var _ = Describe("onConfig passthrough path validation (issues #1031, #1034)", f
 					"read files above the project (issues #1031, #1034)")
 			Expect(err.Error()).To(ContainSubstring("passthrough"),
 				"error must identify passthrough as the source (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("from"),
+				"error must identify the from field (issues #1031, #1034)")
 			Expect(err.Error()).To(ContainSubstring("travers"),
 				"a bare '..' is a traversal, not an absolute path "+
+					"(issues #1031, #1034)")
+		})
+
+		It("rejects embedded .. in passthrough[].from that escapes project root", func() {
+			contentMap := baseContent("embedded-escape-from.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [{ from: "a/../../etc", to: "exfil" }];
+    return config;
+  });
+}`)
+			_, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).To(HaveOccurred(),
+				"passthrough from 'a/../../etc' cleans to '../etc' which "+
+					"escapes the project root — must be rejected even though "+
+					"the raw path starts with a safe component (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("passthrough"),
+				"error must identify passthrough as the source (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("from"),
+				"error must identify the from field (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("travers"),
+				"error must indicate path traversal — after filepath.Clean, "+
+					"'a/../../etc' becomes '../etc' which starts with '..' "+
 					"(issues #1031, #1034)")
 		})
 	})
@@ -509,6 +533,8 @@ var _ = Describe("onConfig passthrough path validation (issues #1031, #1034)", f
 					"(issues #1031, #1034)")
 			Expect(err.Error()).To(ContainSubstring("passthrough"),
 				"error must identify passthrough as the source (issues #1031, #1034)")
+			Expect(err.Error()).To(ContainSubstring("to"),
+				"error must identify the to field (issues #1031, #1034)")
 			Expect(err.Error()).To(ContainSubstring("travers"),
 				"a bare '..' is a traversal (issues #1031, #1034)")
 		})
@@ -631,6 +657,79 @@ var _ = Describe("onConfig passthrough path validation (issues #1031, #1034)", f
 					"is a valid output subdirectory — must be accepted "+
 					"(issues #1031, #1034)")
 			Expect(result).NotTo(BeNil())
+		})
+	})
+
+	// ── Empty from filtering ────────────────────────────────────────
+	// The existing passthrough deserialization filters out entries with
+	// empty from values before validation runs. This means from: "" is
+	// silently skipped (not rejected as ".") — it never reaches
+	// validateOnConfigPath. This is safe: no files are copied for an
+	// entry with no source path.
+
+	Describe("empty from filtering", func() {
+		It("silently skips passthrough entries with empty from", func() {
+			contentMap := baseContent("empty-from.js", `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.passthrough = [
+      { from: "", to: "should-skip" },
+      { from: "vendor/assets", to: "assets/vendor" }
+    ];
+    return config;
+  });
+}`)
+			contentMap["vendor/assets/lib.js"] = "// lib"
+			result, err := pipeline.BuildWithContent(baseConfig(), contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"passthrough entry with from: '' must be silently skipped — "+
+					"the existing empty-from filter removes the entry before "+
+					"validation runs. filepath.Clean('') returns '.' which "+
+					"would be rejected, but the filter prevents that path. "+
+					"This is safe: no files are copied when from is empty "+
+					"(issues #1031, #1034)")
+			Expect(result).NotTo(BeNil())
+		})
+	})
+
+	// ── Atomicity ───────────────────────────────────────────────────
+	// Bad passthrough validation must prevent ALL config mutations,
+	// including build.output and structure.* fields set in the same
+	// hook return. This maintains the existing atomicity guarantee:
+	// no partial config mutation on failure.
+	//
+	// This test calls applyOnConfigResult directly (via export_test.go)
+	// rather than going through BuildWithContent, because BuildWithContent
+	// does a struct copy of *cfg before passing it to Build — the test's
+	// original cfg pointer is never mutated regardless of atomicity
+	// implementation. Direct invocation ensures we observe whether the
+	// validate-then-apply pattern actually prevents partial mutation.
+
+	Describe("atomicity", func() {
+		It("prevents all config mutations when passthrough validation fails", func() {
+			cfg := baseConfig()
+			resultMap := map[string]interface{}{
+				"build": map[string]interface{}{
+					"output": "dist",
+				},
+				"passthrough": []interface{}{
+					map[string]interface{}{
+						"from": "/etc/shadow",
+						"to":   "exfil",
+					},
+				},
+			}
+			err := pipeline.ApplyOnConfigResult(cfg, resultMap)
+			Expect(err).To(HaveOccurred(),
+				"passthrough from set to absolute path must be rejected — "+
+					"applyOnConfigResult must validate passthrough paths "+
+					"before applying any config mutations "+
+					"(issues #1031, #1034)")
+			Expect(cfg.Build.Output).To(Equal("_site"),
+				"build.output must remain '_site' (the original value) — "+
+					"a passthrough validation failure must prevent ALL config "+
+					"mutations, not just the passthrough field. The atomicity "+
+					"guarantee requires that no structure/build fields are "+
+					"applied when any validation fails (issues #1031, #1034)")
 		})
 	})
 
