@@ -99,6 +99,51 @@ func applyOnConfigResult(cfg *config.Config, result interface{}) error {
 		}
 	}
 
+	var validatedMappings []config.PassthroughMapping
+	hasPassthrough := false
+	if passthrough, ok := m["passthrough"].([]interface{}); ok {
+		hasPassthrough = true
+		validatedMappings = make([]config.PassthroughMapping, 0, len(passthrough))
+		for i, item := range passthrough {
+			pm, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			mapping := config.PassthroughMapping{}
+			if from, ok := pm["from"].(string); ok {
+				mapping.From = from
+			}
+			if mapping.From == "" {
+				continue
+			}
+			cleaned, err := validateOnConfigPath(fmt.Sprintf("passthrough[%d].from", i), mapping.From)
+			if err != nil {
+				return err
+			}
+			mapping.From = cleaned
+
+			if to, ok := pm["to"].(string); ok {
+				mapping.To = to
+			}
+			if mapping.To != "" && mapping.To != "." {
+				cleaned, err := validateOnConfigPath(fmt.Sprintf("passthrough[%d].to", i), mapping.To)
+				if err != nil {
+					return err
+				}
+				mapping.To = cleaned
+			}
+
+			if exclude, ok := pm["exclude"].([]interface{}); ok {
+				for _, e := range exclude {
+					if s, ok := e.(string); ok {
+						mapping.Exclude = append(mapping.Exclude, s)
+					}
+				}
+			}
+			validatedMappings = append(validatedMappings, mapping)
+		}
+	}
+
 	// All path validations passed — apply to cfg.
 	for _, pf := range validatedPaths {
 		switch pf.field {
@@ -123,33 +168,8 @@ func applyOnConfigResult(cfg *config.Config, result interface{}) error {
 		}
 	}
 
-	if passthrough, ok := m["passthrough"].([]interface{}); ok {
-		mappings := make([]config.PassthroughMapping, 0, len(passthrough))
-		for _, item := range passthrough {
-			pm, ok := item.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			mapping := config.PassthroughMapping{}
-			if from, ok := pm["from"].(string); ok {
-				mapping.From = from
-			}
-			if mapping.From == "" {
-				continue
-			}
-			if to, ok := pm["to"].(string); ok {
-				mapping.To = to
-			}
-			if exclude, ok := pm["exclude"].([]interface{}); ok {
-				for _, e := range exclude {
-					if s, ok := e.(string); ok {
-						mapping.Exclude = append(mapping.Exclude, s)
-					}
-				}
-			}
-			mappings = append(mappings, mapping)
-		}
-		cfg.Passthrough = mappings
+	if hasPassthrough {
+		cfg.Passthrough = validatedMappings
 	}
 
 	if plugins, ok := m["plugins"].(map[string]interface{}); ok {
