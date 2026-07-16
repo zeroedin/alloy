@@ -2557,7 +2557,25 @@ Fire **once per build**. Payload is a JSON-serializable representation of the Go
 - **Relative paths that traverse above the project root** (e.g., `../../etc`, `..`) — after `filepath.Clean`, any path starting with `..` escapes the project root. `resolveDir` would resolve these to directories outside the project tree.
 - **Current directory `.` and empty string `""`** — `filepath.Clean("")` returns `"."`, which resolves to the project root itself. With `clean: true` (default), `CleanOutputDir` would run `os.RemoveAll` on every entry in the project root — deleting content, layouts, plugins, and all source files. Neither `validateOutputDir` nor the absolute/traversal checks catch this case; it must be explicitly rejected.
 
-Validation normalizes paths via `filepath.Clean` before the traversal check and before storing the value in `cfg`. This means `subdir/../dist` is accepted (cleans to `dist`, which is a valid relative path) while `../../etc` is rejected (cleans to `../../etc`, which starts with `..`). Paths that fail validation produce a build error identifying the field name (e.g., `"build.output"`, `"structure.content"`) and the type of violation (absolute path or path traversal). The validation runs inside `applyOnConfigResult` before writing each string field to `cfg` — this ensures no downstream code (`resolveDir`, `validateOutputDir`, `CleanOutputDir`, `CopyPassthrough`) ever sees an unsafe path. Non-path fields (`build.clean`, `passthrough`, `plugins.workers`, `plugins.timeout`) are not subject to path validation.
+Validation normalizes paths via `filepath.Clean` before the traversal check and before storing the value in `cfg`. This means `subdir/../dist` is accepted (cleans to `dist`, which is a valid relative path) while `../../etc` is rejected (cleans to `../../etc`, which starts with `..`). Paths that fail validation produce a build error identifying the field name (e.g., `"build.output"`, `"structure.content"`) and the type of violation (absolute path or path traversal). The validation runs inside `applyOnConfigResult` before writing each string field to `cfg` — this ensures no downstream code (`resolveDir`, `validateOutputDir`, `CleanOutputDir`, `CopyPassthrough`) ever sees an unsafe path. Non-path fields (`build.clean`, `plugins.workers`, `plugins.timeout`) are not subject to path validation.
+
+**Passthrough path validation (issues #1031, #1034)** — Passthrough `from` and `to` fields set via `onConfig` are filesystem paths and receive the same path-containment validation as `build.output` and `structure.*` fields. Config-file passthrough intentionally supports absolute `from` paths and `../relative` for cross-project asset sharing (§1h), but plugin-sourced passthrough is untrusted — a plugin could set `from: "/etc/shadow"` to exfiltrate sensitive files into the output directory, or `to: "../../evil"` to write files outside the output directory.
+
+Validation rules for `passthrough[N].from`:
+- Reject absolute paths (e.g., `/etc/shadow`)
+- Reject `..` traversal above project root (e.g., `../../etc`, `..`)
+- Reject `.` (project root — would copy the entire project including `_site` into output)
+- Accept safe relative paths (e.g., `vendor/assets`)
+- Accept paths with embedded `..` that resolve within the project root (e.g., `subdir/../vendor` → `vendor`)
+
+Validation rules for `passthrough[N].to`:
+- Reject absolute paths (e.g., `/var/www/public`)
+- Reject `..` traversal (e.g., `../../evil`, `..`)
+- Accept `.` and empty string `""` — both mean "root of the output directory", which is a valid destination. This differs from `build.output` where `.` is dangerous (targets the project root for `CleanOutputDir` deletion).
+- Accept safe relative paths (e.g., `assets/vendor`)
+- Accept paths with embedded `..` that resolve safely (e.g., `subdir/../assets` → `assets`)
+
+Error messages must include the zero-based array index (e.g., `passthrough[2].from`) so plugin authors can identify which mapping entry failed. Passthrough path validation runs alongside the existing `build.output`/`structure.*` validation — all validations must pass before any values are written to `cfg`, preventing partial config mutation on failure.
 
 ```javascript
 // Example: redirect output directory via onConfig
