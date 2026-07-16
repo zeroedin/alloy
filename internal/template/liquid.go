@@ -442,9 +442,6 @@ func (f *alloyFilterBridge) URL(input interface{}, args ...interface{}) interfac
 // Parse returns immediately — no token consumption.
 // ---------------------------------------------------------------------------
 
-// alloyTagMarkupPattern extracts quoted arguments from tag markup.
-var alloyTagMarkupPattern = regexp.MustCompile(`"([^"]*)"`)
-
 type alloyInlineTag struct {
 	*liquid.Tag
 	fn     TagFunc
@@ -454,12 +451,8 @@ type alloyInlineTag struct {
 func (t *alloyInlineTag) Parse(tokenizer *liquid.Tokenizer) error { return nil }
 
 func (t *alloyInlineTag) Render(context liquid.TagContext) string {
-	args := parseTagArgs(t.markup)
-	result := t.fn(args, "")
-	if result == "" {
-		return fmt.Sprintf(`<alloy-shortcode data-tag="%s"></alloy-shortcode>`, t.TagName())
-	}
-	return result
+	args := resolveTagArgs(parseTagTokens(t.markup), context)
+	return t.fn(args, "")
 }
 
 func (t *alloyInlineTag) RenderToOutputBuffer(context liquid.TagContext, output *string) {
@@ -498,30 +491,101 @@ func (t *alloyBlockTag) Parse(tokenizer *liquid.Tokenizer) error {
 }
 
 func (t *alloyBlockTag) Render(context liquid.TagContext) string {
-	args := parseTagArgs(t.markup)
-	result := t.fn(args, t.bodyText)
-	if result == "" {
-		return fmt.Sprintf(`<alloy-shortcode data-tag="%s"></alloy-shortcode>`, t.TagName())
-	}
-	return result
+	args := resolveTagArgs(parseTagTokens(t.markup), context)
+	return t.fn(args, t.bodyText)
 }
 
 func (t *alloyBlockTag) RenderToOutputBuffer(context liquid.TagContext, output *string) {
 	*output += t.Render(context)
 }
 
-func parseTagArgs(markup string) []string {
-	matches := alloyTagMarkupPattern.FindAllStringSubmatch(markup, -1)
-	args := make([]string, 0, len(matches))
-	for _, m := range matches {
-		if len(m) >= 2 {
-			args = append(args, m[1])
+// parsedArg represents a single argument token from tag markup.
+// Quoted args are literal strings; unquoted args may be variable references.
+type parsedArg struct {
+	value  string
+	quoted bool
+}
+
+// parseTagTokens parses tag markup into a sequence of quoted and unquoted
+// argument tokens, preserving order. Both single and double quotes are
+// recognized as string delimiters (Liquid supports both). Supports mixed
+// forms like:
+//
+//	"primary" page.size   → [{value:"primary", quoted:true}, {value:"page.size", quoted:false}]
+//	'label' count         → [{value:"label", quoted:true}, {value:"count", quoted:false}]
+func parseTagTokens(markup string) []parsedArg {
+	s := strings.TrimSpace(markup)
+	var args []parsedArg
+	for len(s) > 0 {
+		if s[0] == '"' || s[0] == '\'' {
+			quote := s[0]
+			end := strings.IndexByte(s[1:], quote)
+			if end >= 0 {
+				args = append(args, parsedArg{value: s[1 : end+1], quoted: true})
+				s = strings.TrimSpace(s[end+2:])
+			} else {
+				args = append(args, parsedArg{value: s[1:], quoted: false})
+				break
+			}
+		} else {
+			end := strings.IndexAny(s, " \t\"'")
+			if end >= 0 {
+				if s[:end] != "" {
+					args = append(args, parsedArg{value: s[:end], quoted: false})
+				}
+				s = strings.TrimSpace(s[end:])
+			} else {
+				args = append(args, parsedArg{value: s, quoted: false})
+				break
+			}
 		}
 	}
-	// Also extract unquoted words (for simple args like: {% tag foo bar %})
-	if len(args) == 0 {
-		parts := strings.Fields(markup)
-		args = append(args, parts...)
+	return args
+}
+
+// resolveTagArgs converts parsed arg tokens into final string values by
+// resolving unquoted args against the Liquid render context. Quoted args
+// remain literal. Unquoted args that don't match a context variable fall
+// back to their literal token string (backward compatible).
+func resolveTagArgs(tokens []parsedArg, context liquid.TagContext) []string {
+	args := make([]string, len(tokens))
+	for i, tok := range tokens {
+		if tok.quoted || context == nil {
+			args[i] = tok.value
+			continue
+		}
+		val, found := resolveVariable(tok.value, context)
+		if found {
+			args[i] = fmt.Sprint(val)
+		} else {
+			args[i] = tok.value
+		}
+	}
+	return args
+}
+
+// resolveVariable looks up a possibly-dotted variable path (e.g. "page.videoId")
+// against the Liquid render context using liquidgo's native variable lookup,
+// which handles map[string]interface{}, typed maps (via reflection), Drops,
+// array index access, and command methods. Returns the resolved value and true
+// if found, or (nil, false) if the variable does not exist or is nil.
+func resolveVariable(name string, context liquid.TagContext) (interface{}, bool) {
+	vl := liquid.VariableLookupParse(name, nil, nil)
+	val := context.Evaluate(vl)
+	if val == nil {
+		return nil, false
+	}
+	return val, true
+}
+
+// parseTagArgs extracts args from tag markup as plain strings without
+// variable resolution. Used by tags that don't need context-aware args
+// (e.g. the {% inline %} tag).
+func parseTagArgs(markup string) []string {
+	tokens := parseTagTokens(markup)
+	args := make([]string, len(tokens))
+	for i, t := range tokens {
+		args[i] = t.value
 	}
 	return args
 }

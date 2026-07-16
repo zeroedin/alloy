@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/fastschema/qjs"
 	"github.com/tetratelabs/wazero"
@@ -19,6 +20,7 @@ import (
 // JavaScript is executed via QuickJS compiled to WASM, running on wazero
 // (pure Go, zero CGo). See PLAN.md §5.
 type QuickJSRuntime struct {
+	mu           sync.Mutex
 	initialized  bool
 	rt           *qjs.Runtime
 	ctx          *qjs.Context
@@ -144,6 +146,8 @@ func (r *QuickJSRuntime) Init() error {
 // Data is JSON-serialized from Go and parsed in JS. The resulting object
 // is frozen to prevent cross-plugin mutation.
 func (r *QuickJSRuntime) SetSiteData(data map[string]interface{}) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if !r.initialized {
 		return fmt.Errorf("quickjs runtime not initialized — call Init() first")
 	}
@@ -185,6 +189,11 @@ var moduleExportRegex = regexp.MustCompile(
 // Plugin files using "export default function(alloy) { ... }" module syntax
 // are transformed to an IIFE that receives the global alloy object.
 func (r *QuickJSRuntime) EvalFile(path string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rt == nil {
+		return fmt.Errorf("%s: runtime is closed", filepath.Base(path))
+	}
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("%s: %w", filepath.Base(path), err)
@@ -215,6 +224,11 @@ func (r *QuickJSRuntime) EvalFile(path string) error {
 // The filter function is invoked in the QuickJS VM and the result is
 // converted back to a Go value.
 func (r *QuickJSRuntime) CallFilter(name string, input interface{}, args ...interface{}) (interface{}, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rt == nil {
+		return input, nil
+	}
 	if !r.filters[name] {
 		return input, nil
 	}
@@ -300,6 +314,11 @@ func jsValueToGo(v *qjs.Value) interface{} {
 // CallShortcode calls a registered shortcode function by name with args and inner content.
 // The shortcode function is invoked in the QuickJS VM with an array of string arguments.
 func (r *QuickJSRuntime) CallShortcode(name string, args []string, innerContent string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rt == nil {
+		return innerContent, nil
+	}
 	if !r.shortcodes[name] {
 		return innerContent, nil
 	}
@@ -339,6 +358,11 @@ func (r *QuickJSRuntime) CallShortcode(name string, args []string, innerContent 
 // The hook function is invoked in the QuickJS VM and the result is
 // converted back to a Go value.
 func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rt == nil {
+		return payload, nil
+	}
 	if _, ok := r.hooks[name]; !ok {
 		return payload, nil
 	}
@@ -437,10 +461,17 @@ func (r *QuickJSRuntime) EvalWarnings() []string {
 }
 
 // Close releases resources held by the QuickJS runtime.
+// Acquires the mutex to wait for any in-flight WASM operations
+// (e.g., from timed-out RunWithTimeout goroutines) to finish
+// before freeing the runtime.
 func (r *QuickJSRuntime) Close() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.rt != nil {
 		r.rt.Close()
 		r.rt = nil
+		r.ctx = nil
+		r.initialized = false
 	}
 }
 
