@@ -1,6 +1,7 @@
 package pipeline_test
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/zeroedin/alloy/internal/config"
+	"github.com/zeroedin/alloy/internal/fetch"
 	"github.com/zeroedin/alloy/internal/pipeline"
 )
 
@@ -940,6 +942,187 @@ var _ = Describe("Build Pipeline", func() {
 					"as two files sharing a stem (issue #983)")
 			Expect(err.Error()).To(ContainSubstring("nav"),
 				"error must name the colliding key")
+		})
+	})
+
+	// ── Plugin source dispatch (issue #979) ─────────────────────────
+	// type: "plugin" in cfg.Sources must dispatch to fetch.FetchPluginSource,
+	// merge the result into siteData, and make it available in templates as
+	// site.data.<as>. This is the end-to-end integration test proving the
+	// pipeline dispatch is wired — unit tests in fetch_test.go cover the
+	// handler invocation mechanics.
+
+	Describe("Plugin source dispatch (issue #979)", func() {
+		AfterEach(func() {
+			fetch.ResetPluginSources()
+		})
+
+		It("Build dispatches type: plugin source to registered handler and merges into site.data", func() {
+			// Register a Go-level plugin source handler that returns blog post data
+			fetch.RegisterPluginSource("cms-posts", func(config map[string]interface{}) (interface{}, error) {
+				return []interface{}{
+					map[string]interface{}{"title": "Hello World", "slug": "hello-world"},
+					map[string]interface{}{"title": "Second Post", "slug": "second-post"},
+				}, nil
+			})
+
+			cfg := &config.Config{
+				Title:   "Plugin Source Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Sources: map[string]*config.SourceConfig{
+					"blog": {
+						Type:   "plugin",
+						Plugin: "cms-posts",
+						Cache:  3600,
+						As:     "blog",
+					},
+				},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Posts",
+				"layouts/default.liquid": "<html><body>{{ content }}<p>Posts: {{ site.data.blog.size }}</p></body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("Posts: 2"),
+				"plugin source data must be merged into site.data under the 'as' key — "+
+					"template must access site.data.blog.size and get 2 posts. "+
+					"This proves the case \"plugin\" dispatch in the source-fetch loop "+
+					"is wired into the pipeline (issue #979)")
+		})
+
+		It("Build uses source name as data key when 'as' is omitted", func() {
+			fetch.RegisterPluginSource("events", func(config map[string]interface{}) (interface{}, error) {
+				return []interface{}{
+					map[string]interface{}{"name": "Conference", "date": "2026-09-01"},
+				}, nil
+			})
+
+			cfg := &config.Config{
+				Title:   "Plugin Source Default Key Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Sources: map[string]*config.SourceConfig{
+					"events": {
+						Type:   "plugin",
+						Plugin: "events",
+						// As is omitted — should default to source name "events"
+					},
+				},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Events\nlayout: default\n---\n# Events",
+				"layouts/default.liquid": "<html><body>{{ content }}<p>Count: {{ site.data.events.size }}</p></body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("Count: 1"),
+				"when 'as' is omitted, source name must be used as the data key — "+
+					"template must access site.data.events.size and get 1 event")
+		})
+
+		It("Build aborts when plugin source handler is not registered", func() {
+			cfg := &config.Config{
+				Title:   "Missing Source Handler Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Sources: map[string]*config.SourceConfig{
+					"blog": {
+						Type:   "plugin",
+						Plugin: "nonexistent-handler",
+						As:     "blog",
+					},
+				},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"build must abort when plugin source handler is not registered — "+
+					"PLAN.md says source failures abort the build, not warn and continue")
+			Expect(err.Error()).To(SatisfyAny(
+				ContainSubstring("nonexistent-handler"),
+				ContainSubstring("not registered"),
+				ContainSubstring("blog"),
+			), "error must identify the missing source handler or the source name")
+		})
+
+		It("Build aborts when plugin source handler returns an error", func() {
+			fetch.RegisterPluginSource("broken-api", func(config map[string]interface{}) (interface{}, error) {
+				return nil, fmt.Errorf("connection refused: CMS API at api.example.com:443")
+			})
+
+			cfg := &config.Config{
+				Title:   "Source Error Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Sources: map[string]*config.SourceConfig{
+					"posts": {
+						Type:   "plugin",
+						Plugin: "broken-api",
+						As:     "posts",
+					},
+				},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"build must abort when a plugin source handler returns an error — "+
+					"PLAN.md §5: 'External data source unreachable aborts the build'")
+			Expect(err.Error()).To(SatisfyAny(
+				ContainSubstring("connection refused"),
+				ContainSubstring("broken-api"),
+				ContainSubstring("posts"),
+			), "error must contain the handler's error message or the source name")
+		})
+
+		It("plugin source data is available in result.SiteData", func() {
+			fetch.RegisterPluginSource("products", func(config map[string]interface{}) (interface{}, error) {
+				return []interface{}{
+					map[string]interface{}{"name": "Widget", "price": float64(9.99)},
+				}, nil
+			})
+
+			cfg := &config.Config{
+				Title:   "SiteData Result Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Sources: map[string]*config.SourceConfig{
+					"catalog": {
+						Type:   "plugin",
+						Plugin: "products",
+						As:     "products",
+					},
+				},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Shop\nlayout: default\n---\n# Shop",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.SiteData).To(HaveKey("products"),
+				"plugin source data must appear in result.SiteData under the 'as' key")
+
+			products, ok := result.SiteData["products"].([]interface{})
+			Expect(ok).To(BeTrue(), "products must be a slice")
+			Expect(products).To(HaveLen(1))
+			first, ok := products[0].(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(first["name"]).To(Equal("Widget"))
 		})
 	})
 

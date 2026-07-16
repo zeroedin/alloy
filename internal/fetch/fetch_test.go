@@ -2,6 +2,7 @@ package fetch_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 
@@ -202,6 +203,10 @@ var _ = Describe("Fetch", func() {
 	// ── Plugin data sources ──────────────────────────────────────────
 
 	Describe("Plugin data sources", func() {
+		BeforeEach(func() {
+			fetch.ResetPluginSources()
+		})
+
 		It("config parses type: plugin with plugin name and cache TTL", func() {
 			// This tests that the config system recognizes plugin sources
 			sourceCfg := map[string]interface{}{
@@ -256,6 +261,104 @@ var _ = Describe("Fetch", func() {
 				ContainSubstring("not registered"),
 				ContainSubstring("not found"),
 			), "error must identify the missing source handler")
+		})
+
+		// ── Plugin source handler edge cases (issue #979) ──────────────
+
+		It("ResetPluginSources clears all registered handlers", func() {
+			fetch.RegisterPluginSource("src-a", func(config map[string]interface{}) (interface{}, error) {
+				return "data-a", nil
+			})
+			fetch.RegisterPluginSource("src-b", func(config map[string]interface{}) (interface{}, error) {
+				return "data-b", nil
+			})
+			Expect(fetch.RegisteredPluginSources()).To(HaveLen(2))
+
+			fetch.ResetPluginSources()
+			Expect(fetch.RegisteredPluginSources()).To(BeEmpty(),
+				"ResetPluginSources must remove all registered handlers")
+
+			_, err := fetch.FetchPluginSource("src-a", nil)
+			Expect(err).To(HaveOccurred(),
+				"previously registered handler must not be callable after reset")
+			Expect(err.Error()).To(ContainSubstring("not registered"),
+				"error must indicate the source is not registered")
+		})
+
+		It("FetchPluginSource passes config map to handler unchanged", func() {
+			var receivedConfig map[string]interface{}
+			fetch.RegisterPluginSource("config-reader", func(config map[string]interface{}) (interface{}, error) {
+				receivedConfig = config
+				return "ok", nil
+			})
+
+			inputConfig := map[string]interface{}{
+				"type":   "plugin",
+				"plugin": "config-reader",
+				"cache":  float64(3600),
+				"as":     "blog",
+			}
+			_, err := fetch.FetchPluginSource("config-reader", inputConfig)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(receivedConfig).To(Equal(inputConfig),
+				"handler must receive the exact config map passed to FetchPluginSource")
+		})
+
+		It("FetchPluginSource propagates handler errors", func() {
+			fetch.RegisterPluginSource("failing-source", func(config map[string]interface{}) (interface{}, error) {
+				return nil, fmt.Errorf("API returned 503")
+			})
+
+			_, err := fetch.FetchPluginSource("failing-source", nil)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("API returned 503"),
+				"handler error message must propagate to the caller unchanged")
+		})
+
+		It("FetchPluginSource returns handler data unchanged for various types", func() {
+			// Array data
+			fetch.RegisterPluginSource("array-src", func(config map[string]interface{}) (interface{}, error) {
+				return []interface{}{"post1", "post2", "post3"}, nil
+			})
+			result, err := fetch.FetchPluginSource("array-src", nil)
+			Expect(err).NotTo(HaveOccurred())
+			arr, ok := result.([]interface{})
+			Expect(ok).To(BeTrue(), "result must be a slice")
+			Expect(arr).To(HaveLen(3))
+			Expect(arr[0]).To(Equal("post1"))
+
+			// Nested map data
+			fetch.RegisterPluginSource("map-src", func(config map[string]interface{}) (interface{}, error) {
+				return map[string]interface{}{
+					"posts": []interface{}{
+						map[string]interface{}{"title": "First", "slug": "first"},
+					},
+				}, nil
+			})
+			result, err = fetch.FetchPluginSource("map-src", nil)
+			Expect(err).NotTo(HaveOccurred())
+			m, ok := result.(map[string]interface{})
+			Expect(ok).To(BeTrue(), "result must be a map")
+			posts, ok := m["posts"].([]interface{})
+			Expect(ok).To(BeTrue(), "posts must be a slice")
+			Expect(posts).To(HaveLen(1))
+			first, ok := posts[0].(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(first["title"]).To(Equal("First"))
+		})
+
+		It("RegisterPluginSource overwrites previous handler for same name", func() {
+			fetch.RegisterPluginSource("overwrite-test", func(config map[string]interface{}) (interface{}, error) {
+				return "first", nil
+			})
+			fetch.RegisterPluginSource("overwrite-test", func(config map[string]interface{}) (interface{}, error) {
+				return "second", nil
+			})
+
+			result, err := fetch.FetchPluginSource("overwrite-test", nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("second"),
+				"last registered handler must win when the same name is registered twice")
 		})
 	})
 })
