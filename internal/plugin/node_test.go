@@ -651,4 +651,111 @@ var _ = Describe("NodeBridge", func() {
 				"error message must be valid UTF-8 after rune-boundary walk-back")
 		})
 	})
+
+	// ── Plugin source registration (issue #979) ─────────────────────
+	// alloy.source(name, fn) in bridge.js registers a data source handler.
+	// The eval response includes a "sources" array. NodeRuntime exposes
+	// RegisteredSources() and CallSource() for bridge-backed invocation.
+
+	Describe("Plugin source registration (issue #979)", func() {
+		var tmpDir string
+		var rt *plugin.NodeRuntime
+
+		BeforeEach(func() {
+			var err error
+			tmpDir, err = os.MkdirTemp("", "alloy-source-test-*")
+			Expect(err).NotTo(HaveOccurred())
+			plugin.ResetStalePIDCleanup(tmpDir)
+			rt = plugin.NewNodeRuntime()
+			rt.SetProjectRoot(tmpDir)
+		})
+
+		AfterEach(func() {
+			if rt != nil {
+				rt.Close()
+			}
+			os.RemoveAll(tmpDir)
+		})
+
+		It("EvalFile reports registered sources from bridge eval response", func() {
+			fixturePath, err := filepath.Abs("testdata/single-files/source-plugin.js")
+			Expect(err).NotTo(HaveOccurred())
+
+			err = rt.EvalFile(fixturePath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rt.RegisteredSources()).To(ContainElement("test-source"),
+				"source registered via alloy.source() must appear in RegisteredSources()")
+			Expect(rt.RegisteredSources()).To(HaveLen(1),
+				"only one source was registered — list must have exactly one entry")
+		})
+
+		It("CallSource invokes the registered source handler and returns data", func() {
+			fixturePath, err := filepath.Abs("testdata/single-files/source-plugin.js")
+			Expect(err).NotTo(HaveOccurred())
+
+			err = rt.EvalFile(fixturePath)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := rt.CallSource("test-source", nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			arr, ok := result.([]interface{})
+			Expect(ok).To(BeTrue(), "source handler must return an array")
+			Expect(arr).To(HaveLen(2))
+
+			first, ok := arr[0].(map[string]interface{})
+			Expect(ok).To(BeTrue(), "array elements must be maps after JSON round-trip")
+			Expect(first["title"]).To(Equal("Post 1"))
+			Expect(first["slug"]).To(Equal("post-1"))
+
+			second, ok := arr[1].(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(second["title"]).To(Equal("Post 2"))
+		})
+
+		It("CallSource propagates handler errors", func() {
+			fixturePath, err := filepath.Abs("testdata/single-files/source-error.js")
+			Expect(err).NotTo(HaveOccurred())
+
+			err = rt.EvalFile(fixturePath)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = rt.CallSource("failing-source", nil)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("503"),
+				"error from the JS handler must propagate through the bridge")
+		})
+
+		It("CallSource returns error for unregistered source name", func() {
+			fixturePath, err := filepath.Abs("testdata/single-files/source-plugin.js")
+			Expect(err).NotTo(HaveOccurred())
+
+			err = rt.EvalFile(fixturePath)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = rt.CallSource("nonexistent-source", nil)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(SatisfyAny(
+				ContainSubstring("nonexistent-source"),
+				ContainSubstring("not found"),
+				ContainSubstring("not registered"),
+			), "error must identify the missing source handler")
+		})
+
+		It("duplicate alloy.source() registration for same name produces a warning", func() {
+			fixturePath, err := filepath.Abs("testdata/single-files/source-duplicate.js")
+			Expect(err).NotTo(HaveOccurred())
+
+			err = rt.EvalFile(fixturePath)
+			Expect(err).NotTo(HaveOccurred())
+
+			warnings := rt.EvalWarnings()
+			Expect(warnings).To(ContainElement(And(
+				ContainSubstring("dup-source"),
+				ContainSubstring("duplicate"),
+			)), "registering the same source name twice must produce a warning — "+
+				"same pattern as duplicate hook registration")
+		})
+	})
 })
