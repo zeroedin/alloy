@@ -9,23 +9,28 @@ import (
 	"github.com/zeroedin/alloy/internal/ordered"
 )
 
-// validateConfigPath checks that a plugin-supplied path is safe to use as a
+// validateOnConfigPath checks that a plugin-supplied path is safe to use as a
 // project-relative directory. It rejects absolute paths, empty strings, ".",
-// and paths whose cleaned form starts with ".." (traversing above the project root).
+// paths whose cleaned form starts with ".." (traversing above the project root),
+// and non-local paths (Windows reserved device names, volume-relative paths).
 // Valid paths are returned in cleaned form (e.g. "subdir/../dist" → "dist").
-func validateConfigPath(field, value string) (string, error) {
+func validateOnConfigPath(field, value string) (string, error) {
 	cleaned := filepath.Clean(value)
 
 	if filepath.IsAbs(cleaned) {
-		return "", fmt.Errorf("%s: absolute path %q is not allowed", field, value)
+		return "", fmt.Errorf("onConfig: %s: absolute path %q is not allowed", field, value)
 	}
 
 	if cleaned == "." {
-		return "", fmt.Errorf("%s: path %q resolves to the project root", field, value)
+		return "", fmt.Errorf("onConfig: %s: path %q resolves to the project root", field, value)
 	}
 
 	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("%s: path %q traverses above the project root", field, value)
+		return "", fmt.Errorf("onConfig: %s: path %q traverses above the project root", field, value)
+	}
+
+	if !filepath.IsLocal(cleaned) {
+		return "", fmt.Errorf("onConfig: %s: path %q is not a valid local path", field, value)
 	}
 
 	return cleaned, nil
@@ -55,54 +60,66 @@ func applyOnConfigResult(cfg *config.Config, result interface{}) error {
 		return fmt.Errorf("hook must return an object, got %T", result)
 	}
 
+	// Validate all path fields before applying any to prevent partial config
+	// mutation on validation failure (e.g. build.output written but
+	// structure.content rejected would leave cfg in a half-mutated state).
+	type pathField struct {
+		field   string
+		cleaned string
+	}
+	var validatedPaths []pathField
+
 	if build, ok := m["build"].(map[string]interface{}); ok {
 		if output, ok := build["output"].(string); ok {
-			cleaned, err := validateConfigPath("build.output", output)
+			cleaned, err := validateOnConfigPath("build.output", output)
 			if err != nil {
 				return err
 			}
-			cfg.Build.Output = cleaned
-		}
-		if clean, ok := build["clean"].(bool); ok {
-			cfg.Build.Clean = &clean
+			validatedPaths = append(validatedPaths, pathField{"build.output", cleaned})
 		}
 	}
 
 	if structure, ok := m["structure"].(map[string]interface{}); ok {
-		if v, ok := structure["content"].(string); ok {
-			cleaned, err := validateConfigPath("structure.content", v)
-			if err != nil {
-				return err
+		for _, entry := range []struct {
+			key, field string
+		}{
+			{"content", "structure.content"},
+			{"layouts", "structure.layouts"},
+			{"assets", "structure.assets"},
+			{"static", "structure.static"},
+			{"data", "structure.data"},
+		} {
+			if v, ok := structure[entry.key].(string); ok {
+				cleaned, err := validateOnConfigPath(entry.field, v)
+				if err != nil {
+					return err
+				}
+				validatedPaths = append(validatedPaths, pathField{entry.field, cleaned})
 			}
-			cfg.Structure.Content = cleaned
 		}
-		if v, ok := structure["layouts"].(string); ok {
-			cleaned, err := validateConfigPath("structure.layouts", v)
-			if err != nil {
-				return err
-			}
-			cfg.Structure.Layouts = cleaned
+	}
+
+	// All path validations passed — apply to cfg.
+	for _, pf := range validatedPaths {
+		switch pf.field {
+		case "build.output":
+			cfg.Build.Output = pf.cleaned
+		case "structure.content":
+			cfg.Structure.Content = pf.cleaned
+		case "structure.layouts":
+			cfg.Structure.Layouts = pf.cleaned
+		case "structure.assets":
+			cfg.Structure.Assets = pf.cleaned
+		case "structure.static":
+			cfg.Structure.Static = pf.cleaned
+		case "structure.data":
+			cfg.Structure.Data = pf.cleaned
 		}
-		if v, ok := structure["assets"].(string); ok {
-			cleaned, err := validateConfigPath("structure.assets", v)
-			if err != nil {
-				return err
-			}
-			cfg.Structure.Assets = cleaned
-		}
-		if v, ok := structure["static"].(string); ok {
-			cleaned, err := validateConfigPath("structure.static", v)
-			if err != nil {
-				return err
-			}
-			cfg.Structure.Static = cleaned
-		}
-		if v, ok := structure["data"].(string); ok {
-			cleaned, err := validateConfigPath("structure.data", v)
-			if err != nil {
-				return err
-			}
-			cfg.Structure.Data = cleaned
+	}
+
+	if build, ok := m["build"].(map[string]interface{}); ok {
+		if clean, ok := build["clean"].(bool); ok {
+			cfg.Build.Clean = &clean
 		}
 	}
 
