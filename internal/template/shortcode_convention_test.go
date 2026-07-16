@@ -197,6 +197,8 @@ var _ = Describe("Shortcode calling convention (issue #981)", func() {
 
 		// Disambiguation test: proves resolution actually happens by changing
 		// context values and observing different shortcode output.
+		// Uses a single Parse, double Render to prove resolution is per-render,
+		// not per-parse (a parse-time caching implementation would fail this).
 		It("produces different output for different context values (disambiguation)", func() {
 			engine := tmpl.NewLiquidEngine()
 
@@ -205,14 +207,12 @@ var _ = Describe("Shortcode calling convention (issue #981)", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			tpl1, err := engine.Parse("test1", []byte(`{% greet name %}`))
-			Expect(err).NotTo(HaveOccurred())
-			tpl2, err := engine.Parse("test2", []byte(`{% greet name %}`))
+			tpl, err := engine.Parse("test", []byte(`{% greet name %}`))
 			Expect(err).NotTo(HaveOccurred())
 
-			out1, err := tpl1.Render(map[string]interface{}{"name": "Alice"})
+			out1, err := tpl.Render(map[string]interface{}{"name": "Alice"})
 			Expect(err).NotTo(HaveOccurred())
-			out2, err := tpl2.Render(map[string]interface{}{"name": "Bob"})
+			out2, err := tpl.Render(map[string]interface{}{"name": "Bob"})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(string(out1)).To(Equal("Hello, Alice!"),
@@ -222,6 +222,92 @@ var _ = Describe("Shortcode calling convention (issue #981)", func() {
 					"if both produce 'Hello, name!' then resolution is not happening")
 			Expect(string(out1)).NotTo(Equal(string(out2)),
 				"outputs must differ — proves args are resolved per-render, not cached as literals")
+		})
+
+		It("resolves multiple unquoted args without any quoted args", func() {
+			engine := tmpl.NewLiquidEngine()
+
+			var capturedArgs []string
+			err := engine.AddTag("pair", func(args []string, content string) string {
+				capturedArgs = args
+				return args[0] + "=" + args[1]
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			tpl, err := engine.Parse("test", []byte(`{% pair key value %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			out, err := tpl.Render(map[string]interface{}{
+				"key":   "color",
+				"value": "blue",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(capturedArgs).To(HaveLen(2))
+			Expect(capturedArgs[0]).To(Equal("color"),
+				"first unquoted arg must resolve from context")
+			Expect(capturedArgs[1]).To(Equal("blue"),
+				"second unquoted arg must resolve from context")
+			Expect(string(out)).To(Equal("color=blue"))
+		})
+
+		It("converts bool and float variable values to strings", func() {
+			engine := tmpl.NewLiquidEngine()
+
+			var capturedArgs []string
+			err := engine.AddTag("show", func(args []string, content string) string {
+				capturedArgs = args
+				return fmt.Sprintf("%s|%s", args[0], args[1])
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			tpl, err := engine.Parse("test", []byte(`{% show flag score %}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = tpl.Render(map[string]interface{}{
+				"flag":  true,
+				"score": 3.14,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(capturedArgs).To(HaveLen(2))
+			Expect(capturedArgs[0]).To(Equal("true"),
+				"bool values must be converted to string via fmt.Sprint")
+			Expect(capturedArgs[1]).To(HavePrefix("3.14"),
+				"float values must be converted to string via fmt.Sprint")
+		})
+
+		It("distinguishes empty-string variable from non-existent variable", func() {
+			engine := tmpl.NewLiquidEngine()
+
+			var capturedArgs []string
+			err := engine.AddTag("check", func(args []string, content string) string {
+				capturedArgs = args
+				return args[0]
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Empty string variable — should resolve to ""
+			tpl1, err := engine.Parse("test1", []byte(`{% check emptyVar %}`))
+			Expect(err).NotTo(HaveOccurred())
+			_, err = tpl1.Render(map[string]interface{}{
+				"emptyVar": "",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			emptyResult := capturedArgs[0]
+
+			// Non-existent variable — should fall back to literal "missing"
+			tpl2, err := engine.Parse("test2", []byte(`{% check missing %}`))
+			Expect(err).NotTo(HaveOccurred())
+			_, err = tpl2.Render(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			missingResult := capturedArgs[0]
+
+			Expect(emptyResult).To(Equal(""),
+				"variable set to empty string must resolve to empty string, not literal 'emptyVar'")
+			Expect(missingResult).To(Equal("missing"),
+				"non-existent variable must fall back to the literal token string")
+			Expect(emptyResult).NotTo(Equal(missingResult),
+				"empty-string variable and non-existent variable must produce different results — "+
+					"if both return the same value, the implementation conflates the two cases")
 		})
 	})
 
