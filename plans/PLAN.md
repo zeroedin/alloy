@@ -1897,7 +1897,12 @@ Shortcodes receive arguments as `[]string` and inner content as `string`. The ca
 - **Fallback to literal:** If an unquoted Liquid argument does not resolve to any context variable, it is passed as a literal string. This preserves backward compatibility — existing shortcodes using unquoted strings that happen not to match any variable continue to work.
 - **Type conversion:** Resolved non-string values (integers, booleans, etc.) are converted to strings via `fmt.Sprint()` before passing to `TagFunc`. The `TagFunc` signature is `func(args []string, content string) string` — all arguments are strings.
 - **Mixed arguments:** `{% card "primary" page.size %}` passes `["primary", "large"]` when `page.size` is `"large"` — quoted args stay literal, unquoted args resolve.
-- **Implementation:** In `alloyInlineTag.Render` and `alloyBlockTag.Render`, unquoted argument tokens are resolved via `context.Evaluate()` (the `liquid.TagContext` already provides this method). `parseTagArgs` must distinguish quoted from unquoted tokens and pass them to the render methods with their quoted/unquoted status preserved. The render methods then resolve unquoted tokens against the context.
+- **Implementation:** Three functions in `internal/template/liquid.go` implement the resolution pipeline:
+  1. `parseTagTokens(markup) []parsedArg` — tokenizes tag markup into a sequence of `{value, quoted}` tokens, preserving order. Both single and double quotes are recognized as string delimiters.
+  2. `resolveTagArgs(tokens, context) []string` — iterates tokens: quoted args pass through as literal strings; unquoted args are resolved via `resolveVariable`.
+  3. `resolveVariable(name, context) (interface{}, bool)` — parses the variable name (which may be a dotted path like `page.videoId`) into a `*VariableLookup` via `liquid.VariableLookupParse(name, nil, nil)`, then calls `context.Evaluate(vl)` on the parsed lookup. `TagContext.Evaluate` expects evaluable objects (e.g., `*VariableLookup`), not plain strings — passing a raw string returns the string unchanged, which would bypass variable resolution. If `Evaluate` returns nil, the variable is not found.
+  
+  `parseTagArgs(markup) []string` is preserved as a thin wrapper over `parseTagTokens` for callers that don't need variable resolution (e.g., the `{% inline %}` tag).
 
 **Empty return behavior:**
 - When a `TagFunc` returns `""` (empty string), both engines emit nothing — no output, no wrapper, no placeholder.
