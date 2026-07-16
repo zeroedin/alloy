@@ -204,6 +204,8 @@ func (r *Registry) Runtimes() []PluginFilterRuntime {
 
 // Close releases resources held by all loaded runtimes and any
 // pre-initialized runtimes that were never consumed by LoadPlugins.
+// Also clears global plugin source handlers to prevent stale closures
+// from referencing stopped NodeBridge instances during dev server rebuilds.
 func (r *Registry) Close() {
 	for _, rt := range r.runtimes {
 		closeRuntime(rt)
@@ -217,6 +219,7 @@ func (r *Registry) Close() {
 		r.wasmCache.Close(context.Background())
 		r.wasmCache = nil
 	}
+	fetch.ResetPluginSources()
 }
 
 // ClassifyPlugin determines the tier and runtime for a plugin file based on

@@ -264,6 +264,12 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			case "graphql":
 				fetched, fetchErr = fetch.FetchGraphQL(src.Endpoint, src.Query)
 			case "plugin":
+				if !cfg.Refetch && src.Cache > 0 {
+					if cached, found := fetch.GetCached(src.Plugin, cacheDir, src.Cache); found {
+						fetched = cached
+						break
+					}
+				}
 				configMap := map[string]interface{}{
 					"type":   src.Type,
 					"plugin": src.Plugin,
@@ -271,6 +277,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 					"as":     src.As,
 				}
 				fetched, fetchErr = fetch.FetchPluginSource(src.Plugin, configMap)
+				if fetchErr == nil {
+					_ = fetch.SaveCache(src.Plugin, cacheDir, fetched)
+				}
 			default:
 				log.Printf("warning: unknown source type %q for %s", src.Type, name)
 				continue

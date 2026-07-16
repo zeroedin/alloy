@@ -116,13 +116,14 @@ type NodeRuntime struct {
 	pluginPaths    []string              // paths loaded via EvalFile, for worker replication
 	workerPool     []*NodeBridge         // additional bridges for parallel hook dispatch
 	evalWarnings   []string              // warnings from bridge eval (e.g., duplicate hooks)
+	sourceTimeout  time.Duration         // timeout for source handler calls (default 5s)
 }
 
 // NewNodeRuntime creates a new Node.js plugin runtime with its own bridge.
 // Defaults to the current working directory as the project root for module resolution.
 func NewNodeRuntime() *NodeRuntime {
 	cwd, _ := os.Getwd()
-	return &NodeRuntime{projectRoot: cwd}
+	return &NodeRuntime{projectRoot: cwd, sourceTimeout: 5 * time.Second}
 }
 
 // ProjectRoot returns the project root used for Node module resolution.
@@ -329,6 +330,7 @@ func (r *NodeRuntime) RegisteredSources() []string {
 }
 
 // CallSource invokes a registered data source handler in the Node subprocess.
+// Applies sourceTimeout (default 5s) to prevent slow handlers from hanging the build.
 func (r *NodeRuntime) CallSource(name string, config map[string]interface{}) (interface{}, error) {
 	if r.bridge == nil {
 		return nil, fmt.Errorf("source %q: bridge not started", name)
@@ -343,15 +345,40 @@ func (r *NodeRuntime) CallSource(name string, config map[string]interface{}) (in
 	if !found {
 		return nil, fmt.Errorf("source %q not registered", name)
 	}
-	resp, err := r.bridge.Send(&Message{
-		Type:    "source",
-		Name:    name,
-		Payload: config,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("node source %q: %w", name, err)
+
+	timeout := r.sourceTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
 	}
-	return resp.Result, nil
+
+	type sendResult struct {
+		resp *Message
+		err  error
+	}
+	ch := make(chan sendResult, 1)
+	go func() {
+		resp, err := r.bridge.Send(&Message{
+			Type:    "source",
+			Name:    name,
+			Payload: config,
+		})
+		ch <- sendResult{resp, err}
+	}()
+
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			return nil, fmt.Errorf("node source %q: %w", name, res.err)
+		}
+		return res.resp.Result, nil
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("node source %q: context deadline exceeded", name)
+	}
+}
+
+// SetSourceTimeout configures the timeout for source handler calls.
+func (r *NodeRuntime) SetSourceTimeout(d time.Duration) {
+	r.sourceTimeout = d
 }
 
 // EvalWarnings returns warnings collected during EvalFile calls.
