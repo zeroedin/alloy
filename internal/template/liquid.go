@@ -507,15 +507,19 @@ type parsedArg struct {
 }
 
 // parseTagTokens parses tag markup into a sequence of quoted and unquoted
-// argument tokens, preserving order. Supports mixed forms like:
+// argument tokens, preserving order. Both single and double quotes are
+// recognized as string delimiters (Liquid supports both). Supports mixed
+// forms like:
 //
 //	"primary" page.size   → [{value:"primary", quoted:true}, {value:"page.size", quoted:false}]
+//	'label' count         → [{value:"label", quoted:true}, {value:"count", quoted:false}]
 func parseTagTokens(markup string) []parsedArg {
 	s := strings.TrimSpace(markup)
 	var args []parsedArg
 	for len(s) > 0 {
-		if s[0] == '"' {
-			end := strings.Index(s[1:], `"`)
+		if s[0] == '"' || s[0] == '\'' {
+			quote := s[0]
+			end := strings.IndexByte(s[1:], quote)
 			if end >= 0 {
 				args = append(args, parsedArg{value: s[1 : end+1], quoted: true})
 				s = strings.TrimSpace(s[end+2:])
@@ -524,7 +528,7 @@ func parseTagTokens(markup string) []parsedArg {
 				break
 			}
 		} else {
-			end := strings.IndexAny(s, " \t\"")
+			end := strings.IndexAny(s, " \t\"'")
 			if end >= 0 {
 				if s[:end] != "" {
 					args = append(args, parsedArg{value: s[:end], quoted: false})
@@ -561,26 +565,15 @@ func resolveTagArgs(tokens []parsedArg, context liquid.TagContext) []string {
 }
 
 // resolveVariable looks up a possibly-dotted variable path (e.g. "page.videoId")
-// against the Liquid render context. Returns the resolved value and true if
-// found, or (nil, false) if the variable does not exist.
+// against the Liquid render context using liquidgo's native variable lookup,
+// which handles map[string]interface{}, typed maps (via reflection), Drops,
+// array index access, and command methods. Returns the resolved value and true
+// if found, or (nil, false) if the variable does not exist or is nil.
 func resolveVariable(name string, context liquid.TagContext) (interface{}, bool) {
-	parts := strings.Split(name, ".")
-	val := context.FindVariable(parts[0], false)
-	if val == nil && len(parts) == 1 {
-		return nil, false
-	}
+	vl := liquid.VariableLookupParse(name, nil, nil)
+	val := context.Evaluate(vl)
 	if val == nil {
 		return nil, false
-	}
-	for _, part := range parts[1:] {
-		m, ok := val.(map[string]interface{})
-		if !ok {
-			return nil, false
-		}
-		val, ok = m[part]
-		if !ok {
-			return nil, false
-		}
 	}
 	return val, true
 }
