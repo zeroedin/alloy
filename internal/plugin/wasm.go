@@ -191,6 +191,9 @@ var moduleExportRegex = regexp.MustCompile(
 func (r *QuickJSRuntime) EvalFile(path string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.rt == nil {
+		return fmt.Errorf("%s: runtime is closed", filepath.Base(path))
+	}
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("%s: %w", filepath.Base(path), err)
@@ -467,6 +470,8 @@ func (r *QuickJSRuntime) Close() {
 	if r.rt != nil {
 		r.rt.Close()
 		r.rt = nil
+		r.ctx = nil
+		r.initialized = false
 	}
 }
 
