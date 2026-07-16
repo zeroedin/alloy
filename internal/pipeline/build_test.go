@@ -126,6 +126,141 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Data directory error handling (issue #982) ────────────────────
+	// Data directory load errors (stem collisions, malformed files) must
+	// be fatal build errors — not warnings that silently drop ALL site
+	// data. The loadSiteData function must propagate data.LoadDirectory
+	// errors instead of swallowing them. This matches the external data
+	// files path (already fatal) and the project's fail-fast philosophy.
+	Describe("Data directory error handling (issue #982)", func() {
+
+		It("stem collision in data directory fails the build", func() {
+			cfg := &config.Config{
+				Title: "Stem Collision Test",
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			// Two data files sharing the stem "team" — team.yaml and team.json
+			// both claim the key "team" in site.data.
+			result, err := pipeline.BuildWithContent(cfg, map[string]string{
+				"data/team.yaml": "name: Alice\nrole: Lead\n",
+				"data/team.json": `{"name": "Bob", "role": "Dev"}`,
+			})
+			Expect(err).To(HaveOccurred(),
+				"stem collision in data directory must cause a fatal build error — "+
+					"currently loadSiteData swallows the error from data.LoadDirectory "+
+					"and silently drops ALL site data (issue #982)")
+			Expect(err.Error()).To(SatisfyAll(
+				ContainSubstring("team"),
+				ContainSubstring("conflict"),
+			), "error must name the conflicting stem and mention 'conflict' — "+
+				"the user needs to know which files collided to fix the problem")
+			Expect(result).To(BeNil(),
+				"failed build must not return partial result")
+		})
+
+		It("malformed YAML in data directory fails the build", func() {
+			cfg := &config.Config{
+				Title: "Malformed YAML Test",
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			// Invalid YAML: unterminated flow sequence
+			result, err := pipeline.BuildWithContent(cfg, map[string]string{
+				"data/broken.yaml": "invalid: [yaml: {unterminated",
+			})
+			Expect(err).To(HaveOccurred(),
+				"malformed YAML in data directory must cause a fatal build error — "+
+					"currently loadSiteData logs a warning and drops the entire "+
+					"data directory contents (issue #982)")
+			Expect(err.Error()).To(ContainSubstring("broken.yaml"),
+				"error must name the file that failed to parse so the user "+
+					"can locate and fix the problem")
+			Expect(result).To(BeNil(),
+				"failed build must not return partial result")
+		})
+
+		It("malformed JSON in data directory fails the build", func() {
+			cfg := &config.Config{
+				Title: "Malformed JSON Test",
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			// Invalid JSON: unterminated object
+			result, err := pipeline.BuildWithContent(cfg, map[string]string{
+				"data/broken.json": `{"invalid json`,
+			})
+			Expect(err).To(HaveOccurred(),
+				"malformed JSON in data directory must cause a fatal build error — "+
+					"currently loadSiteData logs a warning and drops the entire "+
+					"data directory contents (issue #982)")
+			Expect(err.Error()).To(ContainSubstring("broken.json"),
+				"error must name the file that failed to parse so the user "+
+					"can locate and fix the problem")
+			Expect(result).To(BeNil(),
+				"failed build must not return partial result")
+		})
+
+		It("non-existent data directory is not an error", func() {
+			cfg := &config.Config{
+				Title:     "No Data Dir Test",
+				Build:     config.BuildConfig{Output: "_site"},
+				Structure: config.StructureConfig{Data: "nonexistent-data-dir"},
+			}
+			// A project with no data/ directory is valid — many projects
+			// don't use data files. This must not error.
+			result, err := pipeline.BuildWithContent(cfg, map[string]string{
+				"content/index.md": "---\ntitle: Home\n---\nhello",
+			})
+			Expect(err).NotTo(HaveOccurred(),
+				"non-existent data directory must not cause an error — "+
+					"not every project uses data files")
+			Expect(result).NotTo(BeNil())
+		})
+
+		It("valid data files load and are accessible in templates", func() {
+			cfg := &config.Config{
+				Title: "Valid Data Test",
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			// Valid YAML data file alongside a content page — the layout
+			// renders site.data.navigation to prove the data reached templates.
+			result, err := pipeline.BuildWithContent(cfg, map[string]string{
+				"data/navigation.yaml":   "items:\n  - name: Home\n    url: /\n",
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\nhello",
+				"layouts/default.liquid": "NAV:{{ site.data.navigation.items[0].name }}|{{ content }}",
+			})
+			Expect(err).NotTo(HaveOccurred(),
+				"valid data files must load without error")
+			Expect(result).NotTo(BeNil())
+			Expect(result.RenderedContent["index.md"]).To(ContainSubstring("NAV:Home"),
+				"site.data.navigation.items[0].name must resolve to 'Home' — "+
+					"if this fails, data loaded successfully but was not injected "+
+					"into the template context (issue #982 core behavior)")
+		})
+
+		It("healthy data files are not dropped when build aborts on error", func() {
+			cfg := &config.Config{
+				Title: "Innocent Bystander Test",
+				Build: config.BuildConfig{Output: "_site"},
+			}
+			// navigation.yaml is valid, but team.yaml + team.json collide.
+			// The bug in issue #982: the warning path drops ALL data files,
+			// not just the conflicting ones. After the fix, the build must
+			// abort entirely — no partial data loading.
+			result, err := pipeline.BuildWithContent(cfg, map[string]string{
+				"data/navigation.yaml": "items:\n  - name: Home\n    url: /\n",
+				"data/team.yaml":       "name: Alice\n",
+				"data/team.json":       `{"name": "Bob"}`,
+				"content/index.md":     "---\ntitle: Home\nlayout: default\n---\nhello",
+				"layouts/default.liquid": "NAV:{{ site.data.navigation.items[0].name }}|{{ content }}",
+			})
+			Expect(err).To(HaveOccurred(),
+				"build must abort when data directory has a stem collision — "+
+					"the current bug silently drops ALL data (including valid "+
+					"navigation.yaml) behind a success exit code (issue #982)")
+			Expect(result).To(BeNil(),
+				"failed build must not return partial result — no partial deploys")
+		})
+	})
+
 	Describe("Build result", func() {
 		It("returns output directory path", func() {
 			cfg := &config.Config{

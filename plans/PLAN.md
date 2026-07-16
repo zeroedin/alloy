@@ -263,6 +263,12 @@ Nesting depth is unlimited. Root-level files and subdirectory namespaces coexist
 
 This follows the same principle as output path conflicts (§2): no silent overwrites, no priority system. The user must resolve collisions explicitly. Stem collision detection applies recursively within subdirectories — `data/sub/team.yaml` and `data/sub/team.json` is also a collision.
 
+**Malformed data files are build errors (issue #982).** If any data file in the data directory fails to parse (invalid YAML, malformed JSON, broken TOML, unreadable CSV), the build fails with an error naming the file. No partial loading — a single bad file aborts the entire build rather than silently dropping the data directory's contents.
+
+**All data directory errors are fatal (issue #982).** `loadSiteData` must propagate errors from `data.LoadDirectory` — stem collisions, parse errors, and I/O errors all abort the build. The only exception is `fs.ErrNotExist` (data directory does not exist), which is silently ignored since not every project uses data files. This matches the external data files path, where file-not-found and parse errors are already fatal. A non-existent data directory is valid; a data directory with broken files is not.
+
+**Dev mode exception:** In incremental rebuilds (`BuildIncremental`), data reload errors are warnings — stale data is preserved so the dev server doesn't crash on a transient edit. The initial build remains strict.
+
 **Directory-file stem collisions are build errors (issue #983).** If a file and a non-empty subdirectory share the same stem (e.g., `data/nav.yaml` and `data/nav/` containing data files), the build fails. Both claim the key `"nav"` — the file would produce a data value, the directory would produce a nested namespace map. Same collision semantics: no priority system, the user must resolve it by renaming. **Exception:** a file coexisting with an empty directory of the same stem (e.g., `nav.yaml` + empty `nav/`) is not a collision — the empty directory produces no key (issue #1019).
 
 **External data files** — Files outside the `data/` directory can be mapped into the data namespace via config:
