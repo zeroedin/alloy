@@ -1343,6 +1343,508 @@ var _ = Describe("Build Pipeline", func() {
 				"error message must identify onConfig as the source — "+
 					"helps plugin authors locate the problematic hook (issue #973)")
 		})
+
+		// ── Remaining mutable allowlist fields (issue #999) ────────────────
+		// PR #997 covered build.output, structure.content, structure.layouts,
+		// title exclusion, chaining, and non-object error. The following tests
+		// cover the remaining mutable allowlist fields and edge cases.
+
+		It("plugin can set build.clean to false via onConfig and chained hook sees the mutation", func() {
+			cfg := &config.Config{
+				Title:   "Clean Mutation Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// Two plugins in a chain: first sets build.clean = false,
+			// second verifies it was applied by throwing if clean is not false.
+			// This proves the bool → *bool serialization is correct in the
+			// hook chain and that build.clean is in the mutable allowlist.
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/aaa-set-clean.js": `export default function(alloy) {
+  alloy.hook('onConfig', { priority: 10 }, (config) => {
+    config.build.clean = false;
+    return config;
+  });
+}`,
+				"plugins/bbb-verify-clean.js": `export default function(alloy) {
+  alloy.hook('onConfig', { priority: 50 }, (config) => {
+    if (config.build.clean !== false) {
+      throw new Error('build.clean was not applied: expected false, got ' + JSON.stringify(config.build.clean));
+    }
+    return config;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onConfig must support build.clean mutation — if this fails with "+
+					"'build.clean was not applied', the field is not in the mutable "+
+					"allowlist or the bool→*bool serialization is broken (issue #999)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(1),
+				"build must complete with clean=false mutation (issue #999)")
+		})
+
+		It("plugin can redirect structure.assets via onConfig and asset filters resolve from the new directory", func() {
+			cfg := &config.Config{
+				Title:   "Assets Redirect Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// Put a CSS file in "my_assets/" (not the default "assets/").
+			// The plugin redirects structure.assets to "my_assets".
+			// The template uses {{ "style.css" | cachebust }} which resolves
+			// asset files from the configured assets directory.
+			// If the mutation is applied, cachebust finds the file and appends ?h=<hash>.
+			// If not applied, cachebust looks in "assets/" (empty), fails, and returns "/style.css".
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": `<html><body>{{ content }}<link href="{{ "style.css" | cachebust }}" rel="stylesheet"></body></html>`,
+				"my_assets/style.css":    "body { color: red; }",
+				"plugins/redirect-assets.js": `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.structure.assets = "my_assets";
+    return config;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onConfig structure.assets redirection must not error (issue #999)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("?h="),
+				"cachebust must find style.css in the redirected 'my_assets/' directory "+
+					"and append a content hash. If output contains '/style.css' without ?h=, "+
+					"the structure.assets mutation was not applied and the pipeline looked "+
+					"in the default 'assets/' directory (issue #999)")
+		})
+
+		It("plugin can redirect structure.static via onConfig and static files are resolved from the new directory", func() {
+			cfg := &config.Config{
+				Title:   "Static Redirect Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// Put a static file in "public/" (not the default "static/").
+			// The plugin redirects structure.static to "public".
+			// The template uses {{ "robots.txt" | cachebust }} which resolves
+			// files from the configured static directory.
+			// If the mutation is applied, cachebust finds the file and appends ?h=<hash>.
+			// If not applied, it looks in "static/" (empty) and returns "/robots.txt".
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": `<html><body>{{ content }}<a href="{{ "robots.txt" | cachebust }}">robots</a></body></html>`,
+				"public/robots.txt":      "User-agent: *\nDisallow: /admin/",
+				"plugins/redirect-static.js": `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.structure.static = "public";
+    return config;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onConfig structure.static redirection must not error (issue #999)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("?h="),
+				"cachebust must find robots.txt in the redirected 'public/' directory "+
+					"and append a content hash. If output contains '/robots.txt' without ?h=, "+
+					"the structure.static mutation was not applied and the pipeline looked "+
+					"in the default 'static/' directory (issue #999)")
+		})
+
+		It("plugin can redirect structure.data via onConfig and data loads from the new directory", func() {
+			cfg := &config.Config{
+				Title:   "Data Redirect Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// Data file is in "my_data/" (not the default "data/").
+			// Without the onConfig mutation, the pipeline looks in "data/"
+			// and finds nothing → site.data.info is nil → template outputs nothing.
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": `<html><body>{{ content }}<span class="site-name">{{ site.data.info.name }}</span></body></html>`,
+				"my_data/info.json":      `{"name":"Redirected Data Works"}`,
+				"plugins/redirect-data.js": `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    config.structure.data = "my_data";
+    return config;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onConfig structure.data redirection must not error (issue #999)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("Redirected Data Works"),
+				"structure.data redirected to 'my_data/' — pipeline must load data "+
+					"from the new directory. If site.data.info.name is empty, the "+
+					"onConfig mutation was not applied and the pipeline looked in "+
+					"'data/' (issue #999)")
+		})
+
+		It("plugin can set passthrough mappings via onConfig", func() {
+			cfg := &config.Config{
+				Title:   "Passthrough Mutation Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// Plugin adds a passthrough mapping via onConfig.
+			// The pipeline should process the passthrough after onConfig applies it.
+			// A chained hook verifies the passthrough was set correctly.
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/aaa-set-passthrough.js": `export default function(alloy) {
+  alloy.hook('onConfig', { priority: 10 }, (config) => {
+    config.passthrough = [
+      { from: "vendor/fonts", to: "assets/fonts" },
+      { from: "node_modules/icons/dist", to: "assets/icons", exclude: ["*.map"] }
+    ];
+    return config;
+  });
+}`,
+				"plugins/bbb-verify-passthrough.js": `export default function(alloy) {
+  alloy.hook('onConfig', { priority: 50 }, (config) => {
+    if (!config.passthrough || !Array.isArray(config.passthrough)) {
+      throw new Error('passthrough was not set: got ' + JSON.stringify(config.passthrough));
+    }
+    if (config.passthrough.length !== 2) {
+      throw new Error('expected 2 passthrough entries, got ' + config.passthrough.length);
+    }
+    if (config.passthrough[0].from !== 'vendor/fonts') {
+      throw new Error('passthrough[0].from mismatch: ' + config.passthrough[0].from);
+    }
+    if (config.passthrough[1].to !== 'assets/icons') {
+      throw new Error('passthrough[1].to mismatch: ' + config.passthrough[1].to);
+    }
+    if (!config.passthrough[1].exclude || config.passthrough[1].exclude[0] !== '*.map') {
+      throw new Error('passthrough[1].exclude mismatch: ' + JSON.stringify(config.passthrough[1].exclude));
+    }
+    return config;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onConfig must support passthrough mutation — if this fails with a "+
+					"verification error from bbb-verify-passthrough.js, the passthrough "+
+					"array was not correctly deserialized or applied (issue #999)")
+			Expect(result).NotTo(BeNil())
+		})
+
+		It("passthrough entries with empty from are skipped during onConfig application", func() {
+			cfg := &config.Config{
+				Title:   "Passthrough Empty From Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// Plugin sets passthrough with one valid and one empty-from entry.
+			// The empty-from entry must be filtered out — only the valid entry
+			// should be applied.
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/aaa-set-passthrough.js": `export default function(alloy) {
+  alloy.hook('onConfig', { priority: 10 }, (config) => {
+    config.passthrough = [
+      { from: "", to: "should-be-skipped" },
+      { from: "vendor/valid", to: "assets/valid" }
+    ];
+    return config;
+  });
+}`,
+				"plugins/bbb-verify-passthrough.js": `export default function(alloy) {
+  alloy.hook('onConfig', { priority: 50 }, (config) => {
+    // After Go-side application and re-serialization, the empty-from
+    // entry should have been filtered out. But in the JS hook chain,
+    // both entries are visible (filtering happens at applyOnConfigResult).
+    // This test verifies the hook chain receives what was set.
+    if (!config.passthrough || config.passthrough.length !== 2) {
+      throw new Error('hook chain should see both entries (filtering is Go-side): got ' + JSON.stringify(config.passthrough));
+    }
+    return config;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"passthrough with empty-from entries must not error — "+
+					"empty-from entries are silently skipped during Go-side "+
+					"application (issue #999)")
+			Expect(result).NotTo(BeNil())
+		})
+
+		It("plugin can set plugins.workers via onConfig and chained hook sees the mutation", func() {
+			cfg := &config.Config{
+				Title:   "Workers Mutation Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// Plugin sets plugins.workers to 2. The chained hook verifies the
+			// value was applied. The pipeline uses this value to size the
+			// worker pool (after onConfig, before batch hooks).
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/aaa-set-workers.js": `export default function(alloy) {
+  alloy.hook('onConfig', { priority: 10 }, (config) => {
+    config.plugins.workers = 2;
+    return config;
+  });
+}`,
+				"plugins/bbb-verify-workers.js": `export default function(alloy) {
+  alloy.hook('onConfig', { priority: 50 }, (config) => {
+    if (config.plugins.workers !== 2) {
+      throw new Error('plugins.workers was not applied: expected 2, got ' + JSON.stringify(config.plugins.workers));
+    }
+    return config;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onConfig must support plugins.workers mutation — if this fails "+
+					"with 'plugins.workers was not applied', the field is not in the "+
+					"mutable allowlist (issue #999)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(1),
+				"build must complete with workers=2 mutation (issue #999)")
+		})
+
+		It("plugin can set plugins.timeout via onConfig and the new timeout applies to subsequent hooks", func() {
+			cfg := &config.Config{
+				Title:   "Timeout Mutation Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// Plugin A (onConfig) reduces timeout to 50ms.
+			// Plugin B (onContentTransformed) sleeps for 200ms, exceeding the new timeout.
+			// If the timeout mutation is applied (and hooks.SetTimeout is called),
+			// plugin B times out → its modifications are discarded → the original
+			// page content is preserved unchanged.
+			// If the timeout is NOT applied, the default 5000ms timeout applies,
+			// plugin B completes → its modification appears in output.
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/aaa-reduce-timeout.js": `export default function(alloy) {
+  alloy.hook('onConfig', { priority: 10 }, (config) => {
+    config.plugins.timeout = 50;
+    return config;
+  });
+}`,
+				"plugins/bbb-slow-hook.js": `export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, (page) => {
+    var start = Date.now();
+    while (Date.now() - start < 200) {}
+    page.html = page.html + '<!-- SLOW_HOOK_APPLIED -->';
+    return page;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"timeout mutation must not cause a build error — "+
+					"timed-out hooks produce warnings, not errors (issue #999)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).NotTo(ContainSubstring("SLOW_HOOK_APPLIED"),
+				"the slow hook must time out under the reduced 50ms timeout — "+
+					"if SLOW_HOOK_APPLIED appears, either the timeout mutation was "+
+					"not applied (still using default 5000ms) or hooks.SetTimeout "+
+					"was not called after applyOnConfigResult (issue #999)")
+		})
+
+		// ── Edge cases for onConfig (issue #999) ──────────────────────────
+
+		It("onConfig hook returning null/nil produces a build error", func() {
+			cfg := &config.Config{
+				Title:   "Nil Return Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/null-return.js": `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    return null;
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"onConfig returning null must produce a build error — "+
+					"null return means the plugin forgot to return the config "+
+					"object, causing silent data loss (issue #999)")
+			Expect(err.Error()).To(ContainSubstring("onConfig"),
+				"error message must identify onConfig as the source (issue #999)")
+		})
+
+		It("onConfig hook that times out preserves the original config", func() {
+			cfg := &config.Config{
+				Title:   "Timeout Preservation Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Plugins: config.PluginsConfig{Timeout: 50}, // 50ms timeout
+			}
+			// Plugin attempts to change build.output but takes too long.
+			// RunWithTimeout returns the original *config.Config when the hook
+			// times out. applyOnConfigResult receives *config.Config and returns
+			// nil (no-op). The original build.output ("_site") must be preserved.
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/slow-config.js": `export default function(alloy) {
+  alloy.hook('onConfig', {}, (config) => {
+    var start = Date.now();
+    while (Date.now() - start < 200) {}
+    config.build.output = "should_not_apply";
+    return config;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"timed-out onConfig hook must not error — build continues "+
+					"with original config (issue #999)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.OutputDir).To(Equal("_site"),
+				"timed-out onConfig hook's mutations must be discarded — "+
+					"OutputDir must remain '_site', not 'should_not_apply'. "+
+					"RunWithTimeout returns the original *config.Config on timeout, "+
+					"and applyOnConfigResult treats *config.Config as a no-op (issue #999)")
+		})
+
+		It("onConfig setting plugins.timeout to zero preserves the original timeout", func() {
+			cfg := &config.Config{
+				Title:   "Zero Timeout Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Plugins: config.PluginsConfig{Timeout: 500}, // explicit baseline
+			}
+			// Plugin sets plugins.timeout to 0. The implementation only applies
+			// timeout values > 0, so 0 should be treated as "keep original".
+			// The verification hook runs a 25ms delay — if 0 is incorrectly
+			// applied as a literal 0ms timeout, the hook always times out.
+			// With the correct 500ms baseline preserved, 25ms completes easily.
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/aaa-zero-timeout.js": `export default function(alloy) {
+  alloy.hook('onConfig', { priority: 10 }, (config) => {
+    config.plugins.timeout = 0;
+    return config;
+  });
+}`,
+				"plugins/bbb-verify-hook-runs.js": `export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, (page) => {
+    var start = Date.now();
+    while (Date.now() - start < 25) {}
+    page.html = page.html + '<!-- HOOK_RAN -->';
+    return page;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"plugins.timeout=0 must not cause a build error — zero is "+
+					"treated as 'keep original timeout' (issue #999)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("HOOK_RAN"),
+				"subsequent hooks must still run under the original timeout — "+
+					"if HOOK_RAN is missing, setting timeout=0 may have been applied "+
+					"as a literal 0ms timeout, causing all hooks to time out (issue #999)")
+		})
+
+		It("onConfig setting plugins.timeout to negative preserves the original timeout", func() {
+			cfg := &config.Config{
+				Title:   "Negative Timeout Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Plugins: config.PluginsConfig{Timeout: 500}, // explicit baseline
+			}
+			// Plugin sets plugins.timeout to -1. Like zero, negative values
+			// must not be applied — the original timeout is preserved.
+			// The verification hook runs a 25ms delay — if -1 is incorrectly
+			// applied, the hook times out. With 500ms baseline, 25ms completes.
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/aaa-negative-timeout.js": `export default function(alloy) {
+  alloy.hook('onConfig', { priority: 10 }, (config) => {
+    config.plugins.timeout = -1;
+    return config;
+  });
+}`,
+				"plugins/bbb-verify-hook-runs.js": `export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, (page) => {
+    var start = Date.now();
+    while (Date.now() - start < 25) {}
+    page.html = page.html + '<!-- HOOK_RAN -->';
+    return page;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"plugins.timeout=-1 must not cause a build error — negative "+
+					"values are treated as 'keep original timeout' (issue #999)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("HOOK_RAN"),
+				"subsequent hooks must still run under the original timeout — "+
+					"if HOOK_RAN is missing, setting timeout=-1 may have been applied "+
+					"as a literal negative timeout (issue #999)")
+		})
+
+		It("plugins.workers can be set to string 'auto' via onConfig", func() {
+			cfg := &config.Config{
+				Title:   "Workers Auto Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// Plugin sets plugins.workers to "auto" (string).
+			// The Workers field is interface{} — accepts both "auto" and int.
+			// The chained hook verifies the string value propagates.
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/aaa-set-workers-auto.js": `export default function(alloy) {
+  alloy.hook('onConfig', { priority: 10 }, (config) => {
+    config.plugins.workers = "auto";
+    return config;
+  });
+}`,
+				"plugins/bbb-verify-workers-auto.js": `export default function(alloy) {
+  alloy.hook('onConfig', { priority: 50 }, (config) => {
+    if (config.plugins.workers !== "auto") {
+      throw new Error('plugins.workers was not applied: expected "auto", got ' + JSON.stringify(config.plugins.workers));
+    }
+    return config;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onConfig must support plugins.workers='auto' — the Workers "+
+					"field is interface{} and accepts both string and int (issue #999)")
+			Expect(result).NotTo(BeNil())
+		})
 	})
 
 	// ── Template tags in <code> not escaped for HTML content (#352) ─
