@@ -100,9 +100,7 @@ func applyOnConfigResult(cfg *config.Config, result interface{}) error {
 	}
 
 	var validatedMappings []config.PassthroughMapping
-	hasPassthrough := false
 	if passthrough, ok := m["passthrough"].([]interface{}); ok {
-		hasPassthrough = true
 		validatedMappings = make([]config.PassthroughMapping, 0, len(passthrough))
 		for i, item := range passthrough {
 			pm, ok := item.(map[string]interface{})
@@ -125,12 +123,16 @@ func applyOnConfigResult(cfg *config.Config, result interface{}) error {
 			if to, ok := pm["to"].(string); ok {
 				mapping.To = to
 			}
-			if mapping.To != "" && mapping.To != "." {
-				cleaned, err := validateOnConfigPath(fmt.Sprintf("passthrough[%d].to", i), mapping.To)
-				if err != nil {
-					return err
+			if mapping.To != "" {
+				cleanedTo := filepath.Clean(mapping.To)
+				if cleanedTo != "." {
+					var err error
+					cleanedTo, err = validateOnConfigPath(fmt.Sprintf("passthrough[%d].to", i), mapping.To)
+					if err != nil {
+						return err
+					}
 				}
-				mapping.To = cleaned
+				mapping.To = cleanedTo
 			}
 
 			if exclude, ok := pm["exclude"].([]interface{}); ok {
@@ -168,7 +170,7 @@ func applyOnConfigResult(cfg *config.Config, result interface{}) error {
 		}
 	}
 
-	if hasPassthrough {
+	if validatedMappings != nil {
 		cfg.Passthrough = validatedMappings
 	}
 
