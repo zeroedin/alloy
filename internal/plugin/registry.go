@@ -11,6 +11,8 @@ import (
 	"sync"
 
 	"github.com/tetratelabs/wazero"
+
+	"github.com/zeroedin/alloy/internal/fetch"
 )
 
 // PluginTier represents the execution tier of a plugin.
@@ -202,6 +204,8 @@ func (r *Registry) Runtimes() []PluginFilterRuntime {
 
 // Close releases resources held by all loaded runtimes and any
 // pre-initialized runtimes that were never consumed by LoadPlugins.
+// Also clears global plugin source handlers to prevent stale closures
+// from referencing stopped NodeBridge instances during dev server rebuilds.
 func (r *Registry) Close() {
 	for _, rt := range r.runtimes {
 		closeRuntime(rt)
@@ -215,6 +219,7 @@ func (r *Registry) Close() {
 		r.wasmCache.Close(context.Background())
 		r.wasmCache = nil
 	}
+	fetch.ResetPluginSources()
 }
 
 // ClassifyPlugin determines the tier and runtime for a plugin file based on
@@ -361,6 +366,17 @@ func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, ho
 	if warner, ok := rt.(EvalWarner); ok {
 		for _, w := range warner.EvalWarnings() {
 			hooks.addWarning(fmt.Sprintf("plugin %s: %s", pluginName, w))
+		}
+	}
+	if sr, ok := rt.(interface {
+		RegisteredSources() []string
+		CallSource(string, map[string]interface{}) (interface{}, error)
+	}); ok {
+		for _, name := range sr.RegisteredSources() {
+			srcName := name
+			fetch.RegisterPluginSource(srcName, func(config map[string]interface{}) (interface{}, error) {
+				return sr.CallSource(srcName, config)
+			})
 		}
 	}
 	r.runtimes = append(r.runtimes, rt)
