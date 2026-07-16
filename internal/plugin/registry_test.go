@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/zeroedin/alloy/internal/fetch"
 	"github.com/zeroedin/alloy/internal/plugin"
 )
 
@@ -274,6 +275,117 @@ var _ = Describe("Registry", func() {
 							iter, accounted, totalPlugins))
 				}()
 			}
+		})
+	})
+
+	// ── Plugin source cleanup on Close (issue #1042) ─────────────────
+	// registerRuntime writes closures into the process-global pluginSources
+	// map (fetch.RegisterPluginSource), but Registry.Close() never clears
+	// them. Stale closures reference stopped NodeBridge instances and
+	// produce "bridge not started" errors instead of "not registered".
+
+	Describe("Plugin source cleanup on Close (issue #1042)", func() {
+		BeforeEach(func() {
+			fetch.ResetPluginSources()
+		})
+
+		AfterEach(func() {
+			fetch.ResetPluginSources()
+		})
+
+		It("Close() clears plugin sources registered during the registry lifecycle", func() {
+			// Simulate what registerRuntime does: register plugin source
+			// handlers via fetch.RegisterPluginSource. In production, these
+			// closures capture a NodeRuntime whose bridge is later stopped
+			// by Close(). After Close(), the global pluginSources map must
+			// not contain stale handlers.
+			fetch.RegisterPluginSource("registry-src-a", func(config map[string]interface{}) (interface{}, error) {
+				return []interface{}{"data-a"}, nil
+			})
+			fetch.RegisterPluginSource("registry-src-b", func(config map[string]interface{}) (interface{}, error) {
+				return []interface{}{"data-b"}, nil
+			})
+			Expect(fetch.RegisteredPluginSources()).To(HaveLen(2),
+				"precondition: two sources must be registered")
+
+			// Close the registry — must also clear plugin sources
+			registry := plugin.NewRegistry(GinkgoT().TempDir())
+			registry.Close()
+
+			// After Close(), the source handlers must be removed.
+			// Currently Close() does not call ResetPluginSources(), so
+			// stale closures remain in the global map — calling
+			// FetchPluginSource hits the dead bridge and returns
+			// "bridge not started" instead of "not registered".
+			Expect(fetch.RegisteredPluginSources()).To(BeEmpty(),
+				"Registry.Close() must clear all plugin source handlers — "+
+					"without this, stale closures referencing stopped NodeBridge "+
+					"instances remain in the global pluginSources map, causing "+
+					"'bridge not started' errors instead of 'not registered' "+
+					"during dev server full rebuilds (issue #1042)")
+		})
+
+		It("after Close(), FetchPluginSource returns 'not registered' not 'bridge not started'", func() {
+			// Reproduce the stale closure scenario:
+			// 1. A closure captures a stopped NodeRuntime (bridge==nil)
+			// 2. Calling the handler returns "bridge not started"
+			// 3. Close() should remove it so FetchPluginSource returns "not registered"
+			staleRT := plugin.NewNodeRuntime()
+			// Do NOT call EvalFile — bridge stays nil, simulating a stopped runtime
+			fetch.RegisterPluginSource("stale-src", func(config map[string]interface{}) (interface{}, error) {
+				// This is what happens when registerRuntime's closure calls
+				// CallSource on a runtime whose bridge was stopped
+				return staleRT.CallSource("stale-src", config)
+			})
+
+			// Verify the stale closure produces the wrong error
+			_, preCloseErr := fetch.FetchPluginSource("stale-src", nil)
+			Expect(preCloseErr).To(HaveOccurred())
+			Expect(preCloseErr.Error()).To(ContainSubstring("bridge"),
+				"precondition: stale closure must produce a bridge-related error "+
+					"proving the handler is still registered but points to a dead runtime")
+
+			// Close the registry — must remove the stale handler
+			registry := plugin.NewRegistry(GinkgoT().TempDir())
+			registry.Close()
+
+			// Now FetchPluginSource should produce "not registered"
+			_, postCloseErr := fetch.FetchPluginSource("stale-src", nil)
+			Expect(postCloseErr).To(HaveOccurred(),
+				"calling a source after Close() must produce an error")
+			Expect(postCloseErr.Error()).To(ContainSubstring("not registered"),
+				"error must be 'not registered' — Close() must have removed "+
+					"the stale handler from the global pluginSources map")
+			Expect(postCloseErr.Error()).NotTo(ContainSubstring("bridge not started"),
+				"'bridge not started' means the stale closure is still registered — "+
+					"Registry.Close() must remove it (issue #1042)")
+		})
+
+		It("dev server rebuild: Close() + new InitRuntimes produces fresh handlers", func() {
+			// Dev server lifecycle: old registry closed, new one created.
+			// Sources registered by the old registry must not persist.
+			fetch.RegisterPluginSource("session-1-src", func(config map[string]interface{}) (interface{}, error) {
+				return "old-data", nil
+			})
+			Expect(fetch.RegisteredPluginSources()).To(ContainElement("session-1-src"))
+
+			// Simulate Close()
+			reg1 := plugin.NewRegistry(GinkgoT().TempDir())
+			reg1.Close()
+
+			// Old source must be gone
+			Expect(fetch.RegisteredPluginSources()).NotTo(ContainElement("session-1-src"),
+				"sources from the old registry lifecycle must be cleared after Close() — "+
+					"dev server rebuilds must start with a clean source map")
+
+			// New source registration works cleanly
+			fetch.RegisterPluginSource("session-2-src", func(config map[string]interface{}) (interface{}, error) {
+				return "fresh-data", nil
+			})
+			result, err := fetch.FetchPluginSource("session-2-src", nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("fresh-data"),
+				"fresh handler registered after Close() must work correctly")
 		})
 	})
 

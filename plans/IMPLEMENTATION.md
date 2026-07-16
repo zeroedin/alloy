@@ -798,23 +798,24 @@ At this point, `alloy build` works end-to-end on test fixtures.
 
 ## Phase 5: Plugin + Fetch + I18n + CLI (~117 tests)
 
-### 5A: `internal/plugin` — 69 tests
+### 5A: `internal/plugin` — 74 tests
 **Files**: `hooks.go`, `registry.go`, `node.go`, `wasm.go`
 
 - **hooks.go**: Hook registry with timeout, chained execution, warnings. `HookFunc` signature is `func(ctx context.Context, payload interface{}) (interface{}, error)` — context carries timeout deadline for cooperative cancellation (issue #13). `Run()` passes `context.Background()`. `RunWithTimeout()` uses `context.WithTimeout()` and passes the derived context to each hook.
-- **registry.go**: Plugin classification by file type, discovery, filter registration, conflict warnings
-- **node.go**: LSP-style message encoding/decoding, bridge state management, stdout isolation (issue #968, 9 tests — 3 integration tests via fixture plugins proving process.stdout.write/console.log don't corrupt the protocol, 2 unit tests proving DecodeMessage includes actionable diagnostic for non-frame bytes, 4 unit tests proving NodeBridge.Send includes the same diagnostic for non-frame bytes including non-newline-terminated garbage (ReadString+EOF edge case), truncation at the 80-char boundary, and binary/non-UTF8 data in the snippet). Plugin source registration via `alloy.source()` (issue #979, 5 tests — EvalFile parses sources from eval response, CallSource invokes handler and returns data, CallSource propagates errors, CallSource returns error for unregistered source, duplicate source name produces warning).
+- **registry.go**: Plugin classification by file type, discovery, filter registration, conflict warnings. Plugin source cleanup on `Close()` (issue #1042, 3 tests — Close clears plugin sources from global map, after Close FetchPluginSource returns "not registered" not "bridge not started", dev server rebuild after Close can register fresh handlers).
+- **node.go**: LSP-style message encoding/decoding, bridge state management, stdout isolation (issue #968, 9 tests — 3 integration tests via fixture plugins proving process.stdout.write/console.log don't corrupt the protocol, 2 unit tests proving DecodeMessage includes actionable diagnostic for non-frame bytes, 4 unit tests proving NodeBridge.Send includes the same diagnostic for non-frame bytes including non-newline-terminated garbage (ReadString+EOF edge case), truncation at the 80-char boundary, and binary/non-UTF8 data in the snippet). Plugin source registration via `alloy.source()` (issue #979, 5 tests — EvalFile parses sources from eval response, CallSource invokes handler and returns data, CallSource propagates errors, CallSource returns error for unregistered source, duplicate source name produces warning). Plugin source error paths (issues #1043, #1045, 2 tests — CallSource with bridge==nil returns descriptive error identifying bridge state, CallSource returns timeout error for slow handlers instead of hanging indefinitely).
 - **wasm.go**: QuickJS/WASM runtime with filter/shortcode/hook registration and execution.
   - `EvalFile()` parses `alloy.filter()`, `alloy.shortcode()`, and `alloy.hook()`/`alloy.on()` registrations
   - `CallFilter()` must execute the actual JS filter function and return the transformed value — not passthrough, not pattern-matching. The current `simulateJSFilter` approach only handles known patterns (word count); arbitrary JS like `toUpperCase()` returns input unchanged. Real QuickJS execution via wazero is required (issue #103).
   - `RegisteredHooks()` returns hook names discovered during `EvalFile()`
   - `LoadPlugins()` returns discovered filter names + hook registrations so the pipeline can bridge them to the template engine and HookRegistry
 
-### 5B: `internal/fetch` — 21 tests
+### 5B: `internal/fetch` — 25 tests
 **File**: `internal/fetch/fetch.go`
 
 - REST/GraphQL fetching, file-based caching, XML/CSV parsing, GraphQL data unwrapping
 - Plugin source handler registration, invocation, error propagation, reset/cleanup (issue #979)
+- Plugin source caching contract (issue #1044, 4 tests — cache round-trip preserves plugin source data, --refetch bypasses cache, cache populated after first fetch, failed fetch does not populate cache)
 
 #### Source pipeline wiring (issue #107)
 
@@ -831,6 +832,10 @@ After `loadSiteData()` loads local data files, the pipeline must iterate `cfg.So
    - When `source.As` is empty, use the source config key (map key from `cfg.Sources`) as the data key
 2. Fire `onDataFetched` hook after all sources are merged (existing hook call stays in place)
 3. On fetch failure: abort build with `return nil, fmt.Errorf(...)` — PLAN.md §5 says source failures abort the build. The current code warns and continues for all source types. The `case "plugin"` path must abort on error. The pre-existing warn-and-continue behavior for `"rest"` and `"graphql"` is a separate divergence from PLAN.md.
+
+- **Plugin source caching (issue #1044)**: The `case "plugin"` branch in `Build()` must wrap `FetchPluginSource` with `GetCached`/`SaveCache`, matching the pattern used by `FetchRESTWithRefetch` for REST sources. Steps: (1) if `!cfg.Refetch`, check `fetch.GetCached(src.Plugin, cacheDir, src.Cache)` — if cache hit, skip the handler call; (2) on cache miss, call `fetch.FetchPluginSource(src.Plugin, configMap)`; (3) on success, call `fetch.SaveCache(src.Plugin, cacheDir, fetched)`. Currently the handler is called on every build, re-executing expensive API calls unnecessarily. Tests: 2 pipeline-level tests in `build_test.go` (cache hit skips handler on second build, cache populated after first build) + 1 pipeline test (--refetch bypasses cache) + 4 fetch-level tests (caching infrastructure handles plugin source data).
+- **Plugin source handler leak on Close (issue #1042)**: `Registry.Close()` must call `fetch.ResetPluginSources()` to remove stale closures from the global `pluginSources` map. Without this, closures registered by `registerRuntime` capture stopped `NodeRuntime` instances — subsequent `FetchPluginSource` calls hit the dead bridge and return "bridge not started" instead of the expected "not registered". This matters for the dev server: after a full rebuild triggered by plugin file changes, the old registry is closed and a new one creates fresh handlers. Tests: 3 registry-level tests in `registry_test.go`.
+- **Plugin source CallSource timeout (issue #1043)**: `NodeRuntime.CallSource()` must apply `cfg.Plugins.Timeout` (or the default 5s) via `context.WithTimeout`, matching the pattern used by `RunWithTimeout` for hook calls. Currently `CallSource` calls `r.bridge.Send()` with no timeout — a slow source handler (DNS timeout, unresponsive CMS API) blocks the build indefinitely. Tests: 1 test in `node_test.go` (CallSource returns timeout error for slow handler, not hang).
 
 ### 5C: `internal/i18n` — 18 tests
 **File**: `internal/i18n/i18n.go`
