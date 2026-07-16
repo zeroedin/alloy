@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -594,6 +595,60 @@ var _ = Describe("NodeBridge", func() {
 				"Send error should name stdout pollution as the likely cause")
 			Expect(errMsg).To(ContainSubstring("plugin debug output"),
 				"Send error should include a snippet of the non-frame bytes")
+		})
+
+		It("Send reports stdout pollution diagnostic when garbage has no trailing newline", func() {
+			// No trailing newline — ReadString('\n') returns data + io.EOF;
+			// the pollution check must fire before the EOF error is returned.
+			garbage := "garbage without trailing newline"
+			reader := bufio.NewReader(strings.NewReader(garbage))
+			bridge := plugin.NewBridgeWithReader(reader)
+
+			_, err := bridge.Send(&plugin.Message{Type: "filter", Name: "test"})
+			Expect(err).To(HaveOccurred())
+			errMsg := err.Error()
+			Expect(errMsg).To(ContainSubstring("stdout"),
+				"Send error should name stdout pollution even when garbage lacks a trailing newline")
+			Expect(errMsg).To(ContainSubstring("garbage without trailing newline"),
+				"Send error should include the full non-newline-terminated snippet")
+		})
+
+		It("Send truncates long non-frame content in the diagnostic snippet at 80 chars", func() {
+			// 500 chars of garbage, no newline — exercises truncateSnippet in Send path.
+			// DecodeMessage has this test; Send must have parity.
+			longGarbage := strings.Repeat("x", 500)
+			reader := bufio.NewReader(strings.NewReader(longGarbage))
+			bridge := plugin.NewBridgeWithReader(reader)
+
+			_, err := bridge.Send(&plugin.Message{Type: "filter", Name: "test"})
+			Expect(err).To(HaveOccurred())
+			errMsg := err.Error()
+			Expect(errMsg).To(ContainSubstring("stdout"),
+				"error should name stdout pollution as the likely cause")
+			Expect(len(errMsg)).To(BeNumerically("<", 300),
+				"error message should be bounded, not echo 500 bytes of garbage verbatim")
+			Expect(errMsg).To(ContainSubstring(strings.Repeat("x", 80)+"..."),
+				"snippet should contain exactly 80 chars of input followed by ellipsis")
+		})
+
+		It("Send diagnostic snippet handles binary/non-UTF8 data without panicking", func() {
+			// ASCII prefix followed by 100 invalid UTF-8 continuation bytes (0x80).
+			// Exercises truncateSnippet's rune-boundary walk-back on invalid sequences.
+			data := "BINARY:" + strings.Repeat("\x80", 100)
+			reader := bufio.NewReader(strings.NewReader(data))
+			bridge := plugin.NewBridgeWithReader(reader)
+
+			_, err := bridge.Send(&plugin.Message{Type: "filter", Name: "test"})
+			Expect(err).To(HaveOccurred())
+			errMsg := err.Error()
+			Expect(errMsg).To(ContainSubstring("stdout"),
+				"error should name stdout pollution as the likely cause")
+			Expect(len(errMsg)).To(BeNumerically("<", 300),
+				"error message should be bounded even with binary content")
+			Expect(errMsg).To(ContainSubstring("BINARY:..."),
+				"invalid bytes should be stripped at a valid UTF-8 rune boundary, preserving ASCII prefix")
+			Expect(utf8.ValidString(errMsg)).To(BeTrue(),
+				"error message must be valid UTF-8 after rune-boundary walk-back")
 		})
 	})
 })
