@@ -1065,6 +1065,197 @@ var _ = Describe("Build Pipeline", func() {
 					"not crash, not produce empty output (issue #719)")
 		})
 
+		It("loadSiteData error from missing external data file preserves stale SiteData (issue #1018)", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			dataDir := filepath.Join(tmpDir, "_data")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			extDir := filepath.Join(tmpDir, "external")
+			outputDir := filepath.Join(tmpDir, "_site")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(dataDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(extDir, 0755)).To(Succeed())
+
+			// Data directory file — the pagination source for the content page.
+			Expect(os.WriteFile(filepath.Join(dataDir, "items.json"),
+				[]byte(`[{"name":"Alpha","slug":"alpha"}]`),
+				0644)).To(Succeed())
+
+			// External data file referenced via data.files config.
+			// Will be deleted before the incremental rebuild to trigger
+			// a loadSiteData error (the only way loadSiteData returns a
+			// non-nil error is via external data file failures).
+			Expect(os.WriteFile(filepath.Join(extDir, "extra.json"),
+				[]byte(`{"version": 1}`),
+				0644)).To(Succeed())
+
+			// Content page paginates site.data.items.
+			Expect(os.WriteFile(filepath.Join(contentDir, "items.html"),
+				[]byte("---\ntitle: \"{{ item.name }}\"\npagination:\n  data: site.data.items\n  perPage: 1\n  as: item\npermalink: \"/items/{{ item.slug }}/\"\n---\n<p>{{ item.name }}</p>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("{{ content }}"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "External Data Error Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Data:    "_data",
+				},
+				Data: config.DataConfig{
+					Files: map[string]string{
+						"ext": "external/extra.json",
+					},
+				},
+			}
+
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			// Sanity: initial PipelineState has both directory and external data.
+			Expect(pipelineState.SiteData).To(HaveKey("items"),
+				"sanity: InitPipelineState must load data directory files")
+			Expect(pipelineState.SiteData).To(HaveKey("ext"),
+				"sanity: InitPipelineState must load external data files from data.files config")
+
+			// Full build (no cache) — establishes baseline.
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result1.RenderedContent["/items/alpha/"]).To(ContainSubstring("Alpha"),
+				"sanity: initial build must render Alpha from site.data.items")
+
+			// Delete the external file. The next loadSiteData call will fail
+			// because LoadExternalFiles cannot read the missing file.
+			Expect(os.Remove(filepath.Join(extDir, "extra.json"))).To(Succeed())
+
+			// Incremental rebuild: report a data dir change to trigger
+			// hasDataChange → loadSiteData(cfg). loadSiteData will fail
+			// because external/extra.json no longer exists. The error must
+			// be logged as a warning (incremental.go error branch at the
+			// loadSiteData call); ps.SiteData must NOT be modified.
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"_data/items.json"},
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred(),
+				"loadSiteData error must not propagate as a BuildIncremental error — "+
+					"it must be logged as a warning and the build must continue "+
+					"with stale data for dev-mode resilience (issue #1018)")
+
+			// The page must render with stale data — the original Alpha value.
+			alphaHTML := result2.RenderedContent["/items/alpha/"]
+			Expect(alphaHTML).To(ContainSubstring("Alpha"),
+				"when loadSiteData returns an error, ps.SiteData must be preserved — "+
+					"pages must re-render with stale data, not crash or produce "+
+					"empty output (issue #1018, incremental.go loadSiteData error branch)")
+
+			// Verify SiteData was NOT cleared — both keys must survive.
+			Expect(pipelineState.SiteData).To(HaveKey("items"),
+				"loadSiteData error must preserve all stale SiteData keys — "+
+					"directory-sourced 'items' must survive (issue #1018)")
+			Expect(pipelineState.SiteData).To(HaveKey("ext"),
+				"loadSiteData error must preserve all stale SiteData keys — "+
+					"'ext' from the now-missing external file must survive because "+
+					"the error branch does not modify ps.SiteData (issue #1018)")
+		})
+
+		It("loadSiteData error from external key collision preserves stale SiteData (issue #1018)", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			dataDir := filepath.Join(tmpDir, "_data")
+			layoutDir := filepath.Join(tmpDir, "layouts")
+			extDir := filepath.Join(tmpDir, "external")
+			outputDir := filepath.Join(tmpDir, "_site")
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(dataDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(extDir, 0755)).To(Succeed())
+
+			// Data directory file — the pagination source.
+			Expect(os.WriteFile(filepath.Join(dataDir, "items.json"),
+				[]byte(`[{"name":"Beta","slug":"beta"}]`),
+				0644)).To(Succeed())
+
+			// External data file with a non-colliding key ("widgets").
+			Expect(os.WriteFile(filepath.Join(extDir, "widgets.json"),
+				[]byte(`[{"name":"Sprocket"}]`),
+				0644)).To(Succeed())
+
+			// Content page paginates site.data.items.
+			Expect(os.WriteFile(filepath.Join(contentDir, "items.html"),
+				[]byte("---\ntitle: \"{{ item.name }}\"\npagination:\n  data: site.data.items\n  perPage: 1\n  as: item\npermalink: \"/items/{{ item.slug }}/\"\n---\n<p>{{ item.name }}</p>"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(layoutDir, "default.liquid"),
+				[]byte("{{ content }}"), 0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Stem Collision Error Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Data:    "_data",
+				},
+				Data: config.DataConfig{
+					Files: map[string]string{
+						"widgets": "external/widgets.json",
+					},
+				},
+			}
+
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			// Sanity: initial data has both keys without collision.
+			Expect(pipelineState.SiteData).To(HaveKey("items"))
+			Expect(pipelineState.SiteData).To(HaveKey("widgets"))
+
+			// Full build — establishes baseline.
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result1.RenderedContent["/items/beta/"]).To(ContainSubstring("Beta"),
+				"sanity: initial build must render Beta")
+
+			// Create a collision: add "widgets.json" to the data directory.
+			// Now both the directory and external config produce key "widgets",
+			// which makes loadSiteData return a collision error.
+			Expect(os.WriteFile(filepath.Join(dataDir, "widgets.json"),
+				[]byte(`[{"name":"Gear"}]`),
+				0644)).To(Succeed())
+
+			// Incremental rebuild: data dir change triggers loadSiteData,
+			// which now fails with a key collision error.
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"_data/widgets.json"},
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred(),
+				"loadSiteData key collision error must not propagate — "+
+					"it must be logged as a warning (issue #1018)")
+
+			betaHTML := result2.RenderedContent["/items/beta/"]
+			Expect(betaHTML).To(ContainSubstring("Beta"),
+				"when loadSiteData returns a collision error, ps.SiteData "+
+					"must be preserved — pages render with stale data (issue #1018)")
+
+			// SiteData must retain original values from before the collision.
+			Expect(pipelineState.SiteData).To(HaveKey("items"),
+				"stale SiteData must retain 'items' after collision error (issue #1018)")
+			Expect(pipelineState.SiteData).To(HaveKey("widgets"),
+				"stale SiteData must retain original 'widgets' after collision error (issue #1018)")
+		})
+
 		It("collections-based pagination is not invalidated by data file changes", func() {
 			tmpDir := GinkgoT().TempDir()
 			contentDir := filepath.Join(tmpDir, "content")
