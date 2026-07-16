@@ -2,6 +2,6 @@
 type: patch
 ---
 
-QuickJS plugin runtime operations are now serialized with a mutex. `Close()` waits for any in-flight hook, filter, or shortcode call to finish before freeing the WASM instance. Methods called after `Close()` return safely instead of panicking.
+Plugin hooks that exceed their timeout no longer cause a panic during build teardown. `Close()` waits for any in-flight hook, filter, or shortcode call to finish before releasing the QuickJS runtime.
 
-Previously, when a plugin hook exceeded its timeout, `RunWithTimeout` abandoned the goroutine while it was still executing inside the WASM context. The deferred `Close()` at the end of `Build()` then freed the runtime mid-execution, causing an intermittent `out of bounds memory access` panic during build teardown.
+Previously, a timed-out plugin hook could trigger an `out of bounds memory access` panic at the end of `Build()` because the runtime was freed while the hook was still executing.
