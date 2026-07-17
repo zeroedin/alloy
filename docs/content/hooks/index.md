@@ -216,18 +216,33 @@ alloy.hook("onPageRendered", {}, (html) => {
 
 ### Per-Asset Hook
 
-#### onAssetProcess (Tier 3 Only)
+#### onAssetProcess
 
-Fires once per asset file during asset copy. Receives `{ path, content }` and returns `{ content }`.
+Fires once per file in the assets directory during asset copy. Each invocation receives a single file's path and content. Multiple `onAssetProcess` hooks chain — each receives the content returned by the previous hook.
 
 ```javascript
-alloy.hook("onAssetProcess", {}, async (asset) => {
+alloy.hook("onAssetProcess", {}, (asset) => {
   if (asset.path.endsWith('.css')) {
-    return { content: await minifyCSS(asset.content) };
+    return { content: minifyCSS(asset.content) };
   }
-  return asset;
+  // Return null or omit content key to keep the original
 });
 ```
+
+| Field | Type | Description |
+|---|---|---|
+| `path` | string | File path relative to the assets directory (forward slashes, e.g., `css/main.css`) |
+| `content` | string | Raw file content |
+
+**Return value:**
+
+| Return | Effect |
+|---|---|
+| `{ content: "..." }` | Replaces the file content in output |
+| `null` / `undefined` | Keeps the original content |
+| Object without `content` key | Keeps the original content |
+
+The `path` key in the return value is ignored — the file is always written to its original relative path in the output directory. A hook error stops the build.
 
 ### Read-Only Hooks
 
