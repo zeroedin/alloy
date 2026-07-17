@@ -39,14 +39,35 @@ Each file is keyed by its filename without the extension. `data/team.yaml` becom
 
 ## Directory structure
 
-Organize data files in any structure inside `data/`:
+Subdirectories create nested namespaces. `data/nav/main.yaml` becomes `site.data.nav.main`. Nesting depth is unlimited.
 
 ```
 data/
 ├── navigation.yaml        # site.data.navigation
 ├── team.yaml              # site.data.team
 ├── products.json          # site.data.products
-└── authors.csv            # site.data.authors
+├── authors.csv            # site.data.authors
+├── nav/
+│   └── main.yaml          # site.data.nav.main
+└── api/
+    └── v2/
+        └── endpoints.yaml # site.data.api.v2.endpoints
+```
+
+Empty subdirectories are silently skipped — they produce no key in the namespace.
+
+A file and a non-empty directory sharing the same stem (e.g., `nav.yaml` alongside a `nav/` directory containing data files) produces a build error:
+
+```
+[alloy] ERROR data file stem conflict: "nav.yaml" and directory "nav/" both produce key "nav"
+```
+
+### Accessing nested data
+
+```liquid
+{% for item in site.data.nav.main.items %}
+  <a href="{{ item.url }}">{{ item.label }}</a>
+{% endfor %}
 ```
 
 ## JSON key order preservation
