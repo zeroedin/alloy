@@ -48,21 +48,38 @@ These fire once per build. Payloads are JSON objects representing build-level st
 
 #### onConfig
 
-Fires after config is loaded. Plugin can mutate configuration values.
+Fires after config is loaded but before the build starts. The hook receives the full configuration object and must return it. Only fields on the mutable allowlist are applied back — all other fields are silently ignored.
 
 ```javascript
 alloy.hook("onConfig", {}, (config) => {
   config.build.output = "dist";
+  config.structure.content = "pages";
   return config;
 });
 ```
 
-| Field | Description |
-|---|---|
-| `title` | Site title |
-| `baseURL` | Site base URL |
-| `build` | Build settings (`output`, `clean`) |
-| ... | All config fields |
+**Mutable fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `build.output` | string | Output directory |
+| `build.clean` | boolean | Clean output before build |
+| `structure.content` | string | Content directory |
+| `structure.layouts` | string | Layouts directory |
+| `structure.assets` | string | Assets directory |
+| `structure.static` | string | Static files directory |
+| `structure.data` | string | Data directory |
+| `passthrough` | array | Passthrough file mappings (`[{ from, to }]`) |
+| `plugins.workers` | number | Worker pool size |
+| `plugins.timeout` | number | Hook timeout in milliseconds |
+
+Fields not listed above (`title`, `baseURL`, `language`, `taxonomies`, etc.) are present in the payload for inspection but mutations have no effect.
+
+**Return value rules:**
+
+- Must return an object. Returning `null` or a non-object produces a build error.
+- Multiple `onConfig` hooks chain in priority order — each receives the previous hook's return value.
+- A timed-out hook's mutations are discarded; the next hook receives the pre-timeout value.
 
 #### onDataFetched
 
