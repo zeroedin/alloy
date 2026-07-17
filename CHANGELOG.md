@@ -1,3 +1,223 @@
+## v0.5.0 (2026-07-17)
+
+### Minor Changes
+
+- `onPagesReady` hooks accept a second return shape, `{ addPages: [...] }`, for injecting virtual pages without round-tripping the entire pages array through the plugin bridge.
+
+  ```javascript
+  alloy.hook('onPagesReady', { data: ["elements"], pages: false }, function(payload) {
+    var newPages = payload.siteData.elements.map(function(el) {
+      return {
+        path: 'demos/' + el.slug + '.md',
+        url: '/demos/' + el.slug + '/',
+        frontMatter: { title: el.name, layout: 'default' },
+        content: '# ' + el.name
+      };
+    });
+    return { addPages: newPages };
+  });
+  ```
+
+  With `pages: false`, the plugin receives only `siteData`. Alloy skips serialization of existing pages and appends the `addPages` entries Go-side, cutting the O(N) cost of returning all pages.
+
+  Virtual pages from `addPages` flow through the remaining pipeline: taxonomy collection, content rendering, layout resolution, and output writing. They appear in `taxonomies.*` template variables and count toward `PageCount`.
+
+  The `{ pages: [...] }` return shape still works for plugins that mutate existing pages. The two shapes are mutually exclusive: returning both produces a build error. Returning an unrecognized key (e.g., `{ newPages: [...] }`) now errors instead of silently dropping pages.
+- Alloy loads data files from subdirectories of `data/` into nested template namespaces. `data/nav/main.yaml` becomes `site.data.nav.main`. Nesting goes to any depth: `data/api/v2/endpoints.yaml` becomes `site.data.api.v2.endpoints`.
+
+  ```yaml
+  # data/nav/main.yaml
+  items:
+    - label: Home
+      url: /
+    - label: About
+      url: /about/
+  ```
+
+  ```liquid
+  {% for item in site.data.nav.main.items %}
+    <a href="{{ item.url }}">{{ item.label }}</a>
+  {% endfor %}
+  ```
+
+  Place root-level data files alongside subdirectory namespaces in the same `data/` directory. A file and directory sharing the same stem (`nav.yaml` alongside a `nav/` directory) produces a build error, matching the collision behavior for same-stem files in different formats. Alloy skips empty subdirectories.
+
+  Alloy skipped subdirectories of `data/` without warning in prior releases. Organizing files into folders produced no template output despite the documented "any structure" guidance.
+- Go template block shortcodes use Hugo-style `{{% tag "args" %}}...{{% /tag %}}` delimiters. A preprocessor runs after Goldmark and before Go template rendering — it pairs opening and closing tags, extracts quoted arguments, passes inner HTML to the shortcode callback, and replaces the block with the callback's output.
+
+  ```markdown
+  {{% callout "warning" %}}
+  This is **important** content with [links](/).
+  {{% /callout %}}
+  ```
+
+  Nesting resolves innermost-first. Same-name nesting (`{{% box %}}{{% box %}}...{{% /box %}}{{% /box %}}`) uses depth tracking. Delimiters inside `<pre>` and `<code>` elements are treated as literal text. Unclosed tags, mismatched names, and callback errors produce build errors.
+
+  Goldmark now treats standalone `{{% tag %}}` lines as block-level nodes, preventing `<p>` wrapping. Inner content between paired tags is Markdown-processed before reaching the preprocessor.
+
+  Previously, Go template block shortcodes always received empty `content` because `goEngine.AddTag` hard-coded it to `""`.
+- `onAssetProcess` fires once per asset file with `{path, content}` instead of once per build with directory paths. The returned `content` key replaces the file in the output directory.
+
+  ```javascript
+  alloy.hook("onAssetProcess", {}, (asset) => {
+    if (asset.path.endsWith('.css')) {
+      return { content: minifyCSS(asset.content) };
+    }
+    return asset;
+  });
+  ```
+
+  Return `null`, `undefined`, or an object without a `content` key to keep the original file. The build ignores any `path` key you return. Hook errors stop the build.
+
+  Before this change, the hook received `{assetsDir, outputDir}` directory paths and discarded the return value. Plugins that followed the docs were silent no-ops.
+- `onConfig` hooks can mutate pipeline config. The return value is applied back to `cfg` for a mutable allowlist: `build.output`, `build.clean`, `structure.content`, `structure.layouts`, `structure.assets`, `structure.static`, `structure.data`, `passthrough`, `plugins.workers`, and `plugins.timeout`.
+
+  ```javascript
+  alloy.hook("onConfig", {}, (config) => {
+    config.build.output = "dist";
+    config.structure.content = "pages";
+    return config;
+  });
+  ```
+
+  Fields outside the allowlist (`title`, `baseURL`, `language`, etc.) are silently ignored. Returning a non-object produces a build error. Multiple `onConfig` hooks from separate plugins chain in priority order — each receives the previous hook's return value.
+
+  Previously the return value was discarded and mutations had no effect.
+- `alloy.source(name, fn)` registers a data source handler in Node plugins. Configure `type: "plugin"` in `sources:` to route data acquisition through the handler instead of a REST or GraphQL endpoint.
+
+  ```yaml
+  # alloy.config.yaml
+  sources:
+    blog:
+      type: "plugin"
+      plugin: "cms-posts"
+      cache: 3600
+      as: "blog"
+  ```
+
+  ```javascript
+  // plugins/cms.js
+  export const runtime = "node";
+  export default function(alloy) {
+    alloy.source("cms-posts", async (config) => {
+      const resp = await fetch("https://api.example.com/posts");
+      return resp.json();
+    });
+  }
+  ```
+
+  Returned data merges into `site.data` under the `as` key (or the source map key when `as` is omitted). Templates access it like any other data source: `site.data.blog.size`, `{% for post in site.data.blog %}`.
+
+  Alloy caches plugin source results to `.alloy/fetch-cache/` using the same TTL and `--refetch` semantics as REST sources. A source handler error aborts the build. Duplicate `alloy.source()` calls for the same name produce a warning; the last registration wins.
+
+  Source calls enforce a 5-second timeout matching `plugins.timeout`. Slow handlers produce a timeout error instead of blocking the build.
+- Liquid shortcode arguments resolve variables from the template context. Unquoted arguments like `{% youtube page.videoId %}` look up `page.videoId` in the template context and pass the resolved value to the shortcode callback. Quoted arguments remain literal strings. Dotted paths traverse nested maps: `page.videoId` resolves to the `videoId` key inside the `page` map. Non-string values are converted to strings. When an unquoted argument does not match any context variable, it falls back to its literal token string.
+
+  ```liquid
+  {% assign vid = "dQw4w9WgXcQ" %}
+  {% youtube vid %}          <!-- resolves vid to "dQw4w9WgXcQ" -->
+  {% youtube "hardcoded" %}  <!-- stays literal "hardcoded" -->
+  {% youtube page.videoId %} <!-- resolves nested path -->
+  ```
+
+  Mixed quoted and unquoted arguments work in the same tag: `{% card "primary" page.size %}` passes `"primary"` as a literal and resolves `page.size` from context.
+
+  Shortcodes returning an empty string now produce no output in Liquid, matching Go template behavior. Previously, empty-returning shortcodes emitted an `<alloy-shortcode>` placeholder element into production HTML.
+- Check for newer Alloy releases with `alloy version --check`. Alloy queries the GitHub Releases API and compares the latest tag against the running binary.
+
+  ```
+  alloy version --check
+  ```
+
+  Set `updateCheck: true` in the config file to receive a one-line notification when `alloy dev` or `alloy serve` starts and a newer version exists. Alloy caches the result for 24 hours at `~/.config/alloy/update-check.json` (respects `XDG_CONFIG_HOME`) and runs the check in the background without blocking server startup. `alloy build` never checks for updates.
+
+  ```yaml
+  # alloy.config.yaml
+  updateCheck: true
+  ```
+
+  Update checking defaults to off. Alloy makes no outbound request unless you opt in via the config or use `--check`.
+- `onBeforeValidation` receives `{ outputPaths: [...] }` and runs immediately before conflict detection. Plugins register additional output paths via `addOutputs`, and those paths feed into `DetectConflicts()`.
+
+  ```javascript
+  alloy.hook("onBeforeValidation", {}, (payload) => {
+    return {
+      addOutputs: {
+        "sitemap.xml": "plugin:sitemap",
+        "robots.txt": "plugin:sitemap"
+      }
+    };
+  });
+  ```
+
+  `onAfterValidation` receives `{ outputPaths: [...], cascade: { ...siteData... } }` after conflict detection passes. Cascade mutations merge into site data for templates. The pipeline ignores `outputPaths` changes in the return.
+
+  ```javascript
+  alloy.hook("onAfterValidation", {}, (payload) => {
+    payload.cascade.buildTimestamp = new Date().toISOString();
+    return payload;
+  });
+  ```
+
+  Both hooks reject unrecognized return keys and type-check `addOutputs`/`cascade` as maps. Omitting a return value is a valid no-op for observation-only use.
+
+  Previously, the pipeline fired both hooks before content discovery with a stub payload and threw away the return values.
+- `onPagesReady` virtual pages accept a `dependencies` array of project-root-relative file paths. On incremental rebuilds, Alloy re-renders virtual pages whose dependencies appear in `changedFiles` and skips the rest.
+
+  ```javascript
+  alloy.hook('onPagesReady', { pages: false }, function() {
+    const demoFiles = glob.sync('elements/*/demo/*.html');
+    const pages = demoFiles.map(file => ({
+      path: 'demos/' + path.basename(file),
+      url: '/demos/' + path.basename(file, '.html') + '/',
+      dependencies: [file],
+      frontMatter: { layout: 'demo', markdown: false },
+      content: fs.readFileSync(file, 'utf-8')
+    }));
+    return { addPages: pages };
+  });
+  ```
+
+  - `dependencies: ['a.html', 'b.css']` — re-render when a listed file changes, skip otherwise
+  - `dependencies: []` — skip (no local file deps to invalidate)
+  - no `dependencies` field — re-render on all incremental rebuilds (pre-#1058 behavior)
+
+  A site with 400 file-derived virtual pages previously re-rendered all 400 per incremental rebuild. Declaring dependencies narrows that to the pages whose source files changed.
+
+### Patch Changes
+
+- Fix batch hooks firing a spurious timeout warning when called with 0 items. The effective timeout was calculated as `timeout * itemCount`, which produced a 0ms timeout that expired instantly. Alloy now skips the hook when there are no payloads to process. This surfaces during incremental rebuilds where scope filtering leaves 0 pages for post-render hooks like `onPageRendered`.
+- `onContentLoaded` now applies `html` mutations back to page state via `SetRenderedBody`. Previously only `frontMatter` changes were merged back; `html` mutations were silently dropped.
+
+  ```javascript
+  alloy.hook("onContentLoaded", { pages: true, pageFields: ["*"] }, (pages) => {
+    for (const page of pages) {
+      page.html = page.html + "<footer>Injected</footer>";
+    }
+    return pages;
+  });
+  ```
+
+  Both `html` and `frontMatter` mutations work independently or together in the same hook call. The fix applies to both `Build()` and `BuildIncremental()`.
+- `onConfig` hooks that set `passthrough[].from` or `passthrough[].to` to an absolute path or a `..` traversal above the project root now produce a build error. The validator rejects `from: "."` (would copy the entire project root into the output directory). `to: "."` and `to: ""` remain valid, meaning "root of the output directory." Error messages include the zero-based array index and field name (e.g. `passthrough[2].from`).
+
+  Passthrough path validation runs before the config is applied, so a bad passthrough entry cannot half-mutate `build.output` or `structure.*` fields.
+
+  Previously, a plugin could set `passthrough[].from` to `/etc/shadow` to exfiltrate files into the output directory, or `passthrough[].to` to `../../evil` to write files outside it.
+- `onConfig` hooks that set `build.output` or any `structure.*` field to an absolute path, a `..` traversal above the project root, `.`, or an empty string now produce a build error. Valid relative paths with embedded `..` segments that resolve within the project (e.g. `subdir/../dist`) are accepted and cleaned before use. On Windows, reserved device names (`NUL`, `CON`) and volume-relative paths (`C:..`) are also rejected via `filepath.IsLocal`.
+
+  All path fields are validated before any are applied to the config, so a validation failure on one field cannot leave the config partially mutated.
+
+  Previously, a plugin could set `structure.content = "/etc"` or `build.output = "../../evil"` via `onConfig` and the values flowed through `resolveDir` unchecked. With `clean: true` (the default), `CleanOutputDir` would run `os.RemoveAll` on directories outside the project tree.
+- Fix omitted `pages` scope defaulting to "all pages" instead of "none". Hooks registered with `{}` or `{data: ["elements"]}` produced a spurious validation warning on pageless events like `onConfig` and `onBuildComplete`. Batch hooks also serialized all pages when the plugin had not requested page data. Plugins that want pages must declare `pages: true`.
+- Plugin hooks that exceed their timeout no longer cause a panic during build teardown. `Close()` waits for any in-flight hook, filter, or shortcode call to finish before releasing the QuickJS runtime.
+
+  Previously, a timed-out plugin hook could trigger an `out of bounds memory access` panic at the end of `Build()` because the runtime was freed while the hook was still executing.
+- Fix Node bridge protocol corruption when a plugin or its dependencies call `process.stdout.write()`. The bridge captures the real `process.stdout.write` at startup and redirects subsequent stdout writes to stderr. `sendMessage` retains the only reference to real stdout, so plugin code and npm dependencies cannot inject bytes into the JSON-RPC channel.
+
+  When non-frame bytes reach the Go frame reader (e.g., a child process inheriting stdout), the error message includes a bounded snippet of the offending output and points to stdout pollution as the cause. Replaces the generic "missing Content-Length header" message.
+- Fix `alloy dev` skipping virtual pages from `onPagesReady` plugins on incremental rebuilds. Alloy tracks virtual page paths across rebuilds, so plugin-generated pages (demos, API docs, CMS-driven content) re-render when source files change instead of serving stale content.
+
 ## v0.4.2 (2026-07-11)
 
 - Fix codeblock render hook over-escaping `"` and `'` to `&#34;` and `&#39;` in `markup.inner`, breaking shiki and other downstream highlighters that don't decode quote entities. Codeblock inner content is element content (inside `<alloy-code>…</alloy-code>`), where only `&`, `<`, and `>` need escaping — quote characters are safe and must pass through as literal characters. The `markup.language` field continues to use full HTML attribute escaping since it lands in a `lang="…"` attribute.
