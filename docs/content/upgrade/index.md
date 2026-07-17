@@ -1,7 +1,6 @@
 ---
 layout: doc
 title: Upgrading Alloy
-nav_weight: 90
 description: "How to upgrade Alloy to the latest version for each install method."
 ---
 
