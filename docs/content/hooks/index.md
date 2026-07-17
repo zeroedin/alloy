@@ -235,27 +235,49 @@ Return values are ignored. Plugins observe but cannot modify.
 
 #### onBuildComplete
 
+Fires after the build finishes. The payload uses PascalCase keys (the `BuildResult` struct has no JSON tag overrides). `Duration` is raw nanoseconds — divide by `1e6` for milliseconds.
+
 ```javascript
 alloy.hook("onBuildComplete", {}, (result) => {
-  console.log(`Built ${result.pageCount} pages in ${result.duration}`);
+  const ms = (result.Duration / 1e6).toFixed(0);
+  console.log(`Built ${result.PageCount} pages in ${ms}ms`);
 });
 ```
 
+| Field | Type | Description |
+|---|---|---|
+| `OutputDir` | string | Output directory path |
+| `PageCount` | number | Total pages built |
+| `PagesSkipped` | number | Pages skipped during incremental rebuilds |
+| `Duration` | number | Build time in nanoseconds |
+
 #### onDevServerStart
 
+Fires when the dev server starts. The payload is the full site configuration object — there is no `url` field with the server address.
+
 ```javascript
-alloy.hook("onDevServerStart", {}, (info) => {
-  console.log(`Server ready at ${info.url}`);
+alloy.hook("onDevServerStart", {}, (config) => {
+  console.log(`Dev server started for "${config.Title}"`);
 });
 ```
 
 #### onFileChanged
 
+Fires once per file-watch batch during `alloy dev`. The payload is an array of change events, not a single file path.
+
 ```javascript
-alloy.hook("onFileChanged", {}, (filePath) => {
-  console.log(`Changed: ${filePath}`);
+alloy.hook("onFileChanged", {}, (events) => {
+  for (const event of events) {
+    console.log(`${event.Path} changed (removed: ${event.IsRemove})`);
+  }
 });
 ```
+
+| Field | Type | Description |
+|---|---|---|
+| `Path` | string | File path relative to project root |
+| `ChangeType` | number | Change category (1–8: content, template, data, asset, etc.) |
+| `IsRemove` | boolean | `true` when the file was deleted |
 
 ## Hook Execution Order
 

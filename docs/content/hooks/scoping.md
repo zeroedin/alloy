@@ -159,13 +159,15 @@ Not all scope options work on all hooks. Two constraints apply:
 | `onBeforeValidation` | no | error | error |
 | `onAfterValidation` | no | error | error |
 | `onDataFetched` | no | error | error |
-| `onPagesReady` | yes (batch) | yes | error |
+| `onPagesReady` | yes (batch) | accepted\* | error |
 | `onContentLoaded` | yes (batch) | yes | yes |
 | `onDataCascadeReady` | yes (batch) | yes | yes |
 | `onContentTransformed` | per-page | n/a | n/a |
 | `onPageRendered` | per-page | n/a | n/a |
 | `onAssetProcess` | per-asset | n/a | n/a |
 | `onBuildComplete` | no | n/a | n/a |
+
+\* `onPagesReady` accepts a glob in the `pages` option without error, but the payload always includes all pages regardless. Glob filtering is not applied for this hook — use `pages: true` or `pages: false` instead.
 
 Per-page hooks (`onContentTransformed`, `onPageRendered`) fire with a fixed payload shape. The pipeline already knows which page to serialize, so `pages` and `pageFields` scope options do not apply. Use `data` and `priority` on per-page hooks.
 
