@@ -115,6 +115,33 @@ structure:
 
 Prints the current version and exits.
 
+```bash
+alloy version
+# alloy 0.5.0
+```
+
+With `--check`, Alloy queries the GitHub Releases API and compares the latest tag against the running binary:
+
+```bash
+alloy version --check
+# alloy 0.5.0
+# Update available: 0.5.0 → 0.6.0
+# Upgrade: https://alloyproject.org/docs/upgrade/
+```
+
+If the running version matches the latest release, it prints `alloy 0.5.0 (up to date)`. Network errors print the version and a warning without failing.
+
+#### Passive update notifications
+
+Set `updateCheck: true` in config to receive a one-line notification when `alloy dev` or `alloy serve` starts and a newer version exists:
+
+```yaml
+# alloy.config.yaml
+updateCheck: true
+```
+
+Alloy caches the result for 24 hours at `~/.config/alloy/update-check.json` (respects `XDG_CONFIG_HOME`) and runs the check in the background without blocking server startup. `alloy build` never checks for updates. Update checking defaults to off.
+
 ### `alloy help`
 
 Prints usage information for all commands and flags.
@@ -139,6 +166,7 @@ Prints usage information for all commands and flags.
 | `--static` | | Static directory name (default: `static`) | init |
 | `--data` | | Data directory name (default: `data`) | init |
 | `--plugins` | | Plugins directory name (default: `plugins`) | init |
+| `--check` | | Check for newer version | version |
 
 ### `--root` flag
 
