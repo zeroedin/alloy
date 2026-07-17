@@ -1360,6 +1360,14 @@ In dev mode, after the initial full build, the file watcher triggers incremental
 
 **Virtual page incremental rebuild (issue #970)** — Virtual pages injected by `onPagesReady` must participate in incremental rebuilds. The ordering problem: `pagesToRender` and `renderRelPaths` are decided before `applyBatchContext` runs `onPagesReady`, so virtual pages are always filtered out. Fix: the build cache tracks which `RelPath` values were virtual pages in the previous build via `TrackVirtualPage(relPath)` and `VirtualPagePaths()`. On incremental rebuild, `BuildIncremental` merges the previous build's virtual page RelPaths into `renderRelPaths` after the content-hash comparison but before the post-pagination `pagesToRender` rebuild. When `onPagesReady` recreates the virtual pages, their RelPaths match the pre-populated set and they are included in `pagesToRender`. After the build, the cache is updated with the current build's virtual page RelPaths — if a plugin stops returning a virtual page, its RelPath is not tracked in the new cache and it will not be rendered in future builds. This is the naive approach: all virtual pages from the previous build are re-rendered on every incremental rebuild. Selective rebuild via file dependency tracking is a separate optimization (issue #1058). **Build()→BuildIncremental() handoff (issue #1061)**: `Build()` must also track virtual page RelPaths in its result cache. In `cmd/dev.go`, `Build()` runs first and its `result.Cache` is passed to `BuildIncremental()` for subsequent rebuilds. Without tracking in `Build()`, the first `BuildIncremental()` after a full build has no virtual page RelPaths to pre-populate. **Empty-key guard (issue #1061)**: `SetHash` must silently discard calls with an empty key. Taxonomy pages have empty `RelPath`, and the `SetHash` loop in `Build()` passes `SetHash("", hash)` for each one — a spurious cache entry that is harmless today but a latent bug if anything queries the cache by empty key. **Non-nil empty slice (issue #1061)**: `VirtualPagePaths()` must return a non-nil empty slice (not nil) when no virtual pages are tracked, to prevent nil-pointer issues in callers that range over or append to the result.
 
+**File-derived virtual page selective rebuild (issue #1058)** — Optimizes the #970 naive approach where all virtual pages from `onPagesReady` are re-rendered on every incremental rebuild. When `previousCache` is not nil (true incremental rebuild), `BuildIncremental` uses the `dependencies` field on virtual pages to determine which need re-rendering:
+
+1. After `applyBatchContext` injects virtual pages via `onPagesReady`, iterate pages not in `discoveredPaths` (i.e., virtual pages from `onPagesReady`)
+2. For each virtual page: if `Dependencies` is nil → add to `renderRelPaths` (safe fallback); if `Dependencies` is non-nil → add to `renderRelPaths` only if any dependency path appears in `changedFiles`
+3. When `previousCache` is nil (initial build), all virtual pages are added to `renderRelPaths` regardless of dependencies
+
+The `dependencies` field on virtual page objects is read by `virtualPageFromMap` and stored as `Dependencies []string` on `content.Page`. `nil` means "not declared" (always re-render); `[]string{}` means "declared as empty" (never invalidated by file changes); `[]string{"foo.html"}` means "invalidated when foo.html changes".
+
 **Untracked layout partials (issue #781)** — When a changed file under `layouts/` is not tracked as a direct layout for any page (`InvalidatedPages()` returns nil), treat it as a partial and rebuild all pages. The cache only tracks direct `page → layout` dependencies; `{% include %}` / `{% render %}` partials are resolved by the Liquid engine at render time without Alloy's knowledge. The conservative full-rebuild fallback is correct (no false negatives) and matches the `ComponentChange` pattern. Precise partial dependency tracking is a future refinement.
 
 **Component invalidation** — Handled entirely in Phase 2. A component definition change triggers re-SSR of all pages using that component (tracked via `componentToPages` in `.alloy/components.json`). Phase 1 is untouched. See Section 6.
@@ -2601,6 +2609,34 @@ alloy.hook("onConfig", {}, (config) => {
 **Data mutation via hooks** — To modify site data that templates see, use per-build hooks. The hook receives the data object, modifies it, and returns it. The pipeline applies the returned value. This is the only way to add or change data that flows into templates — `alloy.data` in filters/shortcodes is read-only.
 
 **Virtual page injection (issues #518, #525, #971)** — `onPagesReady` is the only hook that supports virtual page injection. Two return shapes are supported: `{ pages: [...] }` appends virtual pages at indices `>= originalCount` of the returned array (existing behavior — plugin mutates existing pages and/or appends); `{ addPages: [...] }` appends all entries as virtual pages without touching existing pages (injection-only, issue #971). Required fields on each virtual page: `path` (source-relative identifier, e.g. `demos/button.md` — used as `RelPath` and `RenderedContent` key) and `url` (permalink, e.g. `/demos/button/` — used for output path computation). Optional: `frontMatter` (including `layout` and taxonomy terms like `tags`), `content` (raw markdown — rendered through the content pipeline). Virtual pages flow through the full remaining pipeline: taxonomy collection, content rendering, layout resolution, template rendering, and output writing. `layout: false` skips layout wrapping. Output-path collisions between a virtual page and a real page produce a build error (e.g., `/demos/button/` and an existing page that writes to the same output file). Missing `path`/`url` produces a validation error. Virtual pages are included in `PageCount`. `onContentLoaded` cannot inject virtual pages — it is limited to modifying `frontMatter` and `html` on existing pages.
+
+**File-derived virtual page dependency tracking (issue #1058)** — Virtual pages injected by `onPagesReady` support an optional `dependencies` field — an array of project-root-relative file paths that the virtual page was built from. This enables selective incremental rebuilds: instead of re-rendering all virtual pages on every incremental rebuild (#970 naive approach), only virtual pages whose source files changed are re-rendered.
+
+```javascript
+// Plugin example: element demo wrapper pages
+virtualPages.push({
+  path: '_virtual/elements/accordion/demo/accents.html',
+  url: '/elements/accordion/demo/accents/',
+  dependencies: ['elements/rh-accordion/demo/accents.html'],
+  frontMatter: { layout: 'demo-wrapper' },
+  content: demoBodyHTML,
+});
+```
+
+Dependency semantics:
+
+| `dependencies` value | Incremental rebuild behavior |
+|---|---|
+| absent (field not present) | Safe fallback — virtual page is always re-rendered (same as pre-#1058 behavior) |
+| `[]` (empty array) | Tracked — the page has explicitly declared it depends on no local files; skipped during file-change-triggered incremental rebuilds |
+| `['elements/button/demo.html']` | Tracked — re-rendered only when `elements/button/demo.html` appears in `changedFiles` |
+| `['a.html', 'b.html', 'c.html']` | Tracked — re-rendered when ANY dependency appears in `changedFiles` |
+
+The distinction between absent `dependencies` and `dependencies: []` is intentional: absent means "I don't know what I depend on" (conservative — always re-render), while empty means "I depend on nothing file-specific" (e.g., the page is derived from fetched data via `alloy.source()`).
+
+On initial build (`previousCache` is nil), all virtual pages are rendered regardless of dependencies — dependency filtering only applies to subsequent incremental rebuilds.
+
+**Cache persistence**: The build cache stores a reverse dependency map `virtualDependencies: map[string]map[string]bool` (source path → set of virtual page RelPaths). Methods: `TrackVirtualDependency(virtualRelPath, sourcePath)` records a dependency; `InvalidatedVirtualPages(changedFile) []string` returns virtual pages that depend on the given source file (nil if no virtual pages depend on it). The map is populated after `onPagesReady` completes and deep-copied by `Clone()`. This follows the same pattern as the existing `templates` and `directoryData` cache maps.
 
 ```javascript
 // plugins/enrich-data.js
