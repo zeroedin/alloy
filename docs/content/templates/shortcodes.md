@@ -25,14 +25,37 @@ Shortcodes are registered via [plugins](/plugins/) and used in content files as 
 
 Inline shortcodes take positional arguments and produce self-contained output:
 
+<wa-tab-group>
+<wa-tab slot="nav" panel="inline-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="inline-go">Go templates</wa-tab>
+
+<wa-tab-panel name="inline-liquid" active>
+
 ```liquid
 {% youtube "dQw4w9WgXcQ" %}
 {% github_star "alloy-ssg/alloy" %}
 ```
 
+</wa-tab-panel>
+<wa-tab-panel name="inline-go">
+
+```html
+{{ youtube "dQw4w9WgXcQ" }}
+{{ github_star "alloy-ssg/alloy" }}
+```
+
+</wa-tab-panel>
+</wa-tab-group>
+
 ### Block shortcodes
 
 Block shortcodes wrap inner content, letting you add markup around authored text:
+
+<wa-tab-group>
+<wa-tab slot="nav" panel="block-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="block-go">Go templates</wa-tab>
+
+<wa-tab-panel name="block-liquid" active>
 
 ```liquid
 {% callout "warning" %}
@@ -40,21 +63,44 @@ Block shortcodes wrap inner content, letting you add markup around authored text
 {% endcallout %}
 ```
 
+Liquid block shortcodes close with `{% end<name> %}`.
+
+</wa-tab-panel>
+<wa-tab-panel name="block-go">
+
 ```html
-<!-- Output -->
+{{% callout "warning" %}}
+  Do not deploy to production without running the test suite first.
+{{% /callout %}}
+```
+
+Go template block shortcodes use `{{% %}}` delimiters (double braces) and close with `{{% /<name> %}}`.
+
+</wa-tab-panel>
+</wa-tab-group>
+
+```html
+<!-- Output (both engines) -->
 <div class="callout callout--warning">
   Do not deploy to production without running the test suite first.
 </div>
 ```
 
-### Go template syntax
+### Engine differences
 
-With the Go template engine, shortcodes are registered as template functions:
+| | Liquid | Go templates |
+|---|---|---|
+| Inline | `{% tag "arg" %}` | `{{ tag "arg" }}` |
+| Block open | `{% tag "arg" %}` | `{{% tag "arg" %}}` |
+| Block close | `{% endtag %}` | `{{% /tag %}}` |
+| Inner content | Rendered HTML | Rendered HTML |
+| Plugin callback | `(args, content)` | `(args, content)` |
 
-```html
-{{ youtube "dQw4w9WgXcQ" }}
-{{ callout "warning" "Do not deploy to production without running the test suite first." }}
-```
+Both engines pass rendered HTML to the plugin callback — the same `alloy.shortcode()` plugin works for both engines with no engine-specific code.
+
+### Code block escaping
+
+`{{% %}}` delimiters inside fenced code blocks and inline `<code>` elements are treated as literal text, not shortcode invocations.
 
 ## Registering shortcodes
 
