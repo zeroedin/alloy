@@ -444,6 +444,17 @@ func extractVirtualPage(raw interface{}, index int) (*content.Page, error) {
 		vp.Content = []byte(rawContent)
 		vp.Body = []byte(rawContent)
 	}
+	if depsRaw, ok := pageMap["dependencies"]; ok {
+		if depsArr, ok := depsRaw.([]interface{}); ok {
+			deps := make([]string, 0, len(depsArr))
+			for _, d := range depsArr {
+				if s, ok := d.(string); ok {
+					deps = append(deps, s)
+				}
+			}
+			vp.Dependencies = deps
+		}
+	}
 	return vp, nil
 }
 

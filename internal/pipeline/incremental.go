@@ -297,22 +297,34 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		renderRelPaths[p.RelPath] = true
 	}
 
-	// Pre-populate renderRelPaths with previous build's virtual page
-	// RelPaths so they survive the post-pagination pagesToRender rebuild
-	// (issue #970, step 3). When onPagesReady recreates these pages,
-	// they'll match the pre-populated set.
-	if previousCache != nil {
-		for _, vp := range previousCache.VirtualPagePaths() {
-			renderRelPaths[vp] = true
-		}
+	// Add virtual pages to renderRelPaths with dependency awareness
+	// (issue #1058). On initial builds (nil cache), render all virtual
+	// pages. On incremental rebuilds, consult each virtual page's
+	// Dependencies field:
+	//   - nil Dependencies → always render (safe fallback; unknown deps)
+	//   - empty Dependencies → skip (tracked, no file deps to invalidate)
+	//   - non-empty Dependencies → render only if a dep is in changedFiles
+	changedSet := make(map[string]bool, len(changedFiles))
+	for _, f := range changedFiles {
+		changedSet[filepath.ToSlash(f)] = true
 	}
-
-	// Also add any newly-identified virtual pages from this build
-	// (issue #970, step 2). Covers the initial build (nil cache) and
-	// new virtual pages not in the previous cache.
 	for _, p := range allPages {
-		if !discoveredPaths[p.RelPath] {
+		if discoveredPaths[p.RelPath] {
+			continue
+		}
+		if previousCache == nil {
 			renderRelPaths[p.RelPath] = true
+			continue
+		}
+		if p.Dependencies == nil {
+			renderRelPaths[p.RelPath] = true
+			continue
+		}
+		for _, dep := range p.Dependencies {
+			if changedSet[dep] {
+				renderRelPaths[p.RelPath] = true
+				break
+			}
 		}
 	}
 
@@ -654,9 +666,9 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
-	// Track virtual page RelPaths in the cache so the next incremental
-	// rebuild knows which pages were virtual (issue #970). Clear any
-	// stale virtual page tracking from the cloned previous cache first.
+	// Track virtual page RelPaths and dependencies in the cache so the
+	// next incremental rebuild can do selective rendering (issues #970, #1058).
+	// Clear stale tracking from the cloned previous cache first.
 	// Skip empty RelPath — taxonomy/generated pages have no RelPath.
 	buildCache.ClearVirtualPages()
 	for _, p := range allPages {
@@ -665,6 +677,9 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 		if !discoveredPaths[p.RelPath] {
 			buildCache.TrackVirtualPage(p.RelPath)
+			for _, dep := range p.Dependencies {
+				buildCache.TrackVirtualDependency(p.RelPath, dep)
+			}
 		}
 	}
 

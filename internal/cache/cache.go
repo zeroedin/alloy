@@ -8,19 +8,21 @@ import (
 // Cache manages content hashes and template usage tracking for
 // incremental build detection. Passed in-memory between builds.
 type Cache struct {
-	hashes        map[string]string
-	templates     map[string]map[string]bool // template path → set of page paths
-	directoryData map[string]map[string]bool // directory path → set of page paths
-	virtualPages  map[string]bool            // RelPaths of pages injected by onPagesReady (issue #970)
+	hashes              map[string]string
+	templates           map[string]map[string]bool // template path → set of page paths
+	directoryData       map[string]map[string]bool // directory path → set of page paths
+	virtualPages        map[string]bool            // RelPaths of pages injected by onPagesReady (issue #970)
+	virtualDependencies map[string]map[string]bool // source path → set of virtual page RelPaths (issue #1058)
 }
 
 // New creates an empty cache with no entries.
 func New() *Cache {
 	return &Cache{
-		hashes:        make(map[string]string),
-		templates:     make(map[string]map[string]bool),
-		directoryData: make(map[string]map[string]bool),
-		virtualPages:  make(map[string]bool),
+		hashes:              make(map[string]string),
+		templates:           make(map[string]map[string]bool),
+		directoryData:       make(map[string]map[string]bool),
+		virtualPages:        make(map[string]bool),
+		virtualDependencies: make(map[string]map[string]bool),
 	}
 }
 
@@ -62,6 +64,7 @@ func (c *Cache) Clear() {
 	c.templates = make(map[string]map[string]bool)
 	c.directoryData = make(map[string]map[string]bool)
 	c.virtualPages = make(map[string]bool)
+	c.virtualDependencies = make(map[string]map[string]bool)
 }
 
 // Clone returns a deep copy of the cache. Used by BuildIncremental to
@@ -87,6 +90,13 @@ func (c *Cache) Clone() *Cache {
 	}
 	for k, v := range c.virtualPages {
 		cloned.virtualPages[k] = v
+	}
+	for k, v := range c.virtualDependencies {
+		cp := make(map[string]bool, len(v))
+		for p, val := range v {
+			cp[p] = val
+		}
+		cloned.virtualDependencies[k] = cp
 	}
 	return cloned
 }
@@ -177,11 +187,13 @@ func (c *Cache) TrackVirtualPage(relPath string) {
 	c.virtualPages[relPath] = true
 }
 
-// ClearVirtualPages removes all virtual page tracking without affecting
-// content hashes or template tracking. Called before re-populating
-// virtual pages after each build so stale entries don't persist.
+// ClearVirtualPages removes all virtual page tracking and dependency
+// tracking without affecting content hashes or template tracking.
+// Called before re-populating virtual pages after each build so stale
+// entries don't persist.
 func (c *Cache) ClearVirtualPages() {
 	c.virtualPages = make(map[string]bool)
+	c.virtualDependencies = make(map[string]map[string]bool)
 }
 
 // VirtualPagePaths returns all RelPaths tracked as virtual pages.
@@ -189,6 +201,34 @@ func (c *Cache) ClearVirtualPages() {
 func (c *Cache) VirtualPagePaths() []string {
 	result := make([]string, 0, len(c.virtualPages))
 	for p := range c.virtualPages {
+		result = append(result, p)
+	}
+	return result
+}
+
+// TrackVirtualDependency records that a virtual page depends on a source
+// file outside the content directory. Builds a reverse map so
+// InvalidatedVirtualPages can return all virtual pages affected by a
+// source file change (issue #1058).
+func (c *Cache) TrackVirtualDependency(virtualRelPath, sourcePath string) {
+	pages := c.virtualDependencies[sourcePath]
+	if pages == nil {
+		pages = make(map[string]bool)
+		c.virtualDependencies[sourcePath] = pages
+	}
+	pages[virtualRelPath] = true
+}
+
+// InvalidatedVirtualPages returns the virtual page RelPaths that depend
+// on the given source file. Returns nil if no virtual page tracks the
+// given source file as a dependency (issue #1058).
+func (c *Cache) InvalidatedVirtualPages(changedFile string) []string {
+	pages, ok := c.virtualDependencies[changedFile]
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(pages))
+	for p := range pages {
 		result = append(result, p)
 	}
 	return result

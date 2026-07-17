@@ -1041,17 +1041,20 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			buildCache.TrackTemplateUsage(pagePath, layoutPath)
 		}
 	}
-	// Track virtual page RelPaths so the first BuildIncremental after
-	// a full Build() knows which pages were injected by onPagesReady
-	// (issue #970). Build→BuildIncremental cache handoff in cmd/dev.go.
-	// Skip empty RelPath — taxonomy pages have no RelPath and would
-	// pollute the virtual page set with a spurious "" entry.
+	// Track virtual page RelPaths and dependencies so the first
+	// BuildIncremental after Build() can do selective rendering
+	// (issues #970, #1058). Build→BuildIncremental cache handoff
+	// in cmd/dev.go. Skip empty RelPath — taxonomy pages have no
+	// RelPath and would pollute the virtual page set.
 	for _, page := range pages {
 		if page.RelPath == "" {
 			continue
 		}
 		if !discoveredPaths[page.RelPath] {
 			buildCache.TrackVirtualPage(page.RelPath)
+			for _, dep := range page.Dependencies {
+				buildCache.TrackVirtualDependency(page.RelPath, dep)
+			}
 		}
 	}
 
