@@ -167,6 +167,22 @@ alloy.hook("onContentLoaded", {
 });
 ```
 
+**Mutating html:**
+
+```javascript
+alloy.hook("onContentLoaded", {
+  pages: true,
+  pageFields: ["html", "url"]
+}, (pages) => {
+  pages.forEach(page => {
+    page.html = `<article>${page.html}</article>`;
+  });
+  return pages;
+});
+```
+
+Both `frontMatter` and `html` can be mutated in the same hook call. Changes to `html` are applied via `SetRenderedBody` — the modified HTML replaces the rendered content for that page before layout rendering.
+
 The return array must be the same length and order as the input. Virtual page injection is not supported here -- use `onPagesReady` instead.
 
 #### onDataCascadeReady
