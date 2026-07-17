@@ -61,7 +61,45 @@ JSON files preserve key insertion order using an ordered map. This matters when 
 }
 ```
 
-Iterating `site.data.sections` in a template produces keys in the order `intro`, `setup`, `usage` -- matching the file. YAML and TOML files use standard Go maps, which do not guarantee key order. Use JSON when order matters, or add an explicit `weight` field and sort in the template.
+Iterating `site.data.sections` in a template produces keys in the order `intro`, `setup`, `usage` — matching the file. YAML and TOML files use standard Go maps, which do not guarantee key order. Use JSON when order matters, or add an explicit `weight` field and sort in the template.
+
+### Iterating ordered maps
+
+The iteration syntax differs between template engines:
+
+<wa-tab-group>
+<wa-tab slot="nav" panel="ordered-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="ordered-go">Go templates</wa-tab>
+
+<wa-tab-panel name="ordered-liquid" active>
+
+In Liquid, `{% for %}` over an ordered map yields `[key, value]` pairs. Access them by index:
+
+```liquid
+{% for pair in site.data.sections %}
+  <h2>{{ pair[0] }}</h2>  <!-- key: "intro", "setup", "usage" -->
+  <p>{{ pair[1].title }}</p>
+{% endfor %}
+```
+
+Dot access works for individual keys: `{{ site.data.sections.intro.title }}`
+
+</wa-tab-panel>
+<wa-tab-panel name="ordered-go">
+
+Go's `{{ range }}` cannot iterate an ordered map directly. Use the `orange` helper to get `Key`/`Value` pairs in insertion order:
+
+```html
+{{ range orange .site.data.sections }}
+  <h2>{{ .Key }}</h2>
+  <p>{{ .Value.title }}</p>
+{{ end }}
+```
+
+Use `oget` for single-key access: `{{ oget .site.data.sections "intro" }}`
+
+</wa-tab-panel>
+</wa-tab-group>
 
 ## CSV files
 
@@ -119,7 +157,9 @@ Each key becomes a `site.data.*` entry. Paths are resolved relative to the proje
 {% endfor %}
 ```
 
-External data files use the same parsers as `data/` directory files. They share the same `site.data.*` namespace -- moving a file between `data/` and the external config is a config change, not a template change.
+External data files support YAML, JSON, and TOML — the same formats as `data/` directory files except CSV. Pointing an external file at a `.csv` produces a build error. Use `data/` directory placement for CSV files.
+
+External files share the same `site.data.*` namespace — moving a YAML, JSON, or TOML file between `data/` and the external config is a config change, not a template change.
 
 ### Collision handling
 
