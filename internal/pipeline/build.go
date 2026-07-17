@@ -194,21 +194,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}()
 	}
 
-	// Build output path map for validation hooks
-	outputPathMap := map[string]string{
-		cfg.Build.Output: "build output",
-	}
-
-	// Fire onBeforeValidation hook — plugins can add entries (e.g. _redirects)
-	if _, err := hooks.RunWithTimeout(plugin.OnBeforeValidation, outputPathMap); err != nil {
-		return nil, fmt.Errorf("plugin hook onBeforeValidation: %w", err)
-	}
-
-	// Fire onAfterValidation hook — validated manifest (read-only) + data cascade
-	if _, err := hooks.RunWithTimeout(plugin.OnAfterValidation, outputPathMap); err != nil {
-		return nil, fmt.Errorf("plugin hook onAfterValidation: %w", err)
-	}
-
 	// Re-validate output dir after hooks in case a plugin changed Build.Output.
 	if err := validateOutputDir(cfg); err != nil {
 		return nil, err
@@ -514,10 +499,102 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			}
 		}
 	}
+	// Fire onBeforeValidation — plugins can register additional output paths
+	// (e.g., _redirects for Netlify). Payload: { outputPaths: [...] }.
+	// Return: { addOutputs: { "path": "source" } }. Added paths feed into
+	// DetectConflicts(). Fires here — after output path computation, after
+	// onPagesReady, after taxonomy collection and pagination (issue #975).
+	if hooks.HasHooks(plugin.OnBeforeValidation) {
+		outputPaths := make([]string, len(outputEntries))
+		for i, e := range outputEntries {
+			outputPaths[i] = e.Path
+		}
+		payload := map[string]interface{}{
+			"outputPaths": outputPaths,
+		}
+		err := hooks.RunEachWithTimeout(plugin.OnBeforeValidation,
+			func(_ int, _ *plugin.HookScope) interface{} { return payload },
+			func(_ int, _ *plugin.HookScope, result interface{}) error {
+				resultMap, ok := toGoMap(result)
+				if !ok {
+					return nil
+				}
+				for key := range resultMap {
+					if key != "addOutputs" {
+						return fmt.Errorf("onBeforeValidation returned unrecognized key %q — only \"addOutputs\" is recognized", key)
+					}
+				}
+				addOutputsVal, hasAddOutputs := resultMap["addOutputs"]
+				if !hasAddOutputs {
+					return nil
+				}
+				addOutputsMap, ok := toGoMap(addOutputsVal)
+				if !ok {
+					return fmt.Errorf("onBeforeValidation addOutputs must be a map, got %T", addOutputsVal)
+				}
+				for path, source := range addOutputsMap {
+					outputEntries = append(outputEntries, validation.OutputPathEntry{
+						Path:   path,
+						Source: fmt.Sprintf("%v", source),
+					})
+				}
+				return nil
+			},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("plugin hook onBeforeValidation: %w", err)
+		}
+	}
+
 	if conflicts, _ := validation.DetectConflicts(outputEntries); len(conflicts) > 0 {
 		c := conflicts[0]
 		return nil, fmt.Errorf("output path conflict: %q claimed by %s and %s",
 			c.Path, c.Sources[0], c.Sources[1])
+	}
+
+	// Fire onAfterValidation — validated output manifest + mutable cascade.
+	// Payload: { outputPaths: [...], cascade: { ...siteData... } }.
+	// Return: { cascade: { ... } } merged into siteData. outputPaths changes
+	// in the return are ignored. Fires after conflict detection passes (issue #975).
+	if hooks.HasHooks(plugin.OnAfterValidation) {
+		validatedPaths := make([]string, len(outputEntries))
+		for i, e := range outputEntries {
+			validatedPaths[i] = e.Path
+		}
+		err := hooks.RunEachWithTimeout(plugin.OnAfterValidation,
+			func(_ int, _ *plugin.HookScope) interface{} {
+				return map[string]interface{}{
+					"outputPaths": validatedPaths,
+					"cascade":     siteData,
+				}
+			},
+			func(_ int, _ *plugin.HookScope, result interface{}) error {
+				resultMap, ok := toGoMap(result)
+				if !ok {
+					return nil
+				}
+				for key := range resultMap {
+					if key != "cascade" && key != "outputPaths" {
+						return fmt.Errorf("onAfterValidation returned unrecognized key %q — only \"cascade\" and \"outputPaths\" are recognized", key)
+					}
+				}
+				cascadeVal, hasCascade := resultMap["cascade"]
+				if !hasCascade {
+					return nil
+				}
+				cascadeMap, ok := toGoMap(cascadeVal)
+				if !ok {
+					return fmt.Errorf("onAfterValidation cascade must be a map, got %T", cascadeVal)
+				}
+				for k, v := range cascadeMap {
+					siteData[k] = v
+				}
+				return nil
+			},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("plugin hook onAfterValidation: %w", err)
+		}
 	}
 
 	// For single-language builds, don't pass langContexts to rendering helpers
