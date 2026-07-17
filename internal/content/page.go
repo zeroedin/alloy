@@ -31,6 +31,7 @@ type Page struct {
 	Bundle       bool
 	BundleAssets []string
 	TOC          []TOCEntry
+	Dependencies []string // nil = untracked (always re-render); non-nil = tracked source file deps
 	renderedStr  string
 }
 

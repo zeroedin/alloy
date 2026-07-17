@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/zeroedin/alloy/internal/content"
@@ -443,6 +444,31 @@ func extractVirtualPage(raw interface{}, index int) (*content.Page, error) {
 	if rawContent, ok := pageMap["content"].(string); ok {
 		vp.Content = []byte(rawContent)
 		vp.Body = []byte(rawContent)
+	}
+	if depsRaw, ok := pageMap["dependencies"]; ok {
+		depsArr, ok := depsRaw.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("dependencies must be an array, got %T", depsRaw)
+		}
+		deps := make([]string, 0, len(depsArr))
+		for i, d := range depsArr {
+			s, ok := d.(string)
+			if !ok {
+				return nil, fmt.Errorf("dependencies[%d] must be a string, got %T", i, d)
+			}
+			cleaned := filepath.ToSlash(filepath.Clean(s))
+			if cleaned == "" || cleaned == "." {
+				return nil, fmt.Errorf("dependencies[%d]: empty or current-directory path", i)
+			}
+			if filepath.IsAbs(s) {
+				return nil, fmt.Errorf("dependencies[%d]: absolute paths not allowed (%q)", i, s)
+			}
+			if strings.HasPrefix(cleaned, "../") || cleaned == ".." {
+				return nil, fmt.Errorf("dependencies[%d]: path escapes project root (%q)", i, s)
+			}
+			deps = append(deps, cleaned)
+		}
+		vp.Dependencies = deps
 	}
 	return vp, nil
 }
