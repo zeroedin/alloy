@@ -27,8 +27,10 @@ var _ = Describe("Build Pipeline", func() {
 
 	Describe("File-derived virtual page dependency tracking (issue #1058)", func() {
 
-		// Helper: creates a project with a plugin that injects virtual pages
-		// with varying dependency states via onPagesReady:
+		// Helper: creates a project with content, layouts, and a plugin that
+		// injects virtual pages via onPagesReady. When pluginJS is empty,
+		// uses the default plugin with 4 virtual pages covering all
+		// dependency states:
 		//
 		//   _virtual/demos/button.html  → depends on: elements/button/demo.html
 		//   _virtual/demos/card.html    → depends on: elements/card/demo.html
@@ -36,7 +38,7 @@ var _ = Describe("Build Pipeline", func() {
 		//   _virtual/demos/empty-deps.html → dependencies: [] (tracked, no file deps)
 		//
 		// Returns (tmpDir, config).
-		setupDepTrackingProject := func() (string, *config.Config) {
+		setupDepTrackingProject := func(pluginJS ...string) (string, *config.Config) {
 			tmpDir := GinkgoT().TempDir()
 			contentDir := filepath.Join(tmpDir, "content")
 			layoutsDir := filepath.Join(tmpDir, "layouts")
@@ -60,11 +62,8 @@ var _ = Describe("Build Pipeline", func() {
 				[]byte("<html><body class=\"demo\">{{ content }}</body></html>"),
 				0644)).To(Succeed())
 
-			// Plugin that injects virtual pages with different dependency states.
-			// Uses addPages return shape — injection-only, no mutation.
-			// The dependencies field is the new API from issue #1058.
-			Expect(os.WriteFile(filepath.Join(pluginsDir, "virtual-demos.js"),
-				[]byte(`export default function(alloy) {
+			// Use provided plugin JS or the default 4-page plugin.
+			js := `export default function(alloy) {
   alloy.hook('onPagesReady', { pages: false }, function({ siteData }) {
     return {
       addPages: [
@@ -114,8 +113,12 @@ var _ = Describe("Build Pipeline", func() {
       ]
     };
   });
-}`),
-				0644)).To(Succeed())
+}`
+			if len(pluginJS) > 0 && pluginJS[0] != "" {
+				js = pluginJS[0]
+			}
+			Expect(os.WriteFile(filepath.Join(pluginsDir, "virtual-demos.js"),
+				[]byte(js), 0644)).To(Succeed())
 
 			cfg := &config.Config{
 				Title:       "Dep Tracking Test",
@@ -239,30 +242,9 @@ var _ = Describe("Build Pipeline", func() {
 		})
 
 		It("renders multiple virtual pages when they share a changed dependency", func() {
-			tmpDir := GinkgoT().TempDir()
-			contentDir := filepath.Join(tmpDir, "content")
-			layoutsDir := filepath.Join(tmpDir, "layouts")
-			pluginsDir := filepath.Join(tmpDir, "plugins")
-			outputDir := filepath.Join(tmpDir, "_site")
-
-			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
-			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
-			Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
-
-			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
-				[]byte("---\ntitle: Home\nlayout: default\n---\n# Home"),
-				0644)).To(Succeed())
-			Expect(os.WriteFile(filepath.Join(layoutsDir, "default.liquid"),
-				[]byte("<html><body>{{ content }}</body></html>"),
-				0644)).To(Succeed())
-			Expect(os.WriteFile(filepath.Join(layoutsDir, "demo.liquid"),
-				[]byte("<html><body class=\"demo\">{{ content }}</body></html>"),
-				0644)).To(Succeed())
-
 			// Plugin with two virtual pages sharing a dependency on the same
 			// base file, plus one with its own unique dependency.
-			Expect(os.WriteFile(filepath.Join(pluginsDir, "shared-deps.js"),
-				[]byte(`export default function(alloy) {
+			sharedDepPlugin := `export default function(alloy) {
   alloy.hook('onPagesReady', { pages: false }, function({ siteData }) {
     return {
       addPages: [
@@ -290,20 +272,8 @@ var _ = Describe("Build Pipeline", func() {
       ]
     };
   });
-}`),
-				0644)).To(Succeed())
-
-			cfg := &config.Config{
-				Title:       "Shared Dep Test",
-				BaseURL:     "https://example.com",
-				ProjectRoot: tmpDir,
-				Build:       config.BuildConfig{Output: outputDir},
-				Structure: config.StructureConfig{
-					Content: "content",
-					Layouts: "layouts",
-				},
-			}
-			config.ApplyDefaults(cfg)
+}`
+			tmpDir, cfg := setupDepTrackingProject(sharedDepPlugin)
 
 			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
 			defer registry.Close()
@@ -411,17 +381,10 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(cardDeps).To(ConsistOf("_virtual/demos/card.html"),
 				"Build() cache must track all virtual dependency entries (issue #1058)")
 
-			// Untracked page should have no dependency entries
+			// Untracked page should have no dependency entries.
+			// ContainElement handles nil slices correctly (returns false).
 			untrackedDeps := result.Cache.InvalidatedVirtualPages("anything")
-			noMatch := true
-			if untrackedDeps != nil {
-				for _, p := range untrackedDeps {
-					if p == "_virtual/demos/untracked.html" {
-						noMatch = false
-					}
-				}
-			}
-			Expect(noMatch).To(BeTrue(),
+			Expect(untrackedDeps).NotTo(ContainElement("_virtual/demos/untracked.html"),
 				"untracked virtual page (no dependencies field) must not appear "+
 					"in any InvalidatedVirtualPages result — it has no source "+
 					"file dependencies to track (issue #1058)")

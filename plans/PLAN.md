@@ -1363,10 +1363,17 @@ In dev mode, after the initial full build, the file watcher triggers incremental
 **File-derived virtual page selective rebuild (issue #1058)** — Optimizes the #970 naive approach where all virtual pages from `onPagesReady` are re-rendered on every incremental rebuild. When `previousCache` is not nil (true incremental rebuild), `BuildIncremental` uses the `dependencies` field on virtual pages to determine which need re-rendering:
 
 1. After `applyBatchContext` injects virtual pages via `onPagesReady`, iterate pages not in `discoveredPaths` (i.e., virtual pages from `onPagesReady`)
-2. For each virtual page: if `Dependencies` is nil → add to `renderRelPaths` (safe fallback); if `Dependencies` is non-nil → add to `renderRelPaths` only if any dependency path appears in `changedFiles`
+2. For each virtual page:
+   - If the page is **new** (its RelPath is not in `previousCache.VirtualPagePaths()`) → add to `renderRelPaths` regardless of dependencies — a page must render at least once before dependency filtering applies
+   - If `Dependencies` is nil → add to `renderRelPaths` (safe fallback)
+   - If `Dependencies` is non-nil → add to `renderRelPaths` only if any dependency path appears in `changedFiles`
 3. When `previousCache` is nil (initial build), all virtual pages are added to `renderRelPaths` regardless of dependencies
 
+**Path normalization**: Both `changedFiles` entries and `page.Dependencies` values must be normalized to forward-slash project-relative paths before comparison. Use `filepath.ToSlash()` on `changedFiles` (which may contain OS-native separators from the file watcher) and store dependency paths as forward-slash strings (as received from plugin JS). The cache's `virtualDependencies` keys must also use forward-slash paths.
+
 The `dependencies` field on virtual page objects is read by `virtualPageFromMap` and stored as `Dependencies []string` on `content.Page`. `nil` means "not declared" (always re-render); `[]string{}` means "declared as empty" (never invalidated by file changes); `[]string{"foo.html"}` means "invalidated when foo.html changes".
+
+**Malformed dependency validation**: If `dependencies` is present but not an array (e.g., `dependencies: "not-an-array"`), treat as nil (safe fallback — always re-render). If `dependencies` is an array but contains non-string entries (e.g., `dependencies: [42, true]`), skip non-string entries. If the result after filtering is an empty slice but the original array was non-empty, treat as nil (safe fallback) — malformed entries must not silently produce "never rebuild" semantics. Only an explicitly empty array (`dependencies: []`) produces the "tracked, no file deps" behavior.
 
 **Untracked layout partials (issue #781)** — When a changed file under `layouts/` is not tracked as a direct layout for any page (`InvalidatedPages()` returns nil), treat it as a partial and rebuild all pages. The cache only tracks direct `page → layout` dependencies; `{% include %}` / `{% render %}` partials are resolved by the Liquid engine at render time without Alloy's knowledge. The conservative full-rebuild fallback is correct (no false negatives) and matches the `ComponentChange` pattern. Precise partial dependency tracking is a future refinement.
 
@@ -2631,8 +2638,12 @@ Dependency semantics:
 | `[]` (empty array) | Tracked — the page has explicitly declared it depends on no local files; skipped during file-change-triggered incremental rebuilds |
 | `['elements/button/demo.html']` | Tracked — re-rendered only when `elements/button/demo.html` appears in `changedFiles` |
 | `['a.html', 'b.html', 'c.html']` | Tracked — re-rendered when ANY dependency appears in `changedFiles` |
+| `"not-an-array"` or `42` (non-array) | Malformed — treated as absent (safe fallback, always re-render) |
+| `[42, true]` (all non-string entries) | Malformed — treated as absent (safe fallback, always re-render); malformed entries never produce "never rebuild" semantics |
 
 The distinction between absent `dependencies` and `dependencies: []` is intentional: absent means "I don't know what I depend on" (conservative — always re-render), while empty means "I depend on nothing file-specific" (e.g., the page is derived from fetched data via `alloy.source()`).
+
+All dependency paths must be project-root-relative with forward slashes (e.g., `elements/button/demo.html`). The pipeline normalizes `changedFiles` to the same format via `filepath.ToSlash()` before comparison.
 
 On initial build (`previousCache` is nil), all virtual pages are rendered regardless of dependencies — dependency filtering only applies to subsequent incremental rebuilds.
 

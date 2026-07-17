@@ -97,6 +97,51 @@ var _ = Describe("Virtual Dependency Tracking (issue #1058)", func() {
 		})
 	})
 
+	// ── Clear / ClearVirtualPages ───────────────────────────────────
+
+	Describe("Clear and ClearVirtualPages reset virtualDependencies", func() {
+		It("Clear resets virtualDependencies", func() {
+			c := cache.New()
+			c.TrackVirtualDependency("_virtual/demos/button.html", "elements/button/demo.html")
+
+			// Guard: dependency must be tracked before Clear
+			Expect(c.InvalidatedVirtualPages("elements/button/demo.html")).To(
+				ConsistOf("_virtual/demos/button.html"),
+				"guard: dependency must be tracked before Clear")
+
+			c.Clear()
+
+			pages := c.InvalidatedVirtualPages("elements/button/demo.html")
+			Expect(pages).To(BeNil(),
+				"Clear must reset virtualDependencies — stale dependency "+
+					"entries from a previous build would cause incorrect "+
+					"selective rendering in subsequent rebuilds (issue #1058)")
+		})
+
+		It("ClearVirtualPages resets virtualDependencies", func() {
+			c := cache.New()
+			c.TrackVirtualDependency("_virtual/demos/button.html", "elements/button/demo.html")
+			c.TrackVirtualDependency("_virtual/demos/card.html", "elements/card/demo.html")
+
+			// Guard: dependencies must be tracked before ClearVirtualPages
+			Expect(c.InvalidatedVirtualPages("elements/button/demo.html")).To(
+				ConsistOf("_virtual/demos/button.html"),
+				"guard: button dependency must be tracked before clear")
+
+			c.ClearVirtualPages()
+
+			buttonPages := c.InvalidatedVirtualPages("elements/button/demo.html")
+			Expect(buttonPages).To(BeNil(),
+				"ClearVirtualPages must reset virtualDependencies alongside "+
+					"virtualPages — both are re-populated together after each "+
+					"build, so stale entries must not persist (issue #1058)")
+
+			cardPages := c.InvalidatedVirtualPages("elements/card/demo.html")
+			Expect(cardPages).To(BeNil(),
+				"ClearVirtualPages must reset all virtualDependencies entries (issue #1058)")
+		})
+	})
+
 	// ── Clone ────────────────────────────────────────────────────────
 
 	Describe("Clone preserves virtual dependencies", func() {
