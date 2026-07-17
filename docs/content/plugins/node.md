@@ -55,7 +55,7 @@ Alloy does not ship Node.js, manage `package.json`, or run `npm install`. If Nod
 
 ## IPC Protocol
 
-Node plugins communicate with Alloy via length-prefixed JSON-RPC over stdin/stdout (LSP-style framing). Plugin `console.log` output is redirected to `.alloy/plugin.log`, keeping stdout clean for the protocol.
+Node plugins communicate with Alloy via length-prefixed JSON-RPC over stdin/stdout (LSP-style framing).
 
 ```
 Content-Length: 82\r\n
@@ -63,7 +63,45 @@ Content-Length: 82\r\n
 {"id": 1, "type": "hook", "name": "onContentTransformed", "payload": [...]}
 ```
 
-You never interact with this protocol directly -- the `alloy` API object handles serialization.
+You never interact with this protocol directly — the `alloy` API object handles serialization.
+
+### stdout isolation
+
+Stdout is reserved for the plugin protocol. The bridge script intercepts all in-process writes before any plugin code loads:
+
+- `console.log`, `console.warn`, `console.info`, `console.debug` → stderr
+- `process.stdout.write` → stderr
+
+Plugin output and library logging appear in the terminal alongside Alloy's own output, not in a log file. Plugins cannot corrupt the protocol by logging.
+
+**Known limitation:** A child process spawned with `stdio: 'inherit'` writes to the real stdout file descriptor, bypassing the JS-level patch. This can corrupt the protocol. Spawn children with explicit stdio instead:
+
+```javascript
+import { spawn } from 'child_process';
+
+// Correct — child output goes to stderr, not stdout
+const child = spawn('cmd', args, {
+  stdio: ['ignore', 'pipe', 'pipe']
+});
+child.stdout.pipe(process.stderr);
+```
+
+### Troubleshooting
+
+If you see this error:
+
+```
+plugin bridge protocol error: expected Content-Length header, got "..." —
+a plugin or one of its dependencies wrote non-protocol output to stdout
+```
+
+A plugin or one of its dependencies is writing to stdout at the file descriptor level, bypassing the bridge's `process.stdout.write` patch. Common causes:
+
+- A child process spawned with `stdio: 'inherit'`
+- A native addon writing directly to fd 1
+- `require('fs').writeSync(1, ...)` or similar fd-level writes
+
+Fix by redirecting the child's stdio as shown above.
 
 ## Registering Filters
 
