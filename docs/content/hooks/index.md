@@ -81,6 +81,31 @@ Fields not listed above (`title`, `baseURL`, `language`, `taxonomies`, etc.) are
 - Multiple `onConfig` hooks chain in priority order — each receives the previous hook's return value.
 - A timed-out hook's mutations are discarded; the next hook receives the pre-timeout value.
 
+##### Path validation
+
+Directory path fields (`build.output`, `structure.content`, `structure.layouts`, `structure.assets`, `structure.static`, `structure.data`) and passthrough entries are validated before any are applied to the config. If any field fails validation, the entire return value is rejected — no partial mutation.
+
+**Rejected values for path fields:**
+
+- Absolute paths (`/etc/shadow`, `C:\Windows`)
+- `..` traversals that resolve above the project root (`../../evil`)
+- `.` (current directory — would conflict with the project root)
+- Empty strings
+- On Windows: reserved device names (`NUL`, `CON`) and volume-relative paths
+
+Relative paths with embedded `..` segments that resolve within the project are valid and cleaned before use (e.g., `subdir/../dist` becomes `dist`).
+
+**Passthrough-specific rules:**
+
+- `passthrough[N].from` follows the same rules as path fields. `from: "."` is rejected (would copy the entire project root into output).
+- `passthrough[N].to` allows `"."` and `""` — these mean "root of the output directory," which is a valid destination.
+
+Error messages include the field name and array index for passthrough entries:
+
+```
+onConfig: passthrough[2].from: path "../../secrets" traverses above the project root
+```
+
 #### onDataFetched
 
 Fires after external data sources are fetched and merged into site data. Plugin can modify or enrich the data.
