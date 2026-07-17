@@ -87,28 +87,54 @@ This is the primary mechanism for adding computed data that templates can access
 
 #### onBeforeValidation
 
-Fires before output path conflict detection. The payload is a map of output paths to source identifiers. Plugins can add entries by mutating the map directly — the return value is discarded.
+Fires before output path conflict detection. The payload contains all computed output paths. Return `{ addOutputs: { path: source } }` to register additional output paths that feed into conflict detection.
 
 ```javascript
-alloy.hook("onBeforeValidation", {}, (paths) => {
-  paths["_redirects"] = "plugin:netlify-redirects";
-  paths["_headers"] = "plugin:netlify-headers";
+alloy.hook("onBeforeValidation", {}, (payload) => {
+  return {
+    addOutputs: {
+      "_redirects": "plugin:netlify-redirects",
+      "_headers": "plugin:netlify-headers"
+    }
+  };
 });
 ```
 
-> **Note:** Mutations work because in-process plugin runtimes (QuickJS, WASM) share the underlying Go map. The return value is not processed — add entries by writing keys on the payload object, not by returning a new object.
+| Payload field | Type | Description |
+|---|---|---|
+| `outputPaths` | string[] | All computed page output paths |
+
+| Return field | Type | Description |
+|---|---|---|
+| `addOutputs` | object | Map of additional output paths to source identifiers |
+
+Unrecognized keys in the return value produce a build error. Each plugin runs independently via `RunEachWithTimeout` — plugins do not see each other's additions.
 
 #### onAfterValidation
 
-Fires after validation passes. The payload is the same output path map from `onBeforeValidation`, now including any entries plugins added. The return value is discarded.
+Fires after conflict detection passes. The payload includes the validated output paths and the site data cascade. Return `{ cascade: { ... } }` to merge data into `siteData` for template rendering.
 
 ```javascript
-alloy.hook("onAfterValidation", {}, (paths) => {
-  console.log(`Validated ${Object.keys(paths).length} output paths`);
+alloy.hook("onAfterValidation", {}, (payload) => {
+  return {
+    cascade: {
+      buildTimestamp: new Date().toISOString(),
+      pageCount: payload.outputPaths.length
+    }
+  };
 });
 ```
 
-> **Note:** The `cascade` payload described in PLAN.md is not yet implemented. Site data injection after validation is tracked in a separate issue.
+| Payload field | Type | Description |
+|---|---|---|
+| `outputPaths` | string[] | Validated output paths (including any added by `onBeforeValidation`) |
+| `cascade` | object | Current site data cascade |
+
+| Return field | Type | Description |
+|---|---|---|
+| `cascade` | object | Merged into `siteData` — keys overwrite existing values |
+
+Returning `outputPaths` in the return value has no effect. Unrecognized keys produce a build error. Each plugin runs independently.
 
 ### Pre-Taxonomy Hook
 
