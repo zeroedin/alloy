@@ -2090,4 +2090,451 @@ var _ = Describe("Build Pipeline", func() {
 
 	// ── Template tags in <code> not escaped for HTML content (#352) ─
 	// escapeTemplateTagsInCode must only run on .md files, not .html.
+
+	// ── onBeforeValidation payload and return contract (issue #975) ───────
+	// onBeforeValidation fires immediately before conflict detection with
+	// { outputPaths: ["about/index.html", ...] }. Return shape: { addOutputs:
+	// { "path": "source" } } — additive only. Added paths feed into
+	// DetectConflicts(). Currently broken: fires too early with trivial
+	// one-entry map, return discarded.
+
+	Describe("onBeforeValidation payload and return contract (issue #975)", func() {
+		It("receives outputPaths array containing computed page output paths", func() {
+			cfg := &config.Config{
+				Title:   "BeforeValidation Payload Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/about.md":       "---\ntitle: About\nlayout: default\n---\n# About",
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/check-payload.js": `export default function(alloy) {
+  alloy.hook('onBeforeValidation', {}, function(payload) {
+    if (!payload || typeof payload !== 'object') {
+      throw new Error('payload must be an object, got ' + typeof payload);
+    }
+    if (!Array.isArray(payload.outputPaths)) {
+      throw new Error('payload.outputPaths must be an array, got ' + typeof payload.outputPaths);
+    }
+    if (payload.outputPaths.length < 2) {
+      throw new Error('outputPaths must contain at least 2 entries (about + index), got ' + payload.outputPaths.length);
+    }
+    var hasAbout = false;
+    for (var i = 0; i < payload.outputPaths.length; i++) {
+      if (payload.outputPaths[i].indexOf('about') !== -1) {
+        hasAbout = true;
+      }
+    }
+    if (!hasAbout) {
+      throw new Error('outputPaths must include about page path, got: ' + JSON.stringify(payload.outputPaths));
+    }
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onBeforeValidation must receive { outputPaths: [...] } with actual "+
+					"computed page output paths — not the trivial one-entry map "+
+					"{\"<output-dir>\": \"build output\"} that the current implementation "+
+					"sends. If this fails with 'payload.outputPaths must be an array', "+
+					"the hook still sends the wrong payload shape (issue #975)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(2),
+				"both pages must be built after onBeforeValidation runs (issue #975)")
+		})
+
+		It("addOutputs entries that conflict with page output paths produce conflict error", func() {
+			cfg := &config.Config{
+				Title:   "BeforeValidation Conflict Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/about.md":       "---\ntitle: About\nlayout: default\n---\n# About",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/add-conflict.js": `export default function(alloy) {
+  alloy.hook('onBeforeValidation', {}, function(payload) {
+    return {
+      addOutputs: {
+        "about/index.html": "plugin:conflict-test"
+      }
+    };
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"onBeforeValidation addOutputs entry 'about/index.html' conflicts with "+
+					"the real about page — DetectConflicts must catch this. If this passes, "+
+					"addOutputs is silently discarded and the return value is not being "+
+					"processed (issue #975)")
+			Expect(err.Error()).To(ContainSubstring("conflict"),
+				"error must indicate an output path conflict (issue #975)")
+			Expect(err.Error()).To(ContainSubstring("about/index.html"),
+				"conflict error must identify the conflicting output path (issue #975)")
+		})
+
+		It("addOutputs with unique path does not produce conflict", func() {
+			cfg := &config.Config{
+				Title:   "BeforeValidation No Conflict Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/add-unique.js": `export default function(alloy) {
+  alloy.hook('onBeforeValidation', {}, function(payload) {
+    return {
+      addOutputs: {
+        "_redirects": "plugin:netlify-redirects",
+        "_headers": "plugin:netlify-headers"
+      }
+    };
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onBeforeValidation addOutputs with unique paths must not produce "+
+					"conflict errors — _redirects and _headers do not collide with "+
+					"any page output path (issue #975)")
+			Expect(result).NotTo(BeNil())
+		})
+
+		It("rejects addOutputs when value is not a map", func() {
+			cfg := &config.Config{
+				Title:   "BeforeValidation Type Error Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/bad-type.js": `export default function(alloy) {
+  alloy.hook('onBeforeValidation', {}, function(payload) {
+    return { addOutputs: ["_redirects", "_headers"] };
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"onBeforeValidation addOutputs must be a map (path → source label), "+
+					"not an array. A map is required so conflict error messages include "+
+					"the plugin source label (issue #975)")
+			Expect(err.Error()).To(ContainSubstring("addOutputs"),
+				"error must reference 'addOutputs' so plugin authors know which "+
+					"return field has the wrong type (issue #975)")
+		})
+
+		It("rejects unrecognized return keys", func() {
+			cfg := &config.Config{
+				Title:   "BeforeValidation Unrecognized Key Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/bad-shape.js": `export default function(alloy) {
+  alloy.hook('onBeforeValidation', {}, function(payload) {
+    return { paths: payload.outputPaths, extra: true };
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"onBeforeValidation must reject unrecognized return keys — "+
+					"only 'addOutputs' is recognized. Returning 'paths' or other "+
+					"keys is a plugin author mistake that should be caught early, "+
+					"matching the addPages pattern for onPagesReady (issue #975)")
+			Expect(err.Error()).To(ContainSubstring("onBeforeValidation"),
+				"error must identify onBeforeValidation as the source hook (issue #975)")
+		})
+
+		It("no-op return from observation-only plugin does not error", func() {
+			cfg := &config.Config{
+				Title:   "BeforeValidation No-Op Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/observe-only.js": `export default function(alloy) {
+  alloy.hook('onBeforeValidation', {}, function(payload) {
+    // observation only — no return value
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onBeforeValidation with no return value (observation-only plugin) "+
+					"must not error — undefined/null return is a valid no-op (issue #975)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(1),
+				"pages must still be built after observation-only onBeforeValidation (issue #975)")
+		})
+
+		It("conflict error message includes plugin source label from addOutputs", func() {
+			cfg := &config.Config{
+				Title:   "BeforeValidation Source Label Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/about.md":       "---\ntitle: About\nlayout: default\n---\n# About",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/add-labeled.js": `export default function(alloy) {
+  alloy.hook('onBeforeValidation', {}, function(payload) {
+    return {
+      addOutputs: {
+        "about/index.html": "plugin:netlify-redirects"
+      }
+    };
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"addOutputs entry conflicting with about page must produce error (issue #975)")
+			Expect(err.Error()).To(ContainSubstring("plugin:netlify-redirects"),
+				"conflict error must include the source label from addOutputs — "+
+					"this is why addOutputs is a map (path → source) rather than an "+
+					"array: the source label appears in conflict error messages so "+
+					"plugin authors can identify which plugin registered the conflicting "+
+					"output path (issue #975)")
+		})
+	})
+
+	// ── onAfterValidation payload and return contract (issue #975) ───────
+	// onAfterValidation fires immediately after conflict detection passes
+	// with { outputPaths: [...], cascade: { ...siteData... } }. Cascade
+	// mutations are applied back to siteData. Currently broken: fires too
+	// early with trivial one-entry map, return discarded, no cascade.
+
+	Describe("onAfterValidation payload and return contract (issue #975)", func() {
+		It("receives outputPaths array and cascade object in payload", func() {
+			cfg := &config.Config{
+				Title:   "AfterValidation Payload Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/about.md":       "---\ntitle: About\nlayout: default\n---\n# About",
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/check-payload.js": `export default function(alloy) {
+  alloy.hook('onAfterValidation', {}, function(payload) {
+    if (!payload || typeof payload !== 'object') {
+      throw new Error('payload must be an object, got ' + typeof payload);
+    }
+    if (!Array.isArray(payload.outputPaths)) {
+      throw new Error('payload.outputPaths must be an array, got ' + typeof payload.outputPaths);
+    }
+    if (payload.outputPaths.length < 2) {
+      throw new Error('outputPaths must contain at least 2 entries (about + index), got ' + payload.outputPaths.length);
+    }
+    if (!payload.cascade || typeof payload.cascade !== 'object') {
+      throw new Error('payload.cascade must be an object, got ' + typeof payload.cascade);
+    }
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onAfterValidation must receive { outputPaths: [...], cascade: {...} } "+
+					"with actual computed output paths and the site data cascade — "+
+					"not the trivial one-entry map that the current implementation sends. "+
+					"If this fails with 'payload.outputPaths must be an array' or "+
+					"'payload.cascade must be an object', the hook still sends the "+
+					"wrong payload shape (issue #975)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(2),
+				"both pages must be built after onAfterValidation runs (issue #975)")
+		})
+
+		It("cascade mutation is applied to site data for templates", func() {
+			cfg := &config.Config{
+				Title:   "AfterValidation Cascade Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}<p>Injected: {{ site.data.injectedValue }}</p></body></html>",
+				"plugins/inject-cascade.js": `export default function(alloy) {
+  alloy.hook('onAfterValidation', {}, function(payload) {
+    payload.cascade.injectedValue = 'cascade-from-plugin';
+    return payload;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onAfterValidation cascade mutation must not error (issue #975)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("Injected: cascade-from-plugin"),
+				"onAfterValidation cascade mutations must be applied back to siteData — "+
+					"the plugin set cascade.injectedValue = 'cascade-from-plugin' and "+
+					"the template renders {{ site.data.injectedValue }}. If this fails, "+
+					"the return value is being discarded (issue #975)")
+		})
+
+		It("outputPaths changes in return are ignored", func() {
+			cfg := &config.Config{
+				Title:   "AfterValidation ReadOnly Paths Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/modify-paths.js": `export default function(alloy) {
+  alloy.hook('onAfterValidation', {}, function(payload) {
+    payload.outputPaths.push('fake/injected-path.html');
+    return payload;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onAfterValidation must ignore outputPaths changes in the return — "+
+					"validation has already passed, no further path modifications are "+
+					"allowed. Modifying outputPaths in the return should not error "+
+					"(it is silently ignored) (issue #975)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(1),
+				"only the real page should exist — the fake path added to "+
+					"outputPaths in the return must not create a page (issue #975)")
+		})
+
+		It("observation-only plugin with no return does not error", func() {
+			cfg := &config.Config{
+				Title:   "AfterValidation Observe Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/observe-only.js": `export default function(alloy) {
+  alloy.hook('onAfterValidation', {}, function(payload) {
+    // observation only — log but do not return
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onAfterValidation with no return value (observation-only plugin) "+
+					"must not error — undefined/null return is a valid no-op (issue #975)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(1),
+				"pages must still be built after observation-only onAfterValidation (issue #975)")
+		})
+
+		It("cascade mutations from multiple hooks are merged into site data", func() {
+			cfg := &config.Config{
+				Title:   "AfterValidation Multi-Hook Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}<p>A: {{ site.data.keyFromHookA }}</p><p>B: {{ site.data.keyFromHookB }}</p></body></html>",
+				"plugins/multi-hook.js": `export default function(alloy) {
+  alloy.hook('onAfterValidation', {}, function(payload) {
+    payload.cascade.keyFromHookA = 'alpha';
+    return payload;
+  });
+  alloy.hook('onAfterValidation', {}, function(payload) {
+    payload.cascade.keyFromHookB = 'beta';
+    return payload;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"multiple onAfterValidation hooks must not error (issue #975)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("A: alpha"),
+				"first hook's cascade mutation (keyFromHookA = 'alpha') must be "+
+					"applied to site data — if missing, only the last hook's return "+
+					"was applied instead of merging all hooks (issue #975)")
+			Expect(html).To(ContainSubstring("B: beta"),
+				"second hook's cascade mutation (keyFromHookB = 'beta') must be "+
+					"applied to site data — both hooks' cascade changes must be "+
+					"independently merged into siteData (issue #975)")
+		})
+
+		It("rejects cascade returned as non-map", func() {
+			cfg := &config.Config{
+				Title:   "AfterValidation Cascade Type Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/bad-cascade.js": `export default function(alloy) {
+  alloy.hook('onAfterValidation', {}, function(payload) {
+    return { cascade: 42 };
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"onAfterValidation cascade must be a map — returning a number "+
+					"is a type error that should be caught (issue #975)")
+			Expect(err.Error()).To(ContainSubstring("cascade"),
+				"error must reference 'cascade' so plugin authors know which "+
+					"return field has the wrong type (issue #975)")
+		})
+
+		It("outputPaths includes plugin-added paths from onBeforeValidation", func() {
+			cfg := &config.Config{
+				Title:   "AfterValidation Includes Plugin Paths Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/cross-hook.js": `export default function(alloy) {
+  alloy.hook('onBeforeValidation', {}, function(payload) {
+    return {
+      addOutputs: {
+        "_redirects": "plugin:netlify-redirects"
+      }
+    };
+  });
+  alloy.hook('onAfterValidation', {}, function(payload) {
+    var hasRedirects = false;
+    for (var i = 0; i < payload.outputPaths.length; i++) {
+      if (payload.outputPaths[i] === '_redirects') {
+        hasRedirects = true;
+      }
+    }
+    if (!hasRedirects) {
+      throw new Error('outputPaths must include _redirects added by onBeforeValidation, got: ' + JSON.stringify(payload.outputPaths));
+    }
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onAfterValidation must receive outputPaths that includes paths "+
+					"added by onBeforeValidation's addOutputs — the _redirects path "+
+					"was registered before conflict detection and must appear in the "+
+					"validated manifest. If this fails with 'outputPaths must include "+
+					"_redirects', the onBeforeValidation addOutputs are not being "+
+					"carried forward to onAfterValidation (issue #975)")
+			Expect(result).NotTo(BeNil())
+		})
+	})
 })
