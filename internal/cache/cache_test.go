@@ -249,4 +249,119 @@ var _ = Describe("Build Cache (§10 Performance Architecture)", func() {
 					"not three (issue #589: replace O(n) slice scan with map lookup)")
 		})
 	})
+
+	// ── Virtual page tracking (issue #970) ───────────────────────────
+	// BuildIncremental must know which RelPaths were virtual pages in
+	// the previous build so it can pre-populate renderRelPaths before
+	// onPagesReady runs. The cache stores this set and carries it
+	// forward across builds via Clone.
+
+	Describe("Virtual page tracking (issue #970)", func() {
+		It("TrackVirtualPage and VirtualPagePaths roundtrip", func() {
+			c := cache.New()
+			c.TrackVirtualPage("_virtual/demos/button.html")
+			c.TrackVirtualPage("_virtual/demos/card.html")
+
+			paths := c.VirtualPagePaths()
+			Expect(paths).To(ConsistOf(
+				"_virtual/demos/button.html",
+				"_virtual/demos/card.html",
+			), "VirtualPagePaths must return all RelPaths tracked via TrackVirtualPage")
+		})
+
+		It("VirtualPagePaths returns empty slice when no virtual pages tracked", func() {
+			c := cache.New()
+
+			paths := c.VirtualPagePaths()
+			Expect(paths).To(BeEmpty(),
+				"VirtualPagePaths must return an empty slice when no virtual "+
+					"pages have been tracked — not nil, to avoid nil-pointer issues "+
+					"in callers that range over the result")
+		})
+
+		It("TrackVirtualPage deduplicates repeated RelPaths", func() {
+			c := cache.New()
+			c.TrackVirtualPage("_virtual/demos/button.html")
+			c.TrackVirtualPage("_virtual/demos/button.html")
+			c.TrackVirtualPage("_virtual/demos/button.html")
+
+			paths := c.VirtualPagePaths()
+			Expect(paths).To(HaveLen(1),
+				"TrackVirtualPage must deduplicate — tracking the same RelPath "+
+					"three times must produce exactly one entry (issue #970)")
+		})
+
+		It("Clone preserves virtual page tracking", func() {
+			c := cache.New()
+			c.TrackVirtualPage("_virtual/demos/button.html")
+			c.TrackVirtualPage("_virtual/demos/card.html")
+
+			cloned := c.Clone()
+
+			// Guard: original must have virtual pages
+			Expect(c.VirtualPagePaths()).To(ConsistOf(
+				"_virtual/demos/button.html",
+				"_virtual/demos/card.html",
+			), "guard: original cache must have virtual pages before clone")
+
+			// Cloned cache must have the same virtual pages
+			clonedPaths := cloned.VirtualPagePaths()
+			Expect(clonedPaths).To(ConsistOf(
+				"_virtual/demos/button.html",
+				"_virtual/demos/card.html",
+			), "Clone must deep-copy virtual page tracking — the cloned "+
+				"cache must return the same virtual page RelPaths as the "+
+				"original (issue #970)")
+		})
+
+		It("Clone produces an independent copy of virtual page set", func() {
+			c := cache.New()
+			c.TrackVirtualPage("_virtual/demos/button.html")
+
+			cloned := c.Clone()
+
+			// Modify original after cloning
+			c.TrackVirtualPage("_virtual/demos/card.html")
+
+			// Cloned cache must not be affected by changes to original
+			clonedPaths := cloned.VirtualPagePaths()
+			Expect(clonedPaths).To(ConsistOf("_virtual/demos/button.html"),
+				"Clone must produce an independent copy — modifying the "+
+					"original after cloning must not affect the clone")
+			Expect(clonedPaths).NotTo(ContainElement("_virtual/demos/card.html"),
+				"changes to original cache must not leak into cloned cache")
+		})
+
+		It("Clear removes virtual page tracking", func() {
+			c := cache.New()
+			c.TrackVirtualPage("_virtual/demos/button.html")
+
+			// Guard: virtual pages must exist before clear
+			Expect(c.VirtualPagePaths()).NotTo(BeEmpty(),
+				"guard: cache must have virtual pages before clear")
+
+			c.Clear()
+
+			Expect(c.VirtualPagePaths()).To(BeEmpty(),
+				"Clear must remove all virtual page tracking alongside "+
+					"content hashes and template tracking")
+		})
+
+		It("virtual page tracking is independent of content hashes", func() {
+			c := cache.New()
+			c.SetHash("index.md", "abc123")
+			c.TrackVirtualPage("_virtual/demos/button.html")
+
+			// Content hash and virtual page are independent
+			Expect(c.GetHash("index.md")).To(Equal("abc123"),
+				"content hash must be retrievable alongside virtual page tracking")
+			Expect(c.VirtualPagePaths()).To(ConsistOf("_virtual/demos/button.html"),
+				"virtual page tracking must be retrievable alongside content hashes")
+
+			// Virtual pages must NOT appear in content hash count
+			Expect(c.Entries()).To(Equal(1),
+				"Entries must count only content hashes, not virtual page tracking — "+
+					"virtual pages are a separate concern from content hashes")
+		})
+	})
 })
