@@ -361,4 +361,172 @@ export default function(alloy) {
 					"dispatching onBuildComplete at all (issue #731)")
 		})
 	})
+
+	// ── BuildIncremental onContentLoaded html merge-back (issue #1050) ──
+	// The onContentLoaded html merge-back fix (issue #976) was applied to
+	// both Build() and BuildIncremental(). The Build() path has 6 spec
+	// tests in hooks_test.go. These tests cover the incremental path
+	// (incremental.go) which has different error handling (warning-only
+	// vs fatal errors) and uses pagesToRender instead of pages.
+
+	Describe("BuildIncremental onContentLoaded html merge-back (issue #1050)", func() {
+
+		It("html-only mutation (no frontMatter) applied via BuildIncremental", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			layoutsDir := filepath.Join(tmpDir, "layouts")
+			pluginsDir := filepath.Join(tmpDir, "plugins")
+			outputDir := filepath.Join(tmpDir, "_site")
+
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home\nlayout: default\n---\n# Home\n\nOriginal body."),
+				0644)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(layoutsDir, "default.liquid"),
+				[]byte("<html><body>{{ content }}</body></html>"),
+				0644)).To(Succeed())
+
+			// Plugin returns sparse entries: only path + html, no frontMatter key.
+			// This catches implementations that gate html merge-back on
+			// frontMatter presence (returnedPath inside frontMatter block).
+			Expect(os.WriteFile(filepath.Join(pluginsDir, "html-only.js"),
+				[]byte(`export default function(alloy) {
+  alloy.hook('onContentLoaded', { pages: true, pageFields: ["*"] }, function(pages) {
+    var result = [];
+    for (var i = 0; i < pages.length; i++) {
+      result.push({
+        path: pages[i].path,
+        html: pages[i].html + '<div class="incremental-html-only">Injected without frontMatter</div>'
+      });
+    }
+    return result;
+  });
+}`),
+				0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Incremental HTML-Only Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+				},
+			}
+
+			config.ApplyDefaults(cfg)
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			// First build (nil cache, nil changedFiles — full build through incremental path)
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result1.RenderedContent["index.md"]).To(
+				ContainSubstring(`<div class="incremental-html-only">Injected without frontMatter</div>`),
+				"html-only return entries must be applied in BuildIncremental — "+
+					"if this fails, the incremental merge-back loop gates html "+
+					"application on frontMatter presence (issue #1050)")
+
+			// Second build (with cache and changed file — true incremental rebuild)
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home Updated\nlayout: default\n---\n# Home Updated\n\nChanged body."),
+				0644)).To(Succeed())
+
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"content/index.md"},
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result2.RenderedContent["index.md"]).To(
+				ContainSubstring(`<div class="incremental-html-only">Injected without frontMatter</div>`),
+				"html-only merge-back must work on subsequent incremental rebuilds "+
+					"with cache, not just the nil-cache path (issue #1050)")
+		})
+
+		It("combined html and frontMatter mutation via BuildIncremental", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			layoutsDir := filepath.Join(tmpDir, "layouts")
+			pluginsDir := filepath.Join(tmpDir, "plugins")
+			outputDir := filepath.Join(tmpDir, "_site")
+
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home\nlayout: default\n---\n# Home"),
+				0644)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(layoutsDir, "default.liquid"),
+				[]byte("<html><body><h1>{{ page.title }}</h1>{{ content }}</body></html>"),
+				0644)).To(Succeed())
+
+			// Plugin mutates both frontMatter and html in the same hook call.
+			Expect(os.WriteFile(filepath.Join(pluginsDir, "mutate-both.js"),
+				[]byte(`export default function(alloy) {
+  alloy.hook('onContentLoaded', { pages: true, pageFields: ["*"] }, function(pages) {
+    for (var i = 0; i < pages.length; i++) {
+      pages[i].frontMatter.title = pages[i].frontMatter.title + ' (enriched)';
+      pages[i].html = pages[i].html + '<span class="incremental-watermark">Processed</span>';
+    }
+    return pages;
+  });
+}`),
+				0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Incremental Both Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+				},
+			}
+
+			config.ApplyDefaults(cfg)
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+
+			html1 := result1.RenderedContent["index.md"]
+			Expect(html1).To(ContainSubstring("Home (enriched)"),
+				"frontMatter.title mutation must be applied in BuildIncremental (issue #1050)")
+			Expect(html1).To(ContainSubstring(`<span class="incremental-watermark">Processed</span>`),
+				"html mutation must ALSO be applied in the same BuildIncremental hook call — "+
+					"both frontMatter and html must be merged back from the return value (issue #1050)")
+
+			// Incremental rebuild with cache
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home v2\nlayout: default\n---\n# Home v2"),
+				0644)).To(Succeed())
+
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"content/index.md"},
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+
+			html2 := result2.RenderedContent["index.md"]
+			Expect(html2).To(ContainSubstring("Home v2 (enriched)"),
+				"frontMatter mutation must work on incremental rebuilds with cache (issue #1050)")
+			Expect(html2).To(ContainSubstring(`<span class="incremental-watermark">Processed</span>`),
+				"html mutation must work on incremental rebuilds with cache (issue #1050)")
+		})
+	})
 })
