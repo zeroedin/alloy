@@ -48,21 +48,63 @@ These fire once per build. Payloads are JSON objects representing build-level st
 
 #### onConfig
 
-Fires after config is loaded. Plugin can mutate configuration values.
+Fires after config is loaded but before the build starts. The hook receives the full configuration object and must return it. Only fields on the mutable allowlist are applied back — all other fields are silently ignored.
 
 ```javascript
 alloy.hook("onConfig", {}, (config) => {
   config.build.output = "dist";
+  config.structure.content = "pages";
   return config;
 });
 ```
 
-| Field | Description |
-|---|---|
-| `title` | Site title |
-| `baseURL` | Site base URL |
-| `build` | Build settings (`output`, `clean`) |
-| ... | All config fields |
+**Mutable fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `build.output` | string | Output directory |
+| `build.clean` | boolean | Clean output before build |
+| `structure.content` | string | Content directory |
+| `structure.layouts` | string | Layouts directory |
+| `structure.assets` | string | Assets directory |
+| `structure.static` | string | Static files directory |
+| `structure.data` | string | Data directory |
+| `passthrough` | array | Passthrough file mappings (`[{ from, to }]`) |
+| `plugins.workers` | number | Worker pool size |
+| `plugins.timeout` | number | Hook timeout in milliseconds |
+
+Fields not listed above (`title`, `baseURL`, `language`, `taxonomies`, etc.) are present in the payload for inspection but mutations have no effect.
+
+**Return value rules:**
+
+- Must return an object. Returning `null` or a non-object produces a build error.
+- Multiple `onConfig` hooks chain in priority order — each receives the previous hook's return value.
+- A timed-out hook's mutations are discarded; the next hook receives the pre-timeout value.
+
+##### Path validation
+
+Directory path fields (`build.output`, `structure.content`, `structure.layouts`, `structure.assets`, `structure.static`, `structure.data`) and passthrough entries are validated before any are applied to the config. If any field fails validation, the entire return value is rejected — no partial mutation.
+
+**Rejected values for path fields:**
+
+- Absolute paths (`/etc/shadow`, `C:\Windows`)
+- `..` traversals that resolve above the project root (`../../evil`)
+- `.` (current directory — would conflict with the project root)
+- Empty strings
+- On Windows: reserved device names (`NUL`, `CON`) and volume-relative paths
+
+Relative paths with embedded `..` segments that resolve within the project are valid and cleaned before use (e.g., `subdir/../dist` becomes `dist`).
+
+**Passthrough-specific rules:**
+
+- `passthrough[N].from` follows the same rules as path fields. `from: "."` is rejected (would copy the entire project root into output).
+- `passthrough[N].to` allows `"."` and `""` — these mean "root of the output directory," which is a valid destination.
+
+Error messages include the field name and array index for passthrough entries:
+
+```text
+onConfig: passthrough[2].from: path "../../secrets" traverses above the project root
+```
 
 #### onDataFetched
 
@@ -87,25 +129,54 @@ This is the primary mechanism for adding computed data that templates can access
 
 #### onBeforeValidation
 
-Fires before output path conflict detection. Plugins can register additional output paths (e.g., `_redirects` or `_headers` for Netlify):
+Fires before output path conflict detection. The payload contains all computed output paths. Return `{ addOutputs: { path: source } }` to register additional output paths that feed into conflict detection.
 
 ```javascript
-alloy.hook("onBeforeValidation", {}, (outputMap) => {
-  outputMap.add("_redirects", { source: "plugin:netlify-redirects" });
-  return outputMap;
+alloy.hook("onBeforeValidation", {}, (payload) => {
+  return {
+    addOutputs: {
+      "_redirects": "plugin:netlify-redirects",
+      "_headers": "plugin:netlify-headers"
+    }
+  };
 });
 ```
+
+| Payload field | Type | Description |
+|---|---|---|
+| `outputPaths` | string[] | All computed page output paths |
+
+| Return field | Type | Description |
+|---|---|---|
+| `addOutputs` | object | Map of additional output paths to source identifiers |
+
+Unrecognized keys in the return value produce a build error. Each plugin runs independently via `RunEachWithTimeout` — plugins do not see each other's additions.
 
 #### onAfterValidation
 
-Fires after validation passes. Plugins receive the validated output manifest (read-only) and the data cascade (mutable):
+Fires after conflict detection passes. The payload includes the validated output paths and the site data cascade. Return `{ cascade: { ... } }` to merge data into `siteData` for template rendering.
 
 ```javascript
 alloy.hook("onAfterValidation", {}, (payload) => {
-  payload.cascade.buildTimestamp = new Date().toISOString();
-  return payload;
+  return {
+    cascade: {
+      buildTimestamp: new Date().toISOString(),
+      pageCount: payload.outputPaths.length
+    }
+  };
 });
 ```
+
+| Payload field | Type | Description |
+|---|---|---|
+| `outputPaths` | string[] | Validated output paths (including any added by `onBeforeValidation`) |
+| `cascade` | object | Current site data cascade |
+
+| Return field | Type | Description |
+|---|---|---|
+| `cascade` | object | Merged into `siteData` — keys overwrite existing values |
+
+Returning `outputPaths` in the return value has no effect. Unrecognized keys produce a build error. Each plugin runs independently.
 
 ### Pre-Taxonomy Hook
 
@@ -142,10 +213,40 @@ alloy.hook("onPagesReady", { data: ["elements"], pages: false }, (payload) => {
 | `url` | yes | Permalink (e.g., `/demos/button/`) |
 | `frontMatter` | no | Page metadata, including taxonomy terms like `tags` |
 | `content` | no | Raw markdown content (rendered through the pipeline) |
+| `dependencies` | no | Array of project-root-relative file paths for incremental rebuild tracking |
 
 Virtual pages injected here flow through the full remaining pipeline: taxonomy collection, content rendering, layout resolution, and output writing.
 
 When using `pages: false` in the options, return `{ addPages: [...] }` to inject pages without round-tripping all existing pages through the plugin bridge.
+
+##### Virtual page dependencies
+
+During `alloy dev`, virtual pages are re-rendered on every incremental rebuild by default. Declare `dependencies` to tell Alloy which source files a virtual page depends on — it will only re-render when one of those files changes.
+
+```javascript
+alloy.hook("onPagesReady", { data: ["elements"], pages: false }, (payload) => {
+  const elements = payload.siteData.elements || [];
+  return {
+    addPages: elements.map(el => ({
+      path: `demos/${el.slug}.html`,
+      url: `/demos/${el.slug}/`,
+      dependencies: [`elements/${el.slug}/demo/index.html`],
+      frontMatter: { layout: "demo", markdown: false },
+      content: fs.readFileSync(`elements/${el.slug}/demo/index.html`, "utf-8")
+    }))
+  };
+});
+```
+
+| `dependencies` value | Incremental rebuild behavior |
+|---|---|
+| `["a.html", "b.css"]` | Re-render only when a listed file appears in the changed files |
+| `[]` (empty array) | Never re-render — no file dependencies to invalidate |
+| Omitted | Always re-render on every rebuild (default, safe fallback) |
+
+Paths must be project-root-relative strings. Absolute paths, `..` traversals above the project root, and empty strings produce build errors.
+
+On initial builds and for newly added virtual pages, `dependencies` has no effect — pages always render at least once before dependency filtering applies.
 
 ### Content Hooks
 
@@ -166,6 +267,22 @@ alloy.hook("onContentLoaded", {
   return pages;
 });
 ```
+
+**Mutating html:**
+
+```javascript
+alloy.hook("onContentLoaded", {
+  pages: true,
+  pageFields: ["html", "url"]
+}, (pages) => {
+  pages.forEach(page => {
+    page.html = `<article>${page.html}</article>`;
+  });
+  return pages;
+});
+```
+
+Both `frontMatter` and `html` can be mutated in the same hook call. Changes to `html` are applied via `SetRenderedBody` — the modified HTML replaces the rendered content for that page before layout rendering.
 
 The return array must be the same length and order as the input. Virtual page injection is not supported here -- use `onPagesReady` instead.
 
@@ -216,18 +333,33 @@ alloy.hook("onPageRendered", {}, (html) => {
 
 ### Per-Asset Hook
 
-#### onAssetProcess (Tier 3 Only)
+#### onAssetProcess
 
-Fires once per asset file during asset copy. Receives `{ path, content }` and returns `{ content }`.
+Fires once per file in the assets directory during asset copy. Each invocation receives a single file's path and content. Multiple `onAssetProcess` hooks chain — each receives the content returned by the previous hook.
 
 ```javascript
-alloy.hook("onAssetProcess", {}, async (asset) => {
+alloy.hook("onAssetProcess", {}, (asset) => {
   if (asset.path.endsWith('.css')) {
-    return { content: await minifyCSS(asset.content) };
+    return { content: minifyCSS(asset.content) };
   }
-  return asset;
+  // Return null or omit content key to keep the original
 });
 ```
+
+| Field | Type | Description |
+|---|---|---|
+| `path` | string | File path relative to the assets directory (forward slashes, e.g., `css/main.css`) |
+| `content` | string | Raw file content |
+
+**Return value:**
+
+| Return | Effect |
+|---|---|
+| `{ content: "..." }` | Replaces the file content in output |
+| `null` / `undefined` | Keeps the original content |
+| Object without `content` key | Keeps the original content |
+
+The `path` key in the return value is ignored — the file is always written to its original relative path in the output directory. A hook error stops the build.
 
 ### Read-Only Hooks
 
@@ -235,27 +367,49 @@ Return values are ignored. Plugins observe but cannot modify.
 
 #### onBuildComplete
 
+Fires after the build finishes. The payload uses PascalCase keys (the `BuildResult` struct has no JSON tag overrides). `Duration` is raw nanoseconds — divide by `1e6` for milliseconds.
+
 ```javascript
 alloy.hook("onBuildComplete", {}, (result) => {
-  console.log(`Built ${result.pageCount} pages in ${result.duration}`);
+  const ms = (result.Duration / 1e6).toFixed(0);
+  console.log(`Built ${result.PageCount} pages in ${ms}ms`);
 });
 ```
 
+| Field | Type | Description |
+|---|---|---|
+| `OutputDir` | string | Output directory path |
+| `PageCount` | number | Total pages built |
+| `PagesSkipped` | number | Pages skipped during incremental rebuilds |
+| `Duration` | number | Build time in nanoseconds |
+
 #### onDevServerStart
 
+Fires when the dev server starts. The payload is the full site configuration object — there is no `url` field with the server address.
+
 ```javascript
-alloy.hook("onDevServerStart", {}, (info) => {
-  console.log(`Server ready at ${info.url}`);
+alloy.hook("onDevServerStart", {}, (config) => {
+  console.log(`Dev server started for "${config.Title}"`);
 });
 ```
 
 #### onFileChanged
 
+Fires once per file-watch batch during `alloy dev`. The payload is an array of change events, not a single file path.
+
 ```javascript
-alloy.hook("onFileChanged", {}, (filePath) => {
-  console.log(`Changed: ${filePath}`);
+alloy.hook("onFileChanged", {}, (events) => {
+  for (const event of events) {
+    console.log(`${event.Path} changed (removed: ${event.IsRemove})`);
+  }
 });
 ```
+
+| Field | Type | Description |
+|---|---|---|
+| `Path` | string | File path relative to project root |
+| `ChangeType` | number | Change category (1–8: content, template, data, asset, etc.) |
+| `IsRemove` | boolean | `true` when the file was deleted |
 
 ## Hook Execution Order
 

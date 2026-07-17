@@ -199,6 +199,6 @@ Suppresses all output except errors. Exit code communicates success or failure.
 | Server | no | yes | yes |
 | Use case | CI/CD, deploy | Local production preview | Active development |
 
-Config-driven SSR is an [experimental](/experimental/ssr/) feature. When an `ssr:` block is present, `alloy build` and `alloy serve` run an extra server-side rendering phase; `alloy dev` always skips it. Plugin-based SSR via `ssr.render()` is separate and unaffected.
+Config-driven SSR is an [experimental](/experimental/ssr/) feature. When an `ssr:` block is present, `alloy build` and `alloy serve` run an extra server-side rendering phase; `alloy dev` always skips it. Plugin-based SSR via the [`onPageRendered` hook](/hooks/#onpagerendered) is separate and unaffected.
 
 See also [Getting Started](/getting-started/) for installation and [Project Structure](/getting-started/project-structure/) for directory layout.

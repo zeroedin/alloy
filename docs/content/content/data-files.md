@@ -18,6 +18,7 @@ main:
     url: "/about/"
 ```
 
+{% raw %}
 ```liquid
 <nav>
   {% for item in site.data.navigation.main %}
@@ -25,6 +26,7 @@ main:
   {% endfor %}
 </nav>
 ```
+{% endraw %}
 
 ## Supported formats
 
@@ -39,15 +41,38 @@ Each file is keyed by its filename without the extension. `data/team.yaml` becom
 
 ## Directory structure
 
-Organize data files in any structure inside `data/`:
+Subdirectories create nested namespaces. `data/nav/main.yaml` becomes `site.data.nav.main`. Nesting depth is unlimited.
 
-```
+```text
 data/
 ├── navigation.yaml        # site.data.navigation
 ├── team.yaml              # site.data.team
 ├── products.json          # site.data.products
-└── authors.csv            # site.data.authors
+├── authors.csv            # site.data.authors
+├── nav/
+│   └── main.yaml          # site.data.nav.main
+└── api/
+    └── v2/
+        └── endpoints.yaml # site.data.api.v2.endpoints
 ```
+
+Empty subdirectories are silently skipped — they produce no key in the namespace.
+
+A file and a non-empty directory sharing the same stem (e.g., `nav.yaml` alongside a `nav/` directory containing data files) produces a build error:
+
+```text
+[alloy] ERROR data file stem conflict: "nav.yaml" and directory "nav/" both produce key "nav"
+```
+
+### Accessing nested data
+
+{% raw %}
+```liquid
+{% for item in site.data.nav.main.items %}
+  <a href="{{ item.url }}">{{ item.label }}</a>
+{% endfor %}
+```
+{% endraw %}
 
 ## JSON key order preservation
 
@@ -61,7 +86,43 @@ JSON files preserve key insertion order using an ordered map. This matters when 
 }
 ```
 
-Iterating `site.data.sections` in a template produces keys in the order `intro`, `setup`, `usage` -- matching the file. YAML and TOML files use standard Go maps, which do not guarantee key order. Use JSON when order matters, or add an explicit `weight` field and sort in the template.
+Iterating `site.data.sections` in a template produces keys in the order `intro`, `setup`, `usage` — matching the file. YAML and TOML files use standard Go maps, which do not guarantee key order. Use JSON when order matters, or add an explicit `weight` field and sort in the template.
+
+### Iterating ordered maps
+
+The iteration syntax differs between template engines:
+
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="ordered-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="ordered-go">Go templates</wa-tab>
+
+<wa-tab-panel name="ordered-liquid" active>
+
+In Liquid, `{% for %}` over an ordered map yields `[key, value]` pairs. Access them by index:
+
+<alloy-code lang="liquid">{% for pair in site.data.sections %}
+  &lt;h2&gt;{{ pair[0] }}&lt;/h2&gt;  &lt;!-- key: "intro", "setup", "usage" --&gt;
+  &lt;p&gt;{{ pair[1].title }}&lt;/p&gt;
+{% endfor %}</alloy-code>
+
+Dot access works for individual keys: `{{ site.data.sections.intro.title }}`
+
+</wa-tab-panel>
+<wa-tab-panel name="ordered-go">
+
+Go's `{{ range }}` cannot iterate an ordered map directly. Use the `orange` helper to get `Key`/`Value` pairs in insertion order:
+
+<alloy-code lang="html">{{ range orange .site.data.sections }}
+  &lt;h2&gt;{{ .Key }}&lt;/h2&gt;
+  &lt;p&gt;{{ .Value.title }}&lt;/p&gt;
+{{ end }}</alloy-code>
+
+Use `oget` for single-key access: `{{ oget .site.data.sections "intro" }}`
+
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 ## CSV files
 
@@ -76,11 +137,13 @@ Carol,PM,carol-pm
 
 Access in templates:
 
+{% raw %}
 ```liquid
 {% for person in site.data.authors %}
   <p>{{ person.name }} -- {{ person.role }}</p>
 {% endfor %}
 ```
+{% endraw %}
 
 ## Name collision detection
 
@@ -111,6 +174,7 @@ data:
 
 Each key becomes a `site.data.*` entry. Paths are resolved relative to the project root:
 
+{% raw %}
 ```liquid
 <p>Schema version: {{ site.data.cem.schemaVersion }}</p>
 
@@ -118,8 +182,11 @@ Each key becomes a `site.data.*` entry. Paths are resolved relative to the proje
   <div style="background: {{ token.value }}">{{ token.name }}</div>
 {% endfor %}
 ```
+{% endraw %}
 
-External data files use the same parsers as `data/` directory files. They share the same `site.data.*` namespace -- moving a file between `data/` and the external config is a config change, not a template change.
+External data files support YAML, JSON, and TOML — the same formats as `data/` directory files except CSV. Pointing an external file at a `.csv` produces a build error. Use `data/` directory placement for CSV files.
+
+External files share the same `site.data.*` namespace. Moving a YAML, JSON, or TOML file between `data/` and external config does not require template changes when the external mapping preserves the same key.
 
 ### Collision handling
 
@@ -151,11 +218,30 @@ sources:
 
 Access fetched data the same way as local files:
 
+{% raw %}
 ```liquid
 {% for post in site.data.posts %}
   <h2><a href="/blog/{{ post.slug }}/">{{ post.title }}</a></h2>
 {% endfor %}
 ```
+{% endraw %}
+
+### Built-in types vs plugin sources
+
+Built-in `rest` and `graphql` types are single-request fetchers. They send one HTTP request and parse the response. For anything more complex, use `type: "plugin"` — see [Data Source Plugins](/plugins/node/#data-source-plugins).
+
+| Capability | `rest` / `graphql` | `plugin` |
+|---|---|---|
+| Single unauthenticated GET | yes | yes |
+| Authentication headers | no | yes |
+| Pagination | no | yes |
+| Custom HTTP methods | no | yes |
+| Database access | no | yes |
+| Multi-endpoint aggregation | no | yes |
+| Retry / error handling | no | yes |
+| Environment variables | no | yes |
+| Requires Node.js | no | yes |
+| Built-in caching | yes | yes |
 
 ### Caching
 

@@ -18,9 +18,19 @@ export default function(alloy) {
 }
 ```
 
-```liquid
-<span>{{ page.content | readingTime }}</span>
-```
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="qjsrt-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="qjsrt-go">Go templates</wa-tab>
+
+<wa-tab-panel name="qjsrt-liquid" active>
+<alloy-code lang="liquid">&lt;span&gt;{{ page.content | readingTime }}&lt;/span&gt;</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="qjsrt-go">
+<alloy-code lang="html">&lt;span&gt;{{ readingTime .page.content }}&lt;/span&gt;</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 ## How It Works
 
@@ -59,11 +69,23 @@ export default function(alloy) {
 
 Use in templates:
 
-```liquid
-{{ page.author | initials }}
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="qjsfilt-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="qjsfilt-go">Go templates</wa-tab>
+
+<wa-tab-panel name="qjsfilt-liquid" active>
+<alloy-code lang="liquid">{{ page.author | initials }}
 {{ page.description | truncateAt: 120 }}
-{{ page.score | percentage: page.maxScore }}
-```
+{{ page.score | percentage: page.maxScore }}</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="qjsfilt-go">
+<alloy-code lang="html">{{ initials .page.author }}
+{{ truncateAt .page.description 120 }}
+{{ percentage .page.score .page.maxScore }}</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 Filter arguments are passed as additional parameters after the input value.
 
@@ -103,15 +125,31 @@ export default function(alloy) {
 
 Use in content:
 
-```liquid
-{% youtube "dQw4w9WgXcQ" %}
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="qjssc-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="qjssc-go">Go templates</wa-tab>
+
+<wa-tab-panel name="qjssc-liquid" active>
+<alloy-code lang="liquid">{% youtube "dQw4w9WgXcQ" %}
 
 {% callout "warning" %}
 Do not use this in production without testing first.
 {% endcallout %}
 
-{% componentDemo "rh-button" %}
-```
+{% componentDemo "rh-button" %}</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="qjssc-go">
+<alloy-code lang="html">{{ youtube "dQw4w9WgXcQ" }}
+
+{{% callout "warning" %}}
+Do not use this in production without testing first.
+{{% /callout %}}
+
+{{ componentDemo "rh-button" }}</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 ## Registering Hooks
 

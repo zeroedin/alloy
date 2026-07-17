@@ -55,15 +55,53 @@ Alloy does not ship Node.js, manage `package.json`, or run `npm install`. If Nod
 
 ## IPC Protocol
 
-Node plugins communicate with Alloy via length-prefixed JSON-RPC over stdin/stdout (LSP-style framing). Plugin `console.log` output is redirected to `.alloy/plugin.log`, keeping stdout clean for the protocol.
+Node plugins communicate with Alloy via length-prefixed JSON-RPC over stdin/stdout (LSP-style framing).
 
-```
+```text
 Content-Length: 82\r\n
 \r\n
 {"id": 1, "type": "hook", "name": "onContentTransformed", "payload": [...]}
 ```
 
-You never interact with this protocol directly -- the `alloy` API object handles serialization.
+You never interact with this protocol directly — the `alloy` API object handles serialization.
+
+### stdout isolation
+
+Stdout is reserved for the plugin protocol. The bridge script intercepts JS-level writes before any plugin code loads:
+
+- `console.log`, `console.warn`, `console.info`, `console.debug` → stderr
+- `process.stdout.write` → stderr
+
+Plugin output and library logging appear in the terminal alongside Alloy's own output, not in a log file. Plugins cannot corrupt the protocol by logging.
+
+**Known limitation:** A child process spawned with `stdio: 'inherit'` writes to the real stdout file descriptor, bypassing the JS-level patch. This can corrupt the protocol. Spawn children with explicit stdio instead:
+
+```javascript
+import { spawn } from 'child_process';
+
+// Correct — child output goes to stderr, not stdout
+const child = spawn('cmd', args, {
+  stdio: ['ignore', 'pipe', 'pipe']
+});
+child.stdout.pipe(process.stderr);
+```
+
+### Troubleshooting
+
+If you see this error:
+
+```text
+plugin bridge protocol error: expected Content-Length header, got "..." —
+a plugin or one of its dependencies wrote non-protocol output to stdout
+```
+
+A plugin or one of its dependencies is writing to stdout at the file descriptor level, bypassing the bridge's `process.stdout.write` patch. Common causes:
+
+- A child process spawned with `stdio: 'inherit'`
+- A native addon writing directly to fd 1
+- `require('fs').writeSync(1, ...)` or similar fd-level writes
+
+Fix by redirecting the child's stdio as shown above.
 
 ## Registering Filters
 
@@ -80,9 +118,19 @@ export default function(alloy) {
 }
 ```
 
-```liquid
-{{ page.content | smartQuotes }}
-```
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="nodefilt-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="nodefilt-go">Go templates</wa-tab>
+
+<wa-tab-panel name="nodefilt-liquid" active>
+<alloy-code lang="liquid">{{ page.content | smartQuotes }}</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="nodefilt-go">
+<alloy-code lang="html">{{ smartQuotes .page.content }}</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 Filter arguments are passed as additional parameters:
 
@@ -92,9 +140,19 @@ alloy.filter("imageUrl", (path, width, format) => {
 });
 ```
 
-```liquid
-{{ "hero.jpg" | imageUrl: 800, "webp" }}
-```
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="nodeimg-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="nodeimg-go">Go templates</wa-tab>
+
+<wa-tab-panel name="nodeimg-liquid" active>
+<alloy-code lang="liquid">{{ "hero.jpg" | imageUrl: 800, "webp" }}</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="nodeimg-go">
+<alloy-code lang="html">{{ imageUrl "hero.jpg" 800 "webp" }}</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 ## Registering Shortcodes
 
@@ -176,7 +234,9 @@ See [Hook Scoping](/hooks/scoping/) for the full scoping API.
 
 ## Data Source Plugins
 
-For paginated APIs, authenticated endpoints, or databases, register a source handler:
+The built-in `rest` and `graphql` source types handle simple, unauthenticated, single-request fetches. For anything beyond that — authentication, pagination, retries, multi-endpoint aggregation, database access — use `type: "plugin"`. The plugin owns the entire data acquisition lifecycle and returns the final dataset. Alloy caches the result and injects it into the data cascade. For a comparison table, see [Built-in types vs plugin sources](/content/data-files/#built-in-types-vs-plugin-sources).
+
+Register a source handler:
 
 ```javascript
 // plugins/cms-posts.js
