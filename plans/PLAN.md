@@ -1373,7 +1373,7 @@ In dev mode, after the initial full build, the file watcher triggers incremental
 
 The `dependencies` field on virtual page objects is read by `virtualPageFromMap` and stored as `Dependencies []string` on `content.Page`. `nil` means "not declared" (always re-render); `[]string{}` means "declared as empty" (never invalidated by file changes); `[]string{"foo.html"}` means "invalidated when foo.html changes".
 
-**Malformed dependency validation**: If `dependencies` is present but not an array (e.g., `dependencies: "not-an-array"`), treat as nil (safe fallback — always re-render). If `dependencies` is an array but contains non-string entries (e.g., `dependencies: [42, true]`), skip non-string entries. If the result after filtering is an empty slice but the original array was non-empty, treat as nil (safe fallback) — malformed entries must not silently produce "never rebuild" semantics. Only an explicitly empty array (`dependencies: []`) produces the "tracked, no file deps" behavior.
+**Malformed dependency validation**: Malformed `dependencies` values produce a hard error that fails the `onPagesReady` hook invocation. This is strict-by-design: dependencies come from plugin code (not user-authored content), so malformed values indicate a plugin bug that should fail loudly rather than silently degrading to "always rebuild". Validation rules: (1) If `dependencies` is present but not an array (e.g., `dependencies: "not-an-array"`) → error: `"dependencies must be an array, got <type>"`. (2) If the array contains a non-string entry (e.g., `dependencies: [42]`) → error: `"dependencies[N] must be a string, got <type>"`. (3) If an entry resolves to an empty or current-directory path after `filepath.Clean` → error: `"dependencies[N]: empty or current-directory path"`. (4) If an entry is an absolute path → error: `"dependencies[N]: absolute paths not allowed"`. (5) If an entry escapes the project root (e.g., `"../../etc/passwd"`) → error: `"dependencies[N]: path escapes project root"`. Valid entries are normalized via `filepath.ToSlash(filepath.Clean(s))` before storage.
 
 **Untracked layout partials (issue #781)** — When a changed file under `layouts/` is not tracked as a direct layout for any page (`InvalidatedPages()` returns nil), treat it as a partial and rebuild all pages. The cache only tracks direct `page → layout` dependencies; `{% include %}` / `{% render %}` partials are resolved by the Liquid engine at render time without Alloy's knowledge. The conservative full-rebuild fallback is correct (no false negatives) and matches the `ComponentChange` pattern. Precise partial dependency tracking is a future refinement.
 
@@ -2638,8 +2638,10 @@ Dependency semantics:
 | `[]` (empty array) | Tracked — the page has explicitly declared it depends on no local files; skipped during file-change-triggered incremental rebuilds |
 | `['elements/button/demo.html']` | Tracked — re-rendered only when `elements/button/demo.html` appears in `changedFiles` |
 | `['a.html', 'b.html', 'c.html']` | Tracked — re-rendered when ANY dependency appears in `changedFiles` |
-| `"not-an-array"` or `42` (non-array) | Malformed — treated as absent (safe fallback, always re-render) |
-| `[42, true]` (all non-string entries) | Malformed — treated as absent (safe fallback, always re-render); malformed entries never produce "never rebuild" semantics |
+| `"not-an-array"` or `42` (non-array) | **Build error** — `dependencies must be an array, got <type>` |
+| `[42, true]` (non-string entries) | **Build error** — `dependencies[N] must be a string, got <type>` |
+| `["/absolute/path"]` | **Build error** — `dependencies[N]: absolute paths not allowed` |
+| `["../../etc/passwd"]` | **Build error** — `dependencies[N]: path escapes project root` |
 
 The distinction between absent `dependencies` and `dependencies: []` is intentional: absent means "I don't know what I depend on" (conservative — always re-render), while empty means "I depend on nothing file-specific" (e.g., the page is derived from fetched data via `alloy.source()`).
 

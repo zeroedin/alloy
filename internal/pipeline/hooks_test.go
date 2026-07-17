@@ -2343,6 +2343,178 @@ var _ = Describe("Build Pipeline", func() {
 	// mutations are applied back to siteData. Currently broken: fires too
 	// early with trivial one-entry map, return discarded, no cascade.
 
+	// ── Malformed virtual page dependency validation (issue #1064) ──
+	//
+	// The `dependencies` field on virtual pages supports strict validation:
+	// malformed values produce a hard error that fails the entire
+	// onPagesReady hook invocation. This is intentional — dependencies
+	// come from plugin JS code, not user-authored content, so malformed
+	// values indicate a plugin bug that should fail loudly rather than
+	// silently degrading to "always rebuild" semantics.
+	//
+	// Five validation rules are enforced:
+	//   1. Non-array value → error
+	//   2. Non-string entry → error
+	//   3. Empty or current-directory path → error
+	//   4. Absolute path → error
+	//   5. Path escaping project root → error
+
+	Describe("Malformed virtual page dependencies (issue #1064)", func() {
+
+		It("non-array dependencies value produces a build error", func() {
+			cfg := &config.Config{
+				Title:   "Malformed Deps Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/bad-deps.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function(payload) {
+    return { addPages: [{
+      path: '_virtual/bad.html',
+      url: '/bad/',
+      dependencies: 'not-an-array',
+      frontMatter: { layout: 'default', markdown: false },
+      content: '<p>bad</p>'
+    }]};
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"a non-array dependencies value (string, number, bool, object) must "+
+					"produce a build error — dependencies come from plugin code, so "+
+					"a type mismatch indicates a plugin bug that should fail loudly "+
+					"rather than silently degrading to always-rebuild (issue #1064)")
+			Expect(err.Error()).To(ContainSubstring("dependencies must be an array"),
+				"error message must identify the type mismatch so plugin authors "+
+					"can diagnose the problem (issue #1064)")
+		})
+
+		It("non-string entry in dependencies array produces a build error", func() {
+			cfg := &config.Config{
+				Title:   "Non-String Dep Entry Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/bad-entry.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function(payload) {
+    return { addPages: [{
+      path: '_virtual/bad.html',
+      url: '/bad/',
+      dependencies: [42, true],
+      frontMatter: { layout: 'default', markdown: false },
+      content: '<p>bad</p>'
+    }]};
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"non-string entries in the dependencies array (numbers, booleans) "+
+					"must produce a build error — each dependency must be a string "+
+					"file path, not a numeric or boolean value (issue #1064)")
+			Expect(err.Error()).To(ContainSubstring("must be a string"),
+				"error message must identify the entry index and expected type "+
+					"so plugin authors know which dependency is malformed (issue #1064)")
+		})
+
+		It("empty dependency path produces a build error", func() {
+			cfg := &config.Config{
+				Title:   "Empty Dep Path Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/empty-dep.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function(payload) {
+    return { addPages: [{
+      path: '_virtual/bad.html',
+      url: '/bad/',
+      dependencies: ['elements/good.html', ''],
+      frontMatter: { layout: 'default', markdown: false },
+      content: '<p>bad</p>'
+    }]};
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"an empty string dependency path must produce a build error — "+
+					"empty paths cannot be matched against changedFiles and would "+
+					"cause silent rebuild failures (issue #1064)")
+			Expect(err.Error()).To(ContainSubstring("empty or current-directory"),
+				"error message must explain why the path is invalid (issue #1064)")
+		})
+
+		It("absolute dependency path produces a build error", func() {
+			cfg := &config.Config{
+				Title:   "Absolute Dep Path Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/abs-dep.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function(payload) {
+    return { addPages: [{
+      path: '_virtual/bad.html',
+      url: '/bad/',
+      dependencies: ['/etc/passwd'],
+      frontMatter: { layout: 'default', markdown: false },
+      content: '<p>bad</p>'
+    }]};
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"absolute paths in dependencies must produce a build error — "+
+					"dependencies are project-root-relative, so absolute paths "+
+					"indicate a plugin bug (issue #1064)")
+			Expect(err.Error()).To(ContainSubstring("absolute paths not allowed"),
+				"error message must reject the absolute path with a clear reason (issue #1064)")
+		})
+
+		It("dependency path escaping project root produces a build error", func() {
+			cfg := &config.Config{
+				Title:   "Escaping Dep Path Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/escape-dep.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function(payload) {
+    return { addPages: [{
+      path: '_virtual/bad.html',
+      url: '/bad/',
+      dependencies: ['../../etc/passwd'],
+      frontMatter: { layout: 'default', markdown: false },
+      content: '<p>bad</p>'
+    }]};
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"dependency paths that escape the project root via '../' must produce "+
+					"a build error — allowing path traversal in dependencies would "+
+					"let plugins read arbitrary files outside the project (issue #1064)")
+			Expect(err.Error()).To(ContainSubstring("escapes project root"),
+				"error message must identify the path traversal attempt (issue #1064)")
+		})
+	})
+
 	Describe("onAfterValidation payload and return contract (issue #975)", func() {
 		It("receives outputPaths array and cascade object in payload", func() {
 			cfg := &config.Config{
