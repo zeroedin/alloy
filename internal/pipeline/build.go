@@ -1044,7 +1044,12 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Track virtual page RelPaths so the first BuildIncremental after
 	// a full Build() knows which pages were injected by onPagesReady
 	// (issue #970). Build→BuildIncremental cache handoff in cmd/dev.go.
+	// Skip empty RelPath — taxonomy pages have no RelPath and would
+	// pollute the virtual page set with a spurious "" entry.
 	for _, page := range pages {
+		if page.RelPath == "" {
+			continue
+		}
 		if !discoveredPaths[page.RelPath] {
 			buildCache.TrackVirtualPage(page.RelPath)
 		}

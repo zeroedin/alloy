@@ -657,8 +657,12 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	// Track virtual page RelPaths in the cache so the next incremental
 	// rebuild knows which pages were virtual (issue #970). Clear any
 	// stale virtual page tracking from the cloned previous cache first.
+	// Skip empty RelPath — taxonomy/generated pages have no RelPath.
 	buildCache.ClearVirtualPages()
 	for _, p := range allPages {
+		if p.RelPath == "" {
+			continue
+		}
 		if !discoveredPaths[p.RelPath] {
 			buildCache.TrackVirtualPage(p.RelPath)
 		}
