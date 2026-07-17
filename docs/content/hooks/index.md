@@ -87,25 +87,28 @@ This is the primary mechanism for adding computed data that templates can access
 
 #### onBeforeValidation
 
-Fires before output path conflict detection. Plugins can register additional output paths (e.g., `_redirects` or `_headers` for Netlify):
+Fires before output path conflict detection. The payload is a map of output paths to source identifiers. Plugins can add entries by mutating the map directly — the return value is discarded.
 
 ```javascript
-alloy.hook("onBeforeValidation", {}, (outputMap) => {
-  outputMap.add("_redirects", { source: "plugin:netlify-redirects" });
-  return outputMap;
+alloy.hook("onBeforeValidation", {}, (paths) => {
+  paths["_redirects"] = "plugin:netlify-redirects";
+  paths["_headers"] = "plugin:netlify-headers";
 });
 ```
+
+> **Note:** Mutations work because in-process plugin runtimes (QuickJS, WASM) share the underlying Go map. The return value is not processed — add entries by writing keys on the payload object, not by returning a new object.
 
 #### onAfterValidation
 
-Fires after validation passes. Plugins receive the validated output manifest (read-only) and the data cascade (mutable):
+Fires after validation passes. The payload is the same output path map from `onBeforeValidation`, now including any entries plugins added. The return value is discarded.
 
 ```javascript
-alloy.hook("onAfterValidation", {}, (payload) => {
-  payload.cascade.buildTimestamp = new Date().toISOString();
-  return payload;
+alloy.hook("onAfterValidation", {}, (paths) => {
+  console.log(`Validated ${Object.keys(paths).length} output paths`);
 });
 ```
+
+> **Note:** The `cascade` payload described in PLAN.md is not yet implemented. Site data injection after validation is tracked in a separate issue.
 
 ### Pre-Taxonomy Hook
 
