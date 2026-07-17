@@ -279,6 +279,13 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		page.URL = url
 	}
 
+	// Save discovered page RelPaths before onPagesReady can inject virtual
+	// pages. Used after applyBatchContext to identify which pages are virtual.
+	discoveredPaths := make(map[string]bool, len(allPages))
+	for _, p := range allPages {
+		discoveredPaths[p.RelPath] = true
+	}
+
 	allPages, bc, err := applyBatchContext(allPages, cfg, ps, permalinkCfg)
 	if err != nil {
 		return nil, err
@@ -288,6 +295,25 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	renderRelPaths := make(map[string]bool, len(pagesToRender))
 	for _, p := range pagesToRender {
 		renderRelPaths[p.RelPath] = true
+	}
+
+	// Pre-populate renderRelPaths with previous build's virtual page
+	// RelPaths so they survive the post-pagination pagesToRender rebuild
+	// (issue #970, step 3). When onPagesReady recreates these pages,
+	// they'll match the pre-populated set.
+	if previousCache != nil {
+		for _, vp := range previousCache.VirtualPagePaths() {
+			renderRelPaths[vp] = true
+		}
+	}
+
+	// Also add any newly-identified virtual pages from this build
+	// (issue #970, step 2). Covers the initial build (nil cache) and
+	// new virtual pages not in the previous cache.
+	for _, p := range allPages {
+		if !discoveredPaths[p.RelPath] {
+			renderRelPaths[p.RelPath] = true
+		}
 	}
 
 	// Capture content hashes before pagination — virtual pages have nil
@@ -625,6 +651,20 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	for pagePath, layoutPaths := range templateUsage {
 		for _, layoutPath := range layoutPaths {
 			buildCache.TrackTemplateUsage(pagePath, layoutPath)
+		}
+	}
+
+	// Track virtual page RelPaths in the cache so the next incremental
+	// rebuild knows which pages were virtual (issue #970). Clear any
+	// stale virtual page tracking from the cloned previous cache first.
+	// Skip empty RelPath — taxonomy/generated pages have no RelPath.
+	buildCache.ClearVirtualPages()
+	for _, p := range allPages {
+		if p.RelPath == "" {
+			continue
+		}
+		if !discoveredPaths[p.RelPath] {
+			buildCache.TrackVirtualPage(p.RelPath)
 		}
 	}
 
