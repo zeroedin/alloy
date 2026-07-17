@@ -102,7 +102,7 @@ Relative paths with embedded `..` segments that resolve within the project are v
 
 Error messages include the field name and array index for passthrough entries:
 
-```
+```text
 onConfig: passthrough[2].from: path "../../secrets" traverses above the project root
 ```
 

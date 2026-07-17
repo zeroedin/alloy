@@ -28,7 +28,9 @@ Download the latest release for your platform from the [GitHub releases page](ht
 ## From source
 
 ```bash
-git pull origin main
+git fetch origin
+git switch main
+git pull --ff-only origin main
 go build -o alloy .
 ```
 

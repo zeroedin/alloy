@@ -142,7 +142,7 @@ Every paginated page receives a `pagination` object in its template context:
 {{ .pagination.nextPage }}      -- URL of next page (nil if last)
 {{ .pagination.first }}         -- URL of first page
 {{ .pagination.last }}          -- URL of last page
-{{ range .pagination.items }}   -- Iterate items on the current page</alloy-code>
+{{ .pagination.items }}         -- Items on the current page (use {{ range }})</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>
 {% endraw %}

@@ -43,7 +43,7 @@ Each file is keyed by its filename without the extension. `data/team.yaml` becom
 
 Subdirectories create nested namespaces. `data/nav/main.yaml` becomes `site.data.nav.main`. Nesting depth is unlimited.
 
-```
+```text
 data/
 ├── navigation.yaml        # site.data.navigation
 ├── team.yaml              # site.data.team
@@ -60,7 +60,7 @@ Empty subdirectories are silently skipped — they produce no key in the namespa
 
 A file and a non-empty directory sharing the same stem (e.g., `nav.yaml` alongside a `nav/` directory containing data files) produces a build error:
 
-```
+```text
 [alloy] ERROR data file stem conflict: "nav.yaml" and directory "nav/" both produce key "nav"
 ```
 
@@ -186,7 +186,7 @@ Each key becomes a `site.data.*` entry. Paths are resolved relative to the proje
 
 External data files support YAML, JSON, and TOML — the same formats as `data/` directory files except CSV. Pointing an external file at a `.csv` produces a build error. Use `data/` directory placement for CSV files.
 
-External files share the same `site.data.*` namespace — moving a YAML, JSON, or TOML file between `data/` and the external config is a config change, not a template change.
+External files share the same `site.data.*` namespace. Moving a YAML, JSON, or TOML file between `data/` and external config does not require template changes when the external mapping preserves the same key.
 
 ### Collision handling
 

@@ -57,7 +57,7 @@ Alloy does not ship Node.js, manage `package.json`, or run `npm install`. If Nod
 
 Node plugins communicate with Alloy via length-prefixed JSON-RPC over stdin/stdout (LSP-style framing).
 
-```
+```text
 Content-Length: 82\r\n
 \r\n
 {"id": 1, "type": "hook", "name": "onContentTransformed", "payload": [...]}
@@ -67,7 +67,7 @@ You never interact with this protocol directly — the `alloy` API object handle
 
 ### stdout isolation
 
-Stdout is reserved for the plugin protocol. The bridge script intercepts all in-process writes before any plugin code loads:
+Stdout is reserved for the plugin protocol. The bridge script intercepts JS-level writes before any plugin code loads:
 
 - `console.log`, `console.warn`, `console.info`, `console.debug` → stderr
 - `process.stdout.write` → stderr
@@ -90,7 +90,7 @@ child.stdout.pipe(process.stderr);
 
 If you see this error:
 
-```
+```text
 plugin bridge protocol error: expected Content-Length header, got "..." —
 a plugin or one of its dependencies wrote non-protocol output to stdout
 ```

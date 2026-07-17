@@ -127,7 +127,7 @@ If two plugins register the same filter or shortcode name, the last one loaded w
 
 Tier 2 plugins (both QuickJS and WASM) run in-process in isolated memory spaces via wazero. They cannot access the filesystem, network, or system resources. No subprocess protocol — no stdout hygiene concerns. Safe to run community plugins.
 
-Tier 3 plugins run in a Node subprocess with the same permissions as the user — full filesystem and network access. Stdout is reserved for the IPC protocol; all plugin output is rerouted to stderr. See [Node Plugins — stdout isolation](/plugins/node/#stdout-isolation) for details.
+Tier 3 plugins run in a Node subprocess with the same permissions as the user — full filesystem and network access. Stdout is reserved for the IPC protocol; JS-level plugin output (`console.*`, `process.stdout.write`) is rerouted to stderr. Child processes and fd-level writes bypass this — see [Node Plugins — stdout isolation](/plugins/node/#stdout-isolation) for details.
 
 ## Error Handling
 
