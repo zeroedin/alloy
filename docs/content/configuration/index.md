@@ -23,7 +23,17 @@ Both `title` and `baseURL` are required. Other fields default to sensible values
 | `title` | string | — (required) | Site title. Available in templates as `site.title`. |
 | `baseURL` | string | — (required) | Full URL including protocol. Used by `absolute_url` filter and sitemap generation. |
 | `language` | string | `"en"` | Default site language code. Available as `site.language`. |
-| `updateCheck` | boolean | `false` | Check for newer Alloy versions when `alloy dev` or `alloy serve` starts. See [CLI Reference](/cli/#passive-update-notifications). |
+| `updateCheck` | boolean | `false` | Check for newer Alloy versions when `alloy dev` or `alloy serve` starts. See below. |
+
+### `updateCheck`
+
+When `true`, Alloy checks GitHub Releases for a newer version each time `alloy dev` or `alloy serve` starts. The check runs in the background without blocking server startup. `alloy build` never checks.
+
+Alloy caches the result at `~/.config/alloy/update-check.json` (respects `XDG_CONFIG_HOME`) for 24 hours. Within that window, Alloy reads the cache instead of making a network request. Running `alloy version --check` queries GitHub immediately and overwrites the cache, resetting the 24-hour TTL.
+
+```yaml
+updateCheck: true
+```
 
 ## `build`
 
