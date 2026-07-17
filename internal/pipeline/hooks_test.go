@@ -2253,6 +2253,35 @@ var _ = Describe("Build Pipeline", func() {
 				"error must identify onBeforeValidation as the source hook (issue #975)")
 		})
 
+		It("rejects unrecognized keys even alongside addOutputs", func() {
+			cfg := &config.Config{
+				Title:   "BeforeValidation Mixed Keys Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/mixed-keys.js": `export default function(alloy) {
+  alloy.hook('onBeforeValidation', {}, function(payload) {
+    return {
+      addOutputs: { "_redirects": "plugin:netlify" },
+      typo: true
+    };
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"onBeforeValidation must reject unrecognized keys even when "+
+					"addOutputs is also present — { addOutputs: {...}, typo: true } "+
+					"contains an unrecognized key 'typo'. Key validation must check "+
+					"ALL keys against the allowlist before processing addOutputs, "+
+					"not only when no recognized keys are found (issue #975)")
+			Expect(err.Error()).To(ContainSubstring("onBeforeValidation"),
+				"error must identify onBeforeValidation as the source hook (issue #975)")
+		})
+
 		It("no-op return from observation-only plugin does not error", func() {
 			cfg := &config.Config{
 				Title:   "BeforeValidation No-Op Test",
@@ -2445,11 +2474,13 @@ var _ = Describe("Build Pipeline", func() {
 			contentMap := map[string]string{
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body>{{ content }}<p>A: {{ site.data.keyFromHookA }}</p><p>B: {{ site.data.keyFromHookB }}</p></body></html>",
-				"plugins/multi-hook.js": `export default function(alloy) {
+				"plugins/hook-a.js": `export default function(alloy) {
   alloy.hook('onAfterValidation', {}, function(payload) {
     payload.cascade.keyFromHookA = 'alpha';
     return payload;
   });
+}`,
+				"plugins/hook-b.js": `export default function(alloy) {
   alloy.hook('onAfterValidation', {}, function(payload) {
     payload.cascade.keyFromHookB = 'beta';
     return payload;
@@ -2458,17 +2489,17 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred(),
-				"multiple onAfterValidation hooks must not error (issue #975)")
+				"multiple onAfterValidation hooks from separate plugins must not error (issue #975)")
 			Expect(result).NotTo(BeNil())
 
 			html := result.RenderedContent["index.md"]
 			Expect(html).To(ContainSubstring("A: alpha"),
-				"first hook's cascade mutation (keyFromHookA = 'alpha') must be "+
-					"applied to site data — if missing, only the last hook's return "+
-					"was applied instead of merging all hooks (issue #975)")
+				"first plugin's cascade mutation (keyFromHookA = 'alpha') must be "+
+					"applied to site data — if missing, only the last plugin's return "+
+					"was applied instead of merging all plugins (issue #975)")
 			Expect(html).To(ContainSubstring("B: beta"),
-				"second hook's cascade mutation (keyFromHookB = 'beta') must be "+
-					"applied to site data — both hooks' cascade changes must be "+
+				"second plugin's cascade mutation (keyFromHookB = 'beta') must be "+
+					"applied to site data — both plugins' cascade changes must be "+
 					"independently merged into siteData (issue #975)")
 		})
 
@@ -2494,6 +2525,36 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(err.Error()).To(ContainSubstring("cascade"),
 				"error must reference 'cascade' so plugin authors know which "+
 					"return field has the wrong type (issue #975)")
+		})
+
+		It("rejects unrecognized keys even alongside cascade", func() {
+			cfg := &config.Config{
+				Title:   "AfterValidation Mixed Keys Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/mixed-keys.js": `export default function(alloy) {
+  alloy.hook('onAfterValidation', {}, function(payload) {
+    return {
+      cascade: { injected: 'value' },
+      badKey: true
+    };
+  });
+}`,
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"onAfterValidation must reject unrecognized keys even when "+
+					"cascade is also present — { cascade: {...}, badKey: true } "+
+					"contains an unrecognized key 'badKey'. Key validation must "+
+					"check ALL keys against the allowlist (cascade, outputPaths) "+
+					"before processing cascade, not only when no recognized keys "+
+					"are found (issue #975)")
+			Expect(err.Error()).To(ContainSubstring("onAfterValidation"),
+				"error must identify onAfterValidation as the source hook (issue #975)")
 		})
 
 		It("outputPaths includes plugin-added paths from onBeforeValidation", func() {
