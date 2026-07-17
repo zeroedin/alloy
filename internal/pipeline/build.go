@@ -356,6 +356,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// ── Pass 1a: discover + prepare per batch (steps 3-9) ──
 	timer.Start("Pass 1a: discovery+collections")
 	reportStartStage(reporter, "Discovering", -1)
+	// Track filesystem-discovered page RelPaths so virtual pages injected
+	// by onPagesReady can be identified and recorded in the build cache
+	// for BuildIncremental parity (issue #970).
+	discoveredPaths := make(map[string]bool)
 	for _, lc := range langContexts {
 		// Content directory: content/<lang>/ for multi-language, content/ for single
 		batchContentDir := contentDir
@@ -416,6 +420,11 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				}
 				page.URL = url
 			}
+		}
+
+		// Snapshot discovered pages before onPagesReady can inject virtual pages (issue #970).
+		for _, p := range batchPages {
+			discoveredPaths[p.RelPath] = true
 		}
 
 		// Cascade + onPagesReady + collections + taxonomies
@@ -1030,6 +1039,14 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	for pagePath, layoutPaths := range templateUsage {
 		for _, layoutPath := range layoutPaths {
 			buildCache.TrackTemplateUsage(pagePath, layoutPath)
+		}
+	}
+	// Track virtual page RelPaths so the first BuildIncremental after
+	// a full Build() knows which pages were injected by onPagesReady
+	// (issue #970). Build→BuildIncremental cache handoff in cmd/dev.go.
+	for _, page := range pages {
+		if !discoveredPaths[page.RelPath] {
+			buildCache.TrackVirtualPage(page.RelPath)
 		}
 	}
 

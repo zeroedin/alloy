@@ -11,6 +11,7 @@ type Cache struct {
 	hashes        map[string]string
 	templates     map[string]map[string]bool // template path → set of page paths
 	directoryData map[string]map[string]bool // directory path → set of page paths
+	virtualPages  map[string]bool            // RelPaths of pages injected by onPagesReady (issue #970)
 }
 
 // New creates an empty cache with no entries.
@@ -19,6 +20,7 @@ func New() *Cache {
 		hashes:        make(map[string]string),
 		templates:     make(map[string]map[string]bool),
 		directoryData: make(map[string]map[string]bool),
+		virtualPages:  make(map[string]bool),
 	}
 }
 
@@ -54,6 +56,7 @@ func (c *Cache) Clear() {
 	c.hashes = make(map[string]string)
 	c.templates = make(map[string]map[string]bool)
 	c.directoryData = make(map[string]map[string]bool)
+	c.virtualPages = make(map[string]bool)
 }
 
 // Clone returns a deep copy of the cache. Used by BuildIncremental to
@@ -76,6 +79,9 @@ func (c *Cache) Clone() *Cache {
 			cp[p] = val
 		}
 		cloned.directoryData[k] = cp
+	}
+	for k, v := range c.virtualPages {
+		cloned.virtualPages[k] = v
 	}
 	return cloned
 }
@@ -157,4 +163,28 @@ func (c *Cache) TrackDirectoryData(pagePath, dirPath string) {
 		c.directoryData[dirPath] = pages
 	}
 	pages[pagePath] = true
+}
+
+// TrackVirtualPage records a RelPath as a virtual page injected by
+// onPagesReady. Used by BuildIncremental to pre-populate renderRelPaths
+// on the next rebuild so virtual pages aren't filtered out (issue #970).
+func (c *Cache) TrackVirtualPage(relPath string) {
+	c.virtualPages[relPath] = true
+}
+
+// ClearVirtualPages removes all virtual page tracking without affecting
+// content hashes or template tracking. Called before re-populating
+// virtual pages after each build so stale entries don't persist.
+func (c *Cache) ClearVirtualPages() {
+	c.virtualPages = make(map[string]bool)
+}
+
+// VirtualPagePaths returns all RelPaths tracked as virtual pages.
+// Returns an empty (non-nil) slice when no virtual pages are tracked.
+func (c *Cache) VirtualPagePaths() []string {
+	result := make([]string, 0, len(c.virtualPages))
+	for p := range c.virtualPages {
+		result = append(result, p)
+	}
+	return result
 }
