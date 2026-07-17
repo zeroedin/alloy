@@ -2150,18 +2150,18 @@ This is a deliberate performance tradeoff: serializing one union payload per eve
 
 Not all page filtering modes are available on all hooks. Two constraints apply:
 
-1. **Pageless hooks** (`onConfig`, `onBeforeValidation`, `onAfterValidation`, `onDataFetched`) do not receive pages — any page scope mode other than `PagesScopeNone` (`pages: false`) is rejected with a validation error. `data` and `pageFields` are also meaningless on these hooks.
+1. **Pageless hooks** (`onConfig`, `onBeforeValidation`, `onAfterValidation`, `onDataFetched`, `onAssetProcess`, `onBuildComplete`, `onDevServerStart`, `onFileChanged`) do not receive pages — any page scope mode other than `PagesScopeNone` (`pages: false`) produces a validation warning at plugin load time. `data` and `pageFields` are also meaningless on these hooks. Omitting the `pages` key (or passing `null`) defaults to `PagesScopeNone`, so `{}` and `{data: [...]}` scopes on pageless hooks do not warn.
 2. **Pre-taxonomy hooks** that do receive pages (`onPagesReady`) cannot use taxonomy filtering because taxonomy indices are built during step 10 (`BuildTaxonomies`).
 
 Per-page hooks (`onContentTransformed`, `onPageRendered`) fire once per page with a fixed payload shape — `pages`/`pageFields` scope does not apply (the pipeline already knows which page to serialize). `onPageRendered` receives an HTML string, not a page object. Scope options on per-page hooks are limited to `data` (site data subset) and `priority`.
 
 | Hook | Pipeline step | Pages in payload | Glob filter | Taxonomy filter |
 |---|:---:|:---:|:---:|:---:|
-| `onConfig` | 2 | no | **error** | **error** |
-| `onBeforeValidation` | 4 | no | **error** | **error** |
-| `onAfterValidation` | 5 | no | **error** | **error** |
-| `onDataFetched` | 6 | no | **error** | **error** |
-| `onPagesReady` | 9 | yes (batch) | yes | **error** — taxonomy indices not built yet |
+| `onConfig` | 2 | no | **warning** | **warning** |
+| `onBeforeValidation` | 4 | no | **warning** | **warning** |
+| `onAfterValidation` | 5 | no | **warning** | **warning** |
+| `onDataFetched` | 6 | no | **warning** | **warning** |
+| `onPagesReady` | 9 | yes (batch) | yes | **warning** — taxonomy indices not built yet |
 | `onContentLoaded` | 11+ | yes (batch) | yes | yes |
 | `onDataCascadeReady` | 11+ | yes (batch) | yes | yes |
 | `onContentTransformed` | 12+ | yes (per-page) | n/a | n/a |
@@ -2171,7 +2171,7 @@ Per-page hooks (`onContentTransformed`, `onPageRendered`) fire once per page wit
 | `onDevServerStart` | — | no | n/a | n/a |
 | `onFileChanged` | — | no | n/a | n/a |
 
-Registering a page scope mode on a pageless hook, or a taxonomy filter on a pre-taxonomy hook, produces a validation error at plugin load time.
+Explicitly registering a page scope mode (e.g. `pages: true`) on a pageless hook, or a taxonomy filter on a pre-taxonomy hook, produces a validation warning at plugin load time. The build proceeds — it is not a hard error. Omitting the `pages` key defaults to `PagesScopeNone` and does not trigger this warning.
 
 ### Tier 1: Go Built-in Filters
 
