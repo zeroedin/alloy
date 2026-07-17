@@ -264,12 +264,14 @@ watch:
 Alloy generates `sitemap.xml` by default. Disable it or set global defaults.
 
 ```yaml
-# Object form — set defaults
 sitemap:
   changefreq: "weekly"
   priority: 0.5
+```
 
-# Boolean form — disable entirely
+Disable sitemap generation entirely:
+
+```yaml
 sitemap: false
 ```
 
