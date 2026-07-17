@@ -959,7 +959,7 @@ Key points:
 - Collections and taxonomies are per-language: `collections.blog` for English only contains English posts
 - Languages can build in parallel (independent content trees) but initial implementation should be sequential
 
-### 5D-0: `internal/update` — 28 tests (issue #1071)
+### 5D-0: `internal/update` — 30 tests (issue #1071)
 **File**: `internal/update/update.go`
 
 Version update checking via the GitHub Releases API. Two modes: explicit (`alloy version --check`) and passive (background notification in `alloy dev`/`alloy serve`).
