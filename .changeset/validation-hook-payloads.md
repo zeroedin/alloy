@@ -8,8 +8,8 @@ type: minor
 alloy.hook("onBeforeValidation", {}, (payload) => {
   return {
     addOutputs: {
-      "_redirects": "plugin:netlify-redirects",
-      "_headers": "plugin:netlify-headers"
+      "sitemap.xml": "plugin:sitemap",
+      "robots.txt": "plugin:sitemap"
     }
   };
 });
