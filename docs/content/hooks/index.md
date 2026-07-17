@@ -213,10 +213,40 @@ alloy.hook("onPagesReady", { data: ["elements"], pages: false }, (payload) => {
 | `url` | yes | Permalink (e.g., `/demos/button/`) |
 | `frontMatter` | no | Page metadata, including taxonomy terms like `tags` |
 | `content` | no | Raw markdown content (rendered through the pipeline) |
+| `dependencies` | no | Array of project-root-relative file paths for incremental rebuild tracking |
 
 Virtual pages injected here flow through the full remaining pipeline: taxonomy collection, content rendering, layout resolution, and output writing.
 
 When using `pages: false` in the options, return `{ addPages: [...] }` to inject pages without round-tripping all existing pages through the plugin bridge.
+
+##### Virtual page dependencies
+
+During `alloy dev`, virtual pages are re-rendered on every incremental rebuild by default. Declare `dependencies` to tell Alloy which source files a virtual page depends on — it will only re-render when one of those files changes.
+
+```javascript
+alloy.hook("onPagesReady", { data: ["elements"], pages: false }, (payload) => {
+  const elements = payload.siteData.elements || [];
+  return {
+    addPages: elements.map(el => ({
+      path: `demos/${el.slug}.html`,
+      url: `/demos/${el.slug}/`,
+      dependencies: [`elements/${el.slug}/demo/index.html`],
+      frontMatter: { layout: "demo", markdown: false },
+      content: fs.readFileSync(`elements/${el.slug}/demo/index.html`, "utf-8")
+    }))
+  };
+});
+```
+
+| `dependencies` value | Incremental rebuild behavior |
+|---|---|
+| `["a.html", "b.css"]` | Re-render only when a listed file appears in the changed files |
+| `[]` (empty array) | Never re-render — no file dependencies to invalidate |
+| Omitted | Always re-render on every rebuild (default, safe fallback) |
+
+Paths must be project-root-relative strings. Absolute paths, `..` traversals above the project root, and empty strings produce build errors.
+
+On initial builds and for newly added virtual pages, `dependencies` has no effect — pages always render at least once before dependency filtering applies.
 
 ### Content Hooks
 

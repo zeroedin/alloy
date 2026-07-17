@@ -145,6 +145,8 @@ alloy.hook("onPagesReady", {
 
 The pipeline detects the `addPages` key and appends the new pages without requiring the plugin to process existing pages.
 
+Virtual pages can declare `dependencies` to optimize incremental rebuilds — see [Virtual page dependencies](/hooks/#virtual-page-dependencies).
+
 ## Hook Availability Matrix
 
 Not all scope options work on all hooks. Two constraints apply:
