@@ -54,10 +54,16 @@ func CheckLatestVersion() (string, error) {
 // the GitHub Releases API format) for the latest release tag.
 // Tests use this with httptest servers; production calls CheckLatestVersion.
 func CheckLatestVersionFrom(baseURL string) (string, error) {
-	url := strings.TrimRight(baseURL, "/") + "/repos/zeroedin/alloy/releases/latest"
+	reqURL := strings.TrimRight(baseURL, "/") + "/repos/zeroedin/alloy/releases/latest"
+
+	req, err := http.NewRequest("GET", reqURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("creating update check request: %w", err)
+	}
+	req.Header.Set("User-Agent", "alloy/update-check")
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("update check request failed: %w", err)
 	}
@@ -67,7 +73,8 @@ func CheckLatestVersionFrom(baseURL string) (string, error) {
 		return "", fmt.Errorf("update check returned HTTP %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	const maxResponseSize = 1 << 20 // 1 MB
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return "", fmt.Errorf("reading update check response: %w", err)
 	}
@@ -96,7 +103,7 @@ func LoadCache() (CacheResult, error) {
 		if os.IsNotExist(err) {
 			return CacheResult{}, nil
 		}
-		return CacheResult{}, nil
+		return CacheResult{}, fmt.Errorf("reading cache file: %w", err)
 	}
 
 	var result CacheResult
@@ -142,7 +149,7 @@ func CacheDir() string {
 	if configHome == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return filepath.Join(".", ".config", "alloy")
+			return filepath.Join(os.TempDir(), "alloy")
 		}
 		configHome = filepath.Join(home, ".config")
 	}

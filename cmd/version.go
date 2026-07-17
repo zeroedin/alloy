@@ -25,21 +25,22 @@ func newVersionCommand() *cobra.Command {
 				return nil
 			}
 
-			fmt.Fprintf(out, "alloy %s\n", Version)
-
 			latest, err := update.CheckLatestVersion()
 			if err != nil {
+				fmt.Fprintf(out, "alloy %s\n", Version)
 				fmt.Fprintf(out, "Update check failed: %s\n", err)
-				_ = update.SaveCache(update.CacheResult{})
 				return nil
 			}
 
-			_ = update.SaveCache(update.CacheResult{
+			if saveErr := update.SaveCache(update.CacheResult{
 				LatestVersion: latest,
 				CheckedAt:     time.Now(),
-			})
+			}); saveErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not save update cache: %s\n", saveErr)
+			}
 
 			if update.IsNewer(Version, latest) {
+				fmt.Fprintf(out, "alloy %s\n", Version)
 				fmt.Fprintf(out, "Update available: %s → %s\n", Version, latest)
 				fmt.Fprintf(out, "Upgrade: %s\n", update.UpgradeURL)
 			} else {
