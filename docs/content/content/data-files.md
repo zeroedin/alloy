@@ -18,6 +18,7 @@ main:
     url: "/about/"
 ```
 
+{% raw %}
 ```liquid
 <nav>
   {% for item in site.data.navigation.main %}
@@ -25,6 +26,7 @@ main:
   {% endfor %}
 </nav>
 ```
+{% endraw %}
 
 ## Supported formats
 
@@ -64,11 +66,13 @@ A file and a non-empty directory sharing the same stem (e.g., `nav.yaml` alongsi
 
 ### Accessing nested data
 
+{% raw %}
 ```liquid
 {% for item in site.data.nav.main.items %}
   <a href="{{ item.url }}">{{ item.label }}</a>
 {% endfor %}
 ```
+{% endraw %}
 
 ## JSON key order preservation
 
@@ -88,6 +92,7 @@ Iterating `site.data.sections` in a template produces keys in the order `intro`,
 
 The iteration syntax differs between template engines:
 
+{% raw %}
 <wa-tab-group>
 <wa-tab slot="nav" panel="ordered-liquid" active>Liquid</wa-tab>
 <wa-tab slot="nav" panel="ordered-go">Go templates</wa-tab>
@@ -96,12 +101,10 @@ The iteration syntax differs between template engines:
 
 In Liquid, `{% for %}` over an ordered map yields `[key, value]` pairs. Access them by index:
 
-```liquid
-{% for pair in site.data.sections %}
-  <h2>{{ pair[0] }}</h2>  <!-- key: "intro", "setup", "usage" -->
-  <p>{{ pair[1].title }}</p>
-{% endfor %}
-```
+<alloy-code lang="liquid">{% for pair in site.data.sections %}
+  &lt;h2&gt;{{ pair[0] }}&lt;/h2&gt;  &lt;!-- key: "intro", "setup", "usage" --&gt;
+  &lt;p&gt;{{ pair[1].title }}&lt;/p&gt;
+{% endfor %}</alloy-code>
 
 Dot access works for individual keys: `{{ site.data.sections.intro.title }}`
 
@@ -110,17 +113,16 @@ Dot access works for individual keys: `{{ site.data.sections.intro.title }}`
 
 Go's `{{ range }}` cannot iterate an ordered map directly. Use the `orange` helper to get `Key`/`Value` pairs in insertion order:
 
-```html
-{{ range orange .site.data.sections }}
-  <h2>{{ .Key }}</h2>
-  <p>{{ .Value.title }}</p>
-{{ end }}
-```
+<alloy-code lang="html">{{ range orange .site.data.sections }}
+  &lt;h2&gt;{{ .Key }}&lt;/h2&gt;
+  &lt;p&gt;{{ .Value.title }}&lt;/p&gt;
+{{ end }}</alloy-code>
 
 Use `oget` for single-key access: `{{ oget .site.data.sections "intro" }}`
 
 </wa-tab-panel>
 </wa-tab-group>
+{% endraw %}
 
 ## CSV files
 
@@ -135,11 +137,13 @@ Carol,PM,carol-pm
 
 Access in templates:
 
+{% raw %}
 ```liquid
 {% for person in site.data.authors %}
   <p>{{ person.name }} -- {{ person.role }}</p>
 {% endfor %}
 ```
+{% endraw %}
 
 ## Name collision detection
 
@@ -170,6 +174,7 @@ data:
 
 Each key becomes a `site.data.*` entry. Paths are resolved relative to the project root:
 
+{% raw %}
 ```liquid
 <p>Schema version: {{ site.data.cem.schemaVersion }}</p>
 
@@ -177,6 +182,7 @@ Each key becomes a `site.data.*` entry. Paths are resolved relative to the proje
   <div style="background: {{ token.value }}">{{ token.name }}</div>
 {% endfor %}
 ```
+{% endraw %}
 
 External data files support YAML, JSON, and TOML — the same formats as `data/` directory files except CSV. Pointing an external file at a `.csv` produces a build error. Use `data/` directory placement for CSV files.
 
@@ -212,11 +218,13 @@ sources:
 
 Access fetched data the same way as local files:
 
+{% raw %}
 ```liquid
 {% for post in site.data.posts %}
   <h2><a href="/blog/{{ post.slug }}/">{{ post.title }}</a></h2>
 {% endfor %}
 ```
+{% endraw %}
 
 ### Built-in types vs plugin sources
 

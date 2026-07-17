@@ -7,9 +7,11 @@ description: "Reusable content snippets that accept arguments and output HTML, e
 
 Shortcodes are reusable content snippets that accept arguments and output HTML. They let you embed rich elements in Markdown content without writing raw HTML.
 
+{% raw %}
 ```liquid
 {% youtube "dQw4w9WgXcQ" %}
 ```
+{% endraw %}
 
 ```html
 <!-- Output -->
@@ -25,59 +27,49 @@ Shortcodes are registered via [plugins](/plugins/) and used in content files as 
 
 Inline shortcodes take positional arguments and produce self-contained output:
 
+{% raw %}
 <wa-tab-group>
 <wa-tab slot="nav" panel="inline-liquid" active>Liquid</wa-tab>
 <wa-tab slot="nav" panel="inline-go">Go templates</wa-tab>
 
 <wa-tab-panel name="inline-liquid" active>
-
-```liquid
-{% youtube "dQw4w9WgXcQ" %}
-{% github_star "alloy-ssg/alloy" %}
-```
-
+<alloy-code lang="liquid">{% youtube "dQw4w9WgXcQ" %}
+{% github_star "alloy-ssg/alloy" %}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="inline-go">
-
-```html
-{{ youtube "dQw4w9WgXcQ" }}
-{{ github_star "alloy-ssg/alloy" }}
-```
-
+<alloy-code lang="html">{{ youtube "dQw4w9WgXcQ" }}
+{{ github_star "alloy-ssg/alloy" }}</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>
+{% endraw %}
 
 ### Block shortcodes
 
 Block shortcodes wrap inner content, letting you add markup around authored text:
 
+{% raw %}
 <wa-tab-group>
 <wa-tab slot="nav" panel="block-liquid" active>Liquid</wa-tab>
 <wa-tab slot="nav" panel="block-go">Go templates</wa-tab>
 
 <wa-tab-panel name="block-liquid" active>
-
-```liquid
-{% callout "warning" %}
+<alloy-code lang="liquid">{% callout "warning" %}
   Do not deploy to production without running the test suite first.
-{% endcallout %}
-```
+{% endcallout %}</alloy-code>
 
 Liquid block shortcodes close with `{% end<name> %}`.
 
 </wa-tab-panel>
 <wa-tab-panel name="block-go">
-
-```html
-{{% callout "warning" %}}
+<alloy-code lang="html">{{% callout "warning" %}}
   Do not deploy to production without running the test suite first.
-{{% /callout %}}
-```
+{{% /callout %}}</alloy-code>
 
 Go template block shortcodes use `{{% %}}` delimiters (double braces) and close with `{{% /<name> %}}`.
 
 </wa-tab-panel>
 </wa-tab-group>
+{% endraw %}
 
 ```html
 <!-- Output (both engines) -->
@@ -106,12 +98,14 @@ Both engines pass rendered HTML to the plugin callback — the same `alloy.short
 
 In Liquid templates, unquoted shortcode arguments resolve from the template context instead of being passed as literal strings:
 
+{% raw %}
 ```liquid
 {% assign vid = "dQw4w9WgXcQ" %}
 {% youtube vid %}              <!-- resolves vid to "dQw4w9WgXcQ" -->
 {% youtube "hardcoded" %}      <!-- stays literal "hardcoded" -->
 {% youtube page.videoId %}     <!-- resolves nested path -->
 ```
+{% endraw %}
 
 Dotted paths like `page.videoId` traverse nested maps in the template context.
 
@@ -119,9 +113,11 @@ Dotted paths like `page.videoId` traverse nested maps in the template context.
 
 Quoted and unquoted arguments work in the same tag:
 
+{% raw %}
 ```liquid
 {% card "primary" page.size %}
 ```
+{% endraw %}
 
 The first argument is the literal string `"primary"`. The second resolves `page.size` from the context.
 
@@ -251,9 +247,11 @@ export default function(alloy) {
 }
 ```
 
+{% raw %}
 ```liquid
 {% statusTag "beta" %}
 ```
+{% endraw %}
 
 `alloy.data` is a read-only snapshot of `site.data` injected after data files are loaded. Access it inside shortcode functions, not at the top level of the plugin file -- top-level access during evaluation returns `undefined`.
 
@@ -276,9 +274,11 @@ export default function(alloy) {
 }
 ```
 
+{% raw %}
 ```liquid
 {% image "/img/hero.jpg" "A sunset over the mountains" %}
 ```
+{% endraw %}
 
 ### Admonition block shortcode
 
@@ -301,6 +301,7 @@ export default function(alloy) {
 }
 ```
 
+{% raw %}
 ```liquid
 {% note %}
   Remember to run `alloy build` before deploying.
@@ -310,6 +311,7 @@ export default function(alloy) {
   Use `alloy dev` during local development for live reloading.
 {% endtip %}
 ```
+{% endraw %}
 
 ## Name conflicts
 
