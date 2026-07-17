@@ -218,6 +218,23 @@ Access fetched data the same way as local files:
 {% endfor %}
 ```
 
+### Built-in types vs plugin sources
+
+Built-in `rest` and `graphql` types are single-request fetchers. They send one HTTP request and parse the response. For anything more complex, use `type: "plugin"` — see [Data Source Plugins](/plugins/node/#data-source-plugins).
+
+| Capability | `rest` / `graphql` | `plugin` |
+|---|---|---|
+| Single unauthenticated GET | yes | yes |
+| Authentication headers | no | yes |
+| Pagination | no | yes |
+| Custom HTTP methods | no | yes |
+| Database access | no | yes |
+| Multi-endpoint aggregation | no | yes |
+| Retry / error handling | no | yes |
+| Environment variables | no | yes |
+| Requires Node.js | no | yes |
+| Built-in caching | yes | yes |
+
 ### Caching
 
 All fetched data is cached to `.alloy/fetch-cache/` on disk. The `cache` value sets the TTL in seconds. Cached data survives process restarts. If the TTL has not expired, the cached data is used without fetching.
