@@ -57,6 +57,7 @@ type PagesScope struct {
 	Mode       PagesScopeMode
 	Glob       string                       // path pattern when Mode == PagesScopeGlob
 	Taxonomies map[string][]string          // taxonomy → terms when Mode == PagesScopeTaxonomy
+	Explicit   bool                         // true when the plugin explicitly set a pages value
 }
 
 // HookScope declares what data subset a plugin hook needs.
@@ -274,12 +275,14 @@ func parseScopeMap(m map[string]interface{}) (*HookScope, error) {
 
 	switch v := m["pages"].(type) {
 	case bool:
+		scope.Pages.Explicit = true
 		if v {
 			scope.Pages.Mode = PagesScopeAll
 		} else {
 			scope.Pages.Mode = PagesScopeNone
 		}
 	case string:
+		scope.Pages.Explicit = true
 		if v == "**" {
 			scope.Pages.Mode = PagesScopeAll
 		} else {
@@ -287,6 +290,7 @@ func parseScopeMap(m map[string]interface{}) (*HookScope, error) {
 			scope.Pages.Glob = v
 		}
 	case map[string]interface{}:
+		scope.Pages.Explicit = true
 		scope.Pages.Mode = PagesScopeTaxonomy
 		scope.Pages.Taxonomies = make(map[string][]string)
 		for k, val := range v {
@@ -306,7 +310,7 @@ func parseScopeMap(m map[string]interface{}) (*HookScope, error) {
 			scope.Pages.Taxonomies[k] = terms
 		}
 	case nil:
-		scope.Pages.Mode = PagesScopeAll
+		// Omitted pages defaults to None — plugins must explicitly opt in to page serialization
 	default:
 		return nil, fmt.Errorf("unsupported pages type %T — expected boolean, string, or object", m["pages"])
 	}

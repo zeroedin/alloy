@@ -25,8 +25,12 @@ func computeUnionScope(scopes []*plugin.HookScope) *plugin.HookScope {
 	hasAll := false
 	hasGlob := false
 	hasTaxonomy := false
+	allPagesExplicit := true
 	var globs []string
 	for _, s := range scopes {
+		if !s.Pages.Explicit {
+			allPagesExplicit = false
+		}
 		switch s.Pages.Mode {
 		case plugin.PagesScopeNone:
 			// Hook opted out of pages — does not widen the union.
@@ -75,6 +79,7 @@ func computeUnionScope(scopes []*plugin.HookScope) *plugin.HookScope {
 	} else if hasTaxonomy {
 		union.Pages.Mode = plugin.PagesScopeTaxonomy
 	}
+	union.Pages.Explicit = allPagesExplicit
 
 	allFields := false
 	fieldSet := make(map[string]bool)
@@ -260,7 +265,7 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 		return nil
 	}
 	scope := computeUnionScope(hooks.ScopeFor(plugin.OnContentTransformed))
-	if scope != nil && scope.Pages.Mode == plugin.PagesScopeNone {
+	if scope != nil && scope.Pages.Mode == plugin.PagesScopeNone && scope.Pages.Explicit {
 		return nil
 	}
 	for _, page := range pages {
