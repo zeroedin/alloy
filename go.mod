@@ -4,6 +4,7 @@ go 1.25.4
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/Notifuse/liquidgo v0.0.0-20260131093335-c0b2d83983a7
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/bytedance/sonic v1.15.1
@@ -24,7 +25,6 @@ require (
 replace github.com/Notifuse/liquidgo => github.com/zeroedin/liquidgo v0.0.0-20260512043442-13cfbb81b595
 
 require (
-	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic/loader v0.5.1 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect

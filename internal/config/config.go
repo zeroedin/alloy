@@ -35,6 +35,15 @@ type Config struct {
 	Languages     map[string]*LanguageConfig   `yaml:"languages" toml:"languages" json:"languages"`
 	Collections   map[string]*CollectionConfig `yaml:"collections" toml:"collections" json:"collections"`
 	SSR           *SSRConfig                   `yaml:"ssr" toml:"ssr" json:"ssr"`
+	UpdateCheck   *bool                        `yaml:"updateCheck" toml:"updateCheck" json:"updateCheck"`
+}
+
+// UpdateCheckValue returns the effective UpdateCheck setting.
+// nil (omitted) defaults to false — no outbound network request
+// without explicit opt-in. Only explicit true enables update checking.
+// This is the inverse of other *bool config fields (which default to true).
+func (c *Config) UpdateCheckValue() bool {
+	return c.UpdateCheck != nil && *c.UpdateCheck
 }
 
 // BuildConfig holds output directory and clean settings.

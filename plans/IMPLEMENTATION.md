@@ -959,12 +959,30 @@ Key points:
 - Collections and taxonomies are per-language: `collections.blog` for English only contains English posts
 - Languages can build in parallel (independent content trees) but initial implementation should be sequential
 
+### 5D-0: `internal/update` — 30 tests (issue #1071)
+**File**: `internal/update/update.go`
+
+Version update checking via the GitHub Releases API. Two modes: explicit (`alloy version --check`) and passive (background notification in `alloy dev`/`alloy serve`).
+
+- **`UpgradeURL` constant**: `"https://alloyproject.org/docs/upgrade/"` — stable URL printed in update notifications. Must not change across releases. The docs page at this URL is tracked in issue #1072.
+- **`IsNewer(current, latest string) bool`**: Semantic version comparison. Strip leading `v` prefix from both strings. Split on `-` to separate the version core from pre-release metadata. Parse the core as major.minor.patch integers. When cores are equal: stable (no pre-release) is newer than any pre-release; between two pre-releases, compare the numeric suffix (e.g., `rc2 > rc1`). When cores differ, compare major.minor.patch normally — pre-release metadata is irrelevant. A stable version is never older than its own pre-release (`0.5.0` is newer than `0.5.0-rc1`). Return `false` if either string is unparseable.
+- **`CheckLatestVersion() (string, error)`**: Hit `GET https://api.github.com/repos/zeroedin/alloy/releases/latest` with a 10-second `http.Client` timeout. Parse the JSON response for `tag_name`. Return error for non-200 status, invalid JSON, or empty `tag_name`. Unauthenticated — subject to GitHub's 60 requests/hour rate limit.
+- **`CheckLatestVersionFrom(baseURL string) (string, error)`**: Same as `CheckLatestVersion` but uses the given base URL. Tests use this with `httptest.NewServer` to avoid hitting the real GitHub API.
+- **`CacheResult` struct**: `LatestVersion string`, `CheckedAt time.Time`. JSON tags for `bytedance/sonic` serialization.
+- **`LoadCache() (CacheResult, error)`**: Read `update-check.json` from `CacheDir()`. Return zero `CacheResult` and nil error for missing file (`os.IsNotExist`). Return zero `CacheResult` and nil error for corrupt JSON (treat as cache miss, not an error). Return error only for unexpected I/O failures.
+- **`SaveCache(result CacheResult) error`**: Write `update-check.json` to `CacheDir()`. Create the directory via `os.MkdirAll` if it doesn't exist.
+- **`ShouldCheck(cached CacheResult) bool`**: Return `true` if `CheckedAt` is zero, `LatestVersion` is empty, or `time.Since(CheckedAt) >= 24 * time.Hour`.
+- **`CacheDir() string`**: Return `filepath.Join(xdgConfigHome, "alloy")` where `xdgConfigHome` is `$XDG_CONFIG_HOME` if set, otherwise `~/.config` (via `os.UserHomeDir()`).
+- Use `bytedance/sonic` for JSON (project convention — not `encoding/json`).
+
 ### 5D: `cmd/` + `main.go` — 15 tests
 **Files**: `main.go`, `root.go`, `build.go`, `serve.go`, `init.go`, `version.go`
 
 - **`main.go` exit code handling (issue #28)**: `main()` must check the error return from `cmd.Execute()` and call `os.Exit(1)` on failure. Without this, all CLI errors exit 0, breaking scripts and CI. Current code discards the error.
 - Register Cobra flags (--config, --output, --root, --verbose, --quiet) on root; (--port, --no-drafts, --refetch) on dev; (--port, --refetch) on serve ✅ done (except --root, dev/serve split)
 - `Version`: Set to non-empty string ✅ done
+- **`version.go` `--check` flag (issue #1071)**: Register a `--check` bool flag on the version subcommand. When set: (1) print `alloy <version>`, (2) call `update.CheckLatestVersionFrom` (or `CheckLatestVersion` in production), (3) if error → print `Update check failed: <err>` and return nil (exit 0, not a build error), (4) if `update.IsNewer(Version, latest)` → print `Update available: <current> → <latest>` and `Upgrade: <update.UpgradeURL>`, (5) if not newer → append `(up to date)` to the version line, (6) save result via `update.SaveCache()`. Without `--check`, behave exactly as today.
+- **Passive update notification wiring (issue #1071)**: In `cmd/dev.go` and `cmd/serve.go`, after the `Serving at http://localhost:...` line, if `cfg.UpdateCheckValue()` is true and `!cfg.Quiet`: (1) load cache via `update.LoadCache()`, (2) if `update.ShouldCheck(cached)` → launch a goroutine that calls `update.CheckLatestVersion()`, saves the cache, and prints `Update available: <current> → <latest> — <update.UpgradeURL>` to the command's stdout if an update is available, (3) if cache is fresh and has a newer version → print the notification immediately (no goroutine needed), (4) all errors silently swallowed. **`alloy build` must NOT import or reference `internal/update`** — tested via source code assertion in `cmd_test.go`.
 
 #### `cmd/init.go` (issue #26)
 

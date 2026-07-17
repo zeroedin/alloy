@@ -1161,4 +1161,75 @@ permalinks:
 				"ApplyDefaults must still apply after loading a legacy config")
 		})
 	})
+
+	// ── UpdateCheck config (issue #1071) ─────────────────────────────
+	// updateCheck: true/false in alloy.config.yaml enables/disables
+	// the passive version update notification in alloy dev and alloy serve.
+	// Default is false (off) — no outbound network request unless the user
+	// explicitly opts in. Uses *bool so we can distinguish "not set" (nil →
+	// false) from "explicitly true". This is the inverse default of other
+	// *bool config fields (which default to true).
+
+	Describe("UpdateCheck config (issue #1071)", func() {
+		It("UpdateCheckValue returns false when UpdateCheck is nil (default)", func() {
+			cfg := &config.Config{}
+			Expect(cfg.UpdateCheckValue()).To(BeFalse(),
+				"nil UpdateCheck (omitted from config) must default to false — "+
+					"no outbound network request without explicit opt-in (issue #1071)")
+		})
+
+		It("UpdateCheckValue returns true when explicitly set to true", func() {
+			cfg := &config.Config{UpdateCheck: boolPtr(true)}
+			Expect(cfg.UpdateCheckValue()).To(BeTrue(),
+				"explicit updateCheck: true must enable passive update notifications")
+		})
+
+		It("UpdateCheckValue returns false when explicitly set to false", func() {
+			cfg := &config.Config{UpdateCheck: boolPtr(false)}
+			Expect(cfg.UpdateCheckValue()).To(BeFalse(),
+				"explicit updateCheck: false must disable update notifications")
+		})
+
+		It("parses updateCheck: true from YAML config", func() {
+			dir := GinkgoT().TempDir()
+			configContent := `title: "Update Check Test"
+baseURL: "https://example.com"
+updateCheck: true
+`
+			Expect(os.WriteFile(filepath.Join(dir, "alloy.config.yaml"), []byte(configContent), 0644)).To(Succeed())
+
+			cfg, err := config.Load(filepath.Join(dir, "alloy.config.yaml"))
+			Expect(err).NotTo(HaveOccurred(),
+				"updateCheck: true must parse without error")
+			Expect(cfg.UpdateCheck).NotTo(BeNil(),
+				"UpdateCheck *bool must be non-nil when explicitly set in config")
+			Expect(cfg.UpdateCheckValue()).To(BeTrue(),
+				"updateCheck: true in YAML must result in UpdateCheckValue() == true")
+		})
+
+		It("defaults to false when updateCheck is omitted from config", func() {
+			cfg, err := config.LoadWithDefaults("testdata/minimal.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.UpdateCheck).To(BeNil(),
+				"omitted updateCheck must remain nil after LoadWithDefaults — "+
+					"ApplyDefaults must not set it to a non-nil value")
+			Expect(cfg.UpdateCheckValue()).To(BeFalse(),
+				"omitted updateCheck must default to false via UpdateCheckValue()")
+		})
+
+		It("preserves updateCheck: true through LoadWithDefaults", func() {
+			dir := GinkgoT().TempDir()
+			configContent := `title: "Update Check Defaults"
+baseURL: "https://example.com"
+updateCheck: true
+`
+			Expect(os.WriteFile(filepath.Join(dir, "alloy.config.yaml"), []byte(configContent), 0644)).To(Succeed())
+
+			cfg, err := config.LoadWithDefaults(filepath.Join(dir, "alloy.config.yaml"))
+			Expect(err).NotTo(HaveOccurred(),
+				"LoadWithDefaults must handle updateCheck: true without error")
+			Expect(cfg.UpdateCheckValue()).To(BeTrue(),
+				"updateCheck: true must survive the full Load → ApplyDefaults path")
+		})
+	})
 })
