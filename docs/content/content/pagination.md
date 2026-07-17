@@ -121,19 +121,33 @@ pagination:
 
 Every paginated page receives a `pagination` object in its template context:
 
-```liquid
-{{ pagination.pageNumber }}    -- Current page number (1-based)
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="pagctx-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="pagctx-go">Go templates</wa-tab>
+
+<wa-tab-panel name="pagctx-liquid" active>
+<alloy-code lang="liquid">{{ pagination.pageNumber }}    -- Current page number (1-based)
 {{ pagination.totalPages }}    -- Total page count
 {{ pagination.previousPage }}  -- URL of previous page (nil if first)
 {{ pagination.nextPage }}      -- URL of next page (nil if last)
 {{ pagination.first }}         -- URL of first page
 {{ pagination.last }}          -- URL of last page
-{{ pagination.items }}         -- Items on the current page
-```
+{{ pagination.items }}         -- Items on the current page</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="pagctx-go">
+<alloy-code lang="html">{{ .pagination.pageNumber }}    -- Current page number (1-based)
+{{ .pagination.totalPages }}    -- Total page count
+{{ .pagination.previousPage }}  -- URL of previous page (nil if first)
+{{ .pagination.nextPage }}      -- URL of next page (nil if last)
+{{ .pagination.first }}         -- URL of first page
+{{ .pagination.last }}          -- URL of last page
+{{ range .pagination.items }}   -- Iterate items on the current page</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 The `as` variable is an alias for `pagination.items`. Both refer to the same data.
-
-The same fields are available in the Go template engine with dot syntax: `{% raw %}{{ .pagination.pageNumber }}{% endraw %}`, `{% raw %}{{ range .pagination.items }}{% endraw %}`, and so on.
 
 ## Front matter interpolation
 
