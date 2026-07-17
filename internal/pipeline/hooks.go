@@ -445,15 +445,19 @@ func extractVirtualPage(raw interface{}, index int) (*content.Page, error) {
 		vp.Body = []byte(rawContent)
 	}
 	if depsRaw, ok := pageMap["dependencies"]; ok {
-		if depsArr, ok := depsRaw.([]interface{}); ok {
-			deps := make([]string, 0, len(depsArr))
-			for _, d := range depsArr {
-				if s, ok := d.(string); ok {
-					deps = append(deps, s)
-				}
-			}
-			vp.Dependencies = deps
+		depsArr, ok := depsRaw.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("dependencies must be an array, got %T", depsRaw)
 		}
+		deps := make([]string, 0, len(depsArr))
+		for i, d := range depsArr {
+			s, ok := d.(string)
+			if !ok {
+				return nil, fmt.Errorf("dependencies[%d] must be a string, got %T", i, d)
+			}
+			deps = append(deps, s)
+		}
+		vp.Dependencies = deps
 	}
 	return vp, nil
 }

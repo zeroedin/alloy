@@ -96,6 +96,8 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	// Determine which pages need rebuilding
 	var pagesToRender []*content.Page
 	skipped := 0
+	layoutInvalidated := make(map[string]bool)
+	untrackedPartial := false
 
 	if previousCache == nil {
 		// No cache — render everything
@@ -115,8 +117,6 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 
 		// Find pages invalidated by layout changes
-		layoutInvalidated := make(map[string]bool)
-		untrackedPartial := false
 		for _, layoutPath := range layoutChanges {
 			pages := previousCache.InvalidatedPages(layoutPath)
 			if pages == nil {
@@ -304,15 +304,31 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	//   - nil Dependencies → always render (safe fallback; unknown deps)
 	//   - empty Dependencies → skip (tracked, no file deps to invalidate)
 	//   - non-empty Dependencies → render only if a dep is in changedFiles
+	// Also re-render when a layout change invalidates the page, or when
+	// the page is new (not in previous cache).
 	changedSet := make(map[string]bool, len(changedFiles))
 	for _, f := range changedFiles {
 		changedSet[filepath.ToSlash(f)] = true
+	}
+	previousVirtualSet := make(map[string]bool)
+	if previousCache != nil {
+		for _, relPath := range previousCache.VirtualPagePaths() {
+			previousVirtualSet[relPath] = true
+		}
 	}
 	for _, p := range allPages {
 		if discoveredPaths[p.RelPath] {
 			continue
 		}
 		if previousCache == nil {
+			renderRelPaths[p.RelPath] = true
+			continue
+		}
+		if !previousVirtualSet[p.RelPath] {
+			renderRelPaths[p.RelPath] = true
+			continue
+		}
+		if untrackedPartial || layoutInvalidated[p.RelPath] {
 			renderRelPaths[p.RelPath] = true
 			continue
 		}
