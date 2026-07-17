@@ -88,3 +88,5 @@ sections:
     items:
       - title: "Commands"
         path: "/cli/"
+      - title: "Upgrading"
+        path: "/upgrade/"
