@@ -1082,20 +1082,28 @@ If two or more sources target the same output path, the build fails immediately 
 
 Two plugin hooks surround the validation pass:
 
-- **`onBeforeValidation`** — Plugins can register additional output paths (e.g., a plugin that generates a `_headers` file or `_redirects` file for Netlify). Payload: the collected output path map. Plugins append entries. Runs before conflict detection.
-- **`onAfterValidation`** — Plugins can inspect the full validated output map (all sources resolved, no conflicts). Read-only. Useful for plugins that need the complete output manifest before the build starts (e.g., pre-generating a service worker file list, or logging the total output count).
+- **`onBeforeValidation`** — Plugins can register additional output paths (e.g., a plugin that generates a `_headers` file or `_redirects` file for Netlify). Payload: `{ outputPaths: ["about/index.html", "blog/index.html", ...] }` — array of all computed output file paths. Return: `{ addOutputs: { "_redirects": "plugin:netlify-redirects" } }` — map of output-file-path → source-label. Added paths feed into conflict detection. Runs immediately before `DetectConflicts()` (after output path computation, after `onPagesReady`, after taxonomy collection and pagination). Return without `addOutputs` key is a no-op (observation only). Unrecognized return keys produce an error. `addOutputs` value must be a map — non-map produces an error. This hook is additive only — plugins cannot remove or modify existing output paths.
+- **`onAfterValidation`** — Plugins receive the validated output manifest and the site data cascade. Payload: `{ outputPaths: ["about/index.html", ...], cascade: { ...site data... } }`. `outputPaths` is read-only (includes plugin-added paths from `onBeforeValidation`). `cascade` is mutable — changes are applied back to site data. Return: `{ cascade: { ...modified data... } }` — merged into `siteData`. Changes to `outputPaths` in the return are ignored. Return without `cascade` key is a no-op (observation only). Unrecognized return keys produce an error (even alongside recognized keys like `cascade`). Fires immediately after conflict detection passes. This is the point where plugins can inspect what pages will be built, inject data into the cascade for templates, compute derived values, or validate the merged dataset. The cascade is trustworthy here — validation has passed, all pages are confirmed valid.
 
 ```javascript
-// Plugin registering additional output paths
-alloy.on("onBeforeValidation", {}, (outputMap) => {
-  outputMap.add("_redirects", { source: "plugin:netlify-redirects" });
-  outputMap.add("_headers", { source: "plugin:netlify-headers" });
-  return outputMap;
+// Plugin registering additional output paths before conflict detection
+alloy.hook("onBeforeValidation", {}, (payload) => {
+  // payload.outputPaths contains all computed output file paths
+  return {
+    addOutputs: {
+      "_redirects": "plugin:netlify-redirects",
+      "_headers": "plugin:netlify-headers"
+    }
+  };
 });
 
-// Plugin inspecting the validated manifest
-alloy.on("onAfterValidation", {}, (outputMap) => {
-  console.log(`Build will produce ${outputMap.size} output files`);
+// Plugin inspecting the validated manifest and injecting cascade data
+alloy.hook("onAfterValidation", {}, (payload) => {
+  // payload.outputPaths is read-only — all validated output paths
+  // payload.cascade is the site data object — mutable
+  payload.cascade.buildTimestamp = new Date().toISOString();
+  payload.cascade.totalOutputs = payload.outputPaths.length;
+  return payload;  // cascade changes are applied back to siteData
 });
 ```
 
@@ -1250,9 +1258,9 @@ For sites with translated content in a CMS or database, the existing `sources` +
 3. **Front Matter Extraction** — Parse YAML/TOML/JSON front matter from each content file (fast: reads front matter only, not body). Files without front matter delimiters are a build error.
 4. **Data Cascade Assembly** — Load `data/` globals, `_data.yaml` per-directory, merge with front matter per-file in defined order. This data is reused by Phase 1 — no duplicate reads.
 5. **Output Path Computation** — Compute all output paths from content (using permalink patterns + front matter data), static, passthrough, auto-generated files, aliases, taxonomy pages, and pagination
-6. **Plugin Hook: `onBeforeValidation`** — Plugins register additional output paths
-7. **Conflict Detection** — Check for duplicate output paths across all sources, including taxonomy page URLs for render-enabled taxonomies (issue #695; taxonomies with `render: false` are excluded — they build collection data but generate no output pages). Fail fast with clear error if conflicts found. **Must run before content rendering** (issue #690) — all inputs (`page.URL`, `page.Aliases`, `page.Outputs`, taxonomy index/term URLs) are finalized after `onPagesReady` and taxonomy collection, so conflicts can be caught in milliseconds instead of after 10+ seconds of rendering on large sites. If a conflict is detected, the build fails immediately — no rendering work is performed.
-8. **Plugin Hook: `onAfterValidation`** — Plugins receive the validated output manifest (read-only) and the assembled data cascade (mutable, shared pointer). This is the point where plugins can inspect what pages will be built, inject data into the cascade for templates, compute derived values, or validate the merged dataset. The cascade is trustworthy here — validation has passed, all pages are confirmed valid.
+6. **Plugin Hook: `onBeforeValidation`** — Fires immediately before conflict detection with `{ outputPaths: [...] }` — array of all computed output file paths (pages, aliases, taxonomy pages, output format variants). Plugins can return `{ addOutputs: { "path": "source" } }` to register additional output paths (e.g., Netlify `_redirects`). Added paths feed into conflict detection. Return without `addOutputs` is a no-op (observation only).
+7. **Conflict Detection** — Check for duplicate output paths across all sources, including taxonomy page URLs for render-enabled taxonomies (issue #695; taxonomies with `render: false` are excluded — they build collection data but generate no output pages) and plugin-added output paths from `onBeforeValidation`. Fail fast with clear error if conflicts found. **Must run before content rendering** (issue #690) — all inputs (`page.URL`, `page.Aliases`, `page.Outputs`, taxonomy index/term URLs) are finalized after `onPagesReady` and taxonomy collection, so conflicts can be caught in milliseconds instead of after 10+ seconds of rendering on large sites. If a conflict is detected, the build fails immediately — no rendering work is performed.
+8. **Plugin Hook: `onAfterValidation`** — Fires immediately after conflict detection passes with `{ outputPaths: [...], cascade: { ...siteData... } }`. `outputPaths` is read-only (includes plugin-added paths from step 6). `cascade` is the site data object — mutable. Return `{ cascade: { ...modified... } }` to inject data into site data for templates. Changes to `outputPaths` in the return are ignored. Return without `cascade` is a no-op (observation only).
 
 **Phase 1a — Per-Batch Processing (runs once per language batch)**
 
@@ -2521,8 +2529,8 @@ Fire **once per build**. Payload is a JSON-serializable representation of the Go
 | Event | Payload | Returns | When |
 |---|---|---|---|
 | `onConfig` | `{ title, baseURL, build: { output, clean }, structure: { ... }, passthrough: [...], plugins: { workers, timeout }, ... }` | Same shape (mutable allowlist applied — see below) | After config loaded, before validation. Plugin mutates config fields in the mutable allowlist. |
-| `onBeforeValidation` | `{ paths: ["/about/", "/blog/", ...] }` | Same + additions | Before conflict detection. Plugin adds output paths. |
-| `onAfterValidation` | `{ paths: [...], cascade: { ... } }` | Cascade portion only | After validation. Plugin injects cascade data. |
+| `onBeforeValidation` | `{ outputPaths: ["about/index.html", "blog/index.html", ...] }` | `{ addOutputs: { "path": "source" } }` | Before conflict detection. Plugin adds output paths via `addOutputs` map. Added paths feed into `DetectConflicts()`. Return without `addOutputs` is no-op. Unrecognized keys produce error even alongside `addOutputs`. |
+| `onAfterValidation` | `{ outputPaths: [...], cascade: { ... } }` | `{ cascade: { ... } }` | After validation passes. Plugin inspects output manifest and injects cascade data. `outputPaths` is read-only (changes ignored). `cascade` changes merged into `siteData`. Return without `cascade` is no-op. Unrecognized keys produce error even alongside `cascade`. |
 | `onDataFetched` | `{ <sourceName>: <data>, ... }` | Same shape | After external data fetched. Plugin modifies fetched data. |
 
 **onConfig mutation semantics (issue #973)** — `onConfig` fires after config loading and defaults but before validation, output-dir resolution, and worker-pool spawn. The plugin receives the full config as a JSON object and returns a modified copy. The pipeline applies returned changes back to `cfg` for a **mutable allowlist** only:
@@ -2609,15 +2617,18 @@ export default function(alloy) {
         return data;  // returned value replaces the pipeline's data
     });
 
-    // Inject data into the cascade after validation
-    alloy.on("onAfterValidation", {}, (payload) => {
+    // Inject computed data into the cascade after validation
+    alloy.hook("onAfterValidation", {}, (payload) => {
+        // payload.outputPaths is read-only — validated output paths
+        // payload.cascade is the site data — mutable
         payload.cascade.buildTimestamp = new Date().toISOString();
-        return payload;  // cascade changes are applied
+        payload.cascade.totalOutputs = payload.outputPaths.length;
+        return payload;  // cascade changes are merged back into siteData
     });
 }
 ```
 
-Templates can then use `{{ site.data.teamCount }}`, `{{ site.data.teamByDepartment }}`, and `{{ site.data.buildTimestamp }}`.
+Templates can then use `{{ site.data.teamCount }}`, `{{ site.data.teamByDepartment }}`, `{{ site.data.buildTimestamp }}`, and `{{ site.data.totalOutputs }}`.
 
 #### Read-only hooks (return value ignored)
 
