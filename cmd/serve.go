@@ -104,6 +104,9 @@ func newServeCommand() *cobra.Command {
 
 			if !cfg.Quiet {
 				fmt.Fprintf(cmd.OutOrStdout(), "Serving at http://localhost:%d\n", actualPort)
+				if cfg.UpdateCheckValue() {
+					maybeNotifyUpdate(cmd.OutOrStdout(), Version)
+				}
 			}
 
 			// Set up file watcher for live rebuild

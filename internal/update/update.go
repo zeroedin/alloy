@@ -115,7 +115,8 @@ func LoadCache() (CacheResult, error) {
 }
 
 // SaveCache writes the check result to the XDG config directory.
-// Creates the directory if needed.
+// Creates the directory if needed. Uses write-then-rename for
+// atomicity so concurrent goroutines cannot corrupt the file.
 func SaveCache(result CacheResult) error {
 	dir := CacheDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -127,7 +128,27 @@ func SaveCache(result CacheResult) error {
 		return fmt.Errorf("marshaling cache result: %w", err)
 	}
 
-	return os.WriteFile(filepath.Join(dir, cacheFileName), data, 0644)
+	tmp, err := os.CreateTemp(dir, "update-check-*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating temp cache file: %w", err)
+	}
+	tmpPath := tmp.Name()
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("writing temp cache file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("closing temp cache file: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, filepath.Join(dir, cacheFileName)); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("renaming cache file: %w", err)
+	}
+	return nil
 }
 
 // ShouldCheck returns true if the cache is missing, expired (>24h),
