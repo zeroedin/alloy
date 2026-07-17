@@ -176,7 +176,9 @@ See [Hook Scoping](/hooks/scoping/) for the full scoping API.
 
 ## Data Source Plugins
 
-For paginated APIs, authenticated endpoints, or databases, register a source handler:
+The built-in `rest` and `graphql` source types handle simple, unauthenticated, single-request fetches. For anything beyond that — authentication, pagination, retries, multi-endpoint aggregation, database access — use `type: "plugin"`. The plugin owns the entire data acquisition lifecycle and returns the final dataset. Alloy caches the result and injects it into the data cascade. For a comparison table, see [Built-in types vs plugin sources](/content/data-files/#built-in-types-vs-plugin-sources).
+
+Register a source handler:
 
 ```javascript
 // plugins/cms-posts.js
