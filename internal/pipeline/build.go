@@ -624,15 +624,22 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			}
 			for _, rp := range returnedPages {
 				if pageMap, ok := toGoMap(rp); ok {
+					returnedPath, _ := pageMap["path"].(string)
+					if !scopedPaths[returnedPath] {
+						continue
+					}
+					origIdx, found := pathToIdx[returnedPath]
+					if !found {
+						continue
+					}
 					if fm, ok := toGoMap(pageMap["frontMatter"]); ok {
-						returnedPath, _ := pageMap["path"].(string)
-						if !scopedPaths[returnedPath] {
-							continue
+						for k, v := range fm {
+							pages[origIdx].FrontMatter[k] = v
 						}
-						if origIdx, ok := pathToIdx[returnedPath]; ok {
-							for k, v := range fm {
-								pages[origIdx].FrontMatter[k] = v
-							}
+					}
+					if htmlVal, ok := pageMap["html"]; ok {
+						if htmlStr, ok := htmlVal.(string); ok {
+							pages[origIdx].SetRenderedBody([]byte(htmlStr))
 						}
 					}
 				}
