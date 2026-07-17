@@ -102,6 +102,37 @@ Both engines pass rendered HTML to the plugin callback — the same `alloy.short
 
 `{{% %}}` delimiters inside fenced code blocks and inline `<code>` elements are treated as literal text, not shortcode invocations.
 
+## Variable arguments (Liquid)
+
+In Liquid templates, unquoted shortcode arguments resolve from the template context instead of being passed as literal strings:
+
+```liquid
+{% assign vid = "dQw4w9WgXcQ" %}
+{% youtube vid %}              <!-- resolves vid to "dQw4w9WgXcQ" -->
+{% youtube "hardcoded" %}      <!-- stays literal "hardcoded" -->
+{% youtube page.videoId %}     <!-- resolves nested path -->
+```
+
+Dotted paths like `page.videoId` traverse nested maps in the template context.
+
+### Mixed arguments
+
+Quoted and unquoted arguments work in the same tag:
+
+```liquid
+{% card "primary" page.size %}
+```
+
+The first argument is the literal string `"primary"`. The second resolves `page.size` from the context.
+
+### Fallback behavior
+
+When an unquoted argument does not match any context variable, it falls back to its literal token string. `{% youtube nonexistent %}` passes `"nonexistent"` to the shortcode callback. This preserves backward compatibility — existing shortcodes that used unquoted literal strings continue to work.
+
+### Empty return
+
+Shortcodes that return an empty string produce no output. Previous versions emitted an `<alloy-shortcode>` placeholder element — this is no longer the case.
+
 ## Registering shortcodes
 
 Shortcodes are defined in plugin files placed in the `plugins/` directory. No configuration is needed -- drop a file in `plugins/` and its shortcodes are immediately available in all content files.
