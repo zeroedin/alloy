@@ -901,6 +901,69 @@ taxonomies:
 			Expect(cmd.Version).NotTo(BeEmpty(),
 				"Version must be set (typically via ldflags at build time)")
 		})
+
+		// ── alloy version --check (issue #1071) ─────────────────────
+		// The --check flag queries the GitHub Releases API for the latest
+		// version and prints whether an update is available. It must be
+		// registered on the version subcommand, not on root.
+
+		It("version command has --check flag registered", func() {
+			root := cmd.NewRootCommand()
+			versionCmd, _, err := root.Find([]string{"version"})
+			Expect(err).NotTo(HaveOccurred(),
+				"version command must be registered on root")
+			checkFlag := versionCmd.Flags().Lookup("check")
+			Expect(checkFlag).NotTo(BeNil(),
+				"--check flag must be registered on the version command — "+
+					"this flag triggers an explicit update check against the "+
+					"GitHub Releases API (issue #1071)")
+			Expect(checkFlag.DefValue).To(Equal("false"),
+				"--check must default to false — without it, alloy version "+
+					"prints the version and exits (existing behavior)")
+		})
+
+		It("version command without --check does not print update info", func() {
+			root := cmd.NewRootCommand()
+			root.SilenceErrors = true
+			root.SilenceUsage = true
+			var buf bytes.Buffer
+			root.SetOut(&buf)
+			root.SetArgs([]string{"version"})
+
+			err := root.Execute()
+			Expect(err).NotTo(HaveOccurred(),
+				"alloy version without --check must succeed")
+			output := buf.String()
+			Expect(output).To(ContainSubstring("alloy"),
+				"must print the version string")
+			Expect(output).NotTo(ContainSubstring("Update available"),
+				"without --check, must not print update information — "+
+					"the existing behavior is a simple version print")
+			Expect(output).NotTo(ContainSubstring("up to date"),
+				"without --check, must not print update status")
+		})
+	})
+
+	// ── alloy build must not reference update package (issue #1071) ──
+	// The passive update check runs only in alloy dev and alloy serve.
+	// alloy build must never check for updates — it is the CI command.
+	// Verify at the source level that build.go does not import the
+	// update package, preventing accidental wiring.
+
+	Describe("alloy build does not reference update package (issue #1071)", func() {
+		It("build.go does not import internal/update", func() {
+			buildSource, err := os.ReadFile("build.go")
+			Expect(err).NotTo(HaveOccurred(),
+				"build.go must exist in the cmd/ package")
+			Expect(string(buildSource)).NotTo(ContainSubstring("internal/update"),
+				"build.go must NOT import the update package — alloy build "+
+					"is the CI command and must never make outbound network "+
+					"requests for version checking (issue #1071). The passive "+
+					"update check is only wired into dev.go and serve.go.")
+			Expect(string(buildSource)).NotTo(ContainSubstring("update.Check"),
+				"build.go must NOT call any update.Check* function — "+
+					"even without an import, ensure no transitive reference")
+		})
 	})
 
 	// ── CLI banner ──────────────────────────────────────────────────
