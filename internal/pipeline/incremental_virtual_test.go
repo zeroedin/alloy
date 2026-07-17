@@ -337,6 +337,65 @@ var _ = Describe("Build Pipeline", func() {
 				"cache must track virtual pages across multiple rebuild generations")
 		})
 
+		It("Build() cache tracks virtual pages for BuildIncremental() handoff", func() {
+			tmpDir, cfg := setupVirtualPageProject()
+
+			// Build() discovers plugins internally and closes them on return.
+			// This simulates the cmd/dev.go pattern: Build() runs first (line 88),
+			// stores result.Cache (line 93-94), then BuildIncremental() uses it.
+			result1, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result1.Cache).NotTo(BeNil(),
+				"Build() must return a cache for the BuildIncremental() handoff")
+
+			// Verify Build() tracked virtual page RelPaths in its cache
+			virtualPaths := result1.Cache.VirtualPagePaths()
+			Expect(virtualPaths).To(ContainElement("_virtual/demos/button.html"),
+				"Build() cache must track virtual page RelPath '_virtual/demos/button.html' — "+
+					"without this, the first BuildIncremental() after Build() cannot "+
+					"pre-populate renderRelPaths with virtual page paths")
+			Expect(virtualPaths).To(ContainElement("_virtual/demos/card.html"),
+				"Build() cache must track all virtual page RelPaths")
+
+			// Filesystem-discovered pages must NOT be tracked as virtual
+			Expect(virtualPaths).NotTo(ContainElement("index.md"),
+				"Build() must not track filesystem-discovered pages as virtual — "+
+					"only pages injected by onPagesReady are virtual")
+
+			// Now pass Build()'s cache to BuildIncremental() — Build() closed
+			// its internal registry, so we need a fresh one for BuildIncremental().
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			// Modify content to trigger incremental rebuild
+			Expect(os.WriteFile(filepath.Join(tmpDir, "content", "index.md"),
+				[]byte("---\ntitle: Updated\nlayout: default\n---\n# Updated"),
+				0644)).To(Succeed())
+
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"content/index.md"},
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Virtual pages must be rendered because Build()'s cache tracked
+			// their RelPaths and BuildIncremental() pre-populated renderRelPaths
+			// from the cache. This is the Build()→BuildIncremental() handoff
+			// that cmd/dev.go relies on.
+			buttonHTML := result2.RenderedContent["_virtual/demos/button.html"]
+			Expect(buttonHTML).To(ContainSubstring("Button demo content"),
+				"virtual page must be rendered after Build()→BuildIncremental() "+
+					"cache handoff — Build() tracks virtual RelPaths in its cache, "+
+					"BuildIncremental() pre-populates renderRelPaths from that cache")
+			Expect(buttonHTML).To(ContainSubstring(`class="demo"`),
+				"virtual page must use its layout after cache handoff")
+
+			cardHTML := result2.RenderedContent["_virtual/demos/card.html"]
+			Expect(cardHTML).To(ContainSubstring("Card demo content"),
+				"all virtual pages must survive the Build()→BuildIncremental() handoff")
+		})
+
 		It("virtual pages removed by plugin are not rendered in next incremental build", func() {
 			tmpDir, cfg := setupVirtualPageProject()
 

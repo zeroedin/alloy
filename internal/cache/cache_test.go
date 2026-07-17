@@ -269,14 +269,18 @@ var _ = Describe("Build Cache (§10 Performance Architecture)", func() {
 			), "VirtualPagePaths must return all RelPaths tracked via TrackVirtualPage")
 		})
 
-		It("VirtualPagePaths returns empty slice when no virtual pages tracked", func() {
+		It("VirtualPagePaths returns non-nil empty slice when no virtual pages tracked", func() {
 			c := cache.New()
 
 			paths := c.VirtualPagePaths()
+			Expect(paths).NotTo(BeNil(),
+				"VirtualPagePaths must return a non-nil empty slice, not nil — "+
+					"callers range over the result without nil checks, so a refactor "+
+					"that returns nil would silently work but mask bugs in consumers "+
+					"that check len() or append()")
 			Expect(paths).To(BeEmpty(),
 				"VirtualPagePaths must return an empty slice when no virtual "+
-					"pages have been tracked — not nil, to avoid nil-pointer issues "+
-					"in callers that range over the result")
+					"pages have been tracked")
 		})
 
 		It("TrackVirtualPage deduplicates repeated RelPaths", func() {
@@ -345,6 +349,25 @@ var _ = Describe("Build Cache (§10 Performance Architecture)", func() {
 			Expect(c.VirtualPagePaths()).To(BeEmpty(),
 				"Clear must remove all virtual page tracking alongside "+
 					"content hashes and template tracking")
+		})
+
+		It("SetHash with empty key is a no-op", func() {
+			c := cache.New()
+			c.SetHash("content/index.md", "abc123")
+			c.SetHash("", "empty-key-hash")
+
+			// The empty-key entry must not be stored. In the pipeline,
+			// taxonomy pages have empty RelPath — the SetHash loop in
+			// Build() calls SetHash("", hash) for each taxonomy page.
+			// This is harmless today but a latent bug: if anything queries
+			// the cache by empty key, it would get a spurious hit.
+			Expect(c.Entries()).To(Equal(1),
+				"SetHash with empty key must not increment Entries count — "+
+					"taxonomy pages have empty RelPath and calling SetHash(\"\", hash) "+
+					"creates a spurious cache entry that could confuse cache consumers")
+			Expect(c.GetHash("")).To(BeEmpty(),
+				"GetHash with empty key must return empty string — "+
+					"empty-key entries should be silently discarded by SetHash")
 		})
 
 		It("virtual page tracking is independent of content hashes", func() {
