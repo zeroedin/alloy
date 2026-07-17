@@ -96,16 +96,33 @@ Layout lookup follows an explicit chain:
 
 Layouts can chain via front matter `layout:` directives, enabling multi-level composition:
 
-```liquid
-<!-- layouts/has-toc.liquid -->
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="chain-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="chain-go">Go templates</wa-tab>
+
+<wa-tab-panel name="chain-liquid" active>
+<alloy-code lang="liquid">&lt;!-- layouts/has-toc.liquid --&gt;
 ---
 layout: "base"
 ---
-<div class="with-toc">
-  <aside>{% include "partials/toc" %}</aside>
-  <main>{{ content }}</main>
-</div>
-```
+&lt;div class="with-toc"&gt;
+  &lt;aside&gt;{% include "partials/toc" %}&lt;/aside&gt;
+  &lt;main&gt;{{ content }}&lt;/main&gt;
+&lt;/div&gt;</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="chain-go">
+<alloy-code lang="html">&lt;!-- layouts/has-toc.html --&gt;
+---
+layout: "base"
+---
+&lt;div class="with-toc"&gt;
+  &lt;aside&gt;{{ include "partials/toc" }}&lt;/aside&gt;
+  &lt;main&gt;{{ .content }}&lt;/main&gt;
+&lt;/div&gt;</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 ## `data/`
 

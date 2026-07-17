@@ -118,9 +118,19 @@ export default function(alloy) {
 }
 ```
 
-```liquid
-{{ page.content | smartQuotes }}
-```
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="nodefilt-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="nodefilt-go">Go templates</wa-tab>
+
+<wa-tab-panel name="nodefilt-liquid" active>
+<alloy-code lang="liquid">{{ page.content | smartQuotes }}</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="nodefilt-go">
+<alloy-code lang="html">{{ smartQuotes .page.content }}</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 Filter arguments are passed as additional parameters:
 
@@ -130,9 +140,19 @@ alloy.filter("imageUrl", (path, width, format) => {
 });
 ```
 
-```liquid
-{{ "hero.jpg" | imageUrl: 800, "webp" }}
-```
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="nodeimg-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="nodeimg-go">Go templates</wa-tab>
+
+<wa-tab-panel name="nodeimg-liquid" active>
+<alloy-code lang="liquid">{{ "hero.jpg" | imageUrl: 800, "webp" }}</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="nodeimg-go">
+<alloy-code lang="html">{{ imageUrl "hero.jpg" 800 "webp" }}</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 ## Registering Shortcodes
 

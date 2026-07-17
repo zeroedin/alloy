@@ -90,20 +90,41 @@ When `autoHeadingID` is true (the default), `{.class #id key=value}` attribute s
 
 Alloy extracts the heading structure from each Markdown page during rendering and exposes it as `page.toc`:
 
-```liquid
-<nav class="toc">
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="toc-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="toc-go">Go templates</wa-tab>
+
+<wa-tab-panel name="toc-liquid" active>
+<alloy-code lang="liquid">&lt;nav class="toc"&gt;
   {% for item in page.toc %}
-    <a href="#{{ item.id }}">{{ item.text }}</a>
+    &lt;a href="#{{ item.id }}"&gt;{{ item.text }}&lt;/a&gt;
     {% if item.children.size > 0 %}
-      <ul>
+      &lt;ul&gt;
         {% for child in item.children %}
-          <li><a href="#{{ child.id }}">{{ child.text }}</a></li>
+          &lt;li&gt;&lt;a href="#{{ child.id }}"&gt;{{ child.text }}&lt;/a&gt;&lt;/li&gt;
         {% endfor %}
-      </ul>
+      &lt;/ul&gt;
     {% endif %}
   {% endfor %}
-</nav>
-```
+&lt;/nav&gt;</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="toc-go">
+<alloy-code lang="html">&lt;nav class="toc"&gt;
+  {{ range .page.toc }}
+    &lt;a href="#{{ .id }}"&gt;{{ .text }}&lt;/a&gt;
+    {{ if .children }}
+      &lt;ul&gt;
+        {{ range .children }}
+          &lt;li&gt;&lt;a href="#{{ .id }}"&gt;{{ .text }}&lt;/a&gt;&lt;/li&gt;
+        {{ end }}
+      &lt;/ul&gt;
+    {{ end }}
+  {{ end }}
+&lt;/nav&gt;</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 Each TOC entry has:
 

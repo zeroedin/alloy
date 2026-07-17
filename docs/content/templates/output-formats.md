@@ -14,15 +14,31 @@ outputs: ["html", "json"]
 ---
 ```
 
-```liquid
-<!-- layouts/post.json.liquid -->
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="fmtjson-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="fmtjson-go">Go templates</wa-tab>
+
+<wa-tab-panel name="fmtjson-liquid" active>
+<alloy-code lang="liquid">&lt;!-- layouts/post.json.liquid --&gt;
 {
   "title": "{{ page.title }}",
   "url": "{{ page.url | absolute_url: site.baseURL }}",
   "date": "{{ page.date | date: '%Y-%m-%dT%H:%M:%S%z' }}",
   "content": {{ content | json }}
-}
-```
+}</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="fmtjson-go">
+<alloy-code lang="html">&lt;!-- layouts/post.json --&gt;
+{
+  "title": "{{ .page.title }}",
+  "url": "{{ absolute_url .page.url .site.baseURL }}",
+  "date": "{{ date .page.date "%Y-%m-%dT%H:%M:%S%z" }}",
+  "content": {{ json .content }}
+}</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 This page generates both `/my-blog-post/index.html` and `/my-blog-post/index.json`.
 
@@ -107,8 +123,13 @@ outputs: ["html", "json"]
 ---
 ```
 
-```liquid
-<!-- layouts/blog.json.liquid (matches the section name) -->
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="fmtapi-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="fmtapi-go">Go templates</wa-tab>
+
+<wa-tab-panel name="fmtapi-liquid" active>
+<alloy-code lang="liquid">&lt;!-- layouts/blog.json.liquid --&gt;
 {
   "posts": [
     {% for post in collections.blog %}
@@ -120,8 +141,25 @@ outputs: ["html", "json"]
     }{% unless forloop.last %},{% endunless %}
     {% endfor %}
   ]
-}
-```
+}</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="fmtapi-go">
+<alloy-code lang="html">&lt;!-- layouts/blog.json --&gt;
+{
+  "posts": [
+    {{ range $i, $post := .collections.blog }}{{ if $i }},{{ end }}
+    {
+      "title": "{{ escape $post.title }}",
+      "url": "{{ absolute_url $post.url $.site.baseURL }}",
+      "date": "{{ date $post.date "%Y-%m-%dT%H:%M:%S%z" }}",
+      "summary": "{{ escape $post.summary }}"
+    }
+    {{ end }}
+  ]
+}</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 Output: `/blog/index.json` with a machine-readable list of posts.
 
@@ -137,25 +175,51 @@ outputs: ["html", "xml"]
 ---
 ```
 
-```liquid
-<!-- layouts/blog.xml.liquid (matches the section name) -->
-<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
-  <channel>
-    <title>{{ site.title }}</title>
-    <link>{{ site.baseURL }}</link>
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="fmtrss-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="fmtrss-go">Go templates</wa-tab>
+
+<wa-tab-panel name="fmtrss-liquid" active>
+<alloy-code lang="liquid">&lt;!-- layouts/blog.xml.liquid --&gt;
+&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"&gt;
+  &lt;channel&gt;
+    &lt;title&gt;{{ site.title }}&lt;/title&gt;
+    &lt;link&gt;{{ site.baseURL }}&lt;/link&gt;
     {% for post in collections.blog limit: 20 %}
-    <item>
-      <title>{{ post.title | escape }}</title>
-      <link>{{ post.url | absolute_url: site.baseURL }}</link>
-      <pubDate>{{ post.date | date: "%a, %d %b %Y %H:%M:%S %z" }}</pubDate>
-      <guid>{{ post.url | absolute_url: site.baseURL }}</guid>
-      <description>{{ post.summary | escape }}</description>
-    </item>
+    &lt;item&gt;
+      &lt;title&gt;{{ post.title | escape }}&lt;/title&gt;
+      &lt;link&gt;{{ post.url | absolute_url: site.baseURL }}&lt;/link&gt;
+      &lt;pubDate&gt;{{ post.date | date: "%a, %d %b %Y %H:%M:%S %z" }}&lt;/pubDate&gt;
+      &lt;guid&gt;{{ post.url | absolute_url: site.baseURL }}&lt;/guid&gt;
+      &lt;description&gt;{{ post.summary | escape }}&lt;/description&gt;
+    &lt;/item&gt;
     {% endfor %}
-  </channel>
-</rss>
-```
+  &lt;/channel&gt;
+&lt;/rss&gt;</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="fmtrss-go">
+<alloy-code lang="html">&lt;!-- layouts/blog.xml --&gt;
+&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"&gt;
+  &lt;channel&gt;
+    &lt;title&gt;{{ .site.title }}&lt;/title&gt;
+    &lt;link&gt;{{ .site.baseURL }}&lt;/link&gt;
+    {{ range limit .collections.blog 20 }}
+    &lt;item&gt;
+      &lt;title&gt;{{ escape .title }}&lt;/title&gt;
+      &lt;link&gt;{{ absolute_url .url $.site.baseURL }}&lt;/link&gt;
+      &lt;pubDate&gt;{{ date .date "%a, %d %b %Y %H:%M:%S %z" }}&lt;/pubDate&gt;
+      &lt;guid&gt;{{ absolute_url .url $.site.baseURL }}&lt;/guid&gt;
+      &lt;description&gt;{{ escape .summary }}&lt;/description&gt;
+    &lt;/item&gt;
+    {{ end }}
+  &lt;/channel&gt;
+&lt;/rss&gt;</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 Output: `/blog/index.xml` alongside the HTML index. The template has access to the same `collections`, `taxonomies`, and `site` context as any other template -- XML entity escaping uses the standard `escape` filter, and RFC 822 dates come from the `date` filter with the format string shown above.
 
@@ -212,8 +276,13 @@ permalink: "/search/"
 ---
 ```
 
-```liquid
-<!-- layouts/search.json.liquid -->
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="fmtsearch-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="fmtsearch-go">Go templates</wa-tab>
+
+<wa-tab-panel name="fmtsearch-liquid" active>
+<alloy-code lang="liquid">&lt;!-- layouts/search.json.liquid --&gt;
 [
   {% for page in site.pages %}
   {
@@ -222,21 +291,50 @@ permalink: "/search/"
     "content": "{{ page.summary | strip_html | escape }}"
   }{% unless forloop.last %},{% endunless %}
   {% endfor %}
-]
-```
+]</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="fmtsearch-go">
+<alloy-code lang="html">&lt;!-- layouts/search.json --&gt;
+[
+  {{ range $i, $page := .site.pages }}{{ if $i }},{{ end }}
+  {
+    "title": "{{ escape $page.title }}",
+    "url": "{{ $page.url }}",
+    "content": "{{ escape (strip_html $page.summary) }}"
+  }
+  {{ end }}
+]</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 ## Custom output formats
 
 Any text-based format works. The output format is determined by the layout file extension, not by a predefined list. Create a layout with the appropriate extension and reference it from your content:
 
-```liquid
-<!-- layouts/component.css.liquid -->
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="fmtcss-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="fmtcss-go">Go templates</wa-tab>
+
+<wa-tab-panel name="fmtcss-liquid" active>
+<alloy-code lang="liquid">&lt;!-- layouts/component.css.liquid --&gt;
 :host {
   {% for token in site.data.tokens %}
   --{{ token.name }}: {{ token.value }};
   {% endfor %}
-}
-```
+}</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="fmtcss-go">
+<alloy-code lang="html">&lt;!-- layouts/component.css --&gt;
+:host {
+  {{ range .site.data.tokens }}
+  --{{ .name }}: {{ .value }};
+  {{ end }}
+}</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 ```yaml
 # content/tokens.md

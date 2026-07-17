@@ -139,17 +139,36 @@ Plugins can mutate page data at three points during the build. Unlike the cascad
 
 All cascaded data is available in templates through the `page` and `site` objects:
 
-```liquid
-<h1>{{ page.title }}</h1>
-<p>By {{ page.author }}</p>
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="cascade-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="cascade-go">Go templates</wa-tab>
+
+<wa-tab-panel name="cascade-liquid" active>
+<alloy-code lang="liquid">&lt;h1&gt;{{ page.title }}&lt;/h1&gt;
+&lt;p&gt;By {{ page.author }}&lt;/p&gt;
 
 {% if page.tags %}
   {% for tag in page.tags %}
-    <span class="tag">{{ tag }}</span>
+    &lt;span class="tag"&gt;{{ tag }}&lt;/span&gt;
   {% endfor %}
 {% endif %}
 
-<p>Theme: {{ site.data.site.theme }}</p>
-```
+&lt;p&gt;Theme: {{ site.data.site.theme }}&lt;/p&gt;</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="cascade-go">
+<alloy-code lang="html">&lt;h1&gt;{{ .page.title }}&lt;/h1&gt;
+&lt;p&gt;By {{ .page.author }}&lt;/p&gt;
+
+{{ if .page.tags }}
+  {{ range .page.tags }}
+    &lt;span class="tag"&gt;{{ . }}&lt;/span&gt;
+  {{ end }}
+{{ end }}
+
+&lt;p&gt;Theme: {{ .site.data.site.theme }}&lt;/p&gt;</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
 
 The data cascade is resolved before template rendering. By the time your template runs, `page.layout`, `page.tags`, and every other field reflect the fully merged result of global data, directory data, and front matter.
