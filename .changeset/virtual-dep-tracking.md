@@ -8,9 +8,9 @@ type: minor
 alloy.hook('onPagesReady', { pages: false }, function({ siteData }) {
   return {
     addPages: [{
-      path: '_virtual/demos/button.html',
+      path: 'demos/button.html',
       url: '/demos/button/',
-      dependencies: ['elements/button/demo.html'],
+      dependencies: ['elements/rh-button/demo/basic.html'],
       frontMatter: { title: 'Button Demo', layout: 'demo', markdown: false },
       content: '<p>Button demo</p>'
     }]
