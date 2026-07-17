@@ -1941,6 +1941,8 @@ var _ = Describe("Build Pipeline", func() {
 				BaseURL: "https://example.com",
 				Build:   config.BuildConfig{Output: "_site"},
 			}
+			// Use page.path to inject a unique per-page marker so we can
+			// verify each page gets its own mutation, not a cloned one.
 			contentMap := map[string]string{
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"content/about.md":      "---\ntitle: About\nlayout: default\n---\n# About",
@@ -1949,7 +1951,7 @@ var _ = Describe("Build Pipeline", func() {
 				"plugins/batch-rewrite.js": `export default function(alloy) {
   alloy.hook('onContentLoaded', { pages: true, pageFields: ["*"] }, function(pages) {
     for (var i = 0; i < pages.length; i++) {
-      pages[i].html = pages[i].html + '<nav class="batch-nav">Page ' + (i + 1) + ' of ' + pages.length + '</nav>';
+      pages[i].html = pages[i].html + '<nav class="batch-nav" data-page="' + pages[i].path + '">Nav for ' + pages[i].path + '</nav>';
     }
     return pages;
   });
@@ -1960,21 +1962,19 @@ var _ = Describe("Build Pipeline", func() {
 				"batch html rewrite must not error (issue #976)")
 			Expect(result).NotTo(BeNil())
 
-			// All three pages must have the injected nav
+			// Each page must have a nav with its own path, proving per-page merge-back
 			htmlIndex := result.RenderedContent["index.md"]
-			Expect(htmlIndex).To(ContainSubstring(`<nav class="batch-nav">`),
-				"index.md must have the batch-injected nav — "+
-					"if missing, html merge-back is not applied for batch rewrites (issue #976)")
-			Expect(htmlIndex).To(ContainSubstring("of 3"),
-				"batch nav must show total page count of 3 (issue #976)")
+			Expect(htmlIndex).To(ContainSubstring(`data-page="index.md"`),
+				"index.md must have a nav with its own path — "+
+					"if missing or wrong path, html merge-back is not per-page (issue #976)")
 
 			htmlAbout := result.RenderedContent["about.md"]
-			Expect(htmlAbout).To(ContainSubstring(`<nav class="batch-nav">`),
-				"about.md must have the batch-injected nav (issue #976)")
+			Expect(htmlAbout).To(ContainSubstring(`data-page="about.md"`),
+				"about.md must have a nav with its own path (issue #976)")
 
 			htmlContact := result.RenderedContent["contact.md"]
-			Expect(htmlContact).To(ContainSubstring(`<nav class="batch-nav">`),
-				"contact.md must have the batch-injected nav (issue #976)")
+			Expect(htmlContact).To(ContainSubstring(`data-page="contact.md"`),
+				"contact.md must have a nav with its own path (issue #976)")
 		})
 
 		It("html and frontMatter mutations are both applied in the same onContentLoaded call", func() {
@@ -2038,12 +2038,53 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(result).NotTo(BeNil())
 
 			html := result.RenderedContent["index.md"]
-			Expect(html).To(ContainSubstring(`<article class="rewritten">`),
-				"rewritten html must appear in output — proves the html merge-back "+
-					"is applied before layout rendering (issue #976)")
-			Expect(html).To(ContainSubstring(`<div class="layout-wrapper">`),
-				"layout wrapper must still be present — the rewritten content flows "+
-					"through layout rendering after onContentLoaded (issue #976)")
+			// Verify nesting order: layout wrapper must contain the rewritten article.
+			// If html mutation were applied AFTER layout rendering, the article
+			// would be outside the wrapper or the wrapper would be absent.
+			Expect(html).To(ContainSubstring(`<div class="layout-wrapper"><article class="rewritten">`),
+				"rewritten article must be nested inside the layout wrapper — "+
+					"proves onContentLoaded html mutation is applied before layout "+
+					"rendering. If the article appears outside the wrapper, the "+
+					"merge-back runs too late in the pipeline (issue #976)")
+		})
+
+		It("html-only return entries (no frontMatter) are applied via onContentLoaded", func() {
+			cfg := &config.Config{
+				Title:   "HTML-Only Return Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			// Plugin returns sparse entries: only path + html, no frontMatter key.
+			// This catches implementations that gate html merge-back on
+			// frontMatter presence (the current bug's code structure nests
+			// returnedPath extraction inside the frontMatter block).
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home\n\nOriginal body.",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/html-only.js": `export default function(alloy) {
+  alloy.hook('onContentLoaded', { pages: true, pageFields: ["*"] }, function(pages) {
+    var result = [];
+    for (var i = 0; i < pages.length; i++) {
+      result.push({
+        path: pages[i].path,
+        html: pages[i].html + '<div class="html-only-marker">Injected without frontMatter</div>'
+      });
+    }
+    return result;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onContentLoaded with html-only return (no frontMatter) must not error (issue #976)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring(`<div class="html-only-marker">Injected without frontMatter</div>`),
+				"html-only return entries must be applied — if this fails, the "+
+					"merge-back implementation gates html application on frontMatter "+
+					"presence. The fix must extract returnedPath and apply html "+
+					"independently of frontMatter (issue #976)")
 		})
 	})
 
