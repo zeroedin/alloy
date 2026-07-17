@@ -2,7 +2,7 @@
 layout: doc
 title: Release Notes
 nav_section: "Release Notes"
-nav_section_weight: 9
+nav_section_weight: 1000
 nav_weight: 10
 description: "Alloy release notes and changelog"
 ---
