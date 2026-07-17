@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/zeroedin/alloy/internal/content"
@@ -455,7 +456,7 @@ func extractVirtualPage(raw interface{}, index int) (*content.Page, error) {
 			if !ok {
 				return nil, fmt.Errorf("dependencies[%d] must be a string, got %T", i, d)
 			}
-			deps = append(deps, s)
+			deps = append(deps, filepath.ToSlash(s))
 		}
 		vp.Dependencies = deps
 	}

@@ -685,19 +685,8 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	// Track virtual page RelPaths and dependencies in the cache so the
 	// next incremental rebuild can do selective rendering (issues #970, #1058).
 	// Clear stale tracking from the cloned previous cache first.
-	// Skip empty RelPath — taxonomy/generated pages have no RelPath.
 	buildCache.ClearVirtualPages()
-	for _, p := range allPages {
-		if p.RelPath == "" {
-			continue
-		}
-		if !discoveredPaths[p.RelPath] {
-			buildCache.TrackVirtualPage(p.RelPath)
-			for _, dep := range p.Dependencies {
-				buildCache.TrackVirtualDependency(p.RelPath, dep)
-			}
-		}
-	}
+	trackVirtualPages(buildCache, allPages, discoveredPaths)
 
 	result := &BuildResult{
 		OutputDir:        cfg.Build.Output,

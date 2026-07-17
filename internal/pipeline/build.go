@@ -1044,19 +1044,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Track virtual page RelPaths and dependencies so the first
 	// BuildIncremental after Build() can do selective rendering
 	// (issues #970, #1058). Build→BuildIncremental cache handoff
-	// in cmd/dev.go. Skip empty RelPath — taxonomy pages have no
-	// RelPath and would pollute the virtual page set.
-	for _, page := range pages {
-		if page.RelPath == "" {
-			continue
-		}
-		if !discoveredPaths[page.RelPath] {
-			buildCache.TrackVirtualPage(page.RelPath)
-			for _, dep := range page.Dependencies {
-				buildCache.TrackVirtualDependency(page.RelPath, dep)
-			}
-		}
-	}
+	// in cmd/dev.go.
+	trackVirtualPages(buildCache, pages, discoveredPaths)
 
 	renderedContent := make(map[string]string, len(pages))
 	for _, page := range pages {
@@ -1259,6 +1248,22 @@ func newPermalinkRenderer(engine tmpl.TemplateEngine) permalink.PermalinkRendere
 			}
 		}()
 		return tmpl.RenderTemplate(source, "_permalink", ctx)
+	}
+}
+
+// trackVirtualPages records virtual page RelPaths and their source file
+// dependencies in the cache. Shared by Build() and BuildIncremental().
+func trackVirtualPages(c *cache.Cache, pages []*content.Page, discoveredPaths map[string]bool) {
+	for _, p := range pages {
+		if p.RelPath == "" {
+			continue
+		}
+		if !discoveredPaths[p.RelPath] {
+			c.TrackVirtualPage(p.RelPath)
+			for _, dep := range p.Dependencies {
+				c.TrackVirtualDependency(p.RelPath, dep)
+			}
+		}
 	}
 }
 
