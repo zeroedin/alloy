@@ -53,13 +53,17 @@ var _ = Describe("parseScopeJSON (issue #539)", func() {
 			"the Taxonomies map must contain the parsed taxonomy → terms mapping (issue #539)")
 	})
 
-	It("pages: null (omitted) → PagesScopeAll (backward compat)", func() {
+	It("pages: null (omitted) → PagesScopeNone (issue #977)", func() {
 		scope, err := plugin.ParseScopeJSON(`{"data": ["elements"]}`)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeAll),
-			"when pages is omitted (null), default to PagesScopeAll for "+
-				"backward compatibility — existing plugins that don't declare "+
-				"a pages scope must continue to receive all pages (issue #539)")
+		Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeNone),
+			"when pages is omitted (null), default to PagesScopeNone — "+
+				"omitting a scope option must not opt into maximum serialization; "+
+				"plugins that want pages must explicitly declare pages: true (issue #977)")
+		Expect(scope.Pages.Explicit).To(BeFalse(),
+			"omitted pages must not be marked Explicit — "+
+				"per-page hooks use this flag to distinguish 'not requested' from "+
+				"'explicitly opted out' (issue #1054)")
 	})
 
 	It("preserves data and pageFields arrays", func() {
@@ -86,22 +90,28 @@ var _ = Describe("parseScopeJSON (issue #539)", func() {
 
 var _ = Describe("parseScopeMap (issue #545)", func() {
 
-	It("pages: false → PagesScopeNone", func() {
+	It("pages: false → PagesScopeNone with Explicit flag", func() {
 		scope, err := plugin.ParseScopeMap(map[string]interface{}{
 			"pages": false,
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeNone),
 			"parseScopeMap must handle bool false the same as parseScopeJSON (issue #545)")
+		Expect(scope.Pages.Explicit).To(BeTrue(),
+			"explicit pages: false must set Explicit = true — "+
+				"per-page hooks like onContentTransformed use this flag to skip "+
+				"dispatch when the plugin explicitly opted out (issue #1054)")
 	})
 
-	It("pages: true → PagesScopeAll", func() {
+	It("pages: true → PagesScopeAll with Explicit flag", func() {
 		scope, err := plugin.ParseScopeMap(map[string]interface{}{
 			"pages": true,
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeAll),
 			"parseScopeMap must handle bool true the same as parseScopeJSON (issue #545)")
+		Expect(scope.Pages.Explicit).To(BeTrue(),
+			"explicit pages: true must set Explicit = true (issue #1054)")
 	})
 
 	It("pages: \"**\" → PagesScopeAll", func() {
@@ -137,14 +147,19 @@ var _ = Describe("parseScopeMap (issue #545)", func() {
 			"taxonomy terms must be extracted from []interface{} to []string (issue #545)")
 	})
 
-	It("pages: nil (omitted) → PagesScopeAll (backward compat)", func() {
+	It("pages: nil (omitted) → PagesScopeNone without Explicit flag (issue #977)", func() {
 		scope, err := plugin.ParseScopeMap(map[string]interface{}{
 			"data": []interface{}{"elements"},
 		})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeAll),
-			"omitted pages key must default to PagesScopeAll — "+
-				"backward compatibility with existing plugins (issue #545)")
+		Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeNone),
+			"omitted pages key must default to PagesScopeNone — "+
+				"omitting a scope option must not opt into maximum serialization; "+
+				"plugins that want pages must explicitly declare pages: true (issue #977)")
+		Expect(scope.Pages.Explicit).To(BeFalse(),
+			"omitted pages must not be marked Explicit — "+
+				"per-page hooks use this flag to distinguish 'not requested' from "+
+				"'explicitly opted out' (issue #1054)")
 	})
 
 	It("preserves data and pageFields arrays", func() {
