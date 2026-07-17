@@ -606,4 +606,121 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 				"warning must include the hook name on the 1-arg path (issue #558)")
 		})
 	})
+
+	// ── Omitted pages scope defaults (issue #977) ────────────────────
+	// parseScopeMap defaults omitted/nil pages to PagesScopeAll, but
+	// the documented contract is pages: false (PagesScopeNone). This
+	// causes two compounding defects:
+	// 1. Every hook registered with {} or {data: [...]} on a pageless
+	//    event triggers a spurious ValidateScope warning on every build.
+	// 2. Batch hooks silently serialize all pages across the bridge
+	//    when the plugin never requested pages — the exact cost the
+	//    docs say the default avoids.
+
+	Describe("Omitted pages scope defaults (issue #977)", func() {
+
+		It("parseScopeMap with empty map defaults pages to PagesScopeNone", func() {
+			scope, err := plugin.ParseScopeMap(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeNone),
+				"empty scope map {} must default pages to PagesScopeNone — "+
+					"omitting a scope option must not opt into maximum serialization (issue #977)")
+		})
+
+		It("parseScopeJSON with empty object defaults pages to PagesScopeNone", func() {
+			scope, err := plugin.ParseScopeJSON(`{}`)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeNone),
+				"empty scope JSON {} must default pages to PagesScopeNone (issue #977)")
+		})
+
+		It("empty scope on each pageless hook passes ValidateScope without error", func() {
+			// This is the core bug: {} on a pageless hook produces a
+			// warning because nil → All → ValidateScope error. With the
+			// fix (nil → None), ValidateScope returns nil for all pageless hooks.
+			scope, err := plugin.ParseScopeMap(map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+
+			pagelessHooks := []plugin.HookName{
+				plugin.OnConfig,
+				plugin.OnBeforeValidation,
+				plugin.OnAfterValidation,
+				plugin.OnDataFetched,
+				plugin.OnAssetProcess,
+				plugin.OnBuildComplete,
+				plugin.OnDevServerStart,
+				plugin.OnFileChanged,
+			}
+			for _, event := range pagelessHooks {
+				err := plugin.ValidateScope(event, *scope)
+				Expect(err).NotTo(HaveOccurred(),
+					"empty scope {} on pageless hook %s must not produce a validation error — "+
+						"omitted pages defaults to PagesScopeNone which is valid on all hooks (issue #977)", event)
+			}
+		})
+
+		It("data-only scope on each pageless hook passes ValidateScope without error", func() {
+			// Mirrors the documented pattern: {data: ["elements"]} on onDataFetched.
+			// Must not warn — the data key does not set pages mode.
+			scope, err := plugin.ParseScopeMap(map[string]interface{}{
+				"data": []interface{}{"elements"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			pagelessHooks := []plugin.HookName{
+				plugin.OnConfig,
+				plugin.OnBeforeValidation,
+				plugin.OnAfterValidation,
+				plugin.OnDataFetched,
+				plugin.OnAssetProcess,
+				plugin.OnBuildComplete,
+				plugin.OnDevServerStart,
+				plugin.OnFileChanged,
+			}
+			for _, event := range pagelessHooks {
+				err := plugin.ValidateScope(event, *scope)
+				Expect(err).NotTo(HaveOccurred(),
+					"data-only scope on pageless hook %s must not produce a validation error — "+
+						"the data key does not set pages mode (issue #977)", event)
+			}
+		})
+
+		It("explicit pages: true on pageless hook still produces a validation error", func() {
+			// Disambiguation: the fix changes the *default* for omitted pages,
+			// not the behavior of explicit pages: true. A plugin that explicitly
+			// requests pages on a pageless hook is still invalid.
+			scope, err := plugin.ParseScopeMap(map[string]interface{}{
+				"pages": true,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeAll),
+				"explicit pages: true must still produce PagesScopeAll")
+
+			err = plugin.ValidateScope(plugin.OnConfig, *scope)
+			Expect(err).To(HaveOccurred(),
+				"explicit pages: true on pageless hook must still produce a validation error — "+
+					"only the omitted/nil default changes, not explicit declarations (issue #977)")
+			Expect(err.Error()).To(ContainSubstring("pages"),
+				"validation error for explicit pages: true must mention pages (issue #977)")
+		})
+
+		It("omitted pages on page-aware batch hook defaults to PagesScopeNone", func() {
+			// The default applies universally, not just to pageless hooks.
+			// A plugin on onContentLoaded with {data: ["elements"]} must
+			// not receive pages unless it explicitly says pages: true.
+			scope, err := plugin.ParseScopeMap(map[string]interface{}{
+				"data": []interface{}{"elements"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeNone),
+				"omitted pages on page-aware hook must default to PagesScopeNone — "+
+					"plugins that want pages must explicitly declare pages: true (issue #977)")
+
+			// PagesScopeNone is valid on page-aware hooks too — it just
+			// means the plugin doesn't need pages for this hook.
+			err = plugin.ValidateScope(plugin.OnContentLoaded, *scope)
+			Expect(err).NotTo(HaveOccurred(),
+				"PagesScopeNone must be valid on page-aware hooks (issue #977)")
+		})
+	})
 })
