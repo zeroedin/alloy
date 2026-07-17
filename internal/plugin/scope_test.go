@@ -619,12 +619,16 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 
 	Describe("Omitted pages scope defaults (issue #977)", func() {
 
-		It("parseScopeMap with empty map defaults pages to PagesScopeNone", func() {
+		It("parseScopeMap with empty map defaults pages to PagesScopeNone without Explicit", func() {
 			scope, err := plugin.ParseScopeMap(map[string]interface{}{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeNone),
 				"empty scope map {} must default pages to PagesScopeNone — "+
 					"omitting a scope option must not opt into maximum serialization (issue #977)")
+			Expect(scope.Pages.Explicit).To(BeFalse(),
+				"empty scope {} must not mark pages as Explicit — "+
+					"per-page hooks should still fire for hooks that did not explicitly "+
+					"opt out of pages (issue #1054)")
 		})
 
 		It("parseScopeJSON with empty object defaults pages to PagesScopeNone", func() {
@@ -695,6 +699,8 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(scope.Pages.Mode).To(Equal(plugin.PagesScopeAll),
 				"explicit pages: true must still produce PagesScopeAll")
+			Expect(scope.Pages.Explicit).To(BeTrue(),
+				"explicit pages: true must set Explicit = true (issue #1054)")
 
 			err = plugin.ValidateScope(plugin.OnConfig, *scope)
 			Expect(err).To(HaveOccurred(),
