@@ -456,7 +456,17 @@ func extractVirtualPage(raw interface{}, index int) (*content.Page, error) {
 			if !ok {
 				return nil, fmt.Errorf("dependencies[%d] must be a string, got %T", i, d)
 			}
-			deps = append(deps, filepath.ToSlash(s))
+			cleaned := filepath.ToSlash(filepath.Clean(s))
+			if cleaned == "" || cleaned == "." {
+				return nil, fmt.Errorf("dependencies[%d]: empty or current-directory path", i)
+			}
+			if filepath.IsAbs(s) {
+				return nil, fmt.Errorf("dependencies[%d]: absolute paths not allowed (%q)", i, s)
+			}
+			if strings.HasPrefix(cleaned, "../") || cleaned == ".." {
+				return nil, fmt.Errorf("dependencies[%d]: path escapes project root (%q)", i, s)
+			}
+			deps = append(deps, cleaned)
 		}
 		vp.Dependencies = deps
 	}
