@@ -25,7 +25,12 @@ func New() *Cache {
 }
 
 // SetHash records the content hash for a source file path.
+// Empty keys are silently discarded — taxonomy pages have empty
+// RelPath and the Build() hash loop would create a spurious entry.
 func (c *Cache) SetHash(path, hash string) {
+	if path == "" {
+		return
+	}
 	c.hashes[path] = hash
 }
 
