@@ -3389,7 +3389,7 @@ Design constraints:
 - If the user is already on the latest version, nothing is printed
 - Suppressed by `--quiet`
 
-**Cache:** Results are cached at `~/.config/alloy/update-check.json` (respects `XDG_CONFIG_HOME`). Cache TTL is 24 hours. Both `--check` and passive checks read/write the same cache file. `--check` always overwrites; passive checks only write when TTL has expired. Cache errors (corrupt JSON, permission denied) are silently ignored — treated as cache miss.
+**Cache:** Results are cached at `~/.config/alloy/update-check.json` (respects `XDG_CONFIG_HOME`). Cache TTL is 24 hours. `--check` always bypasses the cache for reads (always fetches from the API) but writes the result to the shared cache file. Passive checks (`alloy dev`/`alloy serve`) read the cache first and only fetch from the API when the TTL has expired, then write the result. Cache errors (corrupt JSON, permission denied) are silently ignored — treated as cache miss.
 
 ---
 

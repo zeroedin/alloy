@@ -18,14 +18,11 @@ var _ = Describe("Update", func() {
 	// ── UpgradeURL constant ─────────────────────────────────────────
 
 	Describe("UpgradeURL", func() {
-		It("is a valid HTTPS URL pointing to the docs upgrade page", func() {
-			Expect(update.UpgradeURL).To(HavePrefix("https://"),
-				"UpgradeURL must use HTTPS — the CLI prints this URL to "+
-					"the terminal; users must trust the destination")
-			Expect(update.UpgradeURL).To(ContainSubstring("/docs/upgrade"),
-				"UpgradeURL must point to the dedicated upgrade page — "+
-					"not a GitHub releases page, which doesn't provide "+
-					"install-method-specific instructions (issue #1072)")
+		It("is the stable docs upgrade URL", func() {
+			Expect(update.UpgradeURL).To(Equal("https://alloyproject.org/docs/upgrade/"),
+				"UpgradeURL must be the exact stable docs URL — the CLI "+
+					"hardcodes this path and it must not change across releases "+
+					"(issue #1072)")
 		})
 	})
 
@@ -93,6 +90,18 @@ var _ = Describe("Update", func() {
 				"pre-release 0.5.0-rc1 must be considered older than "+
 					"stable 0.5.0 — users on pre-release should be told "+
 					"about the stable release")
+		})
+
+		It("returns false for stable current vs pre-release latest", func() {
+			Expect(update.IsNewer("0.5.0", "0.5.0-rc1")).To(BeFalse(),
+				"stable 0.5.0 must NOT be considered older than "+
+					"pre-release 0.5.0-rc1 — pre-release is always behind stable")
+		})
+
+		It("returns true for older pre-release vs newer pre-release", func() {
+			Expect(update.IsNewer("0.5.0-rc1", "0.5.0-rc2")).To(BeTrue(),
+				"rc1 must be considered older than rc2 — pre-release "+
+					"versions must compare their suffix numerically")
 		})
 	})
 
