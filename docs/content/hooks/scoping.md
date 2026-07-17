@@ -31,7 +31,7 @@ Controls which `site.data` keys are serialized in the hook payload.
 | `["*"]` | All site data keys |
 
 ```javascript
-// Only receive navigation data
+// Only receive navigation data in the cascade
 alloy.hook("onAfterValidation", { data: ["navigation"] }, (payload) => {
   // payload.cascade has navigation data
 });
