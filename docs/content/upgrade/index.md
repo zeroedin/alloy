@@ -10,18 +10,20 @@ Upgrade instructions for each install method. Run `alloy version` after upgradin
 ## Homebrew
 
 ```bash
-brew upgrade alloy
+brew update && brew upgrade alloy-ssg
+```
+
+`brew update` refreshes tap metadata first. Third-party taps like `zeroedin/alloy-ssg` can go stale without it — `brew upgrade` may report "already installed" even when a new version is available.
+
+## Go install
+
+```bash
+go install github.com/zeroedin/alloy@latest
 ```
 
 ## Binary download
 
-Download the latest release for your platform from the [GitHub releases page](https://github.com/zeroedin/alloy/releases/latest). Replace the existing `alloy` binary in your `PATH`:
-
-```bash
-# macOS / Linux
-curl -L https://github.com/zeroedin/alloy/releases/latest/download/alloy-$(uname -s)-$(uname -m).tar.gz | tar xz
-sudo mv alloy /usr/local/bin/alloy
-```
+Download the latest release for your platform from the [GitHub releases page](https://github.com/zeroedin/alloy/releases/latest) and replace the existing binary in your `PATH`.
 
 ## From source
 
