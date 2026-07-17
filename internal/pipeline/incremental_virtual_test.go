@@ -7,7 +7,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/pipeline"
 )
@@ -115,18 +114,21 @@ var _ = Describe("Build Pipeline", func() {
 				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
 
-			// Virtual pages must appear in RenderedContent
-			buttonHTML := result.RenderedContent["/demos/button/"]
+			// Virtual pages must appear in RenderedContent keyed by RelPath.
+			// renderedContentKey() returns RelPath for non-paginated pages
+			// with non-empty RelPath — virtual pages from addPages have
+			// RelPath set to their path field (e.g. "_virtual/demos/button.html").
+			buttonHTML := result.RenderedContent["_virtual/demos/button.html"]
 			Expect(buttonHTML).To(ContainSubstring("Button demo content"),
-				"virtual page /demos/button/ must be rendered in initial "+
+				"virtual page _virtual/demos/button.html must be rendered in initial "+
 					"incremental build — onPagesReady injects it into allPages "+
 					"and nil cache means all pages should render")
 			Expect(buttonHTML).To(ContainSubstring(`class="demo"`),
 				"virtual page must be wrapped in its layout (demo.liquid)")
 
-			cardHTML := result.RenderedContent["/demos/card/"]
+			cardHTML := result.RenderedContent["_virtual/demos/card.html"]
 			Expect(cardHTML).To(ContainSubstring("Card demo content"),
-				"virtual page /demos/card/ must also be rendered in initial build")
+				"virtual page _virtual/demos/card.html must also be rendered in initial build")
 
 			// Real page must also render normally
 			homeHTML := result.RenderedContent["index.md"]
@@ -146,7 +148,7 @@ var _ = Describe("Build Pipeline", func() {
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
 				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result1.RenderedContent["/demos/button/"]).To(ContainSubstring("Button demo content"),
+			Expect(result1.RenderedContent["_virtual/demos/button.html"]).To(ContainSubstring("Button demo content"),
 				"sanity: initial build must render virtual page")
 
 			// Modify a real content file to trigger incremental rebuild
@@ -164,16 +166,16 @@ var _ = Describe("Build Pipeline", func() {
 			// pagesToRender because their RelPaths are never in renderRelPaths.
 			// After the fix, the cache tracks virtual page RelPaths from
 			// the previous build and pre-populates renderRelPaths with them.
-			buttonHTML := result2.RenderedContent["/demos/button/"]
+			buttonHTML := result2.RenderedContent["_virtual/demos/button.html"]
 			Expect(buttonHTML).To(ContainSubstring("Button demo content"),
-				"virtual page /demos/button/ must be re-rendered in incremental "+
+				"virtual page _virtual/demos/button.html must be re-rendered in incremental "+
 					"rebuild — currently filtered out because pagesToRender is "+
 					"decided before onPagesReady runs, and virtual page RelPaths "+
 					"are never in renderRelPaths (issue #970)")
 
-			cardHTML := result2.RenderedContent["/demos/card/"]
+			cardHTML := result2.RenderedContent["_virtual/demos/card.html"]
 			Expect(cardHTML).To(ContainSubstring("Card demo content"),
-				"virtual page /demos/card/ must also be re-rendered — all "+
+				"virtual page _virtual/demos/card.html must also be re-rendered — all "+
 					"virtual pages from the previous build must participate in "+
 					"incremental rebuilds (issue #970)")
 		})
@@ -190,7 +192,7 @@ var _ = Describe("Build Pipeline", func() {
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
 				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result1.RenderedContent["/demos/button/"]).To(ContainSubstring(`class="demo"`),
+			Expect(result1.RenderedContent["_virtual/demos/button.html"]).To(ContainSubstring(`class="demo"`),
 				"sanity: initial build must apply demo layout")
 
 			// Change the demo layout
@@ -204,7 +206,7 @@ var _ = Describe("Build Pipeline", func() {
 				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
 
-			buttonHTML := result2.RenderedContent["/demos/button/"]
+			buttonHTML := result2.RenderedContent["_virtual/demos/button.html"]
 			Expect(buttonHTML).To(ContainSubstring(`class="demo-updated"`),
 				"virtual page must reflect the updated layout — the templates "+
 					"cache tracks which pages used which layout, so layout changes "+
@@ -263,6 +265,10 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(string(buttonOnDisk)).To(ContainSubstring("Button demo content"),
 				"output file must contain the virtual page content")
 
+			// Delete the output file so build 2 must recreate it — otherwise
+			// build 1's file persists on disk and the assertion passes vacuously.
+			Expect(os.Remove(buttonPath)).To(Succeed())
+
 			// Modify content to trigger incremental rebuild
 			Expect(os.WriteFile(filepath.Join(tmpDir, "content", "index.md"),
 				[]byte("---\ntitle: Home v2\nlayout: default\n---\n# Home v2"),
@@ -274,11 +280,14 @@ var _ = Describe("Build Pipeline", func() {
 				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
 
-			// Re-read the output file — must still exist and have content
+			// Re-read the output file — must exist because build 2 rewrote it.
+			// We deleted it after build 1, so this proves the incremental
+			// rebuild actually wrote the virtual page to disk.
 			buttonOnDisk2, readErr2 := os.ReadFile(buttonPath)
 			Expect(readErr2).NotTo(HaveOccurred(),
 				"virtual page must be re-written to output directory after "+
-					"incremental rebuild (issue #970)")
+					"incremental rebuild — file was deleted after build 1 to prove "+
+					"build 2 actually writes it (issue #970)")
 			Expect(string(buttonOnDisk2)).To(ContainSubstring("Button demo content"),
 				"output file must contain virtual page content after incremental rebuild")
 		})
@@ -295,7 +304,7 @@ var _ = Describe("Build Pipeline", func() {
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
 				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result1.RenderedContent["/demos/button/"]).To(ContainSubstring("Button demo content"),
+			Expect(result1.RenderedContent["_virtual/demos/button.html"]).To(ContainSubstring("Button demo content"),
 				"sanity: initial build must render virtual page")
 
 			// Build 2: first incremental
@@ -316,7 +325,7 @@ var _ = Describe("Build Pipeline", func() {
 				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
 
-			buttonHTML := result3.RenderedContent["/demos/button/"]
+			buttonHTML := result3.RenderedContent["_virtual/demos/button.html"]
 			Expect(buttonHTML).To(ContainSubstring("Button demo content"),
 				"virtual pages must survive across multiple incremental rebuilds — "+
 					"the cache must be updated after each build with the current "+
@@ -340,9 +349,9 @@ var _ = Describe("Build Pipeline", func() {
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
 				pipeline.BuildOptions{PipelineState: pipelineState})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result1.RenderedContent["/demos/button/"]).To(ContainSubstring("Button demo content"),
+			Expect(result1.RenderedContent["_virtual/demos/button.html"]).To(ContainSubstring("Button demo content"),
 				"sanity: initial build renders button demo")
-			Expect(result1.RenderedContent["/demos/card/"]).To(ContainSubstring("Card demo content"),
+			Expect(result1.RenderedContent["_virtual/demos/card.html"]).To(ContainSubstring("Card demo content"),
 				"sanity: initial build renders card demo")
 
 			// Replace the plugin with one that only returns button (drops card)
@@ -383,13 +392,14 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Button must still render
-			Expect(result2.RenderedContent["/demos/button/"]).To(ContainSubstring("Button demo content"),
+			Expect(result2.RenderedContent["_virtual/demos/button.html"]).To(ContainSubstring("Button demo content"),
 				"virtual page still returned by plugin must continue rendering")
 
 			// Card must NOT render — the plugin no longer returns it.
 			// Even though the cache has card's RelPath from the previous build,
 			// onPagesReady no longer injects it, so it should not appear.
-			Expect(result2.RenderedContent).NotTo(HaveKey("/demos/card/"),
+			// Key is the RelPath ("_virtual/demos/card.html"), not the URL.
+			Expect(result2.RenderedContent).NotTo(HaveKey("_virtual/demos/card.html"),
 				"virtual page removed by plugin must not be rendered — "+
 					"the cache pre-populates renderRelPaths with previous virtual "+
 					"page paths, but if onPagesReady no longer injects the page, "+
