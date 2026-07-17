@@ -109,6 +109,8 @@ plugins:
   node: true                   # Enable Node bridge
   timeout: 5000                # Plugin timeout (ms)
 
+updateCheck: true                 # Opt-in passive update notification (default: false)
+
 structure:                       # Override default directory paths (all relative to project root)
   content: "content"             # Default: "content"
   layouts: "layouts"             # Default: "layouts"
@@ -3158,7 +3160,7 @@ alloy init               # Scaffold a new project (no-op if config already exist
 alloy build              # Run pipeline (Phase 1 + Phase 2 if SSR configured), write _site/, exit
 alloy dev                # Dev mode: Phase 1, full page reload, client-side components, drafts visible
 alloy serve              # Production server: same pipeline as build, served locally, full reload
-alloy version            # Print version
+alloy version [--check]  # Print version; with --check, query GitHub for updates
 alloy help               # Help text
 ```
 
@@ -3237,6 +3239,7 @@ Starts the production server. Same pipeline as `alloy build` but keeps serving w
 --refetch          Bypass source cache TTL, fetch fresh data on startup — alloy dev and alloy serve
 --profile          Enable per-stage timing breakdown and pprof CPU/memory profiling — alloy build only
 --profile-dir      Directory for profile output (default: .alloy/profiles) — requires --profile
+--check            Check for newer version — alloy version only
 ```
 
 ### Build Progress Output
@@ -3339,6 +3342,54 @@ alloy build --config deploy/production.yaml --root .
 ```
 
 When `--root` is not provided, the existing behavior is preserved: `ProjectRoot = filepath.Dir(configPath)`.
+
+### Version Update Check (issue #1071)
+
+Alloy can check for newer versions via the GitHub Releases API. Two mechanisms:
+
+**Explicit check — `alloy version --check`:**
+
+The `--check` flag on the `version` command queries the API and reports the result:
+
+```
+# Up to date:
+alloy v0.4.2 (up to date)
+
+# Update available:
+alloy v0.4.2
+Update available: v0.4.2 → v0.5.0
+Upgrade: https://alloyproject.org/docs/upgrade/
+
+# Check failed (network error, rate limit):
+alloy v0.4.2
+Update check failed: <error message>
+```
+
+The `--check` flag always hits the API — no caching. Without `--check`, the command prints the version and exits (existing behavior). Comparison uses semantic versioning (strip `v` prefix, compare major.minor.patch). Pre-release versions (e.g., `v0.5.0-rc1`) are considered older than the corresponding stable release. A failed check prints the error but exits 0 — it is not a build error.
+
+**Passive notification — `updateCheck: true` in config:**
+
+```yaml
+# alloy.config.yaml
+updateCheck: true    # default: false
+```
+
+When enabled, `alloy dev` and `alloy serve` perform a background update check on startup. If a newer version exists, a single notification line appears after the server startup message:
+
+```
+Serving at http://localhost:3000
+Update available: v0.4.2 → v0.5.0 — https://alloyproject.org/docs/upgrade/
+```
+
+Design constraints:
+- Default is `false` — no outbound network request without explicit opt-in
+- **`alloy build` never checks**, regardless of the config value — it is the CI command
+- The check runs in a background goroutine — never blocks server startup
+- Network errors, rate limits, and timeouts are silently swallowed — the user sees nothing
+- If the user is already on the latest version, nothing is printed
+- Suppressed by `--quiet`
+
+**Cache:** Results are cached at `~/.config/alloy/update-check.json` (respects `XDG_CONFIG_HOME`). Cache TTL is 24 hours. Both `--check` and passive checks read/write the same cache file. `--check` always overwrites; passive checks only write when TTL has expired. Cache errors (corrupt JSON, permission denied) are silently ignored — treated as cache miss.
 
 ---
 
