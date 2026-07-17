@@ -5,16 +5,16 @@ type: minor
 `onPagesReady` virtual pages accept a `dependencies` array of project-root-relative file paths. On incremental rebuilds, Alloy re-renders virtual pages whose dependencies appear in `changedFiles` and skips the rest.
 
 ```javascript
-alloy.hook('onPagesReady', { pages: false }, function({ siteData }) {
-  return {
-    addPages: [{
-      path: 'demos/button.html',
-      url: '/demos/button/',
-      dependencies: ['elements/rh-button/demo/basic.html'],
-      frontMatter: { title: 'Button Demo', layout: 'demo', markdown: false },
-      content: '<p>Button demo</p>'
-    }]
-  };
+alloy.hook('onPagesReady', { pages: false }, function() {
+  const demoFiles = glob.sync('elements/*/demo/*.html');
+  const pages = demoFiles.map(file => ({
+    path: 'demos/' + path.basename(file),
+    url: '/demos/' + path.basename(file, '.html') + '/',
+    dependencies: [file],
+    frontMatter: { layout: 'demo', markdown: false },
+    content: fs.readFileSync(file, 'utf-8')
+  }));
+  return { addPages: pages };
 });
 ```
 
