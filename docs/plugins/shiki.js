@@ -47,6 +47,8 @@ export default function(alloy) {
             lang,
             themes: { light: 'github-light', dark: 'github-dark' },
             defaultColor: false,
+            // #6a737d (comments) fails WCAG AA against #1e1e22 bg (3.45:1); #8b949e passes (5.40:1)
+            colorReplacements: { 'github-dark': { '#6a737d': '#8b949e' } },
           });
           html = html.replace(full, `<alloy-code${attrs}>${highlighted}</alloy-code>`);
           continue;
