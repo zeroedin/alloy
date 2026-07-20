@@ -66,7 +66,7 @@ Loop through a collection in your templates to build index pages, feeds, or navi
 <wa-tab slot="nav" panel="iterate-go">Go templates</wa-tab>
 
 <wa-tab-panel name="iterate-liquid" active>
-<alloy-code lang="liquid">{% for post in collections.blog %}
+<alloy-code language="liquid">{% for post in collections.blog %}
   &lt;article&gt;
     &lt;h2&gt;&lt;a href="{{ post.url }}"&gt;{{ post.title }}&lt;/a&gt;&lt;/h2&gt;
     &lt;time&gt;{{ post.date | date: "%B %d, %Y" }}&lt;/time&gt;
@@ -75,7 +75,7 @@ Loop through a collection in your templates to build index pages, feeds, or navi
 {% endfor %}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="iterate-go">
-<alloy-code lang="html">{{ range .collections.blog }}
+<alloy-code language="html">{{ range .collections.blog }}
   &lt;article&gt;
     &lt;h2&gt;&lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;&lt;/h2&gt;
     &lt;time&gt;{{ date .date "%B %d, %Y" }}&lt;/time&gt;
@@ -125,12 +125,12 @@ Sort inline using built-in array filters:
 <wa-tab slot="nav" panel="sort-go">Go templates</wa-tab>
 
 <wa-tab-panel name="sort-liquid" active>
-<alloy-code lang="liquid">{% assign alphabetical = collections.blog | sort: "title" %}
+<alloy-code language="liquid">{% assign alphabetical = collections.blog | sort: "title" %}
 {% assign by_author = collections.blog | sort: "author" %}
 {% assign recent = collections.blog | sort: "date" | reverse %}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="sort-go">
-<alloy-code lang="html">{{ $alphabetical := sort .collections.blog "title" }}
+<alloy-code language="html">{{ $alphabetical := sort .collections.blog "title" }}
 {{ $by_author := sort .collections.blog "author" }}
 {{ $recent := reverse (sort .collections.blog "date") }}</alloy-code>
 </wa-tab-panel>
@@ -157,13 +157,13 @@ Use the `where` filter to narrow a collection by any front matter field:
 <wa-tab slot="nav" panel="filter-go">Go templates</wa-tab>
 
 <wa-tab-panel name="filter-liquid" active>
-<alloy-code lang="liquid">{% assign featured = collections.blog | where: "featured", true %}
+<alloy-code language="liquid">{% assign featured = collections.blog | where: "featured", true %}
 {% for post in featured %}
   &lt;a href="{{ post.url }}"&gt;{{ post.title }}&lt;/a&gt;
 {% endfor %}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="filter-go">
-<alloy-code lang="html">{{ $featured := where .collections.blog "featured" true }}
+<alloy-code language="html">{{ $featured := where .collections.blog "featured" true }}
 {{ range $featured }}
   &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
 {{ end }}</alloy-code>
@@ -179,13 +179,13 @@ Combine with other filters:
 <wa-tab slot="nav" panel="chain-go">Go templates</wa-tab>
 
 <wa-tab-panel name="chain-liquid" active>
-<alloy-code lang="liquid">{% assign recent_tutorials = collections.blog
+<alloy-code language="liquid">{% assign recent_tutorials = collections.blog
     | where: "category", "tutorial"
     | sort: "date"
     | reverse %}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="chain-go">
-<alloy-code lang="html">{{ $recent_tutorials := reverse (sort (where .collections.blog "category" "tutorial") "date") }}</alloy-code>
+<alloy-code language="html">{{ $recent_tutorials := reverse (sort (where .collections.blog "category" "tutorial") "date") }}</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>
 {% endraw %}
@@ -210,12 +210,12 @@ All published pages are available as `site.pages` regardless of whether they bel
 <wa-tab slot="nav" panel="allpages-go">Go templates</wa-tab>
 
 <wa-tab-panel name="allpages-liquid" active>
-<alloy-code lang="liquid">{% for page in site.pages %}
+<alloy-code language="liquid">{% for page in site.pages %}
   &lt;a href="{{ page.url }}"&gt;{{ page.title }}&lt;/a&gt;
 {% endfor %}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="allpages-go">
-<alloy-code lang="html">{{ range .site.pages }}
+<alloy-code language="html">{{ range .site.pages }}
   &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
 {{ end }}</alloy-code>
 </wa-tab-panel>

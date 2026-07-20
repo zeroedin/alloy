@@ -102,7 +102,7 @@ Layouts can chain via front matter `layout:` directives, enabling multi-level co
 <wa-tab slot="nav" panel="chain-go">Go templates</wa-tab>
 
 <wa-tab-panel name="chain-liquid" active>
-<alloy-code lang="liquid">&lt;!-- layouts/has-toc.liquid --&gt;
+<alloy-code language="liquid">&lt;!-- layouts/has-toc.liquid --&gt;
 ---
 layout: "base"
 ---
@@ -112,7 +112,7 @@ layout: "base"
 &lt;/div&gt;</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="chain-go">
-<alloy-code lang="html">&lt;!-- layouts/has-toc.html --&gt;
+<alloy-code language="html">&lt;!-- layouts/has-toc.html --&gt;
 ---
 layout: "base"
 ---

@@ -33,7 +33,7 @@ export default function(alloy) {
 
     for (const m of matches) {
       const [full, attrs, content] = m;
-      const langMatch = attrs.match(/lang="([^"]+)"/);
+      const langMatch = attrs.match(/language="([^"]+)"/);
       const raw = decodeHtmlEntities(content.trim());
 
       if (langMatch) {

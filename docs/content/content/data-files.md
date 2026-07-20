@@ -101,7 +101,7 @@ The iteration syntax differs between template engines:
 
 In Liquid, `{% for %}` over an ordered map yields `[key, value]` pairs. Access them by index:
 
-<alloy-code lang="liquid">{% for pair in site.data.sections %}
+<alloy-code language="liquid">{% for pair in site.data.sections %}
   &lt;h2&gt;{{ pair[0] }}&lt;/h2&gt;  &lt;!-- key: "intro", "setup", "usage" --&gt;
   &lt;p&gt;{{ pair[1].title }}&lt;/p&gt;
 {% endfor %}</alloy-code>
@@ -113,7 +113,7 @@ Dot access works for individual keys: `{{ site.data.sections.intro.title }}`
 
 Go's `{{ range }}` cannot iterate an ordered map directly. Use the `orange` helper to get `Key`/`Value` pairs in insertion order:
 
-<alloy-code lang="html">{{ range orange .site.data.sections }}
+<alloy-code language="html">{{ range orange .site.data.sections }}
   &lt;h2&gt;{{ .Key }}&lt;/h2&gt;
   &lt;p&gt;{{ .Value.title }}&lt;/p&gt;
 {{ end }}</alloy-code>

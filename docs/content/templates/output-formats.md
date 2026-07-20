@@ -20,7 +20,7 @@ outputs: ["html", "json"]
 <wa-tab slot="nav" panel="fmtjson-go">Go templates</wa-tab>
 
 <wa-tab-panel name="fmtjson-liquid" active>
-<alloy-code lang="liquid">&lt;!-- layouts/post.json.liquid --&gt;
+<alloy-code language="liquid">&lt;!-- layouts/post.json.liquid --&gt;
 {
   "title": "{{ page.title }}",
   "url": "{{ page.url | absolute_url: site.baseURL }}",
@@ -29,7 +29,7 @@ outputs: ["html", "json"]
 }</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="fmtjson-go">
-<alloy-code lang="html">&lt;!-- layouts/post.json --&gt;
+<alloy-code language="html">&lt;!-- layouts/post.json --&gt;
 {
   "title": "{{ .page.title }}",
   "url": "{{ absolute_url .page.url .site.baseURL }}",
@@ -129,7 +129,7 @@ outputs: ["html", "json"]
 <wa-tab slot="nav" panel="fmtapi-go">Go templates</wa-tab>
 
 <wa-tab-panel name="fmtapi-liquid" active>
-<alloy-code lang="liquid">&lt;!-- layouts/blog.json.liquid --&gt;
+<alloy-code language="liquid">&lt;!-- layouts/blog.json.liquid --&gt;
 {
   "posts": [
     {% for post in collections.blog %}
@@ -144,7 +144,7 @@ outputs: ["html", "json"]
 }</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="fmtapi-go">
-<alloy-code lang="html">&lt;!-- layouts/blog.json --&gt;
+<alloy-code language="html">&lt;!-- layouts/blog.json --&gt;
 {
   "posts": [
     {{ range $i, $post := .collections.blog }}{{ if $i }},{{ end }}
@@ -181,7 +181,7 @@ outputs: ["html", "xml"]
 <wa-tab slot="nav" panel="fmtrss-go">Go templates</wa-tab>
 
 <wa-tab-panel name="fmtrss-liquid" active>
-<alloy-code lang="liquid">&lt;!-- layouts/blog.xml.liquid --&gt;
+<alloy-code language="liquid">&lt;!-- layouts/blog.xml.liquid --&gt;
 &lt;?xml version="1.0" encoding="UTF-8"?&gt;
 &lt;rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"&gt;
   &lt;channel&gt;
@@ -200,7 +200,7 @@ outputs: ["html", "xml"]
 &lt;/rss&gt;</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="fmtrss-go">
-<alloy-code lang="html">&lt;!-- layouts/blog.xml --&gt;
+<alloy-code language="html">&lt;!-- layouts/blog.xml --&gt;
 &lt;?xml version="1.0" encoding="UTF-8"?&gt;
 &lt;rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"&gt;
   &lt;channel&gt;
@@ -282,7 +282,7 @@ permalink: "/search/"
 <wa-tab slot="nav" panel="fmtsearch-go">Go templates</wa-tab>
 
 <wa-tab-panel name="fmtsearch-liquid" active>
-<alloy-code lang="liquid">&lt;!-- layouts/search.json.liquid --&gt;
+<alloy-code language="liquid">&lt;!-- layouts/search.json.liquid --&gt;
 [
   {% for page in site.pages %}
   {
@@ -294,7 +294,7 @@ permalink: "/search/"
 ]</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="fmtsearch-go">
-<alloy-code lang="html">&lt;!-- layouts/search.json --&gt;
+<alloy-code language="html">&lt;!-- layouts/search.json --&gt;
 [
   {{ range $i, $page := .site.pages }}{{ if $i }},{{ end }}
   {
@@ -318,7 +318,7 @@ Any text-based format works. The output format is determined by the layout file 
 <wa-tab slot="nav" panel="fmtcss-go">Go templates</wa-tab>
 
 <wa-tab-panel name="fmtcss-liquid" active>
-<alloy-code lang="liquid">&lt;!-- layouts/component.css.liquid --&gt;
+<alloy-code language="liquid">&lt;!-- layouts/component.css.liquid --&gt;
 :host {
   {% for token in site.data.tokens %}
   --{{ token.name }}: {{ token.value }};
@@ -326,7 +326,7 @@ Any text-based format works. The output format is determined by the layout file 
 }</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="fmtcss-go">
-<alloy-code lang="html">&lt;!-- layouts/component.css --&gt;
+<alloy-code language="html">&lt;!-- layouts/component.css --&gt;
 :host {
   {{ range .site.data.tokens }}
   --{{ .name }}: {{ .value }};

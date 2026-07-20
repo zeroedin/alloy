@@ -34,7 +34,7 @@ taxonomies:
 <wa-tab slot="nav" panel="qs-default-go">Go templates</wa-tab>
 
 <wa-tab-panel name="qs-default-liquid" active>
-<alloy-code lang="liquid">&lt;!-- layouts/default.liquid --&gt;
+<alloy-code language="liquid">&lt;!-- layouts/default.liquid --&gt;
 &lt;!DOCTYPE html&gt;
 &lt;html lang="en"&gt;
 &lt;head&gt;
@@ -52,7 +52,7 @@ taxonomies:
 &lt;/html&gt;</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="qs-default-go">
-<alloy-code lang="html">&lt;!-- layouts/default.html --&gt;
+<alloy-code language="html">&lt;!-- layouts/default.html --&gt;
 &lt;!DOCTYPE html&gt;
 &lt;html lang="en"&gt;
 &lt;head&gt;
@@ -80,7 +80,7 @@ Create a layout for blog posts. Children of a section with date-based permalinks
 <wa-tab slot="nav" panel="qs-post-go">Go templates</wa-tab>
 
 <wa-tab-panel name="qs-post-liquid" active>
-<alloy-code lang="liquid">&lt;!-- layouts/post.liquid --&gt;
+<alloy-code language="liquid">&lt;!-- layouts/post.liquid --&gt;
 &lt;!DOCTYPE html&gt;
 &lt;html lang="en"&gt;
 &lt;head&gt;
@@ -109,7 +109,7 @@ Create a layout for blog posts. Children of a section with date-based permalinks
 &lt;/html&gt;</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="qs-post-go">
-<alloy-code lang="html">&lt;!-- layouts/post.html --&gt;
+<alloy-code language="html">&lt;!-- layouts/post.html --&gt;
 &lt;!DOCTYPE html&gt;
 &lt;html lang="en"&gt;
 &lt;head&gt;

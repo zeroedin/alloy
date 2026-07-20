@@ -24,10 +24,10 @@ export default function(alloy) {
 <wa-tab slot="nav" panel="qjsrt-go">Go templates</wa-tab>
 
 <wa-tab-panel name="qjsrt-liquid" active>
-<alloy-code lang="liquid">&lt;span&gt;{{ page.content | readingTime }}&lt;/span&gt;</alloy-code>
+<alloy-code language="liquid">&lt;span&gt;{{ page.content | readingTime }}&lt;/span&gt;</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="qjsrt-go">
-<alloy-code lang="html">&lt;span&gt;{{ readingTime .page.content }}&lt;/span&gt;</alloy-code>
+<alloy-code language="html">&lt;span&gt;{{ readingTime .page.content }}&lt;/span&gt;</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>
 {% endraw %}
@@ -75,12 +75,12 @@ Use in templates:
 <wa-tab slot="nav" panel="qjsfilt-go">Go templates</wa-tab>
 
 <wa-tab-panel name="qjsfilt-liquid" active>
-<alloy-code lang="liquid">{{ page.author | initials }}
+<alloy-code language="liquid">{{ page.author | initials }}
 {{ page.description | truncateAt: 120 }}
 {{ page.score | percentage: page.maxScore }}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="qjsfilt-go">
-<alloy-code lang="html">{{ initials .page.author }}
+<alloy-code language="html">{{ initials .page.author }}
 {{ truncateAt .page.description 120 }}
 {{ percentage .page.score .page.maxScore }}</alloy-code>
 </wa-tab-panel>
@@ -131,7 +131,7 @@ Use in content:
 <wa-tab slot="nav" panel="qjssc-go">Go templates</wa-tab>
 
 <wa-tab-panel name="qjssc-liquid" active>
-<alloy-code lang="liquid">{% youtube "dQw4w9WgXcQ" %}
+<alloy-code language="liquid">{% youtube "dQw4w9WgXcQ" %}
 
 {% callout "warning" %}
 Do not use this in production without testing first.
@@ -140,7 +140,7 @@ Do not use this in production without testing first.
 {% componentDemo "rh-button" %}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="qjssc-go">
-<alloy-code lang="html">{{ youtube "dQw4w9WgXcQ" }}
+<alloy-code language="html">{{ youtube "dQw4w9WgXcQ" }}
 
 {{% callout "warning" %}}
 Do not use this in production without testing first.

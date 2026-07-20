@@ -41,24 +41,24 @@ Your module must export an `alloc` function that returns a pointer to a block of
 <wa-tab slot="nav" panel="alloc-as">AssemblyScript</wa-tab>
 
 <wa-tab-panel name="alloc-wat" active>
-<alloy-code lang="wasm">alloc(size i32) -> ptr i32</alloy-code>
+<alloy-code language="wasm">alloc(size i32) -> ptr i32</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="alloc-rust">
-<alloy-code lang="rust">#[no_mangle]
+<alloy-code language="rust">#[no_mangle]
 pub extern "C" fn alloc(size: i32) -> i32 {
     let layout = std::alloc::Layout::from_size_align(size as usize, 1).unwrap();
     unsafe { std::alloc::alloc(layout) as i32 }
 }</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="alloc-tinygo">
-<alloy-code lang="go">//export alloc
+<alloy-code language="go">//export alloc
 func alloc(size int32) int32 {
 	buf := make([]byte, size)
 	return int32(uintptr(unsafe.Pointer(&buf[0])))
 }</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="alloc-as">
-<alloy-code lang="typescript">export function alloc(size: i32): i32 {
+<alloy-code language="typescript">export function alloc(size: i32): i32 {
   return heap.alloc(size) as i32;
 }</alloy-code>
 </wa-tab-panel>
@@ -75,10 +75,10 @@ Receives a UTF-8 string at the given pointer/length. Returns a pointer/length pa
 <wa-tab slot="nav" panel="filter-as">AssemblyScript</wa-tab>
 
 <wa-tab-panel name="filter-wat" active>
-<alloy-code lang="wasm">filter(ptr i32, len i32) -> (ptr i32, len i32)</alloy-code>
+<alloy-code language="wasm">filter(ptr i32, len i32) -> (ptr i32, len i32)</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="filter-rust">
-<alloy-code lang="rust">#[no_mangle]
+<alloy-code language="rust">#[no_mangle]
 pub extern "C" fn filter(ptr: i32, len: i32) -> u64 {
     let input = unsafe {
         std::str::from_utf8_unchecked(
@@ -94,7 +94,7 @@ pub extern "C" fn filter(ptr: i32, len: i32) -> u64 {
 }</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="filter-tinygo">
-<alloy-code lang="go">//export filter
+<alloy-code language="go">//export filter
 func filter(ptr, length int32) uint64 {
 	input := ptrToString(ptr, length)
 	result := strings.ToUpper(input)
@@ -104,7 +104,7 @@ func filter(ptr, length int32) uint64 {
 }</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="filter-as">
-<alloy-code lang="typescript">export function filter(ptr: i32, len: i32): u64 {
+<alloy-code language="typescript">export function filter(ptr: i32, len: i32): u64 {
   const input = String.UTF8.decodeUnsafe(ptr, len);
   const result = input.toUpperCase();
   const resultBuf = String.UTF8.encode(result);

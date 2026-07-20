@@ -96,7 +96,7 @@ Alloy extracts the heading structure from each Markdown page during rendering an
 <wa-tab slot="nav" panel="toc-go">Go templates</wa-tab>
 
 <wa-tab-panel name="toc-liquid" active>
-<alloy-code lang="liquid">&lt;nav class="toc"&gt;
+<alloy-code language="liquid">&lt;nav class="toc"&gt;
   {% for item in page.toc %}
     &lt;a href="#{{ item.id }}"&gt;{{ item.text }}&lt;/a&gt;
     {% if item.children.size > 0 %}
@@ -110,7 +110,7 @@ Alloy extracts the heading structure from each Markdown page during rendering an
 &lt;/nav&gt;</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="toc-go">
-<alloy-code lang="html">&lt;nav class="toc"&gt;
+<alloy-code language="html">&lt;nav class="toc"&gt;
   {{ range .page.toc }}
     &lt;a href="#{{ .id }}"&gt;{{ .text }}&lt;/a&gt;
     {{ if .children }}

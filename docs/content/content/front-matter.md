@@ -129,7 +129,7 @@ Use summaries in list templates:
 <wa-tab slot="nav" panel="summary-go">Go templates</wa-tab>
 
 <wa-tab-panel name="summary-liquid" active>
-<alloy-code lang="liquid">{% for article in collections.articles %}
+<alloy-code language="liquid">{% for article in collections.articles %}
   &lt;article&gt;
     &lt;h2&gt;&lt;a href="{{ article.url }}"&gt;{{ article.title }}&lt;/a&gt;&lt;/h2&gt;
     &lt;p&gt;By {{ article.author }} -- {{ article.date | date: "%B %Y" }}&lt;/p&gt;
@@ -140,7 +140,7 @@ Use summaries in list templates:
 {% endfor %}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="summary-go">
-<alloy-code lang="html">{{ range .collections.articles }}
+<alloy-code language="html">{{ range .collections.articles }}
   &lt;article&gt;
     &lt;h2&gt;&lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;&lt;/h2&gt;
     &lt;p&gt;By {{ .author }} -- {{ date .date "%B %Y" }}&lt;/p&gt;

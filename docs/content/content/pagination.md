@@ -127,7 +127,7 @@ Every paginated page receives a `pagination` object in its template context:
 <wa-tab slot="nav" panel="pagctx-go">Go templates</wa-tab>
 
 <wa-tab-panel name="pagctx-liquid" active>
-<alloy-code lang="liquid">{{ pagination.pageNumber }}    -- Current page number (1-based)
+<alloy-code language="liquid">{{ pagination.pageNumber }}    -- Current page number (1-based)
 {{ pagination.totalPages }}    -- Total page count
 {{ pagination.previousPage }}  -- URL of previous page (nil if first)
 {{ pagination.nextPage }}      -- URL of next page (nil if last)
@@ -136,7 +136,7 @@ Every paginated page receives a `pagination` object in its template context:
 {{ pagination.items }}         -- Items on the current page</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="pagctx-go">
-<alloy-code lang="html">{{ .pagination.pageNumber }}    -- Current page number (1-based)
+<alloy-code language="html">{{ .pagination.pageNumber }}    -- Current page number (1-based)
 {{ .pagination.totalPages }}    -- Total page count
 {{ .pagination.previousPage }}  -- URL of previous page (nil if first)
 {{ .pagination.nextPage }}      -- URL of next page (nil if last)

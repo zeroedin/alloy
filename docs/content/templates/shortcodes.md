@@ -33,11 +33,11 @@ Inline shortcodes take positional arguments and produce self-contained output:
 <wa-tab slot="nav" panel="inline-go">Go templates</wa-tab>
 
 <wa-tab-panel name="inline-liquid" active>
-<alloy-code lang="liquid">{% youtube "dQw4w9WgXcQ" %}
+<alloy-code language="liquid">{% youtube "dQw4w9WgXcQ" %}
 {% github_star "alloy-ssg/alloy" %}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="inline-go">
-<alloy-code lang="html">{{ youtube "dQw4w9WgXcQ" }}
+<alloy-code language="html">{{ youtube "dQw4w9WgXcQ" }}
 {{ github_star "alloy-ssg/alloy" }}</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>
@@ -53,7 +53,7 @@ Block shortcodes wrap inner content, letting you add markup around authored text
 <wa-tab slot="nav" panel="block-go">Go templates</wa-tab>
 
 <wa-tab-panel name="block-liquid" active>
-<alloy-code lang="liquid">{% callout "warning" %}
+<alloy-code language="liquid">{% callout "warning" %}
   Do not deploy to production without running the test suite first.
 {% endcallout %}</alloy-code>
 
@@ -61,7 +61,7 @@ Liquid block shortcodes close with `{% end<name> %}`.
 
 </wa-tab-panel>
 <wa-tab-panel name="block-go">
-<alloy-code lang="html">{{% callout "warning" %}}
+<alloy-code language="html">{{% callout "warning" %}}
   Do not deploy to production without running the test suite first.
 {{% /callout %}}</alloy-code>
 

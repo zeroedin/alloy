@@ -80,12 +80,12 @@ Output a web component instead of the default `<pre><code>`:
 <wa-tab slot="nav" panel="hook-codeblock-go">Go templates</wa-tab>
 
 <wa-tab-panel name="hook-codeblock-liquid" active>
-<alloy-code lang="liquid">&lt;!-- layouts/_markup/render-codeblock.liquid --&gt;
-&lt;alloy-code lang="{{ markup.language }}"&gt;{{ markup.inner }}&lt;/alloy-code&gt;</alloy-code>
+<alloy-code language="liquid">&lt;!-- layouts/_markup/render-codeblock.liquid --&gt;
+&lt;alloy-code language="{{ markup.language }}"&gt;{{ markup.inner }}&lt;/alloy-code&gt;</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="hook-codeblock-go">
-<alloy-code lang="html">&lt;!-- layouts/_markup/render-codeblock.html --&gt;
-&lt;alloy-code lang="{{ .markup.language }}"&gt;{{ .markup.inner }}&lt;/alloy-code&gt;</alloy-code>
+<alloy-code language="html">&lt;!-- layouts/_markup/render-codeblock.html --&gt;
+&lt;alloy-code language="{{ .markup.language }}"&gt;{{ .markup.inner }}&lt;/alloy-code&gt;</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>
 {% endraw %}
@@ -102,7 +102,7 @@ Add `target="_blank"` and an icon to external links:
 <wa-tab slot="nav" panel="hook-link-go">Go templates</wa-tab>
 
 <wa-tab-panel name="hook-link-liquid" active>
-<alloy-code lang="liquid">&lt;!-- layouts/_markup/render-link.liquid --&gt;
+<alloy-code language="liquid">&lt;!-- layouts/_markup/render-link.liquid --&gt;
 {% if markup.is_external %}
   &lt;a href="{{ markup.destination }}" target="_blank" rel="noopener"&gt;{{ markup.text }} ↗&lt;/a&gt;
 {% else %}
@@ -110,7 +110,7 @@ Add `target="_blank"` and an icon to external links:
 {% endif %}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="hook-link-go">
-<alloy-code lang="html">&lt;!-- layouts/_markup/render-link.html --&gt;
+<alloy-code language="html">&lt;!-- layouts/_markup/render-link.html --&gt;
 {{ if .markup.is_external }}
   &lt;a href="{{ .markup.destination }}" target="_blank" rel="noopener"&gt;{{ .markup.text }} ↗&lt;/a&gt;
 {{ else }}
@@ -130,11 +130,11 @@ Render mermaid code blocks as diagram containers instead of code:
 <wa-tab slot="nav" panel="hook-mermaid-go">Go templates</wa-tab>
 
 <wa-tab-panel name="hook-mermaid-liquid" active>
-<alloy-code lang="liquid">&lt;!-- layouts/_markup/render-codeblock-mermaid.liquid --&gt;
+<alloy-code language="liquid">&lt;!-- layouts/_markup/render-codeblock-mermaid.liquid --&gt;
 &lt;div class="mermaid"&gt;{{ markup.inner }}&lt;/div&gt;</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="hook-mermaid-go">
-<alloy-code lang="html">&lt;!-- layouts/_markup/render-codeblock-mermaid.html --&gt;
+<alloy-code language="html">&lt;!-- layouts/_markup/render-codeblock-mermaid.html --&gt;
 &lt;div class="mermaid"&gt;{{ .markup.inner }}&lt;/div&gt;</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>
@@ -152,14 +152,14 @@ Add anchor links to headings. `markup.inner` contains the rendered HTML (so `## 
 <wa-tab slot="nav" panel="hook-heading-go">Go templates</wa-tab>
 
 <wa-tab-panel name="hook-heading-liquid" active>
-<alloy-code lang="liquid">&lt;!-- layouts/_markup/render-heading.liquid --&gt;
+<alloy-code language="liquid">&lt;!-- layouts/_markup/render-heading.liquid --&gt;
 &lt;h{{ markup.level }} id="{{ markup.id }}"&gt;
   &lt;a href="#{{ markup.id }}" class="anchor"&gt;#&lt;/a&gt;
   {{ markup.inner }}
 &lt;/h{{ markup.level }}&gt;</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="hook-heading-go">
-<alloy-code lang="html">&lt;!-- layouts/_markup/render-heading.html --&gt;
+<alloy-code language="html">&lt;!-- layouts/_markup/render-heading.html --&gt;
 &lt;h{{ .markup.level }} id="{{ .markup.id }}"&gt;
   &lt;a href="#{{ .markup.id }}" class="anchor"&gt;#&lt;/a&gt;
   {{ .markup.inner }}
@@ -180,13 +180,13 @@ Use `markup.attributes` to pass classes and IDs from Markdown to your hook outpu
 <wa-tab slot="nav" panel="hook-attrs-go">Go templates</wa-tab>
 
 <wa-tab-panel name="hook-attrs-liquid" active>
-<alloy-code lang="liquid">&lt;!-- layouts/_markup/render-codeblock.liquid --&gt;
+<alloy-code language="liquid">&lt;!-- layouts/_markup/render-codeblock.liquid --&gt;
 &lt;pre class="{{ markup.attributes.class }}"{% if markup.attributes.id %} id="{{ markup.attributes.id }}"{% endif %}&gt;
   &lt;code data-lang="{{ markup.language }}"&gt;{{ markup.inner }}&lt;/code&gt;
 &lt;/pre&gt;</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="hook-attrs-go">
-<alloy-code lang="html">&lt;!-- layouts/_markup/render-codeblock.html --&gt;
+<alloy-code language="html">&lt;!-- layouts/_markup/render-codeblock.html --&gt;
 &lt;pre class="{{ .markup.attributes.class }}"{{ if .markup.attributes.id }} id="{{ .markup.attributes.id }}"{{ end }}&gt;
   &lt;code data-lang="{{ .markup.language }}"&gt;{{ .markup.inner }}&lt;/code&gt;
 &lt;/pre&gt;</alloy-code>

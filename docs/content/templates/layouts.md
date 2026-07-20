@@ -13,7 +13,7 @@ Layouts wrap your page content in shared HTML structure. Every content page is r
 <wa-tab slot="nav" panel="layout-go">Go templates</wa-tab>
 
 <wa-tab-panel name="layout-liquid" active>
-<alloy-code lang="liquid">&lt;!-- layouts/default.liquid --&gt;
+<alloy-code language="liquid">&lt;!-- layouts/default.liquid --&gt;
 &lt;!DOCTYPE html&gt;
 &lt;html lang="{{ site.language }}"&gt;
 &lt;head&gt;
@@ -28,7 +28,7 @@ Layouts wrap your page content in shared HTML structure. Every content page is r
 &lt;/html&gt;</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="layout-go">
-<alloy-code lang="html">&lt;!-- layouts/default.html --&gt;
+<alloy-code language="html">&lt;!-- layouts/default.html --&gt;
 &lt;!DOCTYPE html&gt;
 &lt;html lang="{{ .site.language }}"&gt;
 &lt;head&gt;
@@ -179,7 +179,7 @@ All front matter fields are available inside layouts via the `page` object:
 <wa-tab slot="nav" panel="pagedata-go">Go templates</wa-tab>
 
 <wa-tab-panel name="pagedata-liquid" active>
-<alloy-code lang="liquid">&lt;article class="post"&gt;
+<alloy-code language="liquid">&lt;article class="post"&gt;
   &lt;h1&gt;{{ page.title }}&lt;/h1&gt;
   &lt;time datetime="{{ page.date | date: '%Y-%m-%d' }}"&gt;
     {{ page.date | date: "%B %d, %Y" }}
@@ -198,7 +198,7 @@ All front matter fields are available inside layouts via the `page` object:
 &lt;/article&gt;</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="pagedata-go">
-<alloy-code lang="html">&lt;article class="post"&gt;
+<alloy-code language="html">&lt;article class="post"&gt;
   &lt;h1&gt;{{ .page.title }}&lt;/h1&gt;
   &lt;time datetime="{{ date .page.date "%Y-%m-%d" }}"&gt;
     {{ date .page.date "%B %d, %Y" }}
@@ -231,24 +231,24 @@ Partials are reusable template fragments stored in `layouts/partials/` (by conve
 <wa-tab slot="nav" panel="partials-go">Go templates</wa-tab>
 
 <wa-tab-panel name="partials-liquid" active>
-<alloy-code lang="liquid">{% include "partials/header" %}
+<alloy-code language="liquid">{% include "partials/header" %}
 {% include "partials/footer" %}
 {% render "partials/social-links" %}</alloy-code>
 
 Both tags resolve paths relative to the `layouts/` directory, trying `name.liquid`, then `name.html`, then the bare name. The difference: `{% include %}` shares the parent template's variable scope, while `{% render %}` creates an isolated scope (variables from the parent are not accessible unless explicitly passed).
 </wa-tab-panel>
 <wa-tab-panel name="partials-go">
-<alloy-code lang="html">{{ include "partials/header" }}
+<alloy-code language="html">{{ include "partials/header" }}
 {{ include "partials/footer" }}
 {{ include "partials/social-links" }}</alloy-code>
 
 The `include` function resolves paths relative to the `layouts/` directory, trying `name.html`. Context is optional -- with no argument, the include inherits the current template context (like Liquid's `{% include %}`). Pass an explicit context to narrow scope:
 
-<alloy-code lang="html">{{ include "partials/card" (dict "item" . "compact" true) }}</alloy-code>
+<alloy-code language="html">{{ include "partials/card" (dict "item" . "compact" true) }}</alloy-code>
 
 Unlike Go's built-in `{{ template }}` action, `include` is a function -- its output can be captured in variables and used in pipelines:
 
-<alloy-code lang="html">{{ $nav := include "partials/nav" }}
+<alloy-code language="html">{{ $nav := include "partials/nav" }}
 {{ if $nav }}&lt;div class="has-nav"&gt;{{ $nav }}&lt;/div&gt;{{ end }}</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>

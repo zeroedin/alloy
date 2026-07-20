@@ -19,7 +19,7 @@ templates:
 <wa-tab slot="nav" panel="overview-go">Go templates</wa-tab>
 
 <wa-tab-panel name="overview-liquid" active>
-<alloy-code lang="liquid">&lt;!-- layouts/default.liquid --&gt;
+<alloy-code language="liquid">&lt;!-- layouts/default.liquid --&gt;
 &lt;!DOCTYPE html&gt;
 &lt;html&gt;
 &lt;head&gt;&lt;title&gt;{{ page.title }}&lt;/title&gt;&lt;/head&gt;
@@ -31,7 +31,7 @@ templates:
 &lt;/html&gt;</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="overview-go">
-<alloy-code lang="html">&lt;!-- layouts/default.html --&gt;
+<alloy-code language="html">&lt;!-- layouts/default.html --&gt;
 &lt;!DOCTYPE html&gt;
 &lt;html&gt;
 &lt;head&gt;&lt;title&gt;{{ .page.title }}&lt;/title&gt;&lt;/head&gt;
@@ -81,7 +81,7 @@ Every template receives these top-level variables:
 <wa-tab slot="nav" panel="context-go">Go templates</wa-tab>
 
 <wa-tab-panel name="context-liquid" active>
-<alloy-code lang="liquid">&lt;h1&gt;{{ page.title }}&lt;/h1&gt;
+<alloy-code language="liquid">&lt;h1&gt;{{ page.title }}&lt;/h1&gt;
 &lt;time&gt;{{ page.date | date: "%B %d, %Y" }}&lt;/time&gt;
 {{ content }}
 
@@ -91,7 +91,7 @@ Every template receives these top-level variables:
 {% endfor %}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="context-go">
-<alloy-code lang="html">&lt;h1&gt;{{ .page.title }}&lt;/h1&gt;
+<alloy-code language="html">&lt;h1&gt;{{ .page.title }}&lt;/h1&gt;
 &lt;time&gt;{{ date .page.date "%B %d, %Y" }}&lt;/time&gt;
 {{ .content }}
 

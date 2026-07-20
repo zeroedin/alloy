@@ -75,7 +75,7 @@ Both use the same layout template. The `taxonomy` object in the template context
 <wa-tab slot="nav" panel="taxpage-go">Go templates</wa-tab>
 
 <wa-tab-panel name="taxpage-liquid" active>
-<alloy-code lang="liquid">{% if taxonomy.term %}
+<alloy-code language="liquid">{% if taxonomy.term %}
   &lt;!-- Rendering /tags/javascript/ --&gt;
   &lt;h1&gt;{{ taxonomy.term }}&lt;/h1&gt;
   {% for post in taxonomy.pages %}
@@ -91,7 +91,7 @@ Both use the same layout template. The `taxonomy` object in the template context
 {% endif %}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="taxpage-go">
-<alloy-code lang="html">{{ if .taxonomy.term }}
+<alloy-code language="html">{{ if .taxonomy.term }}
   &lt;!-- Rendering /tags/javascript/ --&gt;
   &lt;h1&gt;{{ .taxonomy.term }}&lt;/h1&gt;
   {{ range .taxonomy.pages }}
@@ -147,14 +147,14 @@ The data is still available as `taxonomies.tags.*` in templates. This is useful 
 <wa-tab slot="nav" panel="taxnav-go">Go templates</wa-tab>
 
 <wa-tab-panel name="taxnav-liquid" active>
-<alloy-code lang="liquid">&lt;!-- Use tags for navigation without dedicated tag pages --&gt;
+<alloy-code language="liquid">&lt;!-- Use tags for navigation without dedicated tag pages --&gt;
 {% assign nav_items = taxonomies.tags.foundations | sort: "order" %}
 {% for page in nav_items %}
   &lt;a href="{{ page.url }}"&gt;{{ page.title }}&lt;/a&gt;
 {% endfor %}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="taxnav-go">
-<alloy-code lang="html">&lt;!-- Use tags for navigation without dedicated tag pages --&gt;
+<alloy-code language="html">&lt;!-- Use tags for navigation without dedicated tag pages --&gt;
 {{ $nav_items := sort .taxonomies.tags.foundations "order" }}
 {{ range $nav_items }}
   &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
@@ -175,7 +175,7 @@ When `render: false`, duplicate term slugs are not an error since no output page
 <wa-tab slot="nav" panel="taxterms-go">Go templates</wa-tab>
 
 <wa-tab-panel name="taxterms-liquid" active>
-<alloy-code lang="liquid">&lt;!-- List all tags with page counts --&gt;
+<alloy-code language="liquid">&lt;!-- List all tags with page counts --&gt;
 &lt;ul&gt;
   {% for term in taxonomy.terms %}
     &lt;li&gt;
@@ -186,7 +186,7 @@ When `render: false`, duplicate term slugs are not an error since no output page
 &lt;/ul&gt;</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="taxterms-go">
-<alloy-code lang="html">&lt;!-- List all tags with page counts --&gt;
+<alloy-code language="html">&lt;!-- List all tags with page counts --&gt;
 &lt;ul&gt;
   {{ range .taxonomy.terms }}
     &lt;li&gt;
@@ -207,7 +207,7 @@ When `render: false`, duplicate term slugs are not an error since no output page
 <wa-tab slot="nav" panel="taxspecific-go">Go templates</wa-tab>
 
 <wa-tab-panel name="taxspecific-liquid" active>
-<alloy-code lang="liquid">&lt;!-- Show all pages tagged "javascript" --&gt;
+<alloy-code language="liquid">&lt;!-- Show all pages tagged "javascript" --&gt;
 {% for post in taxonomies.tags.javascript %}
   &lt;article&gt;
     &lt;h3&gt;&lt;a href="{{ post.url }}"&gt;{{ post.title }}&lt;/a&gt;&lt;/h3&gt;
@@ -215,7 +215,7 @@ When `render: false`, duplicate term slugs are not an error since no output page
 {% endfor %}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="taxspecific-go">
-<alloy-code lang="html">&lt;!-- Show all pages tagged "javascript" --&gt;
+<alloy-code language="html">&lt;!-- Show all pages tagged "javascript" --&gt;
 {{ range .taxonomies.tags.javascript }}
   &lt;article&gt;
     &lt;h3&gt;&lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;&lt;/h3&gt;
@@ -233,13 +233,13 @@ When `render: false`, duplicate term slugs are not an error since no output page
 <wa-tab slot="nav" panel="taxsort-go">Go templates</wa-tab>
 
 <wa-tab-panel name="taxsort-liquid" active>
-<alloy-code lang="liquid">{% assign sorted = taxonomies.tags.foundations | sort: "order" %}
+<alloy-code language="liquid">{% assign sorted = taxonomies.tags.foundations | sort: "order" %}
 {% for page in sorted %}
   &lt;a href="{{ page.url }}"&gt;{{ page.title }}&lt;/a&gt;
 {% endfor %}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="taxsort-go">
-<alloy-code lang="html">{{ $sorted := sort .taxonomies.tags.foundations "order" }}
+<alloy-code language="html">{{ $sorted := sort .taxonomies.tags.foundations "order" }}
 {{ range $sorted }}
   &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
 {{ end }}</alloy-code>
@@ -301,11 +301,11 @@ Taxonomies live under their own top-level template variable, `taxonomies`, separ
 <wa-tab slot="nav" panel="taxns-go">Go templates</wa-tab>
 
 <wa-tab-panel name="taxns-liquid" active>
-<alloy-code lang="liquid">{{ collections.blog }}            &lt;!-- section collection --&gt;
+<alloy-code language="liquid">{{ collections.blog }}            &lt;!-- section collection --&gt;
 {{ taxonomies.tags.javascript }}  &lt;!-- taxonomy collection --&gt;</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="taxns-go">
-<alloy-code lang="html">{{ .collections.blog }}            &lt;!-- section collection --&gt;
+<alloy-code language="html">{{ .collections.blog }}            &lt;!-- section collection --&gt;
 {{ .taxonomies.tags.javascript }}  &lt;!-- taxonomy collection --&gt;</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>

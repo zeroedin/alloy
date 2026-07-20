@@ -145,7 +145,7 @@ All cascaded data is available in templates through the `page` and `site` object
 <wa-tab slot="nav" panel="cascade-go">Go templates</wa-tab>
 
 <wa-tab-panel name="cascade-liquid" active>
-<alloy-code lang="liquid">&lt;h1&gt;{{ page.title }}&lt;/h1&gt;
+<alloy-code language="liquid">&lt;h1&gt;{{ page.title }}&lt;/h1&gt;
 &lt;p&gt;By {{ page.author }}&lt;/p&gt;
 
 {% if page.tags %}
@@ -157,7 +157,7 @@ All cascaded data is available in templates through the `page` and `site` object
 &lt;p&gt;Theme: {{ site.data.site.theme }}&lt;/p&gt;</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="cascade-go">
-<alloy-code lang="html">&lt;h1&gt;{{ .page.title }}&lt;/h1&gt;
+<alloy-code language="html">&lt;h1&gt;{{ .page.title }}&lt;/h1&gt;
 &lt;p&gt;By {{ .page.author }}&lt;/p&gt;
 
 {{ if .page.tags }}

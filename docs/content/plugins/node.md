@@ -124,10 +124,10 @@ export default function(alloy) {
 <wa-tab slot="nav" panel="nodefilt-go">Go templates</wa-tab>
 
 <wa-tab-panel name="nodefilt-liquid" active>
-<alloy-code lang="liquid">{{ page.content | smartQuotes }}</alloy-code>
+<alloy-code language="liquid">{{ page.content | smartQuotes }}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="nodefilt-go">
-<alloy-code lang="html">{{ smartQuotes .page.content }}</alloy-code>
+<alloy-code language="html">{{ smartQuotes .page.content }}</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>
 {% endraw %}
@@ -146,10 +146,10 @@ alloy.filter("imageUrl", (path, width, format) => {
 <wa-tab slot="nav" panel="nodeimg-go">Go templates</wa-tab>
 
 <wa-tab-panel name="nodeimg-liquid" active>
-<alloy-code lang="liquid">{{ "hero.jpg" | imageUrl: 800, "webp" }}</alloy-code>
+<alloy-code language="liquid">{{ "hero.jpg" | imageUrl: 800, "webp" }}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="nodeimg-go">
-<alloy-code lang="html">{{ imageUrl "hero.jpg" 800 "webp" }}</alloy-code>
+<alloy-code language="html">{{ imageUrl "hero.jpg" 800 "webp" }}</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>
 {% endraw %}

@@ -25,13 +25,13 @@ All built-in filters are registered in both engines, but the calling syntax diff
 <wa-tab slot="nav" panel="syntax-go">Go templates</wa-tab>
 
 <wa-tab-panel name="syntax-liquid" active>
-<alloy-code lang="liquid">{{ page.title | upcase }}
+<alloy-code language="liquid">{{ page.title | upcase }}
 {{ page.summary | truncate: 100 }}
 {{ page.date | date: "%B %d, %Y" }}
 {{ collections.blog | sort: "title" | first }}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="syntax-go">
-<alloy-code lang="html">{{ upcase .page.title }}
+<alloy-code language="html">{{ upcase .page.title }}
 {{ truncate .page.summary 100 }}
 {{ date .page.date "%B %d, %Y" }}
 {{ first (sort .collections.blog "title") }}</alloy-code>
@@ -154,7 +154,7 @@ The `limit` filter returns the first N items from an array. It provides Go templ
 <wa-tab slot="nav" panel="limit-go">Go templates</wa-tab>
 
 <wa-tab-panel name="limit-liquid" active>
-<alloy-code lang="liquid">&lt;h2&gt;Recent posts&lt;/h2&gt;
+<alloy-code language="liquid">&lt;h2&gt;Recent posts&lt;/h2&gt;
 {% assign recent = collections.blog | limit: 5 %}
 {% for post in recent %}
   &lt;a href="{{ post.url }}"&gt;{{ post.title }}&lt;/a&gt;
@@ -162,17 +162,17 @@ The `limit` filter returns the first N items from an array. It provides Go templ
 
 Liquid's `{% for ... limit: 5 %}` clause still works -- the `limit` filter is an alternative that's useful in `assign` chains or when composing filters:
 
-<alloy-code lang="liquid">{% assign top3 = collections.blog | sort: "date" | reverse | limit: 3 %}</alloy-code>
+<alloy-code language="liquid">{% assign top3 = collections.blog | sort: "date" | reverse | limit: 3 %}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="limit-go">
-<alloy-code lang="html">&lt;h2&gt;Recent posts&lt;/h2&gt;
+<alloy-code language="html">&lt;h2&gt;Recent posts&lt;/h2&gt;
 {{ range limit .collections.blog 5 }}
   &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
 {{ end }}</alloy-code>
 
 Go templates also have a built-in `slice` function (from Go's standard library, not an Alloy filter) that supports both start and end indices:
 
-<alloy-code lang="html">&lt;!-- slice: native Go built-in, equivalent to limit --&gt;
+<alloy-code language="html">&lt;!-- slice: native Go built-in, equivalent to limit --&gt;
 {{ range slice .collections.blog 0 5 }}
   &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
 {{ end }}

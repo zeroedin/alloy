@@ -2,12 +2,12 @@ import { LitElement, html, css } from 'lit';
 
 export class AlloyCode extends LitElement {
   static properties = {
-    lang: { type: String },
+    language: { type: String },
     filename: { type: String },
     _codeText: { state: true },
   };
 
-  declare lang: string;
+  declare language: string;
   declare filename: string;
   declare _codeText: string;
 
@@ -59,7 +59,7 @@ export class AlloyCode extends LitElement {
 
   constructor() {
     super();
-    this.lang = '';
+    this.language = '';
     this.filename = '';
     this._codeText = '';
   }
