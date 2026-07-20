@@ -1088,8 +1088,9 @@
     pointer-events: none;
 
     @media (prefers-color-scheme: light) {
-      opacity: 0.2;
-      mix-blend-mode: soft-light;
+      opacity: 0.45;
+      mix-blend-mode: multiply;
+      filter: saturate(0.1) brightness(0.7);
     }
   }
 
