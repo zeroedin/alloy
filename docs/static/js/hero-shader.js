@@ -190,12 +190,23 @@ void main() {
   }
 
   var hero = canvas.closest('.hero');
-  hero.addEventListener('mousemove', function(e) {
+  function updateTarget(x, y) {
     var rect = hero.getBoundingClientRect();
-    mouseTarget[0] = (e.clientX - rect.left) / rect.width;
-    mouseTarget[1] = 1.0 - (e.clientY - rect.top) / rect.height;
+    mouseTarget[0] = (x - rect.left) / rect.width;
+    mouseTarget[1] = 1.0 - (y - rect.top) / rect.height;
+  }
+  hero.addEventListener('mousemove', function(e) {
+    updateTarget(e.clientX, e.clientY);
   });
   hero.addEventListener('mouseleave', function() {
+    mouseTarget[0] = 0.5;
+    mouseTarget[1] = 0.5;
+  });
+  hero.addEventListener('touchmove', function(e) {
+    var touch = e.touches[0];
+    updateTarget(touch.clientX, touch.clientY);
+  }, { passive: true });
+  hero.addEventListener('touchend', function() {
     mouseTarget[0] = 0.5;
     mouseTarget[1] = 0.5;
   });
