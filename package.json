@@ -4,20 +4,18 @@
   "scripts": {
     "build:elements": "esbuild docs/elements/*.ts --outdir=docs/elements --format=esm"
   },
-  "dependencies": {
+  "devDependencies": {
     "@awesome.me/webawesome": "^3.6.0",
     "@lit-labs/ssr": "^4.1.0",
     "@lit-labs/ssr-client": "^1.1.8",
-    "lit": "^3.3.3",
-    "lit-html": "^3.3.3",
-    "shiki": "^4.3.0"
-  },
-  "devDependencies": {
     "esbuild": "^0.28.1",
     "lightningcss": "^1.32.0",
+    "lit": "^3.3.3",
+    "lit-html": "^3.3.3",
     "rehype-format": "^5.0.1",
     "rehype-parse": "^9.0.1",
     "rehype-stringify": "^10.0.1",
+    "shiki": "^4.3.0",
     "unified": "^11.0.5"
   }
 }
