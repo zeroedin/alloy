@@ -160,6 +160,15 @@ void main() {
   var dispW = 256, dispH = 256;
   var fboA = createFBO(dispW, dispH);
   var fboB = createFBO(dispW, dispH);
+
+  // Clear both FBOs to neutral displacement (0.5 = zero displacement when unpacked)
+  gl.clearColor(0.5, 0.5, 0.0, 1.0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fboA.fb);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fboB.fb);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.clearColor(0.0, 0.0, 0.0, 1.0);
   var readFBO = fboA, writeFBO = fboB;
 
   // Uniform locations
@@ -215,7 +224,9 @@ void main() {
   ro.observe(canvas);
   resize();
 
+  var startTime = -1;
   function frame(t) {
+    if (startTime < 0) startTime = t;
     mousePrev[0] = mouseCurrent[0];
     mousePrev[1] = mouseCurrent[1];
     mouseCurrent[0] += (mouseTarget[0] - mouseCurrent[0]) * 0.06;
@@ -250,7 +261,7 @@ void main() {
     gl.bindTexture(gl.TEXTURE_2D, readFBO.tex);
     gl.uniform1i(fU.disp, 0);
     gl.uniform2f(fU.res, canvas.width, canvas.height);
-    gl.uniform1f(fU.time, t * 0.001);
+    gl.uniform1f(fU.time, (t - startTime) * 0.001);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
     raf = requestAnimationFrame(frame);
