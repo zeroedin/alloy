@@ -44,11 +44,12 @@ export default function(alloy) {
   });
 
   // Write the index after the build finishes
-  alloy.hook("onBuildComplete", {}, async (result) => {
+  // TODO: use result.OutputDir once #1111 is resolved
+  alloy.hook("onBuildComplete", {}, async () => {
     const { writeFileSync } = await import("fs");
     const { join } = await import("path");
     writeFileSync(
-      join(result.OutputDir, "search-index.json"),
+      join("_site", "search-index.json"),
       JSON.stringify(searchEntries),
     );
   });
