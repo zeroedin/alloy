@@ -95,6 +95,7 @@ func buildCompletePayload(r *BuildResult) *plugin.HookBuildCompletePayload {
 		PageCount: r.PageCount,
 		Duration:  r.Duration.String(),
 		Errors:    errs,
+		OutputDir: r.OutputDir,
 	}
 }
 
