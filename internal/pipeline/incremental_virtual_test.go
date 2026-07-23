@@ -447,7 +447,7 @@ var _ = Describe("Build Pipeline", func() {
 				0644)).To(Succeed())
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"content/index.md"},
-				pipeline.BuildOptions{PipelineState: pipelineState2})
+				pipeline.BuildOptions{PipelineState: pipelineState2, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Button must still render
