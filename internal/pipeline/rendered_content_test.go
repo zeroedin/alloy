@@ -413,7 +413,7 @@ var _ = Describe("BuildResult.RenderedContent memory optimization (issue #1098)"
 	// ── Direction 2: onBuildComplete payload excludes rendered HTML ──
 	//
 	// The onBuildComplete hook payload must not include rendered HTML.
-	// PLAN.md §5 documents the payload as { pageCount, duration, errors }.
+	// PLAN.md §5 documents the payload as { pageCount, duration, errors, outputDir }.
 	// Passing the full *BuildResult (which includes RenderedContent, Cache,
 	// SiteData) to plugins serializes megabytes of HTML over IPC on every
 	// build. The payload must be a trimmed view matching the documented shape.
@@ -489,7 +489,7 @@ export default function(alloy) {
 					"to every plugin over IPC on every build (issue #1098)")
 			Expect(keysStr).NotTo(ContainSubstring("renderedContent"),
 				"onBuildComplete payload must NOT include renderedContent (camelCase) — "+
-					"the documented payload shape is { pageCount, duration, errors }")
+					"the documented payload shape is { pageCount, duration, errors, outputDir }")
 
 			// The payload must NOT include internal state fields that
 			// have no value for plugins and waste IPC bandwidth.
@@ -583,6 +583,222 @@ export default function(alloy) {
 			Expect(statsStr).To(ContainSubstring("errors:0"),
 				"onBuildComplete payload must include errors as an array "+
 					"(empty for successful builds) per PLAN.md §5")
+		})
+
+		It("payload contains outputDir matching the configured output path", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			layoutsDir := filepath.Join(tmpDir, "layouts")
+			pluginsDir := filepath.Join(tmpDir, "plugins")
+			outputDir := filepath.Join(tmpDir, "_site")
+			payloadFile := filepath.Join(tmpDir, "payload-outputdir.txt")
+
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home\nlayout: default\n---\n# OutputDir Test"),
+				0644)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(layoutsDir, "default.liquid"),
+				[]byte("<html><body>{{ content }}</body></html>"),
+				0644)).To(Succeed())
+
+			// Plugin captures the outputDir value from the onBuildComplete payload.
+			// If outputDir is missing (undefined), the plugin writes "MISSING".
+			// If present, it writes the value so the test can assert it matches
+			// the configured output directory.
+			Expect(os.WriteFile(filepath.Join(pluginsDir, "outputdir-checker.js"),
+				[]byte(fmt.Sprintf(`export const runtime = "node";
+import { writeFileSync } from 'fs';
+export default function(alloy) {
+  alloy.hook('onBuildComplete', {}, function(result) {
+    const val = typeof result.outputDir === 'string' ? result.outputDir : 'MISSING';
+    writeFileSync(%q, val, 'utf8');
+    return result;
+  });
+}`, payloadFile)),
+				0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "OutputDir Payload Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Plugins: "plugins",
+				},
+			}
+			config.ApplyDefaults(cfg)
+
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			Expect(payloadFile).To(BeAnExistingFile(),
+				"outputdir-checker plugin must fire and write outputDir to disk")
+
+			payloadContent, readErr := os.ReadFile(payloadFile)
+			Expect(readErr).NotTo(HaveOccurred())
+			payloadStr := string(payloadContent)
+
+			// outputDir must be present (not "MISSING") — plugins like
+			// search-index.js use it to write output files via path.join().
+			Expect(payloadStr).NotTo(Equal("MISSING"),
+				"onBuildComplete payload must include outputDir — "+
+					"plugins need the output directory path to write "+
+					"post-build artifacts (e.g., search-index.json). "+
+					"This is a cheap string field, not the rendered content "+
+					"that was intentionally removed (issue #1110)")
+
+			// The value must match the configured output directory.
+			Expect(payloadStr).To(Equal(outputDir),
+				"onBuildComplete payload outputDir must match the configured "+
+					"build output directory (cfg.Build.Output)")
+		})
+
+		It("outputDir passes through cfg.Build.Output as-is, not resolved to absolute", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			layoutsDir := filepath.Join(tmpDir, "layouts")
+			pluginsDir := filepath.Join(tmpDir, "plugins")
+			payloadFile := filepath.Join(tmpDir, "payload-relpath.txt")
+
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home\nlayout: default\n---\n# Relative Path Test"),
+				0644)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(layoutsDir, "default.liquid"),
+				[]byte("<html><body>{{ content }}</body></html>"),
+				0644)).To(Succeed())
+
+			// Plugin captures outputDir to verify it is the raw config value,
+			// not resolved to an absolute path. This disambiguates between
+			// "pass through cfg.Build.Output" and "resolve to absolute".
+			Expect(os.WriteFile(filepath.Join(pluginsDir, "relpath-checker.js"),
+				[]byte(fmt.Sprintf(`export const runtime = "node";
+import { writeFileSync } from 'fs';
+export default function(alloy) {
+  alloy.hook('onBuildComplete', {}, function(result) {
+    const val = typeof result.outputDir === 'string' ? result.outputDir : 'MISSING';
+    writeFileSync(%q, val, 'utf8');
+    return result;
+  });
+}`, payloadFile)),
+				0644)).To(Succeed())
+
+			// Configure Build.Output as a relative path ("_site").
+			// The pipeline resolves this internally for file I/O via
+			// resolveDir(projectRoot, cfg.Build.Output), but
+			// BuildResult.OutputDir stores the raw cfg.Build.Output value.
+			// The hook payload must match BuildResult.OutputDir.
+			cfg := &config.Config{
+				Title:       "Relative OutputDir Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: "_site"},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Plugins: "plugins",
+				},
+			}
+			config.ApplyDefaults(cfg)
+
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			Expect(payloadFile).To(BeAnExistingFile(),
+				"relpath-checker plugin must fire and write outputDir to disk")
+
+			payloadContent, readErr := os.ReadFile(payloadFile)
+			Expect(readErr).NotTo(HaveOccurred())
+			payloadStr := string(payloadContent)
+
+			// outputDir must be the raw configured value "_site", not the
+			// resolved absolute path. This matches BuildResult.OutputDir
+			// semantics — the pipeline stores cfg.Build.Output as-is.
+			// Plugin subprocesses run with CWD set to ProjectRoot, so
+			// path.join("_site", "file.json") resolves correctly.
+			Expect(payloadStr).To(Equal("_site"),
+				"onBuildComplete payload outputDir must be the raw "+
+					"cfg.Build.Output value, not resolved to an absolute path — "+
+					"BuildResult.OutputDir stores the configured value as-is")
+		})
+
+		It("payload keys include outputDir alongside stats fields", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			layoutsDir := filepath.Join(tmpDir, "layouts")
+			pluginsDir := filepath.Join(tmpDir, "plugins")
+			outputDir := filepath.Join(tmpDir, "_site")
+			payloadFile := filepath.Join(tmpDir, "payload-all-keys.txt")
+
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home\nlayout: default\n---\n# Keys Test"),
+				0644)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(layoutsDir, "default.liquid"),
+				[]byte("<html><body>{{ content }}</body></html>"),
+				0644)).To(Succeed())
+
+			// Plugin dumps all payload keys (excluding the internal 'event' key)
+			// so we can verify the complete documented shape.
+			Expect(os.WriteFile(filepath.Join(pluginsDir, "keys-checker.js"),
+				[]byte(fmt.Sprintf(`export const runtime = "node";
+import { writeFileSync } from 'fs';
+export default function(alloy) {
+  alloy.hook('onBuildComplete', {}, function(result) {
+    const keys = Object.keys(result).filter(k => k !== 'event').sort().join(',');
+    writeFileSync(%q, keys, 'utf8');
+    return result;
+  });
+}`, payloadFile)),
+				0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Keys Shape Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Plugins: "plugins",
+				},
+			}
+			config.ApplyDefaults(cfg)
+
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			Expect(payloadFile).To(BeAnExistingFile(),
+				"keys-checker plugin must fire and write payload keys to disk")
+
+			payloadKeys, readErr := os.ReadFile(payloadFile)
+			Expect(readErr).NotTo(HaveOccurred())
+			keysStr := string(payloadKeys)
+
+			// The documented payload shape is { pageCount, duration, errors, outputDir }.
+			// Keys are sorted alphabetically: duration,errors,outputDir,pageCount
+			Expect(keysStr).To(Equal("duration,errors,outputDir,pageCount"),
+				"onBuildComplete payload must contain exactly the four documented "+
+					"fields: duration, errors, outputDir, pageCount — no more, no less. "+
+					"outputDir was restored in issue #1110 after being accidentally "+
+					"removed by the RenderedContent memory optimization (PR #1104)")
 		})
 	})
 
