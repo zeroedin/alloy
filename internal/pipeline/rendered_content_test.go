@@ -585,7 +585,7 @@ export default function(alloy) {
 					"(empty for successful builds) per PLAN.md §5")
 		})
 
-		It("payload contains outputDir with the resolved output path", func() {
+		It("payload contains outputDir matching the configured output path", func() {
 			tmpDir := GinkgoT().TempDir()
 			contentDir := filepath.Join(tmpDir, "content")
 			layoutsDir := filepath.Join(tmpDir, "layouts")
@@ -649,7 +649,7 @@ export default function(alloy) {
 			// search-index.js use it to write output files via path.join().
 			Expect(payloadStr).NotTo(Equal("MISSING"),
 				"onBuildComplete payload must include outputDir — "+
-					"plugins need the resolved output directory path to write "+
+					"plugins need the output directory path to write "+
 					"post-build artifacts (e.g., search-index.json). "+
 					"This is a cheap string field, not the rendered content "+
 					"that was intentionally removed (issue #1110)")
@@ -658,6 +658,80 @@ export default function(alloy) {
 			Expect(payloadStr).To(Equal(outputDir),
 				"onBuildComplete payload outputDir must match the configured "+
 					"build output directory (cfg.Build.Output)")
+		})
+
+		It("outputDir passes through cfg.Build.Output as-is, not resolved to absolute", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			layoutsDir := filepath.Join(tmpDir, "layouts")
+			pluginsDir := filepath.Join(tmpDir, "plugins")
+			payloadFile := filepath.Join(tmpDir, "payload-relpath.txt")
+
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home\nlayout: default\n---\n# Relative Path Test"),
+				0644)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(layoutsDir, "default.liquid"),
+				[]byte("<html><body>{{ content }}</body></html>"),
+				0644)).To(Succeed())
+
+			// Plugin captures outputDir to verify it is the raw config value,
+			// not resolved to an absolute path. This disambiguates between
+			// "pass through cfg.Build.Output" and "resolve to absolute".
+			Expect(os.WriteFile(filepath.Join(pluginsDir, "relpath-checker.js"),
+				[]byte(fmt.Sprintf(`export const runtime = "node";
+import { writeFileSync } from 'fs';
+export default function(alloy) {
+  alloy.hook('onBuildComplete', {}, function(result) {
+    const val = typeof result.outputDir === 'string' ? result.outputDir : 'MISSING';
+    writeFileSync(%q, val, 'utf8');
+    return result;
+  });
+}`, payloadFile)),
+				0644)).To(Succeed())
+
+			// Configure Build.Output as a relative path ("_site").
+			// The pipeline resolves this internally for file I/O via
+			// resolveDir(projectRoot, cfg.Build.Output), but
+			// BuildResult.OutputDir stores the raw cfg.Build.Output value.
+			// The hook payload must match BuildResult.OutputDir.
+			cfg := &config.Config{
+				Title:       "Relative OutputDir Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: "_site"},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+					Plugins: "plugins",
+				},
+			}
+			config.ApplyDefaults(cfg)
+
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			Expect(payloadFile).To(BeAnExistingFile(),
+				"relpath-checker plugin must fire and write outputDir to disk")
+
+			payloadContent, readErr := os.ReadFile(payloadFile)
+			Expect(readErr).NotTo(HaveOccurred())
+			payloadStr := string(payloadContent)
+
+			// outputDir must be the raw configured value "_site", not the
+			// resolved absolute path. This matches BuildResult.OutputDir
+			// semantics — the pipeline stores cfg.Build.Output as-is.
+			// Plugin subprocesses run with CWD set to ProjectRoot, so
+			// path.join("_site", "file.json") resolves correctly.
+			Expect(payloadStr).To(Equal("_site"),
+				"onBuildComplete payload outputDir must be the raw "+
+					"cfg.Build.Output value, not resolved to an absolute path — "+
+					"BuildResult.OutputDir stores the configured value as-is")
 		})
 
 		It("payload keys include outputDir alongside stats fields", func() {
