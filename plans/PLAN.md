@@ -1381,6 +1381,16 @@ The `dependencies` field on virtual page objects is read by `virtualPageFromMap`
 
 **Component invalidation** — Handled entirely in Phase 2. A component definition change triggers re-SSR of all pages using that component (tracked via `componentToPages` in `.alloy/components.json`). Phase 1 is untouched. See Section 6.
 
+### Memory Efficiency — BuildResult.RenderedContent (issue #1098)
+
+`BuildResult.RenderedContent` is a `map[string]string` that holds every page's final rendered HTML, keyed by `RelPath` (or `URL` for generated pages). This duplicates the `page.RenderedBody` `[]byte` already held in memory, roughly doubling peak memory for page bodies. Calling `page.HTML()` to populate the map also caches a `renderedStr` string field on each page — a third reference to the same data. For a site with 3000 pages averaging 500KB of output, this is ~1.5GB of unnecessary heap per copy. In dev mode this peak recurs on every rebuild.
+
+**No production consumers.** `grep RenderedContent` across all non-test Go code finds only the struct field declaration and the two population sites (in `Build()` and `BuildIncremental()`). The dev server serves from `_site/` on disk via `http.ServeFile`. `cmd/build.go` and `cmd/dev.go` read only `.Cache` and `.SiteData` from the result. Every reader is a test file.
+
+**Opt-in via `BuildOptions.CaptureRenderedContent`** (default false). When false, `Build()` and `BuildIncremental()` skip the `renderedContent` map population loop entirely and set `BuildResult.RenderedContent` to nil. When true, the map is populated as before. `BuildWithContent()` — the test utility — must always force `CaptureRenderedContent: true` regardless of what the caller passes, preserving backward compatibility for all existing tests.
+
+**`onBuildComplete` hook payload** must not include rendered HTML content. The documented payload shape is `{ pageCount, duration, errors }` (see §5 read-only hooks table). The pipeline must pass a trimmed payload matching this shape, not the full `*BuildResult`. This eliminates the JSON serialization of all rendered HTML to Node plugin subprocesses on every build — a transient third copy of the entire site's output.
+
 ---
 
 ## 3. Data Cascade
