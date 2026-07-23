@@ -72,7 +72,7 @@ var _ = Describe("Full build pipeline", func() {
 			cfg, err := config.Load(cfgPath)
 			Expect(err).NotTo(HaveOccurred())
 
-			result, err := pipeline.Build(cfg)
+			result, err := pipeline.Build(cfg, pipeline.BuildOptions{CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 
@@ -146,7 +146,7 @@ var _ = Describe("Full build pipeline", func() {
 			cfg, err := config.Load(cfgPath)
 			Expect(err).NotTo(HaveOccurred())
 
-			result, err := pipeline.Build(cfg)
+			result, err := pipeline.Build(cfg, pipeline.BuildOptions{CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred(),
 				"build must succeed when plugin shortcode is properly bridged")
 			Expect(result).NotTo(BeNil())
@@ -181,7 +181,7 @@ var _ = Describe("Full build pipeline", func() {
 			cfg, err := config.Load(cfgPath)
 			Expect(err).NotTo(HaveOccurred())
 
-			result, err := pipeline.Build(cfg)
+			result, err := pipeline.Build(cfg, pipeline.BuildOptions{CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 
@@ -209,7 +209,7 @@ var _ = Describe("Full build pipeline", func() {
 			cfg, err := config.Load(cfgPath)
 			Expect(err).NotTo(HaveOccurred())
 
-			result, err := pipeline.Build(cfg)
+			result, err := pipeline.Build(cfg, pipeline.BuildOptions{CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 			Expect(result.RenderedContent).NotTo(BeNil())
@@ -234,7 +234,7 @@ var _ = Describe("Full build pipeline", func() {
 			cfg, err := config.Load(cfgPath)
 			Expect(err).NotTo(HaveOccurred())
 
-			result, err := pipeline.Build(cfg)
+			result, err := pipeline.Build(cfg, pipeline.BuildOptions{CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 			Expect(result.RenderedContent).NotTo(BeNil())
@@ -284,7 +284,7 @@ var _ = Describe("Full build pipeline", func() {
 			// Patch the URL to point at the test server (can't be static in YAML)
 			cfg.Sources["api_posts"].URL = ts.URL + "/posts"
 
-			result, err := pipeline.Build(cfg)
+			result, err := pipeline.Build(cfg, pipeline.BuildOptions{CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred(),
 				"Build with sources: config must succeed")
 			Expect(result).NotTo(BeNil())
@@ -314,7 +314,7 @@ var _ = Describe("Full build pipeline", func() {
 			cfg, err := config.Load(cfgPath)
 			Expect(err).NotTo(HaveOccurred())
 
-			result, err := pipeline.Build(cfg)
+			result, err := pipeline.Build(cfg, pipeline.BuildOptions{CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 			Expect(result.RenderedContent).NotTo(BeNil())
