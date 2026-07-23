@@ -823,6 +823,9 @@ export default function(alloy) {
 				"pages must be rendered")
 			Expect(result.SSRSkipped).To(BeFalse(),
 				"SSR must run when cfg.SSR is configured and SkipSSR is false")
+			Expect(result.SSRPagesRendered).To(BeNumerically(">", 0),
+				"SSR Phase 2 must actually execute — SSRPagesRendered proves the "+
+					"command ran, not just that the config gate was open")
 
 			Expect(result.RenderedContent).To(BeNil(),
 				"RenderedContent must be nil when CaptureRenderedContent is false — "+
