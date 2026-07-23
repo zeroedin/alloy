@@ -251,7 +251,8 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 
-			result, err := pipeline.BuildIncremental(cfg, nil, nil, nil)
+			result, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			html := result.RenderedContent["index.md"]
@@ -294,7 +295,8 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 
-			result, err := pipeline.BuildIncremental(cfg, nil, nil, nil)
+			result, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			html := result.RenderedContent["guide.md"]
@@ -334,11 +336,12 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 
-			fullResult, err := pipeline.Build(cfg)
+			fullResult, err := pipeline.Build(cfg, pipeline.BuildOptions{CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			fullHTML := fullResult.RenderedContent["about.md"]
 
-			incrResult, err := pipeline.BuildIncremental(cfg, nil, nil, nil)
+			incrResult, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			incrHTML := incrResult.RenderedContent["about.md"]
 
@@ -379,7 +382,8 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 
-			result, err := pipeline.BuildIncremental(cfg, nil, nil, nil)
+			result, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			html := result.RenderedContent["embed.md"]
@@ -709,7 +713,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Initial incremental build (no cache — renders everything)
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result1.RenderedContent["/team/alice/"]).To(ContainSubstring("Alice"),
 				"sanity: initial build must render Alice")
@@ -724,7 +728,7 @@ var _ = Describe("Build Pipeline", func() {
 			// change is in changedFiles but ps.SiteData is stale.
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"_data/team.json"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			charlieHTML := result2.RenderedContent["/team/charlie/"]
@@ -774,7 +778,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Initial build
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Modify data — change item content (not adding/removing)
@@ -787,7 +791,7 @@ var _ = Describe("Build Pipeline", func() {
 			// references has changed, so its virtual pages must be re-rendered.
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"_data/colors.json"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			redHTML := result2.RenderedContent["/colors/red/"]
@@ -844,7 +848,8 @@ var _ = Describe("Build Pipeline", func() {
 				0644)).To(Succeed())
 
 			incrResult, err := pipeline.BuildIncremental(cfg, nil, fullResult.Cache,
-				[]string{"content/sizes.html"})
+				[]string{"content/sizes.html"},
+				pipeline.BuildOptions{CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(incrResult.PageCount).To(Equal(3),
@@ -904,7 +909,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Initial build — 3 virtual pages
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result1.RenderedContent["/items/gamma/"]).To(ContainSubstring("Gamma"),
 				"sanity: initial build must include Gamma")
@@ -916,7 +921,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"_data/items.json"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(result2.RenderedContent).NotTo(HaveKey("/items/gamma/"),
@@ -965,7 +970,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Initial incremental build
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			colorHTML := result1.RenderedContent["/tokens/color/"]
@@ -980,7 +985,7 @@ var _ = Describe("Build Pipeline", func() {
 			// Incremental rebuild with same PipelineState
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"content/tokens.html"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			colorHTML2 := result2.RenderedContent["/tokens/color/"]
@@ -1039,7 +1044,7 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(psErr).NotTo(HaveOccurred())
 
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result1.RenderedContent["/items/alpha/"]).To(ContainSubstring("Alpha"),
 				"sanity: initial build must render Alpha")
@@ -1055,7 +1060,7 @@ var _ = Describe("Build Pipeline", func() {
 			// crashing or producing empty output.
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"_data/items.json"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred(),
 				"malformed data file must not cause BuildIncremental to return an error — "+
 					"it should log a warning and continue with stale data (issue #719)")
@@ -1129,7 +1134,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Full build (no cache) — establishes baseline.
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result1.RenderedContent["/items/alpha/"]).To(ContainSubstring("Alpha"),
 				"sanity: initial build must render Alpha from site.data.items")
@@ -1145,7 +1150,7 @@ var _ = Describe("Build Pipeline", func() {
 			// loadSiteData call); ps.SiteData must NOT be modified.
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"_data/items.json"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred(),
 				"loadSiteData error must not propagate as a BuildIncremental error — "+
 					"it must be logged as a warning and the build must continue "+
@@ -1227,7 +1232,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Full build — establishes baseline.
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result1.RenderedContent["/items/beta/"]).To(ContainSubstring("Beta"),
 				"sanity: initial build must render Beta")
@@ -1243,7 +1248,7 @@ var _ = Describe("Build Pipeline", func() {
 			// which now fails with a key collision error.
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"_data/widgets.json"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred(),
 				"loadSiteData key collision error must not propagate — "+
 					"it must be logged as a warning (issue #1018)")
@@ -1323,7 +1328,7 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(psErr).NotTo(HaveOccurred())
 
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Modify data file — should invalidate widgets (site.data.*) but
@@ -1334,7 +1339,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"_data/widgets.json"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Positive: site.data.* page WAS invalidated and re-rendered
@@ -1389,7 +1394,7 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(psErr).NotTo(HaveOccurred())
 
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result1.RenderedContent["/broken/"]).NotTo(BeEmpty(),
 				"sanity: page with non-string pagination.data must still be "+
@@ -1403,7 +1408,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"_data/stuff.json"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred(),
 				"non-string pagination.data must not cause a panic or error "+
 					"during data-change invalidation scan — the type assertion "+
@@ -1449,7 +1454,7 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(psErr).NotTo(HaveOccurred())
 
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result1.RenderedContent["/team/alice/"]).To(ContainSubstring("Alice"),
 				"sanity: initial build with custom data dir must render Alice")
@@ -1462,7 +1467,7 @@ var _ = Describe("Build Pipeline", func() {
 			// changedFiles path must use the custom directory name, not "data"
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"custom_data/team.json"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			charlieHTML := result2.RenderedContent["/team/charlie/"]
@@ -1525,7 +1530,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Initial build (no cache) — all pages rendered
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result1.RenderedContent["/tokens/color/"]).To(ContainSubstring("Color"),
 				"sanity: initial build must render /tokens/color/ with data")
@@ -1543,7 +1548,7 @@ var _ = Describe("Build Pipeline", func() {
 			// The paginated pages must still have their data.
 			result2, err := pipeline.BuildIncremental(cfg, nil, nil,
 				[]string{"content/about.md"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(result2.RenderedContent["/tokens/color/"]).To(ContainSubstring("Color"),
@@ -1561,7 +1566,7 @@ var _ = Describe("Build Pipeline", func() {
 			// is unconditional.
 			result3, err := pipeline.BuildIncremental(cfg, nil, nil,
 				[]string{"content/about.md"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(result3.RenderedContent["/tokens/color/"]).To(ContainSubstring("Color"),
@@ -1629,7 +1634,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			incrResult, err := pipeline.BuildIncremental(cfg, nil, nil,
 				[]string{"content/index.md"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(incrResult.RenderedContent["/catalog/widget/"]).To(ContainSubstring("Widget"),
@@ -1692,7 +1697,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Incremental rebuild must work with this PipelineState
 			result, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RenderedContent["/tokens/color/"]).To(ContainSubstring("Color"),
 				"paginated page must render correctly when using PipelineState "+
@@ -1824,7 +1829,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Initial build — establishes cache with template tracking
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result1.RenderedContent["/colors/red/"]).To(ContainSubstring("Red"),
 				"sanity: initial build must render Red")
@@ -1846,7 +1851,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				changedFiles,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred(),
 				"simultaneous data change and partial change must not error (issue #799)")
 			Expect(result2.PageCount).To(Equal(initialPageCount),

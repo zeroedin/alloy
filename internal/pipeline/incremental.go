@@ -511,10 +511,14 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
-	renderedContent := make(map[string]string, len(pagesToRender))
-	for _, page := range pagesToRender {
-		if len(page.RenderedBody) > 0 {
-			renderedContent[renderedContentKey(page)] = page.HTML()
+	needsRenderedMap := options.CaptureRenderedContent || (cfg.SSR != nil && !options.SkipSSR)
+	var renderedContent map[string]string
+	if needsRenderedMap {
+		renderedContent = make(map[string]string, len(pagesToRender))
+		for _, page := range pagesToRender {
+			if len(page.RenderedBody) > 0 {
+				renderedContent[renderedContentKey(page)] = page.HTML()
+			}
 		}
 	}
 
@@ -688,6 +692,11 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	buildCache.ClearVirtualPages()
 	trackVirtualPages(buildCache, allPages, discoveredPaths)
 
+	var capturedContent map[string]string
+	if options.CaptureRenderedContent {
+		capturedContent = renderedContent
+	}
+
 	result := &BuildResult{
 		OutputDir:        cfg.Build.Output,
 		PageCount:        len(pagesToRender),
@@ -696,7 +705,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		Duration:         time.Since(start),
 		SSRSkipped:       ssrSkipped,
 		PagesRendered:    rendered,
-		RenderedContent:  renderedContent,
+		RenderedContent:  capturedContent,
 		Cache:            buildCache,
 		SiteData:         ps.SiteData,
 	}
@@ -704,7 +713,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	reportSummary(reporter, result.PageCount, result.Duration, result.PagesSkipped)
 
 	if ps.Hooks != nil && ps.Hooks.HasHooks(plugin.OnBuildComplete) {
-		if _, hookErr := ps.Hooks.RunWithTimeout(plugin.OnBuildComplete, result); hookErr != nil {
+		if _, hookErr := ps.Hooks.RunWithTimeout(plugin.OnBuildComplete, buildCompletePayload(result)); hookErr != nil {
 			log.Printf("warning: plugin hook onBuildComplete: %v", hookErr)
 		}
 	}

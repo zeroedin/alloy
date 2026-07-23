@@ -60,10 +60,11 @@ func reportSummary(r ProgressReporter, pageCount int, duration time.Duration, pa
 
 // BuildOptions controls optional pipeline behavior.
 type BuildOptions struct {
-	SkipSSR       bool               // true = skip Phase 2 entirely, regardless of cfg.SSR
-	PipelineState *PipelineState     // pre-built state to reuse (BuildIncremental only)
-	Profile       bool               // true = record per-stage timing in BuildResult.StageTimings
-	Reporter      ProgressReporter   // progress output; nil = silent
+	SkipSSR                bool               // true = skip Phase 2 entirely, regardless of cfg.SSR
+	CaptureRenderedContent bool               // true = populate BuildResult.RenderedContent (test-only; default false halves peak memory)
+	PipelineState          *PipelineState     // pre-built state to reuse (BuildIncremental only)
+	Profile                bool               // true = record per-stage timing in BuildResult.StageTimings
+	Reporter               ProgressReporter   // progress output; nil = silent
 }
 
 // BuildResult holds the outcome of a build.
@@ -81,6 +82,20 @@ type BuildResult struct {
 	StageTimings        []StageTiming     // per-stage durations (populated when BuildOptions.Profile is true)
 	Cache               *cache.Cache      // in-memory cache with content hashes for incremental rebuild (issue #639)
 	SiteData            map[string]interface{} // enriched site data (data files + external sources + hooks)
+}
+
+func buildCompletePayload(r *BuildResult) *plugin.HookBuildCompletePayload {
+	errs := make([]string, 0, len(r.Errors))
+	for _, e := range r.Errors {
+		if e != nil {
+			errs = append(errs, e.Error())
+		}
+	}
+	return &plugin.HookBuildCompletePayload{
+		PageCount: r.PageCount,
+		Duration:  r.Duration.String(),
+		Errors:    errs,
+	}
 }
 
 // RenderContext bundles shared rendering state passed through the render call
@@ -1047,10 +1062,13 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// in cmd/dev.go.
 	trackVirtualPages(buildCache, pages, discoveredPaths)
 
-	renderedContent := make(map[string]string, len(pages))
-	for _, page := range pages {
-		if len(page.RenderedBody) > 0 {
-			renderedContent[renderedContentKey(page)] = page.HTML()
+	var renderedContent map[string]string
+	if options.CaptureRenderedContent {
+		renderedContent = make(map[string]string, len(pages))
+		for _, page := range pages {
+			if len(page.RenderedBody) > 0 {
+				renderedContent[renderedContentKey(page)] = page.HTML()
+			}
 		}
 	}
 	reportEndStage(reporter)
@@ -1072,8 +1090,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	reportSummary(reporter, result.PageCount, result.Duration, 0)
 
-	// Fire onBuildComplete hook — build is finished, plugins can run post-build tasks
-	if _, err := ps.Hooks.RunWithTimeout(plugin.OnBuildComplete, result); err != nil {
+	// Fire onBuildComplete hook with a trimmed payload — no rendered HTML,
+	// cache, or site data (issue #1098).
+	if _, err := ps.Hooks.RunWithTimeout(plugin.OnBuildComplete, buildCompletePayload(result)); err != nil {
 		return nil, fmt.Errorf("plugin hook onBuildComplete: %w", err)
 	}
 
@@ -1125,6 +1144,15 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string, opts ...
 
 	cfgCopy := *cfg
 	cfgCopy.ProjectRoot = tmpDir
+
+	if len(opts) == 0 {
+		opts = []BuildOptions{{CaptureRenderedContent: true}}
+	} else {
+		optsCopy := opts[0]
+		optsCopy.CaptureRenderedContent = true
+		opts = []BuildOptions{optsCopy}
+	}
+
 	return Build(&cfgCopy, opts...)
 }
 // batchContext holds the per-batch pipeline state produced by applyBatchContext.
