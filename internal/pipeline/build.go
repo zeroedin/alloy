@@ -87,7 +87,9 @@ type BuildResult struct {
 func buildCompletePayload(r *BuildResult) *plugin.HookBuildCompletePayload {
 	errs := make([]string, 0, len(r.Errors))
 	for _, e := range r.Errors {
-		errs = append(errs, e.Error())
+		if e != nil {
+			errs = append(errs, e.Error())
+		}
 	}
 	return &plugin.HookBuildCompletePayload{
 		PageCount: r.PageCount,
@@ -1146,7 +1148,9 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string, opts ...
 	if len(opts) == 0 {
 		opts = []BuildOptions{{CaptureRenderedContent: true}}
 	} else {
-		opts[0].CaptureRenderedContent = true
+		optsCopy := opts[0]
+		optsCopy.CaptureRenderedContent = true
+		opts = []BuildOptions{optsCopy}
 	}
 
 	return Build(&cfgCopy, opts...)
