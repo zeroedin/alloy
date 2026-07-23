@@ -775,6 +775,104 @@ export default function(alloy) {
 			Expect(string(blogContent)).To(ContainSubstring("Blog Post Content"))
 		})
 
+		It("BuildIncremental with SSR enabled uses renderedContent map internally but does not capture it (issue #1106)", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			layoutsDir := filepath.Join(tmpDir, "layouts")
+			outputDir := filepath.Join(tmpDir, "_site")
+
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
+
+			// Content with a custom element — triggers SSR Phase 2
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Home\nlayout: default\n---\n# Home\n<my-widget>SSR target</my-widget>"),
+				0644)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(layoutsDir, "default.liquid"),
+				[]byte("<html><body>{{ content }}</body></html>"),
+				0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "SSR Capture Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+				},
+				// SSR enabled with "cat" — passes HTML through unchanged.
+				// This triggers the needsRenderedMap branch in BuildIncremental
+				// (incremental.go) even when CaptureRenderedContent is false.
+				SSR: &config.SSRConfig{Command: "cat"},
+			}
+			config.ApplyDefaults(cfg)
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			// CaptureRenderedContent is false (default) but SSR is enabled.
+			// The internal renderedContent map must still be built for SSR
+			// processing, but result.RenderedContent must remain nil.
+			result, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: pipelineState})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.PageCount).To(BeNumerically(">", 0),
+				"pages must be rendered")
+			Expect(result.SSRSkipped).To(BeFalse(),
+				"SSR must run when cfg.SSR is configured and SkipSSR is false")
+			Expect(result.SSRPagesRendered).To(BeNumerically(">", 0),
+				"SSR Phase 2 must actually execute — SSRPagesRendered proves the "+
+					"command ran, not just that the config gate was open")
+
+			Expect(result.RenderedContent).To(BeNil(),
+				"RenderedContent must be nil when CaptureRenderedContent is false — "+
+					"the internal renderedContent map is used as SSR working state "+
+					"but must not be exposed on BuildResult (issue #1106)")
+
+			// Verify the SSR-processed output is still correct on disk
+			indexPath := filepath.Join(outputDir, "index.html")
+			Expect(indexPath).To(BeAnExistingFile(),
+				"output file must be written to disk even without RenderedContent capture")
+
+			diskContent, readErr := os.ReadFile(indexPath)
+			Expect(readErr).NotTo(HaveOccurred())
+			Expect(string(diskContent)).To(ContainSubstring("my-widget"),
+				"SSR-processed content must appear on disk — 'cat' passes through "+
+					"unchanged, proving the SSR pipeline ran with the internal map")
+			Expect(string(diskContent)).To(ContainSubstring("<html>"),
+				"layout must still be applied in SSR+no-capture mode")
+		})
+
+		It("BuildWithContent overrides explicit CaptureRenderedContent: false (issue #1106)", func() {
+			cfg := &config.Config{
+				Title:   "BuildWithContent Override Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/page.md":        "---\ntitle: Page\nlayout: default\n---\n# Override Test",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			}
+
+			// Caller explicitly sets CaptureRenderedContent: false.
+			// BuildWithContent must override this to true — it is a test
+			// utility and all existing tests depend on RenderedContent.
+			result, err := pipeline.BuildWithContent(cfg, contentMap,
+				pipeline.BuildOptions{CaptureRenderedContent: false})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RenderedContent).NotTo(BeNil(),
+				"BuildWithContent must override CaptureRenderedContent: false to true — "+
+					"the unconditional override at BuildWithContent ensures backward "+
+					"compatibility regardless of what the caller passes (issue #1106)")
+			Expect(result.RenderedContent).To(HaveKey("page.md"),
+				"page.md must be present in RenderedContent after override")
+			Expect(result.RenderedContent["page.md"]).To(ContainSubstring("Override Test"),
+				"captured HTML must contain the rendered page content")
+		})
+
 		It("SkipSSR does not accidentally enable CaptureRenderedContent", func() {
 			tmpDir := GinkgoT().TempDir()
 			contentDir := filepath.Join(tmpDir, "content")
