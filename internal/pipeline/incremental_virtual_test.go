@@ -111,7 +111,7 @@ var _ = Describe("Build Pipeline", func() {
 			// Initial build (nil cache) — all pages must be rendered,
 			// including virtual pages from onPagesReady.
 			result, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Virtual pages must appear in RenderedContent keyed by RelPath.
@@ -146,7 +146,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Build 1: initial (nil cache)
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result1.RenderedContent["_virtual/demos/button.html"]).To(ContainSubstring("Button demo content"),
 				"sanity: initial build must render virtual page")
@@ -159,7 +159,7 @@ var _ = Describe("Build Pipeline", func() {
 			// Build 2: incremental with cache from build 1
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"content/index.md"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			// This is the core #970 bug: virtual pages are filtered out of
@@ -190,7 +190,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Build 1: initial
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result1.RenderedContent["_virtual/demos/button.html"]).To(ContainSubstring(`class="demo"`),
 				"sanity: initial build must apply demo layout")
@@ -203,7 +203,7 @@ var _ = Describe("Build Pipeline", func() {
 			// Build 2: layout change — virtual pages using demo layout must re-render
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"layouts/demo.liquid"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			buttonHTML := result2.RenderedContent["_virtual/demos/button.html"]
@@ -225,7 +225,7 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(psErr).NotTo(HaveOccurred())
 
 			result, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Cache).NotTo(BeNil(),
 				"BuildIncremental must return a cache")
@@ -254,7 +254,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Build 1: initial
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify initial output files exist
@@ -277,7 +277,7 @@ var _ = Describe("Build Pipeline", func() {
 			// Build 2: incremental — virtual pages must still be written
 			_, err = pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"content/index.md"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Re-read the output file — must exist because build 2 rewrote it.
@@ -302,7 +302,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Build 1: initial
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result1.RenderedContent["_virtual/demos/button.html"]).To(ContainSubstring("Button demo content"),
 				"sanity: initial build must render virtual page")
@@ -313,7 +313,7 @@ var _ = Describe("Build Pipeline", func() {
 				0644)).To(Succeed())
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"content/index.md"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Build 3: second incremental — using cache from build 2
@@ -322,7 +322,7 @@ var _ = Describe("Build Pipeline", func() {
 				0644)).To(Succeed())
 			result3, err := pipeline.BuildIncremental(cfg, nil, result2.Cache,
 				[]string{"content/index.md"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			buttonHTML := result3.RenderedContent["_virtual/demos/button.html"]
@@ -376,7 +376,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"content/index.md"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Virtual pages must be rendered because Build()'s cache tracked
@@ -406,7 +406,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Build 1: both virtual pages rendered
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result1.RenderedContent["_virtual/demos/button.html"]).To(ContainSubstring("Button demo content"),
 				"sanity: initial build renders button demo")

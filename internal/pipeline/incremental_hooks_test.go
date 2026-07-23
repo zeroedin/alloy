@@ -70,7 +70,7 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(psErr).NotTo(HaveOccurred())
 
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(result1.RenderedContent["index.md"]).To(ContainSubstring("content-loaded-ran"),
@@ -85,7 +85,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"content/index.md"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(result2.RenderedContent["index.md"]).To(ContainSubstring("content-loaded-ran"),
@@ -141,7 +141,7 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(psErr).NotTo(HaveOccurred())
 
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(result1.RenderedContent["index.md"]).To(ContainSubstring("cascade-About"),
@@ -156,7 +156,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"content/index.md"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(result2.RenderedContent["index.md"]).To(ContainSubstring("cascade-About Updated"),
@@ -210,7 +210,7 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(psErr).NotTo(HaveOccurred())
 
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(result1.RenderedContent["index.md"]).To(ContainSubstring(`class="transformed"`),
@@ -225,7 +225,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"content/index.md"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(result2.RenderedContent["index.md"]).To(ContainSubstring(`class="transformed"`),
@@ -278,7 +278,7 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(psErr).NotTo(HaveOccurred())
 
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(result1.RenderedContent["index.md"]).To(ContainSubstring("<!-- ssr-marker -->"),
@@ -294,7 +294,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"content/index.md"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(result2.RenderedContent["index.md"]).To(ContainSubstring("<!-- ssr-marker -->"),
@@ -351,7 +351,7 @@ export default function(alloy) {
 			Expect(psErr).NotTo(HaveOccurred())
 
 			_, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(markerFile).To(BeAnExistingFile(),
@@ -427,7 +427,7 @@ export default function(alloy) {
 
 			// First build (nil cache, nil changedFiles — full build through incremental path)
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(result1.RenderedContent["index.md"]).To(
@@ -443,7 +443,7 @@ export default function(alloy) {
 
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"content/index.md"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(result2.RenderedContent["index.md"]).To(
@@ -502,7 +502,7 @@ export default function(alloy) {
 			Expect(psErr).NotTo(HaveOccurred())
 
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			html1 := result1.RenderedContent["index.md"]
@@ -519,7 +519,7 @@ export default function(alloy) {
 
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"content/index.md"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			html2 := result2.RenderedContent["index.md"]

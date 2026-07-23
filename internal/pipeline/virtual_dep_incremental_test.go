@@ -145,7 +145,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Build 1: initial (nil cache) — all pages rendered
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Sanity: all 4 virtual pages rendered in initial build
@@ -173,7 +173,7 @@ var _ = Describe("Build Pipeline", func() {
 			// directory that the button virtual page declared as a dependency.
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"content/index.md", "elements/button/demo.html"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Button: dependency matches changedFiles → MUST be rendered
@@ -221,7 +221,7 @@ var _ = Describe("Build Pipeline", func() {
 			// Initial build with nil cache — all pages must be rendered,
 			// regardless of their dependency declarations.
 			result, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(result.RenderedContent["_virtual/demos/button.html"]).To(
@@ -282,7 +282,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Build 1: initial
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result1.RenderedContent["_virtual/demos/accordion.html"]).To(
 				ContainSubstring("Accordion demo"),
@@ -297,7 +297,7 @@ var _ = Describe("Build Pipeline", func() {
 			// depend on it, but tooltip does not.
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"content/index.md", "elements/shared/base.html"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Accordion: depends on shared/base.html → rendered
@@ -327,7 +327,7 @@ var _ = Describe("Build Pipeline", func() {
 
 			// Build 1: initial
 			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Build 1's cache must track virtual dependencies
@@ -349,7 +349,7 @@ var _ = Describe("Build Pipeline", func() {
 			// Build 2: incremental — verify cache is carried forward
 			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
 				[]string{"content/index.md"},
-				pipeline.BuildOptions{PipelineState: pipelineState})
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Build 2's cache must also track virtual dependencies
