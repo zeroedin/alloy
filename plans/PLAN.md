@@ -1389,7 +1389,7 @@ The `dependencies` field on virtual page objects is read by `virtualPageFromMap`
 
 **Opt-in via `BuildOptions.CaptureRenderedContent`** (default false). When false, `Build()` and `BuildIncremental()` skip the `renderedContent` map population loop entirely and set `BuildResult.RenderedContent` to nil. When true, the map is populated as before. `BuildWithContent()` — the test utility — must always force `CaptureRenderedContent: true` regardless of what the caller passes, preserving backward compatibility for all existing tests.
 
-**`onBuildComplete` hook payload** must not include rendered HTML content. The documented payload shape is `{ pageCount, duration, errors }` (see §5 read-only hooks table). The pipeline must pass a trimmed payload matching this shape, not the full `*BuildResult`. This eliminates the JSON serialization of all rendered HTML to Node plugin subprocesses on every build — a transient third copy of the entire site's output.
+**`onBuildComplete` hook payload** must not include rendered HTML content. The documented payload shape is `{ pageCount, duration, errors, outputDir }` (see §5 read-only hooks table). The pipeline must pass a trimmed payload matching this shape, not the full `*BuildResult`. This eliminates the JSON serialization of all rendered HTML to Node plugin subprocesses on every build — a transient third copy of the entire site's output. `outputDir` is the resolved output directory path (`cfg.Build.Output`) — a cheap string field that plugins need to write post-build artifacts (e.g., `search-index.json`). It was accidentally omitted in the initial trimming (issue #1110).
 
 ---
 
@@ -2699,7 +2699,7 @@ Fire **once per event**. Plugins observe but cannot modify.
 
 | Event | Payload | When |
 |---|---|---|
-| `onBuildComplete` | `{ pageCount: 42, duration: "127ms", errors: [] }` | After output written. |
+| `onBuildComplete` | `{ pageCount: 42, duration: "127ms", errors: [], outputDir: "_site" }` | After output written. |
 | `onDevServerStart` | `{ port: 3000, url: "http://localhost:3000" }` | Dev server ready. |
 | `onFileChanged` | `"content/blog/post.md"` (string) | File changed in watch mode. |
 
