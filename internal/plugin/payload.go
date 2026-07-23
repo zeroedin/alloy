@@ -40,3 +40,11 @@ type HookAssetPayload struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`
 }
+
+// HookBuildCompletePayload is the trimmed onBuildComplete payload sent to plugins.
+// Only includes stats — no rendered HTML, cache, or site data (issue #1098).
+type HookBuildCompletePayload struct {
+	PageCount int      `json:"pageCount"`
+	Duration  string   `json:"duration"`
+	Errors    []string `json:"errors"`
+}
