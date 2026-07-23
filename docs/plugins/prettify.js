@@ -5,6 +5,7 @@ export default function(alloy) {
 
   alloy.hook("onPageRendered", { priority: 100, pages: true, pageFields: ["html"] }, async (html) => {
     if (typeof html !== 'string') return html;
+    if (!html.includes('<!DOCTYPE') && !html.includes('<html')) return html;
 
     if (!processor) {
       const { unified } = await import('unified');

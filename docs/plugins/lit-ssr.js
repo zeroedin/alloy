@@ -30,6 +30,7 @@ export default function(alloy) {
     }
 
     await import('../elements/alloy-code.js');
+    await import('../elements/alloy-search.js');
     await import('@awesome.me/webawesome/dist/ssr/all.js');
     await import('@awesome.me/webawesome/dist/components/copy-button/copy-button.js');
 
@@ -169,7 +170,7 @@ export default function(alloy) {
 
   alloy.hook("onPageRendered", { priority: 50, pages: true, pageFields: ["html"] }, async (html) => {
     if (typeof html !== 'string') return html;
-    if (!/<wa-/.test(html) && !/<alloy-code/.test(html)) return html;
+    if (!/<wa-/.test(html) && !/<alloy-/.test(html)) return html;
 
     await ensureLoaded();
 
