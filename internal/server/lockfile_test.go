@@ -161,10 +161,13 @@ var _ = Describe("Server lockfile (issue #1094)", func() {
 			DeferCleanup(func() { os.RemoveAll(tmpDir) })
 		})
 
-		It("returns nil,nil when no lockfile exists", func() {
+		It("returns nil,nil when .alloy/ exists but server.lock does not", func() {
+			alloyDir := filepath.Join(tmpDir, ".alloy")
+			Expect(os.MkdirAll(alloyDir, 0755)).To(Succeed())
+
 			info, err := server.ReadLockfile(tmpDir)
 			Expect(err).NotTo(HaveOccurred(),
-				"missing lockfile must not be an error")
+				"missing lockfile must not be an error when .alloy/ directory exists")
 			Expect(info).To(BeNil(),
 				"missing lockfile must return nil info")
 		})

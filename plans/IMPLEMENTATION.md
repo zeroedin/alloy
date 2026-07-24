@@ -1181,9 +1181,9 @@ if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.
 
 ---
 
-## Phase 6: Server + SSR (~65 tests)
+## Phase 6: Server + SSR (~96 tests)
 
-### 6A: `internal/server` — 65 tests
+### 6A: `internal/server` — 73 tests
 **Files**: `server.go`, `watcher.go`, `overlay.go`, `lockfile.go`
 
 - HTTP server with mode-aware behavior (dev/preview)
@@ -1208,12 +1208,12 @@ if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.
 
   After config loading but before the initial build, call `server.CheckAndWarnLockfile(cfg.ProjectRoot)`. Print any returned warnings to stderr. After the build and server start, call `server.WriteLockfile(cfg.ProjectRoot, server.LockfileInfo{PID: os.Getpid(), Port: actualPort, Mode: "dev"/"serve", StartedAt: time.Now().Format(time.RFC3339)})`. In the shutdown path (after `<-sigCh`), call `server.RemoveLockfile(cfg.ProjectRoot)` before `srv.Stop()`.
 
-  **14 tests** in `lockfile_test.go`:
+  **22 tests** in `lockfile_test.go`:
   - `LockfilePath` returns `.alloy/server.lock` under project root (2 tests)
   - `WriteLockfile` creates directory and writes correct JSON, overwrites existing, writes correct mode (4 tests)
-  - `ReadLockfile` returns nil/nil for missing file, parses valid JSON, errors on corrupt JSON, returns nil/nil when .alloy/ directory missing (4 tests)
+  - `ReadLockfile` returns nil/nil when .alloy/ exists but server.lock does not, parses valid JSON, errors on corrupt JSON, returns nil/nil when .alloy/ directory missing (4 tests)
   - `RemoveLockfile` removes file, no-op when missing, preserves .alloy/ directory (3 tests)
-  - `CheckAndWarnLockfile` returns nil when no lockfile, removes stale lockfile (dead PID) and returns nil, returns warnings for active lockfile (live PID) with correct content, format validation, treats corrupt lockfile as stale, preserves lockfile when PID alive (7 tests — some test multiple aspects per case)
+  - `CheckAndWarnLockfile` returns nil when no lockfile, removes stale lockfile (dead PID) and returns nil, returns warnings for active lockfile (live PID) with correct content, format validation, treats corrupt lockfile as stale, non-blocking startup, preserves lockfile when PID alive (7 tests)
   - `LockfileInfo` JSON round-trip and field name validation (2 tests)
 
 - Error overlay injection
@@ -1286,8 +1286,8 @@ Cross-package integration paths that should mostly pass once pipeline works:
 | 3 | permalink, collection, template (context/layout/shortcodes), output, assets | ~79 | ~307 |
 | 4 | template (liquid/go engines), static, pipeline **[WALKING SKELETON]** | ~56 | ~363 |
 | 5 | plugin, fetch, i18n, cmd | ~111 | ~474 |
-| 6 | server, ssr | ~70 | ~544 |
-| 7 | integration tests + remaining | ~86 | ~630 |
+| 6 | server, ssr | ~96 | ~570 |
+| 7 | integration tests + remaining | ~86 | ~656 |
 
 ## Key Risks
 
