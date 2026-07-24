@@ -165,8 +165,9 @@ export default function(alloy) {
   });
 
   // Minify final HTML output
-  alloy.hook("onPageRendered", {}, (html) => {
-    return html.replace(/\s+/g, ' ').trim();
+  alloy.hook("onPageRendered", {}, (page) => {
+    page.html = page.html.replace(/\s+/g, ' ').trim();
+    return page;
   });
 }
 ```
