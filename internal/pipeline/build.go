@@ -934,11 +934,17 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// between hooks so mutations to read-only fields are not propagated.
 	if ps.Hooks.HasHooks(plugin.OnFormatRendered) {
 		for _, page := range pages {
+			if len(page.FormatBodies) == 0 {
+				continue
+			}
 			fm := convertOrderedMaps(page.FrontMatter)
 			if fm == nil {
 				fm = map[string]interface{}{}
 			}
 			for _, format := range page.Outputs {
+				if format == "html" {
+					continue
+				}
 				body, ok := page.FormatBodies[format]
 				if !ok {
 					continue

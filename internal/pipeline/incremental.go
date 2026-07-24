@@ -520,11 +520,17 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 
 	if ps.Hooks != nil && ps.Hooks.HasHooks(plugin.OnFormatRendered) {
 		for _, page := range pagesToRender {
+			if len(page.FormatBodies) == 0 {
+				continue
+			}
 			fm := convertOrderedMaps(page.FrontMatter)
 			if fm == nil {
 				fm = map[string]interface{}{}
 			}
 			for _, format := range page.Outputs {
+				if format == "html" {
+					continue
+				}
 				body, ok := page.FormatBodies[format]
 				if !ok {
 					continue
