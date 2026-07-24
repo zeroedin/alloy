@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/zeroedin/alloy/internal/cache"
@@ -71,6 +72,13 @@ func newDevCommand() *cobra.Command {
 				}
 			}
 
+			// Check for another running alloy instance (issue #1094)
+			if warnings := server.CheckAndWarnLockfile(cfg.ProjectRoot); len(warnings) > 0 {
+				for _, w := range warnings {
+					fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+				}
+			}
+
 			noDrafts, _ := cmd.Flags().GetBool("no-drafts")
 			cfg.IncludeDrafts = !noDrafts
 
@@ -112,6 +120,16 @@ func newDevCommand() *cobra.Command {
 			actualPort, err := srv.StartWithPortFallback(port, 10)
 			if err != nil {
 				return err
+			}
+
+			// Write server lockfile after successful start (issue #1094)
+			if err := server.WriteLockfile(cfg.ProjectRoot, server.LockfileInfo{
+				PID:       os.Getpid(),
+				Port:      actualPort,
+				Mode:      "dev",
+				StartedAt: time.Now().Format(time.RFC3339),
+			}); err != nil {
+				log.Printf("warning: write server lockfile: %v", err)
 			}
 
 			if !cfg.Quiet {
@@ -285,6 +303,8 @@ func newDevCommand() *cobra.Command {
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 			<-sigCh
+
+			server.RemoveLockfileIfOwned(cfg.ProjectRoot, os.Getpid())
 
 			if !cfg.Quiet {
 				fmt.Fprintln(cmd.OutOrStdout(), "\nShutting down...")

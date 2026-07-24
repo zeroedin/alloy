@@ -1038,35 +1038,41 @@ Version update checking via the GitHub Releases API. Two modes: explicit (`alloy
 Dev server command (`alloy dev`). Uses `ModeDev` — Phase 1 only, in-memory, drafts visible.
 
 1. Load config (same as build).
-2. Set `cfg.IncludeDrafts = true` (unless `--no-drafts`).
-3. Run initial build via `pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})`. `Build()` persists cache to disk at Stage 9 (`.alloy/cache.json`).
-4. Read `--port`, `--no-drafts`, `--refetch` flags.
-5. Call `server.NewWithMode(cfg, server.ModeDev)` and `server.Start()`.
-6. **Start file watcher (issue #371)** — call `server.WatchDirs(cfg)`, `addRecursiveWatch` on each directory, fsnotify event loop with `ClassifyChange` and debouncer. On file change, dispatch by `ChangeType`:
+2. **Check server lockfile (issue #1094)**: Call `server.CheckAndWarnLockfile(cfg.ProjectRoot)`. Print any returned warnings to stderr. Proceed regardless — lockfile warnings never block startup.
+3. Set `cfg.IncludeDrafts = true` (unless `--no-drafts`).
+4. Run initial build via `pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})`. `Build()` persists cache to disk at Stage 9 (`.alloy/cache.json`).
+5. Read `--port`, `--no-drafts`, `--refetch` flags.
+6. Call `server.NewWithMode(cfg, server.ModeDev)` and `server.Start()`.
+7. **Write server lockfile (issue #1094)**: Call `server.WriteLockfile(cfg.ProjectRoot, server.LockfileInfo{PID: os.Getpid(), Port: actualPort, Mode: "dev", StartedAt: time.Now().Format(time.RFC3339)})`.
+8. **Start file watcher (issue #371)** — call `server.WatchDirs(cfg)`, `addRecursiveWatch` on each directory, fsnotify event loop with `ClassifyChange` and debouncer. On file change, dispatch by `ChangeType`:
    - `ContentChange`/`LayoutChange`/`DataChange` → extract `changedFiles` from debounced events, call `pipeline.BuildIncremental(cfg, nil, previousCache, changedFiles, pipeline.BuildOptions{SkipSSR: true, PipelineState: ps})`. `previousCache` is kept in memory — initialized from the initial `Build()` result's `BuildResult.Cache` and updated from each `BuildIncremental` result's `BuildResult.Cache` (no disk round-trip). When `contentMap` is nil, `BuildIncremental` discovers content from the filesystem. Bulk changes (10+ files) trigger a full `Build()` instead. **Stale PipelineState.SiteData (issue #717)**: `ps` is created once at startup (line 135) and reused for all incremental rebuilds. When data files change, `BuildIncremental` must detect data file paths in `changedFiles` and re-load `ps.SiteData` from disk before `processPagination` runs — otherwise paginated virtual pages referencing `site.data.*` use stale data. After refreshing `ps.SiteData`, plugin runtimes that cache site data (e.g., QuickJS `alloy.data` via `rt.SetSiteData`) must also be updated — otherwise plugin filters/hooks still see stale data even though `ps.SiteData` is fresh.
    - `AssetChange`/`StaticChange` → **recopy changed files to `_site/` (issue #737)**. Dev mode serves from `_site/`, not source directories. Call `static.CopyStatic(staticDir, outputDir)` for `StaticChange` and `assets.CopyAssets(assetsDir, outputDir)` for `AssetChange`. For efficiency, a targeted single-file copy is preferred over recopying all files in the directory — but correctness (full recopy) is acceptable as a first implementation. **Transient file handling (issue #782)**: `fileutil.CopyFile` errors where `os.IsNotExist(err)` is true are silently skipped — atomic-write editors create `.tmp` files that vanish before the debounced copy runs; the rename target triggers its own event.
    - `PassthroughChange` → **recopy changed file to `_site/<to>/<relative-path>` (issue #737)**. Use `server.RecopyPassthroughFile(changedPath, cfg)` for targeted single-file copy, or `static.CopyPassthroughWithValidation(...)` for full passthrough recopy.
    - `ComponentChange` → full rebuild via `pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})`.
    - All types → `srv.BroadcastReload()` after rebuild.
    - **Bulk change protection**: If debouncer detects 10+ simultaneous changes (e.g., `git checkout`), always do a full rebuild. Cache is re-persisted by `Build()` Stage 9.
-7. Block until interrupt.
+9. Block until interrupt.
+10. **Remove server lockfile (issue #1094)**: In the shutdown path (after `<-sigCh`), read the lockfile and only remove if the PID matches the current process: `if info, _ := server.ReadLockfile(cfg.ProjectRoot); info != nil && info.PID == os.Getpid() { server.RemoveLockfile(cfg.ProjectRoot) }`. This PID guard prevents Process A from deleting a lockfile that Process B has since overwritten (cascade scenario, issue #1124).
 
 #### `cmd/serve.go` (issue #256; watcher #291, fix #371)
 
 Production server command (`alloy serve`). Uses `ModePreview` — same pipeline as `alloy build`, writes to `_site/`, SSR if configured, excludes drafts. **Must have a file watcher** — `alloy serve` is NOT a one-shot build (PLAN.md §8).
 
 1. Load config (same as build).
-2. Set `cfg.IncludeDrafts = false`.
-3. Run initial build via `pipeline.Build(cfg)`.
-4. Read `--port`, `--refetch` flags. No `--no-drafts` (production always excludes drafts). No `--preview` (removed).
-5. Call `server.NewWithMode(cfg, server.ModePreview)` and `server.Start()`.
-6. **Start file watcher (issue #291, #371)** — same setup as `cmd/dev.go`: call `server.WatchDirs(cfg)`, `addRecursiveWatch` on each directory, fsnotify event loop with `ClassifyChange` and debouncer. On file change, dispatch by `ChangeType`:
+2. **Check server lockfile (issue #1094)**: Call `server.CheckAndWarnLockfile(cfg.ProjectRoot)`. Print any returned warnings to stderr. Proceed regardless.
+3. Set `cfg.IncludeDrafts = false`.
+4. Run initial build via `pipeline.Build(cfg)`.
+5. Read `--port`, `--refetch` flags. No `--no-drafts` (production always excludes drafts). No `--preview` (removed).
+6. Call `server.NewWithMode(cfg, server.ModePreview)` and `server.Start()`.
+7. **Write server lockfile (issue #1094)**: Call `server.WriteLockfile(cfg.ProjectRoot, server.LockfileInfo{PID: os.Getpid(), Port: actualPort, Mode: "serve", StartedAt: time.Now().Format(time.RFC3339)})`.
+8. **Start file watcher (issue #291, #371)** — same setup as `cmd/dev.go`: call `server.WatchDirs(cfg)`, `addRecursiveWatch` on each directory, fsnotify event loop with `ClassifyChange` and debouncer. On file change, dispatch by `ChangeType`:
    - `ContentChange`/`LayoutChange`/`DataChange` → `pipeline.Build(cfg)` (full rebuild — serve mode always does full rebuilds, not incremental)
    - `AssetChange`/`StaticChange` → recopy changed files to `_site/`
    - `PassthroughChange` → `server.RecopyPassthroughFile(changedPath, cfg)` — copies only the changed file to `_site/<to>/<relative-path>`
    - `ComponentChange` → full rebuild (SSR re-render)
    - All types → `srv.BroadcastReload()` after rebuild/recopy
-7. Block until interrupt.
+9. Block until interrupt.
+10. **Remove server lockfile (issue #1094)**: In the shutdown path (after `<-sigCh`), read the lockfile and only remove if the PID matches the current process: `if info, _ := server.ReadLockfile(cfg.ProjectRoot); info != nil && info.PID == os.Getpid() { server.RemoveLockfile(cfg.ProjectRoot) }`. This PID guard prevents Process A from deleting a lockfile that Process B has since overwritten (cascade scenario, issue #1124).
 
 **`server.RecopyPassthroughFile(changedPath string, cfg *config.Config) (string, error)`** — Finds the matching passthrough mapping by checking which `from:` directory the `changedPath` is under. Computes the relative path within `from:`, constructs the output path as `_site/<to>/<relative-path>`, copies the single file, and returns the output path. Returns error if no matching mapping is found or the copy fails.
 
@@ -1175,10 +1181,10 @@ if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.
 
 ---
 
-## Phase 6: Server + SSR (~65 tests)
+## Phase 6: Server + SSR (~96 tests)
 
-### 6A: `internal/server` — 51 tests
-**Files**: `server.go`, `watcher.go`, `overlay.go`
+### 6A: `internal/server` — 73 tests
+**Files**: `server.go`, `watcher.go`, `overlay.go`, `lockfile.go`
 
 - HTTP server with mode-aware behavior (dev/preview)
 - File watcher with debouncing and change classification
@@ -1187,6 +1193,30 @@ if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.
 - **Configurable plugins directory (issue #802)**: `StructureConfig` gets a `Plugins string` field (yaml/toml/json: `"plugins"`, default `"plugins"`). `ApplyDefaults()` sets it when empty. `Validate()` includes `cfg.Structure.Plugins` in the `baseDirs` overlap map so watch `from:` paths cannot conflict. `WatchDirs()` includes `structureDir(cfg.Structure.Plugins, "plugins")` in the base directories list. `ClassifyChange()` adds a `PluginChange` case before the `default:` fallback — matches `hasPathPrefix(path, pluginsDir)`. `PluginChange` is a new `ChangeType` constant; `RebuildScopeForChangeType` returns `RebuildPipeline` for it (handled by the existing `default:` case). In `cmd/dev.go`, the `hasComponentChange` check must also check for `PluginChange` to trigger a full `Build()` instead of `BuildIncremental` — plugin file changes require re-discovery via `DiscoverPlugins()`. In `internal/pipeline/state.go`, `DiscoverPlugins()` uses `cfg.Structure.Plugins` instead of hardcoded `"plugins"`. The `internal/plugin/Registry` already receives `pluginsDir` as a parameter, but its `SetProjectRoot` derivation via `filepath.Dir(pluginsDir)` breaks for nested paths like `tools/plugins` — `DiscoverPlugins` must pass `cfg.ProjectRoot` to a new `Registry.SetProjectRoot()` method instead. The `managedDirs` lists in `internal/pipeline/build.go` (passthrough validation and `validateOutputDir`) use `cfg.Structure.Plugins` instead of the hardcoded string. `cmd/init.go` registers a `--plugins` flag (default `"plugins"`) and uses it in directory creation and structure block generation.
 - **Configurable components directory (issue #1099)**: `StructureConfig` gets a `Components string` field (yaml/toml/json: `"components"`, default `"components"`). `ApplyDefaults()` must set it when empty, same pattern as all other structure fields. `Validate()` must include `cfg.Structure.Components` in the `baseDirs` overlap map so watch `from:` paths cannot conflict. `WatchDirs()` must use `structureDir(cfg.Structure.Components, "components")` instead of the hardcoded `"components"` string when SSR is configured. `ClassifyChange()` must use `hasPathPrefix(path, componentsDir)` where `componentsDir` reads from config instead of the hardcoded `"components"`. In `internal/pipeline/incremental.go`, the component definition change detection block (the `strings.HasPrefix(normalized, "components/")` check) must use the configured components directory path from `cfg.Structure.Components` (falling back to `"components"` when empty). The `strings.TrimPrefix` that extracts the component tag name must also use the configured path. Fields outside the onConfig mutable allowlist — `structure.components` is not mutable via `onConfig` (same rationale as `structure.plugins`).
 - **Content-colocated file serving (issue #300)**: Content-colocated non-content files (SVGs, images, JS in `content/`) are copied to `_site/` during the build. The server serves them from `_site/` like any other output file — no special request handler fallback needed.
+- **Server lockfile — concurrent instance detection (issue #1094)**: Create `lockfile.go` in `internal/server/`. Detects when another `alloy dev` or `alloy serve` process is already watching the same project directory, and warns the user instead of silently corrupting output. Lockfile lives at `.alloy/server.lock` — inside the project-local cache directory, already gitignored. Uses `bytedance/sonic` via the package-level `jsonCodec` for JSON serialization (same as `watcher.go`).
+
+  **Types and functions to create in `lockfile.go`:**
+
+  - `LockfileInfo` struct — `PID int` (`json:"pid"`), `Port int` (`json:"port"`), `Mode string` (`json:"mode"`), `StartedAt string` (`json:"startedAt"`). `Mode` is `"dev"` or `"serve"`. `StartedAt` is RFC 3339 format.
+  - `LockfilePath(projectRoot string) string` — returns `filepath.Join(projectRoot, ".alloy", "server.lock")`. When `projectRoot` is empty, produces relative path `.alloy/server.lock`.
+  - `WriteLockfile(projectRoot string, info LockfileInfo) error` — creates `.alloy/` directory via `os.MkdirAll(dir, 0755)` if it does not exist, marshals `info` to JSON, writes atomically to `.alloy/server.lock`. Overwrites any existing lockfile.
+  - `ReadLockfile(projectRoot string) (*LockfileInfo, error)` — reads and unmarshals `.alloy/server.lock`. Returns `(nil, nil)` when the file does not exist (`os.IsNotExist`). Returns parse error for corrupt JSON.
+  - `RemoveLockfile(projectRoot string)` — removes `.alloy/server.lock`. No-op when the file does not exist. Does NOT remove the `.alloy/` directory — other files (fetch cache, WASM cache, profiles, plugin logs) live there.
+  - `CheckAndWarnLockfile(projectRoot string) []string` — orchestrates the check-on-startup flow. Reads the lockfile. If missing, returns nil. If corrupt JSON, removes the lockfile and returns nil. If the PID is ≤ 0 (PID 0 or negative — invalid on all platforms), treats as stale, removes the lockfile, and returns nil. If the PID is dead (POSIX: `syscall.Kill(pid, 0)` returns error; Windows: `os.FindProcess` + process signal check), removes the stale lockfile and returns nil. If the PID is alive, returns warning messages (at least 3 strings): (1) identifies the conflicting process with PID, mode, port, and start time; (2) explains the impact (concurrent instances cause missing pages and 404s); (3) provides the kill command (`kill <PID>`). Does NOT remove the lockfile when the PID is alive — the other process owns it. The PID liveness check must use platform-specific code (existing pattern: `internal/plugin/node_posix.go` and `node_windows.go` use `syscall.Kill(pid, 0)` and `os.FindProcess` respectively).
+
+  **Wiring in `cmd/dev.go` and `cmd/serve.go`:**
+
+  After config loading but before the initial build, call `server.CheckAndWarnLockfile(cfg.ProjectRoot)`. Print any returned warnings to stderr. After the build and server start, call `server.WriteLockfile(cfg.ProjectRoot, server.LockfileInfo{PID: os.Getpid(), Port: actualPort, Mode: "dev"/"serve", StartedAt: time.Now().Format(time.RFC3339)})`. In the shutdown path (after `<-sigCh`), read the lockfile and only remove if the PID matches: `if info, _ := server.ReadLockfile(cfg.ProjectRoot); info != nil && info.PID == os.Getpid() { server.RemoveLockfile(cfg.ProjectRoot) }`. This PID guard prevents cascade deletion — if another process overwrote the lockfile, the shutting-down process must not remove it.
+
+  **27 tests** in `lockfile_test.go`:
+  - `LockfilePath` returns `.alloy/server.lock` under project root (2 tests)
+  - `WriteLockfile` creates directory and writes correct JSON, overwrites existing, returns error when .alloy is a regular file, writes correct mode (5 tests)
+  - `ReadLockfile` returns nil/nil when .alloy/ exists but server.lock does not, parses valid JSON, errors on corrupt JSON, returns error when .alloy is a regular file, returns nil/nil when .alloy/ directory missing (5 tests)
+  - `RemoveLockfile` removes file, no-op when missing, preserves .alloy/ directory (3 tests)
+  - `CheckAndWarnLockfile` returns nil when no lockfile, removes stale lockfile (dead PID) and returns nil, returns warnings for active lockfile (live PID) with correct content, format validation, treats corrupt lockfile as stale, non-blocking startup, treats PID 0 as stale and removes lockfile, treats negative PID as stale and removes lockfile, preserves lockfile when PID alive (9 tests)
+  - PID ownership lifecycle: cascade scenario — Process A cannot delete lockfile after Process B overwrites (1 test)
+  - `LockfileInfo` JSON round-trip and field name validation (2 tests)
+
 - Error overlay injection
 - `WebSocketReloadMessage()`: Return `{"type": "reload"}` JSON string for connected browser reload
 - `DebounceInterval()`: Return configurable debounce interval in milliseconds for file watcher
@@ -1257,8 +1287,8 @@ Cross-package integration paths that should mostly pass once pipeline works:
 | 3 | permalink, collection, template (context/layout/shortcodes), output, assets | ~79 | ~307 |
 | 4 | template (liquid/go engines), static, pipeline **[WALKING SKELETON]** | ~56 | ~363 |
 | 5 | plugin, fetch, i18n, cmd | ~111 | ~474 |
-| 6 | server, ssr | ~70 | ~544 |
-| 7 | integration tests + remaining | ~86 | ~630 |
+| 6 | server, ssr | ~96 | ~570 |
+| 7 | integration tests + remaining | ~86 | ~656 |
 
 ## Key Risks
 
