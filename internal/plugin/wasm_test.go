@@ -2,14 +2,39 @@ package plugin_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/zeroedin/alloy/internal/content"
+	"github.com/zeroedin/alloy/internal/ordered"
 	"github.com/zeroedin/alloy/internal/plugin"
 )
+
+// toOrderedMap attempts to convert an interface{} to map[string]interface{}
+// via *ordered.Map. Returns the map and true if the value is an *ordered.Map.
+func toOrderedMap(v interface{}) (map[string]interface{}, bool) {
+	if om, ok := v.(*ordered.Map); ok {
+		return om.ToGoMap(), true
+	}
+	return nil, false
+}
+
+// extractGoMap extracts a map[string]interface{} from a CallHook result.
+// Handles both direct map[string]interface{} returns (from the fast path)
+// and *ordered.Map returns (from the JSON parse path).
+func extractGoMap(v interface{}) map[string]interface{} {
+	if m, ok := v.(map[string]interface{}); ok {
+		return m
+	}
+	if m, ok := toOrderedMap(v); ok {
+		return m
+	}
+	return nil
+}
 
 var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 
@@ -1599,6 +1624,392 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 				"priority 10.9 must be floored to 10 and run before priority 11 — "+
 					"verifies Math.floor() in alloy.hook() JS bridge survives "+
 					"the full registration path (issue #478)")
+		})
+	})
+
+	// ── CallHook payload struct fast path (issue #1180) ──────────────
+	// QuickJS CallHook currently JSON-serializes the entire payload for
+	// struct types (HookRenderedPayload, HookFormatRenderedPayload,
+	// HookTransformPayload), which means ~800KB HTML goes through 4
+	// serialization passes per page. The fix adds type-specific cases
+	// that build JS objects directly via the QuickJS API, only
+	// JSON-serializing the small frontMatter map. These tests verify
+	// the behavioral contract that the fast path must satisfy.
+
+	Describe("CallHook payload struct fast path (issue #1180)", func() {
+
+		// setupQuickJSWithHook creates a QuickJS runtime, inlines the given
+		// plugin JS (which must register a hook via alloy.hook), and returns
+		// the runtime. Caller must DeferCleanup(rt.Close).
+		setupQuickJSWithHook := func(hookJS string) *plugin.QuickJSRuntime {
+			tmpDir := GinkgoT().TempDir()
+			pluginPath := filepath.Join(tmpDir, "test-hook.js")
+			Expect(os.WriteFile(pluginPath, []byte(hookJS), 0644)).To(Succeed())
+
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(pluginPath)).To(Succeed())
+			DeferCleanup(rt.Close)
+			return rt
+		}
+
+		It("HookRenderedPayload delivers all fields to JS and returns modified html", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    if (typeof page !== 'object') return { html: 'ERROR: expected object, got ' + typeof page };
+    if (typeof page.html !== 'string') return { html: 'ERROR: html is ' + typeof page.html };
+    if (typeof page.url !== 'string') return { html: 'ERROR: url is ' + typeof page.url };
+    if (typeof page.path !== 'string') return { html: 'ERROR: path is ' + typeof page.path };
+    if (typeof page.frontMatter !== 'object') return { html: 'ERROR: frontMatter is ' + typeof page.frontMatter };
+    return {
+      html: page.html + '<!-- url:' + page.url + ' path:' + page.path + ' title:' + page.frontMatter.title + ' -->'
+    };
+  });
+}`)
+			payload := plugin.HookRenderedPayload{
+				HTML:        "<h1>Hello</h1>",
+				FrontMatter: map[string]interface{}{"title": "Test Page"},
+				URL:         "/test/",
+				Path:        "content/test.md",
+			}
+			result, err := rt.CallHook("onPageRendered", payload)
+			Expect(err).NotTo(HaveOccurred(),
+				"CallHook must not error when dispatching HookRenderedPayload — "+
+					"the type switch must handle this struct type, either via a "+
+					"dedicated fast path case or the existing JSON default case")
+
+			m, ok := result.(map[string]interface{})
+			if !ok {
+				// ordered.Map is also acceptable from the JSON path
+				if om, omOk := toOrderedMap(result); omOk {
+					m = om
+					ok = true
+				}
+			}
+			Expect(ok).To(BeTrue(),
+				"CallHook with HookRenderedPayload must return a map — "+
+					"got %T; the hook returns {html: ...} which must be "+
+					"deserialized as a map on the Go side", result)
+
+			html, htmlOk := m["html"].(string)
+			Expect(htmlOk).To(BeTrue(),
+				"result map must contain an 'html' key with a string value — "+
+					"the hook concatenated metadata into the html field")
+			Expect(html).To(ContainSubstring("<h1>Hello</h1>"),
+				"original HTML must be preserved in the result")
+			Expect(html).To(ContainSubstring("url:/test/"),
+				"hook must receive the url field from HookRenderedPayload — "+
+					"if missing, the fast path failed to set the url property")
+			Expect(html).To(ContainSubstring("path:content/test.md"),
+				"hook must receive the path field from HookRenderedPayload — "+
+					"if missing, the fast path failed to set the path property")
+			Expect(html).To(ContainSubstring("title:Test Page"),
+				"hook must receive frontMatter.title from HookRenderedPayload — "+
+					"if missing, the fast path failed to serialize frontMatter")
+		})
+
+		It("HookRenderedPayload preserves HTML with JSON-special characters", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return { html: page.html };
+  });
+}`)
+			// HTML containing characters that require JSON escaping:
+			// double quotes, backslashes, newlines, tabs, angle brackets,
+			// unicode, null bytes in attribute values, script tags
+			specialHTML := "<div class=\"test\" data-attr='val'>\n\t" +
+				"<script>var x = \"hello\\nworld\";</script>\n" +
+				"<p>Price: $100 & tax < $20 > $10</p>\n" +
+				"<p>Unicode: café résumé naïve</p>\n" +
+				"<p>Emoji: \U0001F600</p>"
+
+			payload := plugin.HookRenderedPayload{
+				HTML:        specialHTML,
+				FrontMatter: map[string]interface{}{},
+				URL:         "/special/",
+				Path:        "content/special.md",
+			}
+			result, err := rt.CallHook("onPageRendered", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil(),
+				"result must be a map type (map[string]interface{} or *ordered.Map)")
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue(), "result must contain html as string")
+			Expect(html).To(Equal(specialHTML),
+				"HTML with JSON-special characters must survive the QuickJS "+
+					"round-trip unchanged — if this fails, the fast path "+
+					"is corrupting characters that would normally be escaped "+
+					"by JSON.parse/JSON.stringify (quotes, backslashes, "+
+					"newlines, unicode codepoints)")
+		})
+
+		It("HookRenderedPayload with empty frontMatter delivers empty object to JS", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    var keys = Object.keys(page.frontMatter);
+    return { html: 'keys:' + keys.length + ' type:' + typeof page.frontMatter };
+  });
+}`)
+			payload := plugin.HookRenderedPayload{
+				HTML:        "<p>test</p>",
+				FrontMatter: map[string]interface{}{},
+				URL:         "/empty-fm/",
+				Path:        "content/empty.md",
+			}
+			result, err := rt.CallHook("onPageRendered", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html := m["html"].(string)
+			Expect(html).To(Equal("keys:0 type:object"),
+				"empty frontMatter must arrive as an empty JS object (not null, "+
+					"not undefined) — plugins must be able to call Object.keys() "+
+					"without TypeError. If this fails with 'type:undefined', the "+
+					"fast path is not setting the frontMatter property")
+		})
+
+		It("HookRenderedPayload with nested frontMatter objects and arrays", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    var fm = page.frontMatter;
+    var tag0 = fm.tags[0];
+    var tag1 = fm.tags[1];
+    var authorName = fm.author.name;
+    var authorAge = fm.author.age;
+    var nested = fm.meta.deep.value;
+    return {
+      html: 'tags:' + tag0 + ',' + tag1 +
+            ' author:' + authorName + '(' + authorAge + ')' +
+            ' nested:' + nested
+    };
+  });
+}`)
+			payload := plugin.HookRenderedPayload{
+				HTML: "<p>nested test</p>",
+				FrontMatter: map[string]interface{}{
+					"tags": []interface{}{"go", "performance"},
+					"author": map[string]interface{}{
+						"name": "Alice",
+						"age":  30,
+					},
+					"meta": map[string]interface{}{
+						"deep": map[string]interface{}{
+							"value": "found-it",
+						},
+					},
+				},
+				URL:  "/nested/",
+				Path: "content/nested.md",
+			}
+			result, err := rt.CallHook("onPageRendered", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html := m["html"].(string)
+			Expect(html).To(ContainSubstring("tags:go,performance"),
+				"frontMatter arrays must be accessible in JS — "+
+					"the fast path must JSON-serialize frontMatter so "+
+					"nested arrays and objects are preserved")
+			Expect(html).To(ContainSubstring("author:Alice(30)"),
+				"nested frontMatter objects must be accessible in JS")
+			Expect(html).To(ContainSubstring("nested:found-it"),
+				"deeply nested frontMatter values must be accessible in JS")
+		})
+
+		It("HookRenderedPayload return with addDependencies is extracted correctly", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return {
+      html: page.html + '<!-- ssr -->',
+      addDependencies: ['elements/rh-card/rh-card.js', 'elements/rh-icon/rh-icon.js']
+    };
+  });
+}`)
+			payload := plugin.HookRenderedPayload{
+				HTML:        "<rh-card>content</rh-card>",
+				FrontMatter: map[string]interface{}{},
+				URL:         "/deps/",
+				Path:        "content/deps.md",
+			}
+			result, err := rt.CallHook("onPageRendered", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(Equal("<rh-card>content</rh-card><!-- ssr -->"),
+				"html must contain the hook's modifications")
+
+			deps, ok := m["addDependencies"]
+			Expect(ok).To(BeTrue(),
+				"addDependencies key must be present in the result map — "+
+					"the fast path's outbound extraction must preserve "+
+					"non-html keys from the hook return value")
+			depsSlice, ok := deps.([]interface{})
+			Expect(ok).To(BeTrue(),
+				"addDependencies must be a []interface{} — got %T; "+
+					"the fast path must extract array values correctly", deps)
+			Expect(depsSlice).To(HaveLen(2))
+			Expect(depsSlice[0]).To(Equal("elements/rh-card/rh-card.js"))
+			Expect(depsSlice[1]).To(Equal("elements/rh-icon/rh-icon.js"))
+		})
+
+		It("HookRenderedPayload identity return preserves all fields", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return page;
+  });
+}`)
+			payload := plugin.HookRenderedPayload{
+				HTML:        "<p>unchanged</p>",
+				FrontMatter: map[string]interface{}{"title": "Identity"},
+				URL:         "/identity/",
+				Path:        "content/identity.md",
+			}
+			result, err := rt.CallHook("onPageRendered", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil(),
+				"identity return (return page) must produce a map result — "+
+					"the hook echoes the input object back unchanged")
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(Equal("<p>unchanged</p>"),
+				"identity return must preserve the html field exactly — "+
+					"the fast path outbound extraction must handle the "+
+					"case where the hook returns the input object unmodified")
+		})
+
+		It("HookFormatRenderedPayload delivers all fields to JS and returns modified content", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onFormatRendered', {}, function(payload) {
+    if (payload.format !== 'json') return payload;
+    return {
+      content: payload.content.replace(/\s+/g, '') +
+        '/*fmt:' + payload.format +
+        ' url:' + payload.url +
+        ' path:' + payload.path +
+        ' title:' + payload.frontMatter.title + '*/'
+    };
+  });
+}`)
+			payload := plugin.HookFormatRenderedPayload{
+				Format:      "json",
+				Content:     "{ \"key\": \"value\" }",
+				URL:         "/api/data/",
+				Path:        "content/api/data.md",
+				FrontMatter: map[string]interface{}{"title": "API Data"},
+			}
+			result, err := rt.CallHook("onFormatRendered", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil(),
+				"CallHook with HookFormatRenderedPayload must return a map")
+			content, ok := m["content"].(string)
+			Expect(ok).To(BeTrue(),
+				"result must contain 'content' key as string")
+			Expect(content).To(ContainSubstring(`{"key":"value"}`),
+				"content must contain the minified JSON")
+			Expect(content).To(ContainSubstring("fmt:json"),
+				"hook must receive the format field")
+			Expect(content).To(ContainSubstring("url:/api/data/"),
+				"hook must receive the url field")
+			Expect(content).To(ContainSubstring("path:content/api/data.md"),
+				"hook must receive the path field")
+			Expect(content).To(ContainSubstring("title:API Data"),
+				"hook must receive frontMatter from the payload")
+		})
+
+		It("HookTransformPayload delivers all fields including toc to JS", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    var tocInfo = 'no-toc';
+    if (page.toc && page.toc.length > 0) {
+      tocInfo = 'toc:' + page.toc[0].text + '(L' + page.toc[0].level + ')';
+    }
+    return {
+      html: page.html + '<!-- ' + tocInfo +
+        ' url:' + page.url +
+        ' path:' + page.path +
+        ' title:' + page.frontMatter.title + ' -->',
+      toc: page.toc
+    };
+  });
+}`)
+			payload := plugin.HookTransformPayload{
+				HTML: "<h2>Introduction</h2><p>Body text</p>",
+				TOC: []content.TOCEntry{
+					{Text: "Introduction", ID: "introduction", Level: 2},
+				},
+				URL:         "/transform/",
+				Path:        "content/transform.md",
+				FrontMatter: map[string]interface{}{"title": "Transform Test"},
+			}
+			result, err := rt.CallHook("onContentTransformed", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil(),
+				"CallHook with HookTransformPayload must return a map")
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(ContainSubstring("toc:Introduction(L2)"),
+				"hook must receive the toc array from HookTransformPayload — "+
+					"the fast path must serialize TOC entries so JS can "+
+					"access .text and .level properties")
+			Expect(html).To(ContainSubstring("url:/transform/"),
+				"hook must receive the url field")
+			Expect(html).To(ContainSubstring("title:Transform Test"),
+				"hook must receive frontMatter from the payload")
+		})
+
+		It("HookRenderedPayload with large HTML does not corrupt content", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return { html: page.html + '<!-- length:' + page.html.length + ' -->' };
+  });
+}`)
+			// Build a ~100KB HTML string — large enough to stress the
+			// serialization path but not so large it slows tests
+			var largeHTML string
+			for i := 0; i < 1000; i++ {
+				largeHTML += "<div class=\"card\"><h3>Card " +
+					fmt.Sprintf("%d", i) +
+					"</h3><p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. " +
+					"Sed do eiusmod tempor incididunt ut labore.</p></div>\n"
+			}
+			expectedLen := len(largeHTML)
+
+			payload := plugin.HookRenderedPayload{
+				HTML:        largeHTML,
+				FrontMatter: map[string]interface{}{},
+				URL:         "/large/",
+				Path:        "content/large.md",
+			}
+			result, err := rt.CallHook("onPageRendered", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(ContainSubstring(fmt.Sprintf("<!-- length:%d -->", expectedLen)),
+				"JS must receive the correct string length for large HTML — "+
+					"if the length differs, the fast path is truncating or "+
+					"corrupting the HTML during native string transfer")
+			Expect(html).To(HavePrefix("<div class=\"card\"><h3>Card 0</h3>"),
+				"start of large HTML must be preserved")
+			Expect(html).To(ContainSubstring("Card 999"),
+				"end of large HTML must be preserved — "+
+					"if missing, the fast path truncated the string")
 		})
 	})
 
