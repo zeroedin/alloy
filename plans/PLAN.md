@@ -118,6 +118,7 @@ structure:                       # Override default directory paths (all relativ
   static: "static"               # Default: "static"
   data: "data"                   # Default: "data"
   plugins: "plugins"             # Default: "plugins"
+  components: "components"       # Default: "components" (SSR component source directory)
 
 taxonomies:
   tags:                          # auto-generates /tags/ and /tags/:slug/
@@ -135,7 +136,7 @@ passthrough:
 
 ### Custom Directory Structure
 
-The default project structure uses `content/`, `layouts/`, `assets/`, `static/`, `data/`, and `plugins/` at the project root. The `structure:` config overrides these paths for projects with non-standard layouts:
+The default project structure uses `content/`, `layouts/`, `assets/`, `static/`, `data/`, and `plugins/` at the project root. When SSR is configured, `components/` is also used (configurable via `structure.components`). The `structure:` config overrides these paths for projects with non-standard layouts:
 
 ```yaml
 # alloy.config.yaml — monorepo example
@@ -2577,7 +2578,7 @@ Fire **once per build**. Payload is a JSON-serializable representation of the Go
 | Worker pool size | `plugins.workers` | Controls hook worker pool size (before spawn) |
 | Hook timeout | `plugins.timeout` | Controls timeout for subsequent hook calls |
 
-**Not mutable via onConfig:** `title`, `baseURL`, `language`, `templates.engine`, `content`, `data`, `taxonomies`, `pagination`, `sitemap`, `collections`, `watch`, `sources`, `ssr`, `languages`, `structure.plugins` (plugins are already loaded before `onConfig` fires — changing the directory has no effect). Changes to non-mutable fields are ignored; the pipeline preserves the original values for those fields. Internal fields (`projectRoot`, `verbose`, `quiet`, `refetch`, `includeDrafts`) have `json:"-"` tags and are never visible to plugins.
+**Not mutable via onConfig:** `title`, `baseURL`, `language`, `templates.engine`, `content`, `data`, `taxonomies`, `pagination`, `sitemap`, `collections`, `watch`, `sources`, `ssr`, `languages`, `structure.plugins` (plugins are already loaded before `onConfig` fires — changing the directory has no effect), `structure.components` (component directory is used by the watcher and incremental builder which are configured before `onConfig` fires). Changes to non-mutable fields are ignored; the pipeline preserves the original values for those fields. Internal fields (`projectRoot`, `verbose`, `quiet`, `refetch`, `includeDrafts`) have `json:"-"` tags and are never visible to plugins.
 
 **Return type enforcement:** `onConfig` must return a JSON object (same shape as the input). Returning a non-object (string, number, array, null) produces a build error identifying `onConfig` as the source. This prevents silent data loss from plugins that forget to return the config.
 
@@ -3181,7 +3182,7 @@ Scaffolds a complete starter project in the target directory (default: current d
 - **Creates target directory** if it does not exist (`os.MkdirAll`).
 - **No-op when a config file already exists.** Use `config.DetectConfigFile` to check all four extensions (`.yaml`, `.yml`, `.toml`, `.json`). Return `nil` (not an error) and print a message containing `"already exists"`. Do not create any directories or files.
 - **Creates `alloy.config.yaml`** with at minimum `title` and `baseURL` (must pass `config.Validate`). When all structure directories are defaults, do not include a `structure:` block — the pipeline defaults handle it.
-- **Creates six project directories**: the five `StructureConfig` paths (content, layouts, assets, static, data) plus `plugins/`. Uses the configured names if overridden via flags, otherwise the defaults.
+- **Creates six project directories**: the six `StructureConfig` paths (content, layouts, assets, static, data, plugins). The `components/` directory is only created when `--components` is specified or SSR is configured — it is not created by default since most sites don't use SSR. Uses the configured names if overridden via flags, otherwise the defaults.
 - **Creates starter files**:
   - `layouts/default.liquid` — HTML5 shell (`<!DOCTYPE html>`) referencing `{{ page.title }}` in the `<head>`, injecting `{{ content }}` in the `<body>`, and linking to `/style.css`.
   - `content/index.md` — YAML frontmatter (`---` delimiters) with `title:` and `layout: default`.

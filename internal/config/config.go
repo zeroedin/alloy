@@ -72,7 +72,8 @@ type StructureConfig struct {
 	Assets  string `yaml:"assets" toml:"assets" json:"assets"`    // default: "assets"
 	Static  string `yaml:"static" toml:"static" json:"static"`    // default: "static"
 	Data    string `yaml:"data" toml:"data" json:"data"`          // default: "data"
-	Plugins string `yaml:"plugins" toml:"plugins" json:"plugins"` // default: "plugins"
+	Plugins    string `yaml:"plugins" toml:"plugins" json:"plugins"`       // default: "plugins"
+	Components string `yaml:"components" toml:"components" json:"components"` // default: "components"
 }
 
 // ContentConfig holds content format and Markdown settings.
@@ -328,6 +329,9 @@ func ApplyDefaults(cfg *Config) {
 	if cfg.Structure.Plugins == "" {
 		cfg.Structure.Plugins = "plugins"
 	}
+	if cfg.Structure.Components == "" {
+		cfg.Structure.Components = "components"
+	}
 	if !cfg.Sitemap.enabledSet {
 		cfg.Sitemap.Enabled = true
 	}
@@ -428,7 +432,8 @@ func Validate(cfg *Config) error {
 		structDir(cfg.Structure.Data, "data"):       true,
 		structDir(cfg.Structure.Assets, "assets"):   true,
 		structDir(cfg.Structure.Static, "static"):   true,
-		structDir(cfg.Structure.Plugins, "plugins"): true,
+		structDir(cfg.Structure.Plugins, "plugins"):       true,
+		structDir(cfg.Structure.Components, "components"): true,
 	}
 	seen := make(map[string]bool)
 	for i := range cfg.Watch {
