@@ -160,6 +160,12 @@ var _ = Describe("ParseFileChangedResult (issue #1100)", func() {
 					"Go's type assertion to bool fails for int. The "+
 					"parser must not treat JS-truthy non-bool values as "+
 					"true (issue #1131)")
+			Expect(parsed.Warnings).To(ContainElement(
+				ContainSubstring("restart"),
+			), "non-boolean restart value must produce a warning so "+
+				"plugin authors know their value is being dropped — "+
+				"without this, restart: 1 silently does nothing and "+
+				"the plugin author has no diagnostic (issue #1138)")
 		})
 
 		It("defaults restart to false for string value", func() {
@@ -175,6 +181,10 @@ var _ = Describe("ParseFileChangedResult (issue #1100)", func() {
 					"only Go bool true triggers a restart. String \"yes\" "+
 					"is truthy in JS but is not a valid restart value "+
 					"(issue #1131)")
+			Expect(parsed.Warnings).To(ContainElement(
+				ContainSubstring("restart"),
+			), "non-boolean restart value must produce a warning — "+
+				"string \"yes\" is a common JS-truthy mistake (issue #1138)")
 		})
 
 		It("defaults restart to false for nil value", func() {
@@ -190,6 +200,92 @@ var _ = Describe("ParseFileChangedResult (issue #1100)", func() {
 					"Go's bool type assertion. A plugin returning "+
 					"restart: null (JS) or restart: undefined would "+
 					"produce nil in the Go map (issue #1131)")
+			Expect(parsed.Warnings).To(ContainElement(
+				ContainSubstring("restart"),
+			), "nil restart value must produce a warning — the key "+
+				"is present but the value is not a boolean (issue #1138)")
+		})
+
+		It("returns non-nil with warning when numeric restart is sole key", func() {
+			// When restart is the ONLY recognized key and its value is
+			// non-boolean, the result must still be non-nil with a
+			// warning. This is the same pattern as malformed
+			// invalidateByDependency: recognized key + malformed value
+			// → non-nil with warning (not nil, which would mean "no
+			// recognized keys found").
+			result := map[string]interface{}{
+				"restart": 1,
+			}
+
+			parsed := plugin.ParseFileChangedResult(result)
+			Expect(parsed).NotTo(BeNil(),
+				"restart is a recognized key — even with a non-boolean "+
+					"value, ParseFileChangedResult must return non-nil. "+
+					"Returning nil would mean 'no recognized keys found' "+
+					"which is wrong — the key IS recognized, just malformed "+
+					"(issue #1138)")
+			Expect(parsed.Restart).To(BeFalse(),
+				"non-boolean restart must default to false regardless of "+
+					"whether other keys are present (issue #1138)")
+			Expect(parsed.Warnings).To(ContainElement(
+				ContainSubstring("restart"),
+			), "non-boolean restart as sole key must produce a warning "+
+				"(issue #1138)")
+		})
+
+		It("returns non-nil with warning when string restart is sole key", func() {
+			// A plugin returning { restart: "yes" } without
+			// invalidateByDependency — the string value is truthy in
+			// JS but fails Go's bool type assertion. The key is
+			// recognized, so parsed must be non-nil with a warning.
+			// Without this test, an implementation using
+			// `if v := m["restart"]; v != nil` (nil-check) instead of
+			// `if _, ok := m["restart"]; ok` (key-presence check)
+			// would pass all other sole-key tests.
+			result := map[string]interface{}{
+				"restart": "yes",
+			}
+
+			parsed := plugin.ParseFileChangedResult(result)
+			Expect(parsed).NotTo(BeNil(),
+				"restart is a recognized key — string value is malformed "+
+					"but the key IS present, so result must be non-nil "+
+					"(issue #1138)")
+			Expect(parsed.Restart).To(BeFalse(),
+				"string restart value as sole key must default to false "+
+					"(issue #1138)")
+			Expect(parsed.Warnings).To(ContainElement(
+				ContainSubstring("restart"),
+			), "string restart as sole key must produce a warning "+
+				"(issue #1138)")
+		})
+
+		It("returns non-nil with warning when nil restart is sole key", func() {
+			// A plugin returning { restart: null } (JS) without
+			// invalidateByDependency — nil fails Go's bool type
+			// assertion. Critical disambiguation: an implementation
+			// using `if v := m["restart"]; v != nil` would return nil
+			// here (treating the result as "no recognized keys") even
+			// though the key IS present. Only a key-presence check
+			// (`if _, ok := m["restart"]; ok`) correctly identifies
+			// this as a recognized-but-malformed key.
+			result := map[string]interface{}{
+				"restart": nil,
+			}
+
+			parsed := plugin.ParseFileChangedResult(result)
+			Expect(parsed).NotTo(BeNil(),
+				"restart is a recognized key — nil value is malformed "+
+					"but the key IS present, so result must be non-nil. "+
+					"A nil-value check implementation would incorrectly "+
+					"return nil here (issue #1138)")
+			Expect(parsed.Restart).To(BeFalse(),
+				"nil restart value as sole key must default to false "+
+					"(issue #1138)")
+			Expect(parsed.Warnings).To(ContainElement(
+				ContainSubstring("restart"),
+			), "nil restart as sole key must produce a warning "+
+				"(issue #1138)")
 		})
 	})
 

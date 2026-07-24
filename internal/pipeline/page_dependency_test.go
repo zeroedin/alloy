@@ -559,6 +559,16 @@ var _ = Describe("Build Pipeline", func() {
 					"full build and are queryable during incremental invalidation "+
 					"(issue #1132)")
 
+			// Verify rebuilt cache preserves deps from BOTH hooks —
+			// not just the hook whose dep triggered this rebuild.
+			Expect(result2.Cache.PagesForDependency("elements/rh-card/rh-card.js")).To(
+				ConsistOf("index.md"),
+				"rebuilt cache must preserve deps from both hooks — "+
+					"the onContentTransformed dep (locales/en.json) triggered "+
+					"this rebuild, but the page was re-rendered through both "+
+					"hooks, so the onPageRendered dep (rh-card.js) must also "+
+					"be re-tracked in the rebuilt cache (issue #1139)")
+
 			// Build 3: onPageRendered dep changed (use initial cache, not
 			// result2's cache, to test independently)
 			result3, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
