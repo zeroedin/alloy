@@ -305,7 +305,7 @@ These fire once per page. They receive page-scoped payloads.
 
 #### onContentTransformed
 
-Fires after Markdown-to-HTML conversion but before layout rendering. Receives a page-scoped object with `html`, `toc`, `path`, `url`, and `frontMatter`.
+Fires after Markdown-to-HTML conversion but before layout rendering. Receives a page-scoped object with `html`, `toc`, `path`, `url`, and `frontMatter`. Return values can include `html`, `toc`, `frontMatter`, and `addDependencies`.
 
 ```javascript
 alloy.hook("onContentTransformed", {}, (page) => {
@@ -321,6 +321,18 @@ alloy.hook("onContentTransformed", {}, (page) => {
 });
 ```
 
+Declaring dependencies for incremental rebuilds:
+
+```javascript
+alloy.hook("onContentTransformed", {}, (page) => {
+  const deps = extractImports(page.html);
+  page.html = page.html.replace(/<img /g, '<img loading="lazy" ');
+  return { ...page, addDependencies: deps };
+});
+```
+
+`addDependencies` is an array of project-root-relative file paths (e.g., `["locales/en.json", "data/nav.yaml"]`). During `alloy dev`, Alloy tracks a reverse index from these paths to pages and rebuilds only affected pages when a dependency changes. See [Dependency Tracking](#dependency-tracking) below.
+
 #### onPageRendered
 
 Fires after template rendering produces the final page HTML. Receives an HTML string and returns an HTML string.
@@ -330,6 +342,33 @@ alloy.hook("onPageRendered", {}, (html) => {
   return html.replace(/\s+/g, ' ').trim();
 });
 ```
+
+Return values can include `addDependencies` to declare external file dependencies for incremental rebuilds during `alloy dev`:
+
+```javascript
+alloy.hook("onPageRendered", {}, (page) => {
+  const result = renderSSR(page.html);
+  return {
+    html: result,
+    addDependencies: [
+      "elements/rh-card/rh-card.js",
+      "elements/rh-icon/rh-icon.js",
+    ],
+  };
+});
+```
+
+#### Dependency Tracking
+
+Both `onContentTransformed` and `onPageRendered` support `addDependencies` in their return values. This drives targeted incremental rebuilds during `alloy dev`:
+
+1. A plugin returns `addDependencies: ["path/to/file.js"]` from a per-page hook.
+2. Alloy records each path in a reverse index keyed by page.
+3. When a watched file changes, `onFileChanged` can return `invalidateByDependency` with the changed paths. Only pages whose reverse-index entries match are rebuilt.
+
+Dependencies accumulate per page per build. If a plugin stops returning a path (e.g., a component tag is removed from the page template), that dependency drops from the index on the next rebuild.
+
+Paths are normalized with `filepath.Clean` -- `./data.json` and `data/../data.json` both resolve to `data.json`. Non-array `addDependencies` values produce a warning and are ignored.
 
 ### Per-Asset Hook
 
@@ -360,6 +399,52 @@ alloy.hook("onAssetProcess", {}, (asset) => {
 | Object without `content` key | Keeps the original content |
 
 The `path` key in the return value is ignored — the file is always written to its original relative path in the output directory. A hook error stops the build.
+
+### Dev Server Hooks
+
+#### onFileChanged
+
+Fires once per file-watch batch during `alloy dev`. The payload is an array of change events, not a single file path.
+
+```javascript
+alloy.hook("onFileChanged", {}, (events) => {
+  for (const event of events) {
+    console.log(`${event.Path} changed (removed: ${event.IsRemove})`);
+  }
+});
+```
+
+**Payload fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `Path` | string | File path relative to project root |
+| `ChangeType` | number | Change category (1--8: content, layout, data, asset, static, component, passthrough, plugin) |
+| `IsRemove` | boolean | `true` when the file was deleted |
+
+**Return value:**
+
+Return an object to control how Alloy responds to the file change. Omitting the return value (or returning `undefined`) preserves the default behavior.
+
+| Return field | Type | Description |
+|---|---|---|
+| `invalidateByDependency` | string[] | File paths to match against the dependency reverse index -- only pages that declared these as dependencies are rebuilt |
+| `restart` | boolean | Restart Node bridge subprocesses before the rebuild (clears ESM module cache) |
+
+```javascript
+alloy.hook("onFileChanged", {}, (events) => {
+  const changed = events
+    .filter(ev => ev.Path.startsWith("elements/") && ev.Path.endsWith(".js"))
+    .map(ev => ev.Path);
+  if (changed.length > 0) {
+    return { invalidateByDependency: changed, restart: true };
+  }
+});
+```
+
+`invalidateByDependency` paths are matched against the reverse index built from `addDependencies` declarations in `onContentTransformed` and `onPageRendered`. Only pages that declared a matching dependency are rebuilt. If a path has no reverse-index entries, it has no effect.
+
+`restart` must be a boolean. Non-boolean values are dropped with a warning.
 
 ### Read-Only Hooks
 
@@ -392,24 +477,6 @@ alloy.hook("onDevServerStart", {}, (config) => {
   console.log(`Dev server started for "${config.Title}"`);
 });
 ```
-
-#### onFileChanged
-
-Fires once per file-watch batch during `alloy dev`. The payload is an array of change events, not a single file path.
-
-```javascript
-alloy.hook("onFileChanged", {}, (events) => {
-  for (const event of events) {
-    console.log(`${event.Path} changed (removed: ${event.IsRemove})`);
-  }
-});
-```
-
-| Field | Type | Description |
-|---|---|---|
-| `Path` | string | File path relative to project root |
-| `ChangeType` | number | Change category (1–8: content, template, data, asset, etc.) |
-| `IsRemove` | boolean | `true` when the file was deleted |
 
 ## Hook Execution Order
 
