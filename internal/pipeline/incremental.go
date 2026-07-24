@@ -127,12 +127,29 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 			}
 		}
 
+		// Find pages invalidated by dependency changes (issue #1100).
+		// For each changed file, check if any content pages declared it
+		// as a dependency via addDependencies. Dependency-invalidated
+		// pages are rebuilt even if their own content hash is unchanged.
+		depInvalidated := make(map[string]bool)
+		for _, f := range changedFiles {
+			depPages := previousCache.PagesForDependency(filepath.ToSlash(f))
+			for _, p := range depPages {
+				depInvalidated[p] = true
+			}
+		}
+
 		if untrackedPartial {
 			pagesToRender = allPages
 		} else {
 			for _, page := range allPages {
 				// Page invalidated by layout change?
 				if layoutInvalidated[page.RelPath] {
+					pagesToRender = append(pagesToRender, page)
+					continue
+				}
+				// Page invalidated by dependency change? (issue #1100)
+				if depInvalidated[page.RelPath] {
 					pagesToRender = append(pagesToRender, page)
 					continue
 				}
@@ -382,6 +399,23 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		return nil, renderErr
 	}
 
+	// Build in-memory cache early so dependency tracking hooks can populate
+	// it. Clone previous cache (preserves skipped page hashes). Hashes and
+	// template tracking are added after rendering.
+	var buildCache *cache.Cache
+	if previousCache != nil {
+		buildCache = previousCache.Clone()
+	} else {
+		buildCache = cache.New()
+	}
+
+	// Clear content page dependencies only for pages being re-rendered.
+	// Hooks will re-track deps for these pages; skipped pages retain their
+	// deps from the cloned previous cache (issue #1100).
+	for _, page := range pagesToRender {
+		buildCache.UntrackPageDependencies(page.RelPath)
+	}
+
 	// Lifecycle hooks between passes — mirrors Build() flow (issue #731).
 	// Warning-only errors: dev server resilience (Build() returns fatal errors).
 	if ps.Hooks != nil {
@@ -464,7 +498,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				}
 			}
 		}
-		if err := fireContentTransformedHooks(pagesToRender, ps.Hooks); err != nil {
+		if err := fireContentTransformedHooks(pagesToRender, ps.Hooks, buildCache); err != nil {
 			log.Printf("warning: plugin hook onContentTransformed: %v", err)
 		}
 	}
@@ -508,8 +542,11 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				log.Printf("warning: plugin hook onPageRendered: %v", hookErr)
 			} else {
 				for i, result := range results {
-					if html, ok := extractPageRenderedHTML(result); ok {
-						htmlPages[i].SetRenderedBody([]byte(html))
+					if m, ok := toGoMap(result); ok {
+						if html, ok := m["html"].(string); ok {
+							htmlPages[i].SetRenderedBody([]byte(html))
+						}
+						extractAddDependencies(m, htmlPages[i].RelPath, buildCache)
 					} else if result != nil {
 						log.Printf("warning: onPageRendered result for %s: expected page object with html key, got %T — plugin may need migration to the object API", htmlPages[i].RelPath, result)
 					}
@@ -736,14 +773,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		page.ReleaseRenderedBody()
 	}
 
-	// Build in-memory cache: clone previous (preserves skipped page hashes),
-	// then update only rendered pages + carry forward template tracking.
-	var buildCache *cache.Cache
-	if previousCache != nil {
-		buildCache = previousCache.Clone()
-	} else {
-		buildCache = cache.New()
-	}
+	// Populate cache hashes and template tracking for rendered pages.
 	for _, page := range pagesToRender {
 		if h, ok := prePageContentHash[page.RelPath]; ok {
 			buildCache.SetHash(page.RelPath, h)

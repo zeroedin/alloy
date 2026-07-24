@@ -13,6 +13,7 @@ type Cache struct {
 	directoryData       map[string]map[string]bool // directory path → set of page paths
 	virtualPages        map[string]bool            // RelPaths of pages injected by onPagesReady (issue #970)
 	virtualDependencies map[string]map[string]bool // source path → set of virtual page RelPaths (issue #1058)
+	pageDependencies    map[string]map[string]bool // dependency path → set of content page RelPaths (issue #1100)
 }
 
 // New creates an empty cache with no entries.
@@ -23,6 +24,7 @@ func New() *Cache {
 		directoryData:       make(map[string]map[string]bool),
 		virtualPages:        make(map[string]bool),
 		virtualDependencies: make(map[string]map[string]bool),
+		pageDependencies:    make(map[string]map[string]bool),
 	}
 }
 
@@ -65,6 +67,7 @@ func (c *Cache) Clear() {
 	c.directoryData = make(map[string]map[string]bool)
 	c.virtualPages = make(map[string]bool)
 	c.virtualDependencies = make(map[string]map[string]bool)
+	c.pageDependencies = make(map[string]map[string]bool)
 }
 
 // Clone returns a deep copy of the cache. Used by BuildIncremental to
@@ -97,6 +100,13 @@ func (c *Cache) Clone() *Cache {
 			cp[p] = val
 		}
 		cloned.virtualDependencies[k] = cp
+	}
+	for k, v := range c.pageDependencies {
+		cp := make(map[string]bool, len(v))
+		for p, val := range v {
+			cp[p] = val
+		}
+		cloned.pageDependencies[k] = cp
 	}
 	return cloned
 }
@@ -232,4 +242,54 @@ func (c *Cache) InvalidatedVirtualPages(changedFile string) []string {
 		result = append(result, p)
 	}
 	return result
+}
+
+// TrackDependency records that a content page depends on an external file.
+// Builds a reverse map so PagesForDependency can return all pages affected
+// by a source file change (issue #1100).
+func (c *Cache) TrackDependency(pageRelPath, depPath string) {
+	if pageRelPath == "" {
+		return
+	}
+	pages := c.pageDependencies[depPath]
+	if pages == nil {
+		pages = make(map[string]bool)
+		c.pageDependencies[depPath] = pages
+	}
+	pages[pageRelPath] = true
+}
+
+// UntrackPageDependencies removes a single page from every dependency set.
+// Used by BuildIncremental to clear stale deps for pages being re-rendered
+// without wiping deps for skipped pages (issue #1100).
+func (c *Cache) UntrackPageDependencies(pageRelPath string) {
+	for depPath, pages := range c.pageDependencies {
+		delete(pages, pageRelPath)
+		if len(pages) == 0 {
+			delete(c.pageDependencies, depPath)
+		}
+	}
+}
+
+// PagesForDependency returns the content page RelPaths that depend on the
+// given external file. Returns nil if no page tracks the given file as a
+// dependency (issue #1100).
+func (c *Cache) PagesForDependency(depPath string) []string {
+	pages, ok := c.pageDependencies[depPath]
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(pages))
+	for p := range pages {
+		result = append(result, p)
+	}
+	return result
+}
+
+// ClearDependencies resets all content page dependency tracking without
+// affecting content hashes, template tracking, or virtual page tracking.
+// Called before re-tracking dependencies on each build so stale entries
+// from previous builds do not persist (issue #1100).
+func (c *Cache) ClearDependencies() {
+	c.pageDependencies = make(map[string]map[string]bool)
 }

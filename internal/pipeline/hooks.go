@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/plugin"
 )
@@ -260,8 +261,10 @@ func virtualPageFromMap(m map[string]interface{}) (*content.Page, error) {
 
 // fireContentTransformedHooks fires onContentTransformed once per page
 // with a page object payload containing html, toc, path, url, and frontMatter.
-// Applies returned modifications back to page fields.
-func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegistry) error {
+// Applies returned modifications back to page fields. When buildCache is
+// non-nil, extracts addDependencies from return values and tracks them
+// in the cache (issue #1100).
+func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegistry, buildCache ...*cache.Cache) error {
 	if !hooks.HasHooks(plugin.OnContentTransformed) {
 		return nil
 	}
@@ -309,6 +312,9 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 				if returnedFM, ok := toGoMap(modified["frontMatter"]); ok {
 					page.FrontMatter = returnedFM
 				}
+			}
+			if len(buildCache) > 0 && buildCache[0] != nil {
+				extractAddDependencies(modified, page.RelPath, buildCache[0])
 			}
 		} else if s, ok := result.(string); ok {
 			page.SetRenderedBody([]byte(s))
@@ -533,6 +539,29 @@ func extractPageRenderedHTML(result interface{}) (string, bool) {
 		return html, ok
 	}
 	return "", false
+}
+
+// extractAddDependencies extracts the addDependencies array from a hook
+// result map and tracks each valid path in the build cache (issue #1100).
+// Non-array values are ignored with a warning. Non-string entries within
+// the array are filtered out with a warning.
+func extractAddDependencies(resultMap map[string]interface{}, pageRelPath string, buildCache *cache.Cache) {
+	raw, exists := resultMap["addDependencies"]
+	if !exists {
+		return
+	}
+	arr, ok := raw.([]interface{})
+	if !ok {
+		log.Printf("warning: addDependencies for %s: expected array, got %T — ignoring", pageRelPath, raw)
+		return
+	}
+	for _, entry := range arr {
+		if depPath, ok := entry.(string); ok {
+			buildCache.TrackDependency(pageRelPath, filepath.ToSlash(filepath.Clean(depPath)))
+		} else {
+			log.Printf("warning: addDependencies for %s: non-string entry %T — skipping", pageRelPath, entry)
+		}
+	}
 }
 
 // buildFormatRenderedPayload constructs the onFormatRendered hook payload for a

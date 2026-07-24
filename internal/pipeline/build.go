@@ -797,7 +797,11 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
-	if err := fireContentTransformedHooks(pages, ps.Hooks); err != nil {
+	// Create cache early so dependency tracking hooks can populate it.
+	// Hashes and template tracking are added after rendering (Stage 9).
+	buildCache := cache.New()
+
+	if err := fireContentTransformedHooks(pages, ps.Hooks, buildCache); err != nil {
 		return nil, err
 	}
 
@@ -916,8 +920,11 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				return nil, fmt.Errorf("plugin hook onPageRendered: %w", err)
 			}
 			for i, result := range results {
-				if html, ok := extractPageRenderedHTML(result); ok {
-					htmlPages[i].SetRenderedBody([]byte(html))
+				if m, ok := toGoMap(result); ok {
+					if html, ok := m["html"].(string); ok {
+						htmlPages[i].SetRenderedBody([]byte(html))
+					}
+					extractAddDependencies(m, htmlPages[i].RelPath, buildCache)
 				} else if result != nil {
 					log.Printf("warning: onPageRendered result for %s: expected page object with html key, got %T — plugin may need migration to the object API", htmlPages[i].RelPath, result)
 				}
@@ -1135,7 +1142,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// Stage 9: Build in-memory cache for incremental rebuilds
 	timer.Start("Cache")
-	buildCache := cache.New()
 	for _, page := range pages {
 		buildCache.SetHash(page.RelPath, cache.HashContent(page.Content))
 	}
