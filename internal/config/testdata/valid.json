@@ -38,7 +38,9 @@
   },
   "passthrough": [
     {"from": "../design-system/dist/elements", "to": "elements"},
-    {"from": "../shared-assets/fonts", "to": "assets/fonts"}
+    {"from": "../shared-assets/fonts", "to": "assets/fonts"},
+    {"from": "elements", "to": "assets/packages/elements", "exclude": ["*.html", "demo/"]},
+    {"from": "elements/**/*.{js,css}", "to": "assets/elements", "exclude": ["*.min.js"]}
   ],
   "sources": {
     "posts": {
@@ -94,5 +96,9 @@
         "posted_on": "Publié le"
       }
     }
-  }
+  },
+  "watch": [
+    {"from": "elements", "type": "content"},
+    {"from": "shared-layouts", "type": "layout"}
+  ]
 }

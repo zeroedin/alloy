@@ -40,6 +40,16 @@ to = "elements"
 from = "../shared-assets/fonts"
 to = "assets/fonts"
 
+[[passthrough]]
+from = "elements"
+to = "assets/packages/elements"
+exclude = ["*.html", "demo/"]
+
+[[passthrough]]
+from = "elements/**/*.{js,css}"
+to = "assets/elements"
+exclude = ["*.min.js"]
+
 [sources.posts]
 type = "rest"
 url = "https://api.example.com/posts.json"
@@ -88,3 +98,11 @@ weight = 2
 [languages.fr.strings]
 read_more = "Lire la suite"
 posted_on = "Publié le"
+
+[[watch]]
+from = "elements"
+type = "content"
+
+[[watch]]
+from = "shared-layouts"
+type = "layout"
