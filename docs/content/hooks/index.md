@@ -323,13 +323,22 @@ alloy.hook("onContentTransformed", {}, (page) => {
 
 #### onPageRendered
 
-Fires after template rendering produces the final page HTML. Receives an HTML string and returns an HTML string.
+Fires after template rendering produces the final page HTML. Receives a page object with `html`, `frontMatter`, `url`, and `path`. Only `html` in the return is applied back -- `frontMatter`, `url`, and `path` are read-only context.
 
 ```javascript
-alloy.hook("onPageRendered", {}, (html) => {
-  return html.replace(/\s+/g, ' ').trim();
+alloy.hook("onPageRendered", {}, (page) => {
+  if (page.frontMatter.layout === "demo") return page;
+  page.html = page.html.replace(/<h2/g, '<h2 class="styled"');
+  return page;
 });
 ```
+
+| Field | Type | Mutable | Description |
+|---|---|---|---|
+| `html` | string | yes | Final rendered HTML |
+| `frontMatter` | object | no | Page front matter (read-only context) |
+| `url` | string | no | Page URL |
+| `path` | string | no | Source-relative file path |
 
 Pages whose `outputs` contains only non-HTML formats (e.g., `outputs: ["json"]`) skip `onPageRendered` entirely. Those pages route through `onFormatRendered` instead.
 
