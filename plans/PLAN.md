@@ -136,7 +136,7 @@ passthrough:
 
 ### Custom Directory Structure
 
-The default project structure uses `content/`, `layouts/`, `assets/`, `static/`, `data/`, `plugins/`, and `components/` at the project root. The `structure:` config overrides these paths for projects with non-standard layouts:
+The default project structure uses `content/`, `layouts/`, `assets/`, `static/`, `data/`, and `plugins/` at the project root. When SSR is configured, `components/` is also used (configurable via `structure.components`). The `structure:` config overrides these paths for projects with non-standard layouts:
 
 ```yaml
 # alloy.config.yaml — monorepo example
