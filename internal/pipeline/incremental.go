@@ -551,11 +551,15 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 
 		// Also check for component definition changes — re-SSR pages
 		// using changed components even if Phase 1 skipped them
+		componentsDir := cfg.Structure.Components
+		if componentsDir == "" {
+			componentsDir = "components"
+		}
+		componentsDirPrefix := componentsDir + "/"
 		for _, f := range changedFiles {
 			normalized := filepath.ToSlash(f)
-			if strings.HasPrefix(normalized, "components/") {
-				// Extract component name from path (e.g., "components/ds-card/ds-card.js" → "ds-card")
-				parts := strings.SplitN(strings.TrimPrefix(normalized, "components/"), "/", 2)
+			if strings.HasPrefix(normalized, componentsDirPrefix) {
+				parts := strings.SplitN(strings.TrimPrefix(normalized, componentsDirPrefix), "/", 2)
 				componentTag := parts[0]
 				if fsMode {
 					// Filesystem mode: scan all discovered pages for component usage

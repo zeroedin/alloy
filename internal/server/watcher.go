@@ -75,7 +75,7 @@ func WatchDirs(cfg *config.Config) []string {
 		structureDir(cfg.Structure.Plugins, "plugins"),
 	}
 	if cfg.SSR != nil {
-		dirs = append(dirs, "components")
+		dirs = append(dirs, structureDir(cfg.Structure.Components, "components"))
 	}
 	for _, pt := range cfg.Passthrough {
 		if static.ContainsGlobChars(pt.From) {
@@ -115,7 +115,7 @@ func ClassifyChange(path string, cfg *config.Config) ChangeType {
 		return AssetChange
 	case hasPathPrefix(path, staticDir):
 		return StaticChange
-	case hasPathPrefix(path, "components"):
+	case hasPathPrefix(path, structureDir(cfg.Structure.Components, "components")):
 		return ComponentChange
 	case hasPathPrefix(path, pluginsDir):
 		return PluginChange
