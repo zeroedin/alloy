@@ -28,50 +28,91 @@ var _ = Describe("Build Pipeline", func() {
 	// feature applies to content pages — filesystem-discovered pages that
 	// go through the normal build pipeline.
 
-	Describe("Plugin dependency tracking via addDependencies (issue #1100)", func() {
+	// ── Shared helpers ────────────────────────────────────────────────
+	//
+	// Hoisted to the outer Describe scope so all inner Describe blocks
+	// can reference them without closure scoping issues.
 
-		// Helper: creates a project with content pages and a plugin that
-		// returns addDependencies from onPageRendered. The plugin simulates
-		// an SSR plugin that imports web component definitions and reports
-		// which component files each page depends on.
-		//
-		// Pages:
-		//   index.md   → depends on: elements/rh-card/rh-card.js, elements/rh-icon/rh-icon.js
-		//   about.md   → depends on: elements/rh-icon/rh-icon.js (only)
-		//   blog.md    → no addDependencies returned (plugin doesn't transform it)
-		//
-		// Returns (tmpDir, config).
-		setupDepTrackingProject := func() (string, *config.Config) {
-			tmpDir := GinkgoT().TempDir()
-			contentDir := filepath.Join(tmpDir, "content")
-			layoutsDir := filepath.Join(tmpDir, "layouts")
-			pluginsDir := filepath.Join(tmpDir, "plugins")
-			outputDir := filepath.Join(tmpDir, "_site")
+	// setupWithPlugin creates a minimal project with a single content
+	// page (index.md) and the given plugin JS. Returns *config.Config.
+	setupWithPlugin := func(pluginJS string) *config.Config {
+		tmpDir := GinkgoT().TempDir()
+		contentDir := filepath.Join(tmpDir, "content")
+		layoutsDir := filepath.Join(tmpDir, "layouts")
+		pluginsDir := filepath.Join(tmpDir, "plugins")
+		outputDir := filepath.Join(tmpDir, "_site")
 
-			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
-			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
-			Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
+		Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+		Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
+		Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
 
-			// Content pages
-			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
-				[]byte("---\ntitle: Home\nlayout: default\n---\n# Home\n<rh-card>content</rh-card>\n<rh-icon>icon</rh-icon>"),
-				0644)).To(Succeed())
-			Expect(os.WriteFile(filepath.Join(contentDir, "about.md"),
-				[]byte("---\ntitle: About\nlayout: default\n---\n# About\n<rh-icon>icon</rh-icon>"),
-				0644)).To(Succeed())
-			Expect(os.WriteFile(filepath.Join(contentDir, "blog.md"),
-				[]byte("---\ntitle: Blog\nlayout: default\n---\n# Blog\nNo components here."),
-				0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+			[]byte("---\ntitle: Home\nlayout: default\n---\n# Home"),
+			0644)).To(Succeed())
 
-			Expect(os.WriteFile(filepath.Join(layoutsDir, "default.liquid"),
-				[]byte("<html><body>{{ content }}</body></html>"),
-				0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(layoutsDir, "default.liquid"),
+			[]byte("<html><body>{{ content }}</body></html>"),
+			0644)).To(Succeed())
 
-			// Plugin that returns addDependencies based on page content.
-			// The plugin detects custom element tags in the HTML and maps
-			// them to component source files. This simulates the SSR use
-			// case described in issue #1100.
-			pluginJS := `export default function(alloy) {
+		Expect(os.WriteFile(filepath.Join(pluginsDir, "test-plugin.js"),
+			[]byte(pluginJS), 0644)).To(Succeed())
+
+		cfg := &config.Config{
+			Title:       "Plugin Test",
+			BaseURL:     "https://example.com",
+			ProjectRoot: tmpDir,
+			Build:       config.BuildConfig{Output: outputDir},
+			Structure: config.StructureConfig{
+				Content: "content",
+				Layouts: "layouts",
+			},
+		}
+		config.ApplyDefaults(cfg)
+		return cfg
+	}
+
+	// setupDepTrackingProject creates a project with content pages and
+	// a plugin that returns addDependencies from onPageRendered. The
+	// plugin simulates an SSR plugin that imports web component
+	// definitions and reports which component files each page depends on.
+	//
+	// Pages:
+	//   index.md   → depends on: elements/rh-card/rh-card.js, elements/rh-icon/rh-icon.js
+	//   about.md   → depends on: elements/rh-icon/rh-icon.js (only)
+	//   blog.md    → no addDependencies returned (plugin doesn't transform it)
+	//
+	// Returns (tmpDir, config).
+	setupDepTrackingProject := func() (string, *config.Config) {
+		tmpDir := GinkgoT().TempDir()
+		contentDir := filepath.Join(tmpDir, "content")
+		layoutsDir := filepath.Join(tmpDir, "layouts")
+		pluginsDir := filepath.Join(tmpDir, "plugins")
+		outputDir := filepath.Join(tmpDir, "_site")
+
+		Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+		Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
+		Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
+
+		// Content pages
+		Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+			[]byte("---\ntitle: Home\nlayout: default\n---\n# Home\n<rh-card>content</rh-card>\n<rh-icon>icon</rh-icon>"),
+			0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(contentDir, "about.md"),
+			[]byte("---\ntitle: About\nlayout: default\n---\n# About\n<rh-icon>icon</rh-icon>"),
+			0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(contentDir, "blog.md"),
+			[]byte("---\ntitle: Blog\nlayout: default\n---\n# Blog\nNo components here."),
+			0644)).To(Succeed())
+
+		Expect(os.WriteFile(filepath.Join(layoutsDir, "default.liquid"),
+			[]byte("<html><body>{{ content }}</body></html>"),
+			0644)).To(Succeed())
+
+		// Plugin that returns addDependencies based on page content.
+		// The plugin detects custom element tags in the HTML and maps
+		// them to component source files. This simulates the SSR use
+		// case described in issue #1100.
+		pluginJS := `export default function(alloy) {
   alloy.hook('onPageRendered', {}, function(page) {
     var deps = [];
     if (page.html.indexOf('rh-card') !== -1) {
@@ -86,23 +127,27 @@ var _ = Describe("Build Pipeline", func() {
     return page;
   });
 }`
-			Expect(os.WriteFile(filepath.Join(pluginsDir, "ssr-deps.js"),
-				[]byte(pluginJS), 0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(pluginsDir, "ssr-deps.js"),
+			[]byte(pluginJS), 0644)).To(Succeed())
 
-			cfg := &config.Config{
-				Title:       "Dep Tracking Test",
-				BaseURL:     "https://example.com",
-				ProjectRoot: tmpDir,
-				Build:       config.BuildConfig{Output: outputDir},
-				Structure: config.StructureConfig{
-					Content: "content",
-					Layouts: "layouts",
-				},
-			}
-			config.ApplyDefaults(cfg)
-
-			return tmpDir, cfg
+		cfg := &config.Config{
+			Title:       "Dep Tracking Test",
+			BaseURL:     "https://example.com",
+			ProjectRoot: tmpDir,
+			Build:       config.BuildConfig{Output: outputDir},
+			Structure: config.StructureConfig{
+				Content: "content",
+				Layouts: "layouts",
+			},
 		}
+		config.ApplyDefaults(cfg)
+
+		return tmpDir, cfg
+	}
+
+	// ── Tests ─────────────────────────────────────────────────────────
+
+	Describe("Plugin dependency tracking via addDependencies (issue #1100)", func() {
 
 		It("tracks dependencies from onPageRendered addDependencies in the build cache", func() {
 			_, cfg := setupDepTrackingProject()
@@ -327,45 +372,67 @@ var _ = Describe("Build Pipeline", func() {
 				"all dependencies from onContentTransformed addDependencies "+
 					"must be tracked (issue #1100)")
 		})
+
+		It("incrementally rebuilds page when onContentTransformed dependency changes", func() {
+			// Same i18n plugin — returns addDependencies from
+			// onContentTransformed. Tests that tracked deps from this
+			// hook actually trigger selective incremental rebuilds.
+			pluginJS := `export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    return {
+      html: page.html,
+      toc: page.toc,
+      frontMatter: page.frontMatter,
+      addDependencies: ['locales/en.json']
+    };
+  });
+}`
+			cfg := setupWithPlugin(pluginJS)
+
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			// Build 1: initial
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Sanity: dep tracked
+			Expect(result1.Cache.PagesForDependency("locales/en.json")).To(
+				ConsistOf("index.md"),
+				"sanity: onContentTransformed dep must be tracked after initial build")
+
+			// Build 2: incremental — dep file changed, content unchanged.
+			// index.md depends on locales/en.json → must be re-rendered.
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"locales/en.json"},
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result2.RenderedContent).To(HaveKey("index.md"),
+				"index.md depends on locales/en.json (tracked via "+
+					"onContentTransformed addDependencies) which appeared "+
+					"in changedFiles — the page must be re-rendered even "+
+					"though its own content is unchanged (issue #1133)")
+
+			// Build 3: incremental — unrelated file changed.
+			// index.md depends on locales/en.json, NOT unrelated.txt.
+			result3, err := pipeline.BuildIncremental(cfg, nil, result2.Cache,
+				[]string{"unrelated.txt"},
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result3.RenderedContent).NotTo(HaveKey("index.md"),
+				"index.md does not depend on unrelated.txt and its content "+
+					"is unchanged — it must be skipped. This proves that "+
+					"onContentTransformed deps selectively trigger rebuilds, "+
+					"not just 'any file change rebuilds everything' (issue #1133)")
+		})
 	})
 
 	Describe("addDependencies validation (issue #1100)", func() {
-
-		setupWithPlugin := func(pluginJS string) *config.Config {
-			tmpDir := GinkgoT().TempDir()
-			contentDir := filepath.Join(tmpDir, "content")
-			layoutsDir := filepath.Join(tmpDir, "layouts")
-			pluginsDir := filepath.Join(tmpDir, "plugins")
-			outputDir := filepath.Join(tmpDir, "_site")
-
-			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
-			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
-			Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
-
-			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
-				[]byte("---\ntitle: Home\nlayout: default\n---\n# Home"),
-				0644)).To(Succeed())
-
-			Expect(os.WriteFile(filepath.Join(layoutsDir, "default.liquid"),
-				[]byte("<html><body>{{ content }}</body></html>"),
-				0644)).To(Succeed())
-
-			Expect(os.WriteFile(filepath.Join(pluginsDir, "test-plugin.js"),
-				[]byte(pluginJS), 0644)).To(Succeed())
-
-			cfg := &config.Config{
-				Title:       "Validation Test",
-				BaseURL:     "https://example.com",
-				ProjectRoot: tmpDir,
-				Build:       config.BuildConfig{Output: outputDir},
-				Structure: config.StructureConfig{
-					Content: "content",
-					Layouts: "layouts",
-				},
-			}
-			config.ApplyDefaults(cfg)
-			return cfg
-		}
 
 		It("ignores non-array addDependencies gracefully", func() {
 			// Plugin returns addDependencies as a string instead of array.
@@ -402,6 +469,123 @@ var _ = Describe("Build Pipeline", func() {
 					"it means the plugin examined the page but found no "+
 					"external dependencies (issue #1100)")
 			Expect(result.Cache).NotTo(BeNil())
+		})
+	})
+
+	// ── Dual-hook dependency accumulation (issue #1132) ───────────
+	//
+	// When a plugin returns addDependencies from both onContentTransformed
+	// and onPageRendered for the same page, both sets of dependencies
+	// must be accumulated in the cache. ClearDependencies must fire once
+	// before the first hook in the per-page sequence, not between hooks.
+
+	Describe("Dual-hook dependency accumulation (issue #1132)", func() {
+
+		It("accumulates dependencies from both onContentTransformed and onPageRendered", func() {
+			// Plugin registers both hooks, each returning different deps.
+			// onContentTransformed: i18n dep (locales/en.json)
+			// onPageRendered: SSR component dep (elements/rh-card/rh-card.js)
+			pluginJS := `export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    return {
+      html: page.html,
+      toc: page.toc,
+      frontMatter: page.frontMatter,
+      addDependencies: ['locales/en.json']
+    };
+  });
+  alloy.hook('onPageRendered', {}, function(page) {
+    return {
+      html: page.html,
+      addDependencies: ['elements/rh-card/rh-card.js']
+    };
+  });
+}`
+			cfg := setupWithPlugin(pluginJS)
+
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Cache).NotTo(BeNil())
+
+			// onContentTransformed dep must be tracked
+			enPages := result.Cache.PagesForDependency("locales/en.json")
+			Expect(enPages).To(ConsistOf("index.md"),
+				"dependencies from onContentTransformed must survive through "+
+					"the onPageRendered hook — ClearDependencies must fire "+
+					"before the per-page hook sequence, not between hooks. "+
+					"If ClearDependencies runs before onPageRendered, this "+
+					"dep would be erased (issue #1132)")
+
+			// onPageRendered dep must be tracked
+			cardPages := result.Cache.PagesForDependency("elements/rh-card/rh-card.js")
+			Expect(cardPages).To(ConsistOf("index.md"),
+				"dependencies from onPageRendered must be tracked alongside "+
+					"onContentTransformed deps — both hooks contribute to the "+
+					"same page's dependency set (issue #1132)")
+		})
+
+		It("incrementally rebuilds page when either hook's dependency changes", func() {
+			pluginJS := `export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    return {
+      html: page.html,
+      toc: page.toc,
+      frontMatter: page.frontMatter,
+      addDependencies: ['locales/en.json']
+    };
+  });
+  alloy.hook('onPageRendered', {}, function(page) {
+    return {
+      html: page.html,
+      addDependencies: ['elements/rh-card/rh-card.js']
+    };
+  });
+}`
+			cfg := setupWithPlugin(pluginJS)
+
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			// Build 1: initial
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Sanity: both deps tracked
+			Expect(result1.Cache.PagesForDependency("locales/en.json")).To(
+				ConsistOf("index.md"),
+				"sanity: onContentTransformed dep tracked")
+			Expect(result1.Cache.PagesForDependency("elements/rh-card/rh-card.js")).To(
+				ConsistOf("index.md"),
+				"sanity: onPageRendered dep tracked")
+
+			// Build 2: onContentTransformed dep changed
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"locales/en.json"},
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result2.RenderedContent).To(HaveKey("index.md"),
+				"index.md depends on locales/en.json (from onContentTransformed) "+
+					"which appeared in changedFiles — page must be re-rendered. "+
+					"This proves onContentTransformed deps survive through the "+
+					"full build and are queryable during incremental invalidation "+
+					"(issue #1132)")
+
+			// Build 3: onPageRendered dep changed (use initial cache, not
+			// result2's cache, to test independently)
+			result3, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"elements/rh-card/rh-card.js"},
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result3.RenderedContent).To(HaveKey("index.md"),
+				"index.md depends on elements/rh-card/rh-card.js (from "+
+					"onPageRendered) which appeared in changedFiles — page "+
+					"must be re-rendered. Both hooks' deps independently "+
+					"trigger incremental rebuilds (issue #1132)")
 		})
 	})
 
