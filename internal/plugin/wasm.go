@@ -372,6 +372,8 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 	// Only small fields (frontMatter, toc) use JSON. Large string fields
 	// (html, content) transfer as native strings, eliminating ~99.9% of
 	// JSON volume for 800KB pages.
+	// Returns map[string]interface{} (the slow path below returns *ordered.Map);
+	// both are handled by pipeline's toGoMap().
 	switch v := payload.(type) {
 	case HookRenderedPayload:
 		return r.callHookRenderedPayload(name, v)
@@ -493,6 +495,8 @@ func (r *QuickJSRuntime) setPayloadFrontMatter(obj *qjs.Value, fm map[string]int
 	if err != nil {
 		return fmt.Errorf("marshaling frontMatter: %w", err)
 	}
+	// ParseJSON returns *qjs.Value without an error channel; safe here because
+	// input is always the output of jsonCodec.Marshal (always valid JSON).
 	obj.SetPropertyStr("frontMatter", r.ctx.ParseJSON(string(fmJSON)))
 	return nil
 }
@@ -562,33 +566,22 @@ func (r *QuickJSRuntime) extractHookResult(result *qjs.Value) (interface{}, erro
 	m := make(map[string]interface{}, len(propNames))
 	for _, pname := range propNames {
 		prop := result.GetPropertyStr(pname)
-		if prop.IsNull() || prop.IsUndefined() {
+		// Primitives (string, number, bool): delegate to jsValueToGo.
+		// Null/undefined properties are skipped (not added to the map).
+		if prop.IsString() || prop.IsNumber() || prop.IsBool() || prop.IsNull() || prop.IsUndefined() {
+			val := jsValueToGo(prop)
 			prop.Free()
-			continue
-		}
-		if prop.IsString() {
-			m[pname] = prop.String()
-			prop.Free()
-			continue
-		}
-		if prop.IsNumber() {
-			f := prop.Float64()
-			if f == float64(int(f)) && f >= -2147483648 && f <= 2147483647 {
-				m[pname] = int(f)
-			} else {
-				m[pname] = f
+			if val != nil {
+				m[pname] = val
 			}
-			prop.Free()
 			continue
 		}
-		if prop.IsBool() {
-			m[pname] = prop.Bool()
-			prop.Free()
-			continue
-		}
+		// Structured values (arrays, objects): JSONStringify the individual
+		// (small) property, then unmarshal to map[string]interface{}.
 		s, serr := prop.JSONStringify()
 		prop.Free()
 		if serr != nil {
+			log.Printf("warning: hook result property %q: JSONStringify failed: %v", pname, serr)
 			continue
 		}
 		var parsed interface{}
