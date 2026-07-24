@@ -223,28 +223,286 @@ var _ = Describe("Config", func() {
 		})
 
 		Context("TOML config", func() {
-			It("loads alloy.config.toml and produces same Config struct as YAML", func() {
-				tomlCfg, err := config.Load("testdata/valid.toml")
-				Expect(err).NotTo(HaveOccurred())
+			var (
+				tomlCfg *config.Config
+				loadErr error
+			)
+
+			BeforeEach(func() {
+				tomlCfg, loadErr = config.Load("testdata/valid.toml")
+			})
+
+			It("loads without error", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
 				Expect(tomlCfg).NotTo(BeNil())
+			})
+
+			It("parses top-level scalars identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
 				Expect(tomlCfg.Title).To(Equal("Test Site"))
 				Expect(tomlCfg.BaseURL).To(Equal("https://example.com"))
+				Expect(tomlCfg.Language).To(Equal("en"))
+			})
+
+			It("parses build section identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
 				Expect(tomlCfg.Build.Output).To(Equal("_site"))
+				Expect(tomlCfg.Build.CleanValue()).To(BeTrue())
+			})
+
+			It("parses content and goldmark sections identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(tomlCfg.Content.Formats).To(Equal([]string{"md", "html"}))
+				Expect(tomlCfg.Content.Markdown.Goldmark.UnsafeValue()).To(BeTrue())
+				Expect(tomlCfg.Content.Markdown.Goldmark.Typographer).To(BeTrue())
+				Expect(tomlCfg.Content.Markdown.Goldmark.TemplateTagsValue()).To(BeTrue())
+			})
+
+			It("parses templates, plugins, and pagination identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(tomlCfg.Templates.Engine).To(Equal("liquid"))
+				Expect(tomlCfg.Plugins.Node).To(BeTrue())
+				Expect(tomlCfg.Plugins.Timeout).To(Equal(5000))
+				Expect(tomlCfg.Pagination.Path).To(Equal("page"))
+			})
+
+			It("parses taxonomies identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(tomlCfg.Taxonomies).To(HaveKey("tags"))
+				Expect(tomlCfg.Taxonomies["tags"].Permalink).To(Equal("/tags/:slug/"))
+				Expect(tomlCfg.Taxonomies["tags"].Layout).To(Equal("tags"))
+				Expect(tomlCfg.Taxonomies).To(HaveKey("categories"))
+				Expect(tomlCfg.Taxonomies["categories"].Permalink).To(Equal("/categories/:slug/"))
+				Expect(tomlCfg.Taxonomies["categories"].Layout).To(Equal("categories"))
+			})
+
+			It("parses passthrough array with exclude identically to YAML (issue #1127)", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(tomlCfg.Passthrough).To(HaveLen(4),
+					"TOML must have 4 passthrough mappings to match YAML (issue #1127)")
+				Expect(tomlCfg.Passthrough[0].From).To(Equal("../design-system/dist/elements"))
+				Expect(tomlCfg.Passthrough[0].To).To(Equal("elements"))
+				Expect(tomlCfg.Passthrough[1].From).To(Equal("../shared-assets/fonts"))
+				Expect(tomlCfg.Passthrough[1].To).To(Equal("assets/fonts"))
+				Expect(tomlCfg.Passthrough[2].From).To(Equal("elements"))
+				Expect(tomlCfg.Passthrough[2].To).To(Equal("assets/packages/elements"))
+				Expect(tomlCfg.Passthrough[2].Exclude).To(Equal([]string{"*.html", "demo/"}),
+					"TOML passthrough exclude must parse into string slice (issue #1127)")
+				Expect(tomlCfg.Passthrough[3].From).To(Equal("elements/**/*.{js,css}"),
+					"TOML must preserve glob pattern in passthrough from (issue #1127)")
+				Expect(tomlCfg.Passthrough[3].To).To(Equal("assets/elements"))
+				Expect(tomlCfg.Passthrough[3].Exclude).To(Equal([]string{"*.min.js"}),
+					"TOML passthrough glob-from exclude must parse correctly (issue #1127)")
+			})
+
+			It("parses sources identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(tomlCfg.Sources).To(HaveKey("posts"))
+				Expect(tomlCfg.Sources["posts"].Type).To(Equal("rest"))
+				Expect(tomlCfg.Sources["posts"].URL).To(Equal("https://api.example.com/posts.json"))
+				Expect(tomlCfg.Sources["posts"].Cache).To(Equal(3600))
+				Expect(tomlCfg.Sources["posts"].As).To(Equal("posts"))
+				Expect(tomlCfg.Sources).To(HaveKey("products"))
+				Expect(tomlCfg.Sources["products"].Type).To(Equal("graphql"))
+				Expect(tomlCfg.Sources["products"].Endpoint).To(Equal("https://api.example.com/graphql"))
+			})
+
+			It("parses sitemap identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(tomlCfg.Sitemap.ChangeFreq).To(Equal("weekly"))
+				Expect(tomlCfg.Sitemap.Priority).To(Equal(0.5))
+			})
+
+			It("parses structure identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(tomlCfg.Structure.Content).To(Equal("content"))
+				Expect(tomlCfg.Structure.Layouts).To(Equal("layouts"))
+				Expect(tomlCfg.Structure.Assets).To(Equal("assets"))
+				Expect(tomlCfg.Structure.Static).To(Equal("static"))
+				Expect(tomlCfg.Structure.Data).To(Equal("data"))
 				Expect(tomlCfg.Structure.Components).To(Equal("components"),
 					"TOML must parse structure.components the same as YAML (issue #1116)")
+			})
+
+			It("parses collections identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(tomlCfg.Collections).To(HaveKey("blog"))
+				Expect(tomlCfg.Collections["blog"].SortBy).To(Equal("date"))
+				Expect(tomlCfg.Collections["blog"].Order).To(Equal("desc"))
+			})
+
+			It("parses SSR config identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(tomlCfg.SSR).NotTo(BeNil())
+				Expect(tomlCfg.SSR.Command).To(Equal("golit render --defs bundles/"))
+			})
+
+			It("parses languages identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(tomlCfg.Languages).To(HaveKey("en"))
+				Expect(tomlCfg.Languages["en"].Title).To(Equal("Test Site"))
+				Expect(tomlCfg.Languages["en"].Weight).To(Equal(1))
+				Expect(tomlCfg.Languages["en"].Root).To(BeTrue())
+				Expect(tomlCfg.Languages["en"].Strings).To(HaveKeyWithValue("read_more", "Read more"))
+				Expect(tomlCfg.Languages).To(HaveKey("fr"))
+				Expect(tomlCfg.Languages["fr"].Title).To(Equal("Site Test"))
+				Expect(tomlCfg.Languages["fr"].Weight).To(Equal(2))
+			})
+
+			It("parses watch array identically to YAML (issue #1127)", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(tomlCfg.Watch).To(HaveLen(2),
+					"TOML must have 2 watch entries to match YAML (issue #1127)")
+				Expect(tomlCfg.Watch[0].From).To(Equal("elements"),
+					"TOML watch[0].from must match YAML (issue #1127)")
+				Expect(tomlCfg.Watch[0].Type).To(Equal("content"),
+					"TOML watch[0].type must match YAML (issue #1127)")
+				Expect(tomlCfg.Watch[1].From).To(Equal("shared-layouts"),
+					"TOML watch[1].from must match YAML (issue #1127)")
+				Expect(tomlCfg.Watch[1].Type).To(Equal("layout"),
+					"TOML watch[1].type must match YAML (issue #1127)")
 			})
 		})
 
 		Context("JSON config", func() {
-			It("loads alloy.config.json and produces same Config struct as YAML", func() {
-				jsonCfg, err := config.Load("testdata/valid.json")
-				Expect(err).NotTo(HaveOccurred())
+			var (
+				jsonCfg *config.Config
+				loadErr error
+			)
+
+			BeforeEach(func() {
+				jsonCfg, loadErr = config.Load("testdata/valid.json")
+			})
+
+			It("loads without error", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
 				Expect(jsonCfg).NotTo(BeNil())
+			})
+
+			It("parses top-level scalars identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
 				Expect(jsonCfg.Title).To(Equal("Test Site"))
 				Expect(jsonCfg.BaseURL).To(Equal("https://example.com"))
+				Expect(jsonCfg.Language).To(Equal("en"))
+			})
+
+			It("parses build section identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
 				Expect(jsonCfg.Build.Output).To(Equal("_site"))
+				Expect(jsonCfg.Build.CleanValue()).To(BeTrue())
+			})
+
+			It("parses content and goldmark sections identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(jsonCfg.Content.Formats).To(Equal([]string{"md", "html"}))
+				Expect(jsonCfg.Content.Markdown.Goldmark.UnsafeValue()).To(BeTrue())
+				Expect(jsonCfg.Content.Markdown.Goldmark.Typographer).To(BeTrue())
+				Expect(jsonCfg.Content.Markdown.Goldmark.TemplateTagsValue()).To(BeTrue())
+			})
+
+			It("parses templates, plugins, and pagination identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(jsonCfg.Templates.Engine).To(Equal("liquid"))
+				Expect(jsonCfg.Plugins.Node).To(BeTrue())
+				Expect(jsonCfg.Plugins.Timeout).To(Equal(5000))
+				Expect(jsonCfg.Pagination.Path).To(Equal("page"))
+			})
+
+			It("parses taxonomies identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(jsonCfg.Taxonomies).To(HaveKey("tags"))
+				Expect(jsonCfg.Taxonomies["tags"].Permalink).To(Equal("/tags/:slug/"))
+				Expect(jsonCfg.Taxonomies["tags"].Layout).To(Equal("tags"))
+				Expect(jsonCfg.Taxonomies).To(HaveKey("categories"))
+				Expect(jsonCfg.Taxonomies["categories"].Permalink).To(Equal("/categories/:slug/"))
+				Expect(jsonCfg.Taxonomies["categories"].Layout).To(Equal("categories"))
+			})
+
+			It("parses passthrough array with exclude identically to YAML (issue #1127)", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(jsonCfg.Passthrough).To(HaveLen(4),
+					"JSON must have 4 passthrough mappings to match YAML (issue #1127)")
+				Expect(jsonCfg.Passthrough[0].From).To(Equal("../design-system/dist/elements"))
+				Expect(jsonCfg.Passthrough[0].To).To(Equal("elements"))
+				Expect(jsonCfg.Passthrough[1].From).To(Equal("../shared-assets/fonts"))
+				Expect(jsonCfg.Passthrough[1].To).To(Equal("assets/fonts"))
+				Expect(jsonCfg.Passthrough[2].From).To(Equal("elements"))
+				Expect(jsonCfg.Passthrough[2].To).To(Equal("assets/packages/elements"))
+				Expect(jsonCfg.Passthrough[2].Exclude).To(Equal([]string{"*.html", "demo/"}),
+					"JSON passthrough exclude must parse into string slice (issue #1127)")
+				Expect(jsonCfg.Passthrough[3].From).To(Equal("elements/**/*.{js,css}"),
+					"JSON must preserve glob pattern in passthrough from (issue #1127)")
+				Expect(jsonCfg.Passthrough[3].To).To(Equal("assets/elements"))
+				Expect(jsonCfg.Passthrough[3].Exclude).To(Equal([]string{"*.min.js"}),
+					"JSON passthrough glob-from exclude must parse correctly (issue #1127)")
+			})
+
+			It("parses sources identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(jsonCfg.Sources).To(HaveKey("posts"))
+				Expect(jsonCfg.Sources["posts"].Type).To(Equal("rest"))
+				Expect(jsonCfg.Sources["posts"].URL).To(Equal("https://api.example.com/posts.json"))
+				Expect(jsonCfg.Sources["posts"].Cache).To(Equal(3600))
+				Expect(jsonCfg.Sources["posts"].As).To(Equal("posts"))
+				Expect(jsonCfg.Sources).To(HaveKey("products"))
+				Expect(jsonCfg.Sources["products"].Type).To(Equal("graphql"))
+				Expect(jsonCfg.Sources["products"].Endpoint).To(Equal("https://api.example.com/graphql"))
+			})
+
+			It("parses sitemap identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(jsonCfg.Sitemap.ChangeFreq).To(Equal("weekly"))
+				Expect(jsonCfg.Sitemap.Priority).To(Equal(0.5))
+			})
+
+			It("parses structure identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(jsonCfg.Structure.Content).To(Equal("content"))
+				Expect(jsonCfg.Structure.Layouts).To(Equal("layouts"))
+				Expect(jsonCfg.Structure.Assets).To(Equal("assets"))
+				Expect(jsonCfg.Structure.Static).To(Equal("static"))
+				Expect(jsonCfg.Structure.Data).To(Equal("data"))
 				Expect(jsonCfg.Structure.Components).To(Equal("components"),
 					"JSON must parse structure.components the same as YAML (issue #1116)")
+			})
+
+			It("parses collections identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(jsonCfg.Collections).To(HaveKey("blog"))
+				Expect(jsonCfg.Collections["blog"].SortBy).To(Equal("date"))
+				Expect(jsonCfg.Collections["blog"].Order).To(Equal("desc"))
+			})
+
+			It("parses SSR config identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(jsonCfg.SSR).NotTo(BeNil())
+				Expect(jsonCfg.SSR.Command).To(Equal("golit render --defs bundles/"))
+			})
+
+			It("parses languages identically to YAML", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(jsonCfg.Languages).To(HaveKey("en"))
+				Expect(jsonCfg.Languages["en"].Title).To(Equal("Test Site"))
+				Expect(jsonCfg.Languages["en"].Weight).To(Equal(1))
+				Expect(jsonCfg.Languages["en"].Root).To(BeTrue())
+				Expect(jsonCfg.Languages["en"].Strings).To(HaveKeyWithValue("read_more", "Read more"))
+				Expect(jsonCfg.Languages).To(HaveKey("fr"))
+				Expect(jsonCfg.Languages["fr"].Title).To(Equal("Site Test"))
+				Expect(jsonCfg.Languages["fr"].Weight).To(Equal(2))
+			})
+
+			It("parses watch array identically to YAML (issue #1127)", func() {
+				Expect(loadErr).NotTo(HaveOccurred())
+				Expect(jsonCfg.Watch).To(HaveLen(2),
+					"JSON must have 2 watch entries to match YAML (issue #1127)")
+				Expect(jsonCfg.Watch[0].From).To(Equal("elements"),
+					"JSON watch[0].from must match YAML (issue #1127)")
+				Expect(jsonCfg.Watch[0].Type).To(Equal("content"),
+					"JSON watch[0].type must match YAML (issue #1127)")
+				Expect(jsonCfg.Watch[1].From).To(Equal("shared-layouts"),
+					"JSON watch[1].from must match YAML (issue #1127)")
+				Expect(jsonCfg.Watch[1].Type).To(Equal("layout"),
+					"JSON watch[1].type must match YAML (issue #1127)")
 			})
 		})
 
