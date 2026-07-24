@@ -2462,7 +2462,7 @@ Content-Length: 82\r\n
 
 Hooks receive JSON-serializable payloads so they work across all plugin tiers (Go built-in, QuickJS, WASM, Node). Go struct pointers are not visible to JS or WASM — the pipeline must serialize before calling and deserialize the return value.
 
-#### Per-page hooks (HTML string)
+#### Per-page hooks (page object)
 
 These fire **once per page**. `onContentTransformed` receives a page-scoped object (mutable — fires before layout, page data still matters). The payload contains only page data — no `site`, `collections`, or `taxonomies`. Site-level mutations belong in `onConfig` or `onAfterValidation`. `onPageRendered` receives a page object with front matter for conditional post-processing (issue #1095). Only the `html` field in the return is applied back — `frontMatter`, `url`, and `path` are read-only context.
 

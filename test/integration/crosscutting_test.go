@@ -257,8 +257,8 @@ var _ = Describe("Cross-Cutting Integration", func() {
 				html, htmlOk := pageMap["html"].(string)
 				Expect(htmlOk).To(BeTrue(), "payload must have string 'html' key")
 
-				_, fmOk := pageMap["frontMatter"]
-				Expect(fmOk).To(BeTrue(), "payload must have 'frontMatter' key")
+				fm, fmOk := pageMap["frontMatter"].(map[string]interface{})
+				Expect(fmOk).To(BeTrue(), "payload must have 'frontMatter' as map[string]interface{}")
 
 				url, urlOk := pageMap["url"].(string)
 				Expect(urlOk).To(BeTrue(), "payload must have string 'url' key")
@@ -268,7 +268,7 @@ var _ = Describe("Cross-Cutting Integration", func() {
 
 				received = append(received, capturedPayload{
 					html: html, url: url, path: path,
-					frontMatter: pageMap["frontMatter"].(map[string]interface{}),
+					frontMatter: fm,
 				})
 				return pageMap, nil
 			})

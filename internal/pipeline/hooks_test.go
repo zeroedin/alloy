@@ -2935,7 +2935,7 @@ var _ = Describe("Build Pipeline", func() {
 				"the appended comment must contain the page's path with 'first-post'")
 		})
 
-		It("page with no custom front matter has empty frontMatter object", func() {
+		It("page with minimal front matter receives frontMatter as an object", func() {
 			cfg := &config.Config{
 				Title:   "Empty FrontMatter Test",
 				BaseURL: "https://example.com",
