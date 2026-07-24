@@ -21,6 +21,16 @@ type HookTransformPayload struct {
 	TOC         []content.TOCEntry     `json:"toc,omitempty"`
 }
 
+// HookRenderedPayload is the outbound payload for onPageRendered (per-page).
+// Only the returned html field is applied back; frontMatter, url, and path are
+// read-only context for conditional processing (issue #1095).
+type HookRenderedPayload struct {
+	HTML        string                 `json:"html"`
+	FrontMatter map[string]interface{} `json:"frontMatter"`
+	URL         string                 `json:"url"`
+	Path        string                 `json:"path"`
+}
+
 // HookPagesReadyPayload is the outbound payload for onPagesReady (per-batch).
 type HookPagesReadyPayload struct {
 	Pages    []HookPagePayload      `json:"pages"`

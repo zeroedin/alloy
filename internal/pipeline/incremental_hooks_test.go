@@ -254,8 +254,9 @@ var _ = Describe("Build Pipeline", func() {
 
 			Expect(os.WriteFile(filepath.Join(pluginsDir, "ssr-marker.js"),
 				[]byte(`export default function(alloy) {
-  alloy.hook('onPageRendered', {}, function(html) {
-    return html + '<!-- ssr-marker -->';
+  alloy.hook('onPageRendered', {}, function(page) {
+    page.html = page.html + '<!-- ssr-marker -->';
+    return page;
   });
 }`),
 				0644)).To(Succeed())
@@ -300,6 +301,124 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(result2.RenderedContent["index.md"]).To(ContainSubstring("<!-- ssr-marker -->"),
 				"onPageRendered must fire on subsequent incremental rebuilds "+
 					"with cache, not just the nil-cache path (issue #731)")
+		})
+
+		// ── BuildIncremental onPageRendered field-level payload verification (issue #1120) ──
+		// The existing incremental test only checks that the hook fires (marker
+		// is present). This test validates all 4 payload fields — html, frontMatter,
+		// url, path — are correctly populated at the field level during
+		// BuildIncremental, matching the contract defined in Build().
+
+		It("BuildIncremental onPageRendered receives object payload with all fields at correct values", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			blogDir := filepath.Join(contentDir, "blog")
+			layoutsDir := filepath.Join(tmpDir, "layouts")
+			pluginsDir := filepath.Join(tmpDir, "plugins")
+			outputDir := filepath.Join(tmpDir, "_site")
+
+			Expect(os.MkdirAll(blogDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(blogDir, "hello.md"),
+				[]byte("---\ntitle: Hello World\nlayout: default\nauthor: Alice\n---\n# Hello"),
+				0644)).To(Succeed())
+
+			Expect(os.WriteFile(filepath.Join(layoutsDir, "default.liquid"),
+				[]byte("<html><body>{{ content }}</body></html>"),
+				0644)).To(Succeed())
+
+			// Plugin validates all 4 payload fields at the field level.
+			// Checks types and shapes (not specific values) so it works across
+			// both the initial and incremental builds. Appends a marker with the
+			// actual values so the test can assert on the final output.
+			Expect(os.WriteFile(filepath.Join(pluginsDir, "field-check.js"),
+				[]byte(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    if (typeof page !== 'object' || page === null) {
+      throw new Error('payload must be object, got ' + typeof page);
+    }
+    if (typeof page.html !== 'string' || page.html.length === 0) {
+      throw new Error('html must be non-empty string, got ' + typeof page.html);
+    }
+    if (typeof page.url !== 'string' || page.url.length === 0) {
+      throw new Error('url must be non-empty string, got ' + typeof page.url);
+    }
+    if (typeof page.path !== 'string' || page.path.length === 0) {
+      throw new Error('path must be non-empty string, got ' + typeof page.path);
+    }
+    if (!page.frontMatter || typeof page.frontMatter !== 'object') {
+      throw new Error('frontMatter must be object, got ' + typeof page.frontMatter);
+    }
+    if (typeof page.frontMatter.title !== 'string' || page.frontMatter.title.length === 0) {
+      throw new Error('frontMatter.title must be non-empty string, got ' + JSON.stringify(page.frontMatter.title));
+    }
+    if (page.frontMatter.author !== 'Alice') {
+      throw new Error('frontMatter.author must be "Alice", got ' + JSON.stringify(page.frontMatter.author));
+    }
+    if (!page.path.includes('hello')) {
+      throw new Error('path must contain "hello", got ' + page.path);
+    }
+    if (!page.url.includes('hello')) {
+      throw new Error('url must contain "hello", got ' + page.url);
+    }
+    page.html = page.html + '<!-- fields-ok:' + page.frontMatter.title + ':' + page.path + ':' + page.url + ' -->';
+    return page;
+  });
+}`),
+				0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "Incremental Field Check",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+				},
+			}
+
+			config.ApplyDefaults(cfg)
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			// First build (nil cache path)
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
+			Expect(err).NotTo(HaveOccurred(),
+				"BuildIncremental must not error — if this fails with a field "+
+					"validation error from the plugin, the onPageRendered payload "+
+					"is not correctly populated in BuildIncremental (issue #1120)")
+
+			html1 := result1.RenderedContent["blog/hello.md"]
+			Expect(html1).To(ContainSubstring("<!-- fields-ok:Hello World:"),
+				"plugin must have validated all payload fields and appended the "+
+					"marker with frontMatter.title — proves field-level correctness "+
+					"in BuildIncremental nil-cache path (issue #1120)")
+			Expect(html1).To(ContainSubstring("hello"),
+				"marker must contain 'hello' from both path and url fields")
+
+			// Second build (cache path — content changed)
+			Expect(os.WriteFile(filepath.Join(blogDir, "hello.md"),
+				[]byte("---\ntitle: Hello Updated\nlayout: default\nauthor: Alice\n---\n# Hello Updated"),
+				0644)).To(Succeed())
+
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"content/blog/hello.md"},
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
+			Expect(err).NotTo(HaveOccurred(),
+				"BuildIncremental with cache must not error on second build — "+
+					"field-level payload must still be correct (issue #1120)")
+
+			html2 := result2.RenderedContent["blog/hello.md"]
+			Expect(html2).To(ContainSubstring("<!-- fields-ok:Hello Updated:"),
+				"plugin must see updated frontMatter.title on incremental rebuild — "+
+					"proves BuildIncremental re-reads front matter before building "+
+					"the onPageRendered payload (issue #1120)")
 		})
 
 		It("onBuildComplete fires during BuildIncremental", func() {

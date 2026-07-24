@@ -510,3 +510,27 @@ func buildPagesReadyPayload(pages []*content.Page, scope *plugin.HookScope, site
 
 	return payload
 }
+
+// buildPageRenderedPayload constructs the onPageRendered hook payload for a page.
+func buildPageRenderedPayload(page *content.Page) plugin.HookRenderedPayload {
+	fm := convertOrderedMaps(page.FrontMatter)
+	if fm == nil {
+		fm = map[string]interface{}{}
+	}
+	return plugin.HookRenderedPayload{
+		HTML:        page.HTML(),
+		FrontMatter: fm,
+		URL:         page.URL,
+		Path:        page.RelPath,
+	}
+}
+
+// extractPageRenderedHTML extracts the html field from an onPageRendered hook result.
+// The result may be a map[string]interface{} or *ordered.Map depending on the runtime.
+func extractPageRenderedHTML(result interface{}) (string, bool) {
+	if m, ok := toGoMap(result); ok {
+		html, ok := m["html"].(string)
+		return html, ok
+	}
+	return "", false
+}
