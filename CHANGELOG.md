@@ -1,3 +1,96 @@
+## v0.6.0 (2026-07-24)
+
+### Minor Changes
+
+- `structure.components` controls where Alloy looks for SSR component source files. Defaults to `components/` when omitted.
+
+  ```yaml
+  # alloy.config.yaml
+  structure:
+    components: "elements"
+  ```
+
+  During `alloy serve`, Alloy watches this directory for changes and re-renders pages that use the affected components. Projects that keep component source outside `components/` previously got no SSR invalidation on file changes.
+
+  Alloy's built-in SSR integration is experimental. This config option and its behavior may change in future releases.
+- `onFormatRendered` fires once per non-HTML format body after layout rendering with `{ format, content, url, path, frontMatter }`. Return an object with a `content` key to replace the rendered body. The build ignores all other keys in the return value.
+
+  ```javascript
+  alloy.hook("onFormatRendered", {}, (payload) => {
+    if (payload.format === "json") {
+      return { content: JSON.stringify(JSON.parse(payload.content)) };
+    }
+  });
+  ```
+
+  `onPageRendered` skips pages whose `outputs` contains only non-HTML formats. A page with `outputs: ["json"]` routes through `onFormatRendered` instead. Both hooks fire independently when a page declares HTML and non-HTML outputs together.
+
+  Return `null`, `undefined`, or an object without a `content` key to keep the original format body.
+- **Breaking:** `onPageRendered` sends a page object `{ html, frontMatter, url, path }` instead of a raw HTML string. Only `html` in the return is applied back — `frontMatter`, `url`, and `path` are read-only context.
+
+  ```javascript
+  alloy.hook("onPageRendered", {}, (page) => {
+    if (page.frontMatter.layout === "demo") return page;
+    page.html = page.html.replace(/<h2/g, '<h2 class="styled"');
+    return page;
+  });
+  ```
+
+  Plugins that conditionally process pages can read `page.frontMatter` to decide whether to transform. Both `Build()` and `BuildIncremental()` send the same payload shape.
+
+  Previously, the hook received a raw HTML string. Plugins that needed to skip certain pages had to embed `<meta>` markers in layout HTML and strip them downstream.
+- Plugins declare external file dependencies via `addDependencies` in `onPageRendered` and `onContentTransformed` return values. Alloy tracks a reverse index in the build cache and rebuilds only the pages that declared a dependency when that file changes during `alloy dev`.
+
+  ```javascript
+  alloy.hook("onPageRendered", {}, (page) => {
+    const result = renderSSR(page.html);
+    return {
+      html: result,
+      addDependencies: [
+        "elements/rh-card/rh-card.js",
+        "elements/rh-icon/rh-icon.js",
+      ],
+    };
+  });
+  ```
+
+  `onFileChanged` hooks return `{ invalidateByDependency: [...] }` to trigger targeted rebuilds via the reverse index, or `{ restart: true }` to restart Node bridge subprocesses before the rebuild. Restart clears Node's ESM module cache so the plugin re-imports fresh component definitions.
+
+  ```javascript
+  alloy.hook("onFileChanged", {}, (events) => {
+    const changed = events
+      .filter(ev => ev.path.startsWith("elements/") && ev.path.endsWith(".js"))
+      .map(ev => ev.path);
+    if (changed.length > 0) {
+      return { invalidateByDependency: changed, restart: true };
+    }
+  });
+  ```
+
+  Dependencies from both hooks accumulate per page per build. Removing a component tag from a page drops that dependency on the next rebuild. Non-array `addDependencies` values produce a warning. Alloy normalizes dependency paths with `filepath.Clean`, so `./data.json` and `data/../data.json` match the canonical `data.json` cache key.
+
+  Previously, changes to files outside `content/` and `layouts/` either triggered no rebuild or forced a full rebuild of every page. A site with 720 pages and an SSR plugin that reads component definitions would rebuild all 720 pages when a single component file changed.
+- `alloy dev` and `alloy serve` write a lockfile at `.alloy/server.lock` on startup. If another alloy process is already watching the same project directory, a warning prints to stderr with the conflicting PID, port, mode, and a `kill` command. Startup continues without blocking.
+
+  ```
+  warning: another alloy process (PID 4659, alloy serve on port 3003, started 2026-07-14T13:00:00-04:00) is watching this directory
+  warning: concurrent instances writing to _site/ will cause missing pages and 404s
+  warning: kill the other process with: kill 4659
+  ```
+
+  Stale lockfiles from crashed processes (dead PID or corrupt JSON) are removed on the next startup. The lockfile is removed on clean shutdown via signal handler.
+
+  Previously, a backgrounded `alloy serve` and a new `alloy dev` session would silently fight over `_site/`, with `clean: true` full rebuilds wiping incremental output. Pages vanished with no errors in either console.
+
+### Patch Changes
+
+- Free each page's rendered HTML after writing it to disk. Alloy held every page's `RenderedBody`, cached HTML string, and alternate format bodies in memory for the full build lifetime. A 3,000-page site averaging 500KB of output carried ~1.5GB in page bodies. Now only the largest single page sits in memory at once: O(total site HTML) becomes O(largest page).
+
+  `CaptureRenderedContent` (used by `BuildWithContent` tests) snapshots the HTML map before the output writing loop, so release does not affect test infrastructure. Sitemap generation and cache building read page metadata, not rendered bodies.
+- Reduce peak memory on large sites. Alloy kept a duplicate of every page's rendered HTML in memory after writing it to disk. A 3,000-page site averaging 500KB of output carried ~1.5GB in the duplicate alone. Production builds and `alloy dev` skip the duplicate.
+
+  Trim the `onBuildComplete` hook payload to `{ pageCount, duration, errors, outputDir }`. Alloy previously piped the full rendered HTML of every page to plugins over IPC on each build. Plugins that need output content can read `_site/` from disk.
+
 ## v0.5.0 (2026-07-17)
 
 ### Minor Changes
