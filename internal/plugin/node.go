@@ -530,6 +530,49 @@ func (r *NodeRuntime) SetSiteData(data map[string]interface{}) error {
 	return nil
 }
 
+// Restart stops the Node bridge subprocess and worker pool, then starts
+// a fresh bridge and re-evaluates all previously loaded plugin files.
+// Used when onFileChanged returns restart: true — Node's ESM module cache
+// holds stale references, so a fresh process is needed to re-import
+// changed component definitions (issue #1100).
+//
+// Restart re-sends eval messages but does not parse the responses to
+// refresh filter/hook/shortcode registrations. This is safe because
+// restart is for clearing ESM caches when imported dependencies change,
+// not when the plugin's own registrations change. If plugin registrations
+// change, a full rebuild (which creates fresh runtimes) is required.
+//
+// Worker pools are not recreated — the dev server registry never has
+// worker pools (PrepareWorkerPool is only called inside pipeline.Build
+// on a separate registry). If future refactoring moves worker pool
+// setup to the dev registry, this method would need updating.
+func (r *NodeRuntime) Restart() error {
+	r.CloseWorkers()
+	if r.bridge != nil {
+		r.bridge.Stop()
+		r.bridge = nil
+	}
+
+	if len(r.pluginPaths) == 0 {
+		return nil
+	}
+
+	bridge := NewNodeBridge(r.projectRoot)
+	if err := bridge.Start(); err != nil {
+		bridge.Stop()
+		return fmt.Errorf("restarting Node bridge: %w", err)
+	}
+	r.bridge = bridge
+	for _, path := range r.pluginPaths {
+		if _, err := r.bridge.Send(&Message{Type: "eval", Payload: path}); err != nil {
+			r.bridge.Stop()
+			r.bridge = nil
+			return fmt.Errorf("restarting Node bridge: re-eval %s: %w", filepath.Base(path), err)
+		}
+	}
+	return nil
+}
+
 // Close shuts down the worker pool and primary Node subprocess.
 func (r *NodeRuntime) Close() {
 	r.CloseWorkers()

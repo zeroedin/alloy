@@ -172,10 +172,19 @@ func newDevCommand() *cobra.Command {
 
 			// Set up file watcher for live rebuild
 			watcher := startWatcher(cfg, srv, func(events []server.ChangeEvent, rebuildScope server.RebuildScope) {
-				// TODO(#1100): Use ParseFileChangedResult to handle invalidateByDependency
-				// and restart once dev-server integration is implemented.
-				if _, err := hooks.RunWithTimeout(plugin.OnFileChanged, events); err != nil {
-					log.Printf("warning: plugin hook onFileChanged: %v", err)
+				// Process onFileChanged return value for dependency-based
+				// invalidation and Node bridge restart (issue #1100).
+				var depInvalidPaths []string
+				var needsRestart bool
+				hookResult, hookErr := hooks.RunWithTimeout(plugin.OnFileChanged, events)
+				if hookErr != nil {
+					log.Printf("warning: plugin hook onFileChanged: %v", hookErr)
+				} else if parsed := plugin.ParseFileChangedResult(hookResult); parsed != nil {
+					for _, w := range parsed.Warnings {
+						log.Printf("warning: onFileChanged: %s", w)
+					}
+					depInvalidPaths = parsed.InvalidateByDependency
+					needsRestart = parsed.Restart
 				}
 
 				// Recopy static/asset/passthrough files before any rebuild decision.
@@ -234,6 +243,15 @@ func newDevCommand() *cobra.Command {
 					}
 				}
 
+				// Dependency invalidation from onFileChanged forces an
+				// incremental rebuild even when the watcher events are
+				// passthrough-only (e.g., component JS recopy). The dep
+				// paths are added to changedFiles so BuildIncremental can
+				// look up affected pages via the cache (issue #1100).
+				if len(depInvalidPaths) > 0 {
+					needsRebuild = true
+				}
+
 				if !needsRebuild {
 					srv.BroadcastReload()
 					return
@@ -248,6 +266,22 @@ func newDevCommand() *cobra.Command {
 					if ev.ChangeType == server.ComponentChange || ev.ChangeType == server.PluginChange {
 						hasFullRebuildChange = true
 						break
+					}
+				}
+
+				// Restart Node bridges before rebuild when the plugin
+				// requested it — clears Node's ESM module cache so
+				// import()ed component definitions are re-read (issue #1100).
+				// On failure, show an overlay error and skip the rebuild —
+				// proceeding with stale bridges would produce wrong output.
+				if needsRestart {
+					if err := registry.RestartNodeRuntimes(); err != nil {
+						log.Printf("warning: restarting Node bridge: %v", err)
+						srv.Overlay().SetErrors([]server.BuildError{
+							{Message: err.Error(), Stage: "runtime restart"},
+						})
+						srv.BroadcastReload()
+						return
 					}
 				}
 
@@ -280,6 +314,9 @@ func newDevCommand() *cobra.Command {
 					var changedFiles []string
 					for _, ev := range events {
 						changedFiles = append(changedFiles, ev.Path)
+					}
+					for _, dp := range depInvalidPaths {
+						changedFiles = append(changedFiles, filepath.ToSlash(filepath.Clean(dp)))
 					}
 					if incrResult, err := pipeline.BuildIncremental(cfg, nil, previousCache, changedFiles, pipeline.BuildOptions{SkipSSR: true, PipelineState: ps, Reporter: reporter}); err != nil {
 						log.Printf("rebuild failed: %v", err)
