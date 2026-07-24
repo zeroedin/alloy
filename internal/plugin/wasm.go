@@ -367,6 +367,22 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 		return payload, nil
 	}
 
+	// Fast path for payload structs (issue #1180): build JS objects directly
+	// via the QuickJS API instead of JSON-serializing the entire struct.
+	// Only small fields (frontMatter, toc) use JSON. Large string fields
+	// (html, content) transfer as native strings, eliminating ~99.9% of
+	// JSON volume for 800KB pages.
+	// Returns map[string]interface{} (the slow path below returns *ordered.Map);
+	// both are handled by pipeline's toGoMap().
+	switch v := payload.(type) {
+	case HookRenderedPayload:
+		return r.callHookRenderedPayload(name, v)
+	case HookFormatRenderedPayload:
+		return r.callHookFormatRenderedPayload(name, v)
+	case HookTransformPayload:
+		return r.callHookTransformPayload(name, v)
+	}
+
 	// Set the payload as a global variable accessible from JS.
 	// Non-primitive types (maps, slices, structs) are JSON-serialized and parsed in the VM.
 	switch v := payload.(type) {
@@ -417,6 +433,165 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 	}
 
 	return jsValueToGo(result), nil
+}
+
+// callHookRenderedPayload is the fast path for HookRenderedPayload (issue #1180).
+// Builds a JS object directly instead of JSON-serializing the ~800KB HTML field.
+func (r *QuickJSRuntime) callHookRenderedPayload(name string, v HookRenderedPayload) (interface{}, error) {
+	obj := r.ctx.NewObject()
+	obj.SetPropertyStr("html", r.ctx.NewString(v.HTML))
+	obj.SetPropertyStr("url", r.ctx.NewString(v.URL))
+	obj.SetPropertyStr("path", r.ctx.NewString(v.Path))
+	if err := r.setPayloadFrontMatter(obj, v.FrontMatter); err != nil {
+		return nil, fmt.Errorf("hook %q: %w", name, err)
+	}
+	return r.invokeHookFastPath(name, obj)
+}
+
+// callHookFormatRenderedPayload is the fast path for HookFormatRenderedPayload (issue #1180).
+// Builds a JS object directly instead of JSON-serializing the ~800KB content field.
+func (r *QuickJSRuntime) callHookFormatRenderedPayload(name string, v HookFormatRenderedPayload) (interface{}, error) {
+	obj := r.ctx.NewObject()
+	obj.SetPropertyStr("format", r.ctx.NewString(v.Format))
+	obj.SetPropertyStr("content", r.ctx.NewString(v.Content))
+	obj.SetPropertyStr("url", r.ctx.NewString(v.URL))
+	obj.SetPropertyStr("path", r.ctx.NewString(v.Path))
+	if err := r.setPayloadFrontMatter(obj, v.FrontMatter); err != nil {
+		return nil, fmt.Errorf("hook %q: %w", name, err)
+	}
+	return r.invokeHookFastPath(name, obj)
+}
+
+// callHookTransformPayload is the fast path for HookTransformPayload (issue #1180).
+// Builds a JS object directly instead of JSON-serializing the ~800KB HTML field.
+// TOC is small and uses JSON; nil/empty TOC is omitted (matching omitempty).
+func (r *QuickJSRuntime) callHookTransformPayload(name string, v HookTransformPayload) (interface{}, error) {
+	obj := r.ctx.NewObject()
+	obj.SetPropertyStr("html", r.ctx.NewString(v.HTML))
+	obj.SetPropertyStr("url", r.ctx.NewString(v.URL))
+	obj.SetPropertyStr("path", r.ctx.NewString(v.Path))
+	if err := r.setPayloadFrontMatter(obj, v.FrontMatter); err != nil {
+		return nil, fmt.Errorf("hook %q: %w", name, err)
+	}
+	if len(v.TOC) > 0 {
+		tocJSON, err := jsonCodec.Marshal(v.TOC)
+		if err != nil {
+			return nil, fmt.Errorf("hook %q: marshaling toc: %w", name, err)
+		}
+		obj.SetPropertyStr("toc", r.ctx.ParseJSON(string(tocJSON)))
+	}
+	return r.invokeHookFastPath(name, obj)
+}
+
+// setPayloadFrontMatter sets the frontMatter property on a JS payload object.
+// Nil frontMatter is coerced to an empty JS object, matching pipeline behavior
+// in buildPageRenderedPayload.
+func (r *QuickJSRuntime) setPayloadFrontMatter(obj *qjs.Value, fm map[string]interface{}) error {
+	if fm == nil {
+		obj.SetPropertyStr("frontMatter", r.ctx.NewObject())
+		return nil
+	}
+	fmJSON, err := jsonCodec.Marshal(fm)
+	if err != nil {
+		return fmt.Errorf("marshaling frontMatter: %w", err)
+	}
+	// ParseJSON returns *qjs.Value without an error channel; safe here because
+	// input is always the output of jsonCodec.Marshal (always valid JSON).
+	obj.SetPropertyStr("frontMatter", r.ctx.ParseJSON(string(fmJSON)))
+	return nil
+}
+
+// invokeHookFastPath calls a hook function with a pre-built JS object and
+// extracts the result without JSON-serializing the entire return value.
+func (r *QuickJSRuntime) invokeHookFastPath(name string, input *qjs.Value) (interface{}, error) {
+	r.ctx.Global().SetPropertyStr("__callInput", input)
+	r.ctx.Global().SetPropertyStr("__callHookName", r.ctx.NewString(name))
+
+	defer func() {
+		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewUndefined())
+		r.ctx.Global().SetPropertyStr("__callHookName", r.ctx.NewUndefined())
+	}()
+
+	result, err := r.ctx.Eval("hook-call.js", qjs.Code(
+		`__hooks[__callHookName](__callInput)`))
+	if err != nil {
+		return nil, fmt.Errorf("hook %q: %w", name, err)
+	}
+	defer result.Free()
+
+	return r.extractHookResult(result)
+}
+
+// extractHookResult converts a JS hook return value to a Go value without
+// JSON-serializing the entire result. String properties (html, content) are
+// extracted as native strings. Non-string properties (arrays, nested objects)
+// use JSON only for their own small values. Uses jsonCodec.Unmarshal (not
+// ordered.UnmarshalJSONValue) so nested objects are map[string]interface{},
+// matching what pipeline consumers like deserializeTOC expect.
+func (r *QuickJSRuntime) extractHookResult(result *qjs.Value) (interface{}, error) {
+	if result.IsString() {
+		return result.String(), nil
+	}
+	if result.IsNull() || result.IsUndefined() {
+		return nil, nil
+	}
+	if !result.IsObject() {
+		return jsValueToGo(result), nil
+	}
+	if result.IsArray() {
+		s, err := result.JSONStringify()
+		if err != nil {
+			return nil, fmt.Errorf("extracting array result: %w", err)
+		}
+		var parsed interface{}
+		if err := jsonCodec.Unmarshal([]byte(s), &parsed); err != nil {
+			return nil, fmt.Errorf("parsing array result: %w", err)
+		}
+		return parsed, nil
+	}
+
+	propNames, err := result.GetOwnPropertyNames()
+	if err != nil {
+		s, serr := result.JSONStringify()
+		if serr != nil {
+			return nil, fmt.Errorf("extracting result: property names: %w", err)
+		}
+		var parsed interface{}
+		if err := jsonCodec.Unmarshal([]byte(s), &parsed); err != nil {
+			return nil, fmt.Errorf("parsing result fallback: %w", err)
+		}
+		return parsed, nil
+	}
+
+	m := make(map[string]interface{}, len(propNames))
+	for _, pname := range propNames {
+		prop := result.GetPropertyStr(pname)
+		// Primitives (string, number, bool): delegate to jsValueToGo.
+		// Null/undefined properties are skipped (not added to the map).
+		if prop.IsString() || prop.IsNumber() || prop.IsBool() || prop.IsNull() || prop.IsUndefined() {
+			val := jsValueToGo(prop)
+			prop.Free()
+			if val != nil {
+				m[pname] = val
+			}
+			continue
+		}
+		// Structured values (arrays, objects): JSONStringify the individual
+		// (small) property, then unmarshal to map[string]interface{}.
+		s, serr := prop.JSONStringify()
+		prop.Free()
+		if serr != nil {
+			log.Printf("warning: hook result property %q: JSONStringify failed: %v", pname, serr)
+			continue
+		}
+		var parsed interface{}
+		if err := jsonCodec.Unmarshal([]byte(s), &parsed); err != nil {
+			m[pname] = s
+			continue
+		}
+		m[pname] = parsed
+	}
+	return m, nil
 }
 
 // RegisteredFilters returns the names of all filters registered in the QuickJS context.
