@@ -103,6 +103,30 @@ var _ = Describe("Page.ReleaseRenderedBody (issue #1107)", func() {
 		Expect(page.HTML()).To(Equal(""))
 	})
 
+	It("releases FormatBodies even when RenderedBody is nil", func() {
+		// Covers the case where RenderedBody is nil but FormatBodies is
+		// populated (e.g., API-only endpoints that produce JSON but no HTML).
+		// If ReleaseRenderedBody() uses `if p.RenderedBody == nil { return }`
+		// as an early exit, FormatBodies would not be released.
+		page := &content.Page{
+			FormatBodies: map[string][]byte{
+				"json": []byte(`{"title":"API endpoint"}`),
+			},
+		}
+		Expect(page.RenderedBody).To(BeNil(),
+			"precondition: RenderedBody is nil (API-only page)")
+		Expect(page.FormatBodies).To(HaveLen(1),
+			"precondition: FormatBodies is populated")
+
+		page.ReleaseRenderedBody()
+
+		Expect(page.FormatBodies).To(BeNil(),
+			"ReleaseRenderedBody must nil FormatBodies even when "+
+				"RenderedBody is already nil — an early-exit guard on "+
+				"nil RenderedBody would skip the FormatBodies release "+
+				"and leak memory for API-only pages (issue #1107)")
+	})
+
 	It("is idempotent — calling twice does not panic", func() {
 		page := &content.Page{
 			RenderedBody: []byte("<html><body>Twice</body></html>"),
@@ -123,6 +147,10 @@ var _ = Describe("Page.ReleaseRenderedBody (issue #1107)", func() {
 		Expect(page.HTML()).To(Equal(""))
 	})
 
+	// MAINTENANCE: When adding new fields to the Page struct, add an
+	// assertion below to verify ReleaseRenderedBody does not clear the
+	// new field. This test is a static snapshot — it will not catch
+	// accidental clearing of fields added after this test was written.
 	It("does not affect other page fields", func() {
 		page := &content.Page{
 			SourcePath:   "/content/test.md",

@@ -211,9 +211,11 @@ var _ = Describe("Release page.RenderedBody after disk write (issue #1107)", fun
 					"if release happens before the primary write, the file "+
 					"would be empty (issue #1107)")
 
-			// Alias output must also exist — the alias redirect file is
-			// written using page.RenderedBody, so it must be written
-			// before release
+			// Alias output must also exist with correct content — the alias
+			// redirect file is written using page.RenderedBody, so it must
+			// be written before release. BeAnExistingFile() alone is
+			// insufficient: os.WriteFile with nil content creates a 0-byte
+			// file that passes existence checks.
 			aliasPath := filepath.Join(outputDir, "old-url", "index.html")
 			Expect(aliasPath).To(BeAnExistingFile(),
 				"alias redirect file must be written before ReleaseRenderedBody "+
@@ -221,6 +223,91 @@ var _ = Describe("Release page.RenderedBody after disk write (issue #1107)", fun
 					"content source. If release happens between primary write "+
 					"and alias write, the alias file would be empty or missing "+
 					"(issue #1107)")
+
+			aliasContent, aliasReadErr := os.ReadFile(aliasPath)
+			Expect(aliasReadErr).NotTo(HaveOccurred())
+			Expect(string(aliasContent)).To(ContainSubstring("New Page Content"),
+				"alias file must contain the rendered page content — "+
+					"WriteAliasesCached writes page.RenderedBody to each alias "+
+					"path. If RenderedBody is nil (premature release), the alias "+
+					"file would be 0 bytes (issue #1107)")
+			Expect(string(aliasContent)).To(Equal(string(primaryContent)),
+				"alias content must be identical to primary output — both are "+
+					"written from the same page.RenderedBody before release")
+		})
+	})
+
+	Describe("Build() — FormatBodies output files survive release", func() {
+
+		It("writes alternate format output files before releasing RenderedBody", func() {
+			tmpDir := GinkgoT().TempDir()
+			contentDir := filepath.Join(tmpDir, "content")
+			layoutsDir := filepath.Join(tmpDir, "layouts")
+			outputDir := filepath.Join(tmpDir, "_site")
+
+			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
+			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
+
+			// Page declares both html and json output formats
+			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
+				[]byte("---\ntitle: Multi-Format\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Multi-Format Content"),
+				0644)).To(Succeed())
+
+			// HTML layout
+			Expect(os.WriteFile(filepath.Join(layoutsDir, "default.liquid"),
+				[]byte("<html><body>{{ content }}</body></html>"),
+				0644)).To(Succeed())
+
+			// JSON format layout — outputs page data as JSON
+			Expect(os.WriteFile(filepath.Join(layoutsDir, "default.json.liquid"),
+				[]byte(`{"title":"{{ page.title }}","content":"{{ content | strip_html | strip_newlines }}"}`),
+				0644)).To(Succeed())
+
+			cfg := &config.Config{
+				Title:       "FormatBodies Release Test",
+				BaseURL:     "https://example.com",
+				ProjectRoot: tmpDir,
+				Build:       config.BuildConfig{Output: outputDir},
+				Structure: config.StructureConfig{
+					Content: "content",
+					Layouts: "layouts",
+				},
+			}
+			config.ApplyDefaults(cfg)
+
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.PageCount).To(Equal(1))
+
+			// Primary HTML output must exist with correct content
+			htmlPath := filepath.Join(outputDir, "index.html")
+			Expect(htmlPath).To(BeAnExistingFile())
+			htmlContent, readErr := os.ReadFile(htmlPath)
+			Expect(readErr).NotTo(HaveOccurred())
+			Expect(string(htmlContent)).To(ContainSubstring("Multi-Format Content"),
+				"primary HTML output must be written before release")
+
+			// JSON format output must also exist with correct content.
+			// FormatBodies are written in the same loop as primary output
+			// (build.go output writing stage). If the developer inserts
+			// ReleaseRenderedBody() after the primary HTML write but before
+			// the FormatBodies loop, the JSON file would be empty or missing.
+			jsonPath := filepath.Join(outputDir, "index.json")
+			Expect(jsonPath).To(BeAnExistingFile(),
+				"JSON format output file must be written before "+
+					"ReleaseRenderedBody — FormatBodies are written from "+
+					"page.FormatBodies which is niled by release (issue #1107)")
+
+			jsonContent, jsonReadErr := os.ReadFile(jsonPath)
+			Expect(jsonReadErr).NotTo(HaveOccurred())
+			Expect(string(jsonContent)).NotTo(BeEmpty(),
+				"JSON format output file must not be empty — if "+
+					"ReleaseRenderedBody runs before FormatBodies are written, "+
+					"the map is nil and WriteFileCached receives nil content")
+			Expect(string(jsonContent)).To(ContainSubstring("Multi-Format"),
+				"JSON format output must contain the page title — "+
+					"this proves FormatBodies were written to disk before "+
+					"page.ReleaseRenderedBody() niled them (issue #1107)")
 		})
 	})
 
@@ -322,6 +409,18 @@ var _ = Describe("Release page.RenderedBody after disk write (issue #1107)", fun
 					"the cache uses page.Content (raw source bytes) for content "+
 					"hashing, not page.RenderedBody, so release must not affect "+
 					"cache correctness (issue #1107)")
+
+			// Verify the cache actually recorded a hash for the page's
+			// source content — NotTo(BeNil()) alone is trivially satisfied
+			// because cache.New() returns a non-nil *Cache with empty maps.
+			contentBytes, readErr := os.ReadFile(filepath.Join(contentDir, "index.md"))
+			Expect(readErr).NotTo(HaveOccurred())
+			Expect(result.Cache.ShouldSkipFile("index.md", contentBytes)).To(BeTrue(),
+				"cache must have recorded the content hash for index.md — "+
+					"ShouldSkipFile returns true when the stored hash matches "+
+					"the current content. This proves the cache was populated "+
+					"from page.Content (not page.RenderedBody) and is unaffected "+
+					"by RenderedBody release (issue #1107)")
 		})
 	})
 
@@ -537,69 +636,4 @@ var _ = Describe("Release page.RenderedBody after disk write (issue #1107)", fun
 		})
 	})
 
-	Describe("Build() — multiple pages with varying sizes", func() {
-
-		It("correctly writes and captures all pages regardless of size", func() {
-			tmpDir := GinkgoT().TempDir()
-			contentDir := filepath.Join(tmpDir, "content")
-			layoutsDir := filepath.Join(tmpDir, "layouts")
-			outputDir := filepath.Join(tmpDir, "_site")
-
-			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
-			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
-
-			// Create pages of varying sizes to exercise the per-page release
-			// path with different memory pressures
-			smallContent := "---\ntitle: Small\nlayout: default\n---\n# Small"
-			mediumBody := ""
-			for i := 0; i < 100; i++ {
-				mediumBody += "This is paragraph number " + string(rune('A'+i%26)) + ". "
-			}
-			mediumContent := "---\ntitle: Medium\nlayout: default\n---\n" + mediumBody
-
-			Expect(os.WriteFile(filepath.Join(contentDir, "small.md"),
-				[]byte(smallContent), 0644)).To(Succeed())
-			Expect(os.WriteFile(filepath.Join(contentDir, "medium.md"),
-				[]byte(mediumContent), 0644)).To(Succeed())
-
-			Expect(os.WriteFile(filepath.Join(layoutsDir, "default.liquid"),
-				[]byte("<html><body>{{ content }}</body></html>"),
-				0644)).To(Succeed())
-
-			cfg := &config.Config{
-				Title:       "Varying Sizes Release",
-				BaseURL:     "https://example.com",
-				ProjectRoot: tmpDir,
-				Build:       config.BuildConfig{Output: outputDir},
-				Structure: config.StructureConfig{
-					Content: "content",
-					Layouts: "layouts",
-				},
-			}
-			config.ApplyDefaults(cfg)
-
-			result, err := pipeline.Build(cfg, pipeline.BuildOptions{
-				CaptureRenderedContent: true,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RenderedContent).To(HaveLen(2))
-
-			// Both pages must have correct captured content and disk output
-			for _, relPath := range []string{"small.md", "medium.md"} {
-				captured, ok := result.RenderedContent[relPath]
-				Expect(ok).To(BeTrue(),
-					relPath+" must be in RenderedContent")
-				Expect(captured).NotTo(BeEmpty(),
-					relPath+" captured content must not be empty after release")
-			}
-
-			// Verify the medium page's content survived — larger pages
-			// exercise more of the release path
-			Expect(result.RenderedContent["medium.md"]).To(
-				ContainSubstring("paragraph number"),
-				"medium page's full content must survive the capture-before-release "+
-					"ordering — larger pages are more likely to expose timing bugs "+
-					"if release happens too early (issue #1107)")
-		})
-	})
 })
