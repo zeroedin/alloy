@@ -67,8 +67,9 @@ export default function(alloy) {
   });
 
   // Register a lifecycle hook
-  alloy.hook("onPageRendered", {}, (html) => {
-    return html.replace(/\s+/g, ' ').trim();
+  alloy.hook("onPageRendered", {}, (page) => {
+    page.html = page.html.replace(/\s+/g, ' ').trim();
+    return page;
   });
 }
 ```

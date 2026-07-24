@@ -28,6 +28,7 @@ my-site/
 ├── data/                      # Global data files (YAML, JSON, CSV)
 │   └── navigation.yaml
 ├── plugins/                   # Optional plugins
+├── components/                # SSR component sources (experimental)
 └── .alloy/                    # Internal (auto-generated, gitignore)
 ```
 
