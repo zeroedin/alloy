@@ -27,7 +27,8 @@ my-site/
 ├── static/                    # Copied as-is to output
 ├── data/                      # Global data files (YAML, JSON, CSV)
 │   └── navigation.yaml
-└── plugins/                   # Optional plugins
+├── plugins/                   # Optional plugins
+└── components/                # SSR component sources (experimental)
 ```
 
 ## Config file

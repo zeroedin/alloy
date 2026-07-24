@@ -100,6 +100,7 @@ structure:
   static: "static"
   data: "data"
   plugins: "plugins"
+  components: "components"
 ```
 
 | Field | Type | Default | Description |
@@ -110,6 +111,7 @@ structure:
 | `structure.static` | string | `"static"` | Static files directory (copied verbatim to output root). |
 | `structure.data` | string | `"data"` | Global data files directory. |
 | `structure.plugins` | string | `"plugins"` | Plugin files directory. |
+| `structure.components` | string | `"components"` | SSR component source directory. Watched during `alloy serve` for re-rendering. Experimental -- see [SSR](/experimental/ssr/). |
 
 ## `plugins`
 
