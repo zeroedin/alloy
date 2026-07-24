@@ -305,6 +305,9 @@ var _ = Describe("Config", func() {
 				Expect(tomlCfg.Sources).To(HaveKey("products"))
 				Expect(tomlCfg.Sources["products"].Type).To(Equal("graphql"))
 				Expect(tomlCfg.Sources["products"].Endpoint).To(Equal("https://api.example.com/graphql"))
+				Expect(tomlCfg.Sources["products"].Query).To(Equal("{ products { id, name, price, slug } }"))
+				Expect(tomlCfg.Sources["products"].Cache).To(Equal(1800))
+				Expect(tomlCfg.Sources["products"].As).To(Equal("products"))
 			})
 
 			It("parses sitemap identically to YAML", func() {
@@ -335,6 +338,8 @@ var _ = Describe("Config", func() {
 				Expect(loadErr).NotTo(HaveOccurred())
 				Expect(tomlCfg.SSR).NotTo(BeNil())
 				Expect(tomlCfg.SSR.Command).To(Equal("golit render --defs bundles/"))
+				Expect(tomlCfg.SSR.Mode).To(BeEmpty(),
+					"mode must be empty when omitted — defaults to exec at runtime")
 			})
 
 			It("parses languages identically to YAML", func() {
@@ -344,9 +349,13 @@ var _ = Describe("Config", func() {
 				Expect(tomlCfg.Languages["en"].Weight).To(Equal(1))
 				Expect(tomlCfg.Languages["en"].Root).To(BeTrue())
 				Expect(tomlCfg.Languages["en"].Strings).To(HaveKeyWithValue("read_more", "Read more"))
+				Expect(tomlCfg.Languages["en"].Strings).To(HaveKeyWithValue("posted_on", "Posted on"))
+
 				Expect(tomlCfg.Languages).To(HaveKey("fr"))
 				Expect(tomlCfg.Languages["fr"].Title).To(Equal("Site Test"))
 				Expect(tomlCfg.Languages["fr"].Weight).To(Equal(2))
+				Expect(tomlCfg.Languages["fr"].Strings).To(HaveKeyWithValue("read_more", "Lire la suite"))
+				Expect(tomlCfg.Languages["fr"].Strings).To(HaveKeyWithValue("posted_on", "Publié le"))
 			})
 
 			It("parses watch array identically to YAML (issue #1127)", func() {
@@ -447,6 +456,9 @@ var _ = Describe("Config", func() {
 				Expect(jsonCfg.Sources).To(HaveKey("products"))
 				Expect(jsonCfg.Sources["products"].Type).To(Equal("graphql"))
 				Expect(jsonCfg.Sources["products"].Endpoint).To(Equal("https://api.example.com/graphql"))
+				Expect(jsonCfg.Sources["products"].Query).To(Equal("{ products { id, name, price, slug } }"))
+				Expect(jsonCfg.Sources["products"].Cache).To(Equal(1800))
+				Expect(jsonCfg.Sources["products"].As).To(Equal("products"))
 			})
 
 			It("parses sitemap identically to YAML", func() {
@@ -477,6 +489,8 @@ var _ = Describe("Config", func() {
 				Expect(loadErr).NotTo(HaveOccurred())
 				Expect(jsonCfg.SSR).NotTo(BeNil())
 				Expect(jsonCfg.SSR.Command).To(Equal("golit render --defs bundles/"))
+				Expect(jsonCfg.SSR.Mode).To(BeEmpty(),
+					"mode must be empty when omitted — defaults to exec at runtime")
 			})
 
 			It("parses languages identically to YAML", func() {
@@ -486,9 +500,13 @@ var _ = Describe("Config", func() {
 				Expect(jsonCfg.Languages["en"].Weight).To(Equal(1))
 				Expect(jsonCfg.Languages["en"].Root).To(BeTrue())
 				Expect(jsonCfg.Languages["en"].Strings).To(HaveKeyWithValue("read_more", "Read more"))
+				Expect(jsonCfg.Languages["en"].Strings).To(HaveKeyWithValue("posted_on", "Posted on"))
+
 				Expect(jsonCfg.Languages).To(HaveKey("fr"))
 				Expect(jsonCfg.Languages["fr"].Title).To(Equal("Site Test"))
 				Expect(jsonCfg.Languages["fr"].Weight).To(Equal(2))
+				Expect(jsonCfg.Languages["fr"].Strings).To(HaveKeyWithValue("read_more", "Lire la suite"))
+				Expect(jsonCfg.Languages["fr"].Strings).To(HaveKeyWithValue("posted_on", "Publié le"))
 			})
 
 			It("parses watch array identically to YAML (issue #1127)", func() {
