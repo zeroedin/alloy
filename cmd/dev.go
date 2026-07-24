@@ -172,6 +172,8 @@ func newDevCommand() *cobra.Command {
 
 			// Set up file watcher for live rebuild
 			watcher := startWatcher(cfg, srv, func(events []server.ChangeEvent, rebuildScope server.RebuildScope) {
+				// TODO(#1100): Use ParseFileChangedResult to handle invalidateByDependency
+				// and restart once dev-server integration is implemented.
 				if _, err := hooks.RunWithTimeout(plugin.OnFileChanged, events); err != nil {
 					log.Printf("warning: plugin hook onFileChanged: %v", err)
 				}

@@ -800,11 +800,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Hashes and template tracking are added after rendering (Stage 9).
 	buildCache := cache.New()
 
-	// Clear content page dependencies before re-tracking from hook output.
-	// Must happen before onContentTransformed (which fires before
-	// onPageRendered) so both hooks can track dependencies (issue #1100).
-	buildCache.ClearDependencies()
-
 	if err := fireContentTransformedHooks(pages, ps.Hooks, buildCache); err != nil {
 		return nil, err
 	}

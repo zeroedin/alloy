@@ -557,7 +557,7 @@ func extractAddDependencies(resultMap map[string]interface{}, pageRelPath string
 	}
 	for _, entry := range arr {
 		if depPath, ok := entry.(string); ok {
-			buildCache.TrackDependency(pageRelPath, depPath)
+			buildCache.TrackDependency(pageRelPath, filepath.ToSlash(filepath.Clean(depPath)))
 		} else {
 			log.Printf("warning: addDependencies for %s: non-string entry %T — skipping", pageRelPath, entry)
 		}

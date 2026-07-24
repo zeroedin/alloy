@@ -248,12 +248,27 @@ func (c *Cache) InvalidatedVirtualPages(changedFile string) []string {
 // Builds a reverse map so PagesForDependency can return all pages affected
 // by a source file change (issue #1100).
 func (c *Cache) TrackDependency(pageRelPath, depPath string) {
+	if pageRelPath == "" {
+		return
+	}
 	pages := c.pageDependencies[depPath]
 	if pages == nil {
 		pages = make(map[string]bool)
 		c.pageDependencies[depPath] = pages
 	}
 	pages[pageRelPath] = true
+}
+
+// UntrackPageDependencies removes a single page from every dependency set.
+// Used by BuildIncremental to clear stale deps for pages being re-rendered
+// without wiping deps for skipped pages (issue #1100).
+func (c *Cache) UntrackPageDependencies(pageRelPath string) {
+	for depPath, pages := range c.pageDependencies {
+		delete(pages, pageRelPath)
+		if len(pages) == 0 {
+			delete(c.pageDependencies, depPath)
+		}
+	}
 }
 
 // PagesForDependency returns the content page RelPaths that depend on the

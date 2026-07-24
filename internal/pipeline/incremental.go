@@ -409,10 +409,12 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		buildCache = cache.New()
 	}
 
-	// Clear content page dependencies before re-tracking from hook output.
-	// Must happen before onContentTransformed (which fires before
-	// onPageRendered) so both hooks can track dependencies (issue #1100).
-	buildCache.ClearDependencies()
+	// Clear content page dependencies only for pages being re-rendered.
+	// Hooks will re-track deps for these pages; skipped pages retain their
+	// deps from the cloned previous cache (issue #1100).
+	for _, page := range pagesToRender {
+		buildCache.UntrackPageDependencies(page.RelPath)
+	}
 
 	// Lifecycle hooks between passes — mirrors Build() flow (issue #731).
 	// Warning-only errors: dev server resilience (Build() returns fatal errors).
