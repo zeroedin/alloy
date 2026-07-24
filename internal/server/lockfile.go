@@ -66,6 +66,18 @@ func RemoveLockfile(projectRoot string) {
 	os.Remove(LockfilePath(projectRoot))
 }
 
+// RemoveLockfileIfOwned removes the lockfile only if it belongs to the given PID.
+// Returns true if the lockfile was removed. Used by shutdown paths to avoid
+// deleting a lockfile that was overwritten by a newer process.
+func RemoveLockfileIfOwned(projectRoot string, pid int) bool {
+	info, _ := ReadLockfile(projectRoot)
+	if info != nil && info.PID == pid {
+		RemoveLockfile(projectRoot)
+		return true
+	}
+	return false
+}
+
 // CheckAndWarnLockfile checks for an existing lockfile and returns warning
 // messages if another alloy process is actively running. Returns nil if no
 // lockfile exists, if the lockfile is stale (dead PID), or if the lockfile
