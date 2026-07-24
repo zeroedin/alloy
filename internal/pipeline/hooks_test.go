@@ -2969,12 +2969,13 @@ var _ = Describe("Build Pipeline", func() {
 				"the plugin must have executed — frontMatter type check passed")
 		})
 
-		// ── extractPageRenderedHTML edge cases (issue #1120) ──
+		// ── onPageRendered apply-back edge cases (issue #1120) ──
 		// These tests verify that malformed or missing hook return values
-		// don't corrupt the page's rendered body. The original HTML must
-		// be preserved when the hook returns nil, an object without an
-		// html key, an object with a non-string html value, or a raw
-		// string (old API format).
+		// don't corrupt the page's rendered body. The inline extraction
+		// in the apply-back block (toGoMap + m["html"].(string)) must
+		// preserve the original HTML when the hook returns nil, an object
+		// without an html key, an object with a non-string html value,
+		// or a raw string (old API format).
 
 		It("nil return from onPageRendered leaves page HTML unchanged", func() {
 			cfg := &config.Config{
@@ -3001,9 +3002,9 @@ var _ = Describe("Build Pipeline", func() {
 			html := result.RenderedContent["index.md"]
 			Expect(html).To(ContainSubstring("Original Content"),
 				"original page HTML must be preserved when onPageRendered "+
-					"returns nil/undefined — extractPageRenderedHTML must return "+
-					"false for nil input, and the apply-back block must skip "+
-					"nil results without logging a warning (issue #1120)")
+					"returns nil/undefined — toGoMap returns false for nil "+
+					"input, so the apply-back block skips nil results without "+
+					"logging a warning (issue #1120)")
 		})
 
 		It("return without html key from onPageRendered leaves page HTML unchanged", func() {
@@ -3025,8 +3026,9 @@ var _ = Describe("Build Pipeline", func() {
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred(),
 				"return without html key must not error — "+
-					"extractPageRenderedHTML returns false when html key is "+
-					"absent, and the pipeline logs a migration warning (issue #1120)")
+					"the inline m[\"html\"].(string) type assertion fails when "+
+					"html key is absent, and the pipeline logs a migration "+
+					"warning (issue #1120)")
 			Expect(result).NotTo(BeNil())
 
 			html := result.RenderedContent["index.md"]
@@ -3055,15 +3057,15 @@ var _ = Describe("Build Pipeline", func() {
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred(),
 				"non-string html value must not error — "+
-					"extractPageRenderedHTML uses a type assertion on m[\"html\"].(string) "+
-					"which returns false for non-string types (issue #1120)")
+					"the inline m[\"html\"].(string) type assertion returns "+
+					"false for non-string types (issue #1120)")
 			Expect(result).NotTo(BeNil())
 
 			html := result.RenderedContent["index.md"]
 			Expect(html).To(ContainSubstring("Intact Content"),
 				"original page HTML must be preserved when onPageRendered "+
-					"returns html as a non-string value — the type assertion "+
-					"fails, extractPageRenderedHTML returns false, and the "+
+					"returns html as a non-string value — the inline type "+
+					"assertion fails, so SetRenderedBody is not called and the "+
 					"pipeline logs a migration warning (issue #1120)")
 		})
 
@@ -3078,7 +3080,7 @@ var _ = Describe("Build Pipeline", func() {
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				// Plugin returns a raw string instead of an object — old API format.
 				// The new API expects { html: "..." }. Returning a string means
-				// toGoMap returns false → extractPageRenderedHTML returns false.
+				// toGoMap returns false → the apply-back block skips the result.
 				"plugins/old-string.js": `export default function(alloy) {
   alloy.hook('onPageRendered', {}, function(page) {
     return page.html + '<!-- old-format -->';
@@ -3100,9 +3102,9 @@ var _ = Describe("Build Pipeline", func() {
 					"to the object API (issue #1120)")
 			Expect(html).NotTo(ContainSubstring("<!-- old-format -->"),
 				"old-format string return must NOT be applied — "+
-					"extractPageRenderedHTML only accepts map types with an "+
-					"html key. The migration warning tells plugin authors to "+
-					"switch to the object API (issue #1120)")
+					"the inline apply-back block only accepts map types with "+
+					"an html key. The migration warning tells plugin authors "+
+					"to switch to the object API (issue #1120)")
 		})
 
 		// ── *ordered.Map front matter through onPageRendered (issue #1120) ──
