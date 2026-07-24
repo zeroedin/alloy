@@ -168,29 +168,29 @@ export default function(alloy) {
     return html;
   }
 
-  alloy.hook("onPageRendered", { priority: 50, pages: true, pageFields: ["html"] }, async (html) => {
-    if (typeof html !== 'string') return html;
-    if (!/<wa-/.test(html) && !/<alloy-/.test(html)) return html;
+  alloy.hook("onPageRendered", { priority: 50, pages: true, pageFields: ["html"] }, async (page) => {
+    if (typeof page.html !== 'string') return page;
+    if (!/<wa-/.test(page.html) && !/<alloy-/.test(page.html)) return page;
 
     await ensureLoaded();
 
     try {
       const Renderer = createDeduplicatingRenderer();
-      const iterator = litRender(unsafeHTML(html), {
+      const iterator = litRender(unsafeHTML(page.html), {
         elementRenderers: [Renderer],
       });
       let result = [];
       for (const chunk of iterator) {
         result.push(chunk);
       }
-      html = trimOuterMarkers(result.join(''));
-      html = postProcess(html);
+      page.html = trimOuterMarkers(result.join(''));
+      page.html = postProcess(page.html);
     } catch (e) {
-      const m = html.match(/<title>([^<]*)<\/title>/);
-      const page = m ? m[1].trim() : '(unknown page)';
-      console.error(`[lit-ssr] SSR failed on "${page}": ${e.message}`);
+      const m = page.html.match(/<title>([^<]*)<\/title>/);
+      const title = m ? m[1].trim() : '(unknown page)';
+      console.error(`[lit-ssr] SSR failed on "${title}": ${e.message}`);
     }
 
-    return html;
+    return page;
   });
 }
