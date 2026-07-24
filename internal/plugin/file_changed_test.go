@@ -141,6 +141,56 @@ var _ = Describe("ParseFileChangedResult (issue #1100)", func() {
 					"return value — most dependency changes don't require "+
 					"a Node bridge restart (issue #1100)")
 		})
+
+		It("defaults restart to false for numeric value", func() {
+			// JS interop can produce numeric truthy values — a plugin
+			// returning restart: 1 is truthy in JS but fails Go's
+			// bool type assertion.
+			result := map[string]interface{}{
+				"invalidateByDependency": []interface{}{"a.js"},
+				"restart":               1,
+			}
+
+			parsed := plugin.ParseFileChangedResult(result)
+			Expect(parsed).NotTo(BeNil(),
+				"invalidateByDependency makes the result actionable even "+
+					"when restart has a non-boolean type")
+			Expect(parsed.Restart).To(BeFalse(),
+				"numeric restart value (1) must default to false — "+
+					"Go's type assertion to bool fails for int. The "+
+					"parser must not treat JS-truthy non-bool values as "+
+					"true (issue #1131)")
+		})
+
+		It("defaults restart to false for string value", func() {
+			result := map[string]interface{}{
+				"invalidateByDependency": []interface{}{"a.js"},
+				"restart":               "yes",
+			}
+
+			parsed := plugin.ParseFileChangedResult(result)
+			Expect(parsed).NotTo(BeNil())
+			Expect(parsed.Restart).To(BeFalse(),
+				"string restart value (\"yes\") must default to false — "+
+					"only Go bool true triggers a restart. String \"yes\" "+
+					"is truthy in JS but is not a valid restart value "+
+					"(issue #1131)")
+		})
+
+		It("defaults restart to false for nil value", func() {
+			result := map[string]interface{}{
+				"invalidateByDependency": []interface{}{"a.js"},
+				"restart":               nil,
+			}
+
+			parsed := plugin.ParseFileChangedResult(result)
+			Expect(parsed).NotTo(BeNil())
+			Expect(parsed.Restart).To(BeFalse(),
+				"nil restart value must default to false — nil fails "+
+					"Go's bool type assertion. A plugin returning "+
+					"restart: null (JS) or restart: undefined would "+
+					"produce nil in the Go map (issue #1131)")
+		})
 	})
 
 	Describe("combined fields", func() {
