@@ -254,8 +254,9 @@ var _ = Describe("Build Pipeline", func() {
 
 			Expect(os.WriteFile(filepath.Join(pluginsDir, "ssr-marker.js"),
 				[]byte(`export default function(alloy) {
-  alloy.hook('onPageRendered', {}, function(html) {
-    return html + '<!-- ssr-marker -->';
+  alloy.hook('onPageRendered', {}, function(page) {
+    page.html = page.html + '<!-- ssr-marker -->';
+    return page;
   });
 }`),
 				0644)).To(Succeed())
