@@ -348,17 +348,17 @@ permalink: "/tokens.css"
 
 This generates a CSS file from your design token data.
 
-## Transforming format output with plugins
+## Plugin hooks for formats
 
-`onPageRendered` fires only for HTML output. Non-HTML formats route through [`onFormatRendered`](/hooks/#onformatrendered) instead.
+`onPageRendered` fires only for HTML output. Non-HTML formats fire [`onFormatRendered`](/hooks/#onformatrendered) instead.
 
-| `outputs` value | Hooks that fire |
+| `outputs` value | Hook |
 |---|---|
 | `["html"]` (default) | `onPageRendered` |
 | `["json"]` | `onFormatRendered` |
-| `["html", "json"]` | Both — independently, one per format |
+| `["html", "json"]` | Both, independently |
 
-Return `{ content: "..." }` from `onFormatRendered` to replace the rendered body for that format. See the [hook reference](/hooks/#onformatrendered) for the full payload.
+Return `{ content: "..." }` from `onFormatRendered` to replace the rendered body. See the [`onFormatRendered` reference](/hooks/#onformatrendered) for payload fields and return value rules.
 
 ## Engine-specific notes
 
