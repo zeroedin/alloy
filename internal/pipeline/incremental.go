@@ -492,31 +492,97 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	}
 
 	if ps.Hooks != nil && ps.Hooks.HasHooks(plugin.OnPageRendered) {
-		payloads := make([]interface{}, len(pagesToRender))
-		for i, page := range pagesToRender {
-			payloads[i] = buildPageRenderedPayload(page)
+		var htmlPages []*content.Page
+		for _, page := range pagesToRender {
+			if pageHasHTMLOutput(page) {
+				htmlPages = append(htmlPages, page)
+			}
 		}
-		results, hookErr := ps.Hooks.RunBatchWithProgress(plugin.OnPageRendered, payloads, nil)
-		if hookErr != nil {
-			log.Printf("warning: plugin hook onPageRendered: %v", hookErr)
-		} else {
-			for i, result := range results {
-				if html, ok := extractPageRenderedHTML(result); ok {
-					pagesToRender[i].SetRenderedBody([]byte(html))
-				} else if result != nil {
-					log.Printf("warning: onPageRendered result for %s: expected page object with html key, got %T — plugin may need migration to the object API", pagesToRender[i].RelPath, result)
+		if len(htmlPages) > 0 {
+			payloads := make([]interface{}, len(htmlPages))
+			for i, page := range htmlPages {
+				payloads[i] = buildPageRenderedPayload(page)
+			}
+			results, hookErr := ps.Hooks.RunBatchWithProgress(plugin.OnPageRendered, payloads, nil)
+			if hookErr != nil {
+				log.Printf("warning: plugin hook onPageRendered: %v", hookErr)
+			} else {
+				for i, result := range results {
+					if html, ok := extractPageRenderedHTML(result); ok {
+						htmlPages[i].SetRenderedBody([]byte(html))
+					} else if result != nil {
+						log.Printf("warning: onPageRendered result for %s: expected page object with html key, got %T — plugin may need migration to the object API", htmlPages[i].RelPath, result)
+					}
 				}
+			}
+		}
+	}
+
+	if ps.Hooks != nil && ps.Hooks.HasHooks(plugin.OnFormatRendered) {
+		for _, page := range pagesToRender {
+			if len(page.FormatBodies) == 0 {
+				continue
+			}
+			fm := convertOrderedMaps(page.FrontMatter)
+			if fm == nil {
+				fm = map[string]interface{}{}
+			}
+			for _, format := range page.Outputs {
+				if format == "html" {
+					continue
+				}
+				body, ok := page.FormatBodies[format]
+				if !ok {
+					continue
+				}
+				currentContent := string(body)
+				hookErr := ps.Hooks.RunEachWithTimeout(plugin.OnFormatRendered,
+					func(_ int, _ *plugin.HookScope) interface{} {
+						return buildFormatRenderedPayload(page, format, currentContent, fm)
+					},
+					func(_ int, _ *plugin.HookScope, result interface{}) error {
+						if c, ok := extractFormatRenderedContent(result); ok {
+							currentContent = c
+						}
+						return nil
+					},
+				)
+				if hookErr != nil {
+					log.Printf("warning: plugin hook onFormatRendered (%s, %s): %v", page.RelPath, format, hookErr)
+				}
+				page.FormatBodies[format] = []byte(currentContent)
+			}
+		}
+	}
+
+	for _, page := range pagesToRender {
+		if !pageHasHTMLOutput(page) && len(page.FormatBodies) == 1 {
+			for _, body := range page.FormatBodies {
+				page.SetRenderedBody(body)
 			}
 		}
 	}
 
 	needsRenderedMap := options.CaptureRenderedContent || (cfg.SSR != nil && !options.SkipSSR)
 	var renderedContent map[string]string
+	var formatContent map[string]map[string]string
 	if needsRenderedMap {
 		renderedContent = make(map[string]string, len(pagesToRender))
 		for _, page := range pagesToRender {
 			if len(page.RenderedBody) > 0 {
 				renderedContent[renderedContentKey(page)] = page.HTML()
+			}
+		}
+	}
+	if options.CaptureRenderedContent {
+		formatContent = make(map[string]map[string]string)
+		for _, page := range pagesToRender {
+			if len(page.FormatBodies) > 0 {
+				key := renderedContentKey(page)
+				formatContent[key] = make(map[string]string, len(page.FormatBodies))
+				for format, body := range page.FormatBodies {
+					formatContent[key][format] = string(body)
+				}
 			}
 		}
 	}
@@ -711,6 +777,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		SSRSkipped:       ssrSkipped,
 		PagesRendered:    rendered,
 		RenderedContent:  capturedContent,
+		FormatContent:    formatContent,
 		Cache:            buildCache,
 		SiteData:         ps.SiteData,
 	}
