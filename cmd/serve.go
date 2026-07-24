@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
@@ -70,6 +71,13 @@ func newServeCommand() *cobra.Command {
 				}
 			}
 
+			// Check for another running alloy instance (issue #1094)
+			if warnings := server.CheckAndWarnLockfile(cfg.ProjectRoot); len(warnings) > 0 {
+				for _, w := range warnings {
+					fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+				}
+			}
+
 			// Production server always excludes drafts
 			cfg.IncludeDrafts = false
 
@@ -100,6 +108,16 @@ func newServeCommand() *cobra.Command {
 			actualPort, err := srv.StartWithPortFallback(port, 10)
 			if err != nil {
 				return err
+			}
+
+			// Write server lockfile after successful start (issue #1094)
+			if err := server.WriteLockfile(cfg.ProjectRoot, server.LockfileInfo{
+				PID:       os.Getpid(),
+				Port:      actualPort,
+				Mode:      "serve",
+				StartedAt: time.Now().Format(time.RFC3339),
+			}); err != nil {
+				log.Printf("warning: write server lockfile: %v", err)
 			}
 
 			if !cfg.Quiet {
@@ -158,6 +176,8 @@ func newServeCommand() *cobra.Command {
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 			<-sigCh
+
+			server.RemoveLockfile(cfg.ProjectRoot)
 
 			if !cfg.Quiet {
 				fmt.Fprintln(cmd.OutOrStdout(), "\nShutting down...")
