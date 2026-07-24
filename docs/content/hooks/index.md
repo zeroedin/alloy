@@ -335,13 +335,22 @@ alloy.hook("onContentTransformed", {}, (page) => {
 
 #### onPageRendered
 
-Fires after template rendering produces the final page HTML. Receives an HTML string and returns an HTML string.
+Fires after template rendering produces the final page HTML. Receives a page object with `html`, `frontMatter`, `url`, and `path`. Only `html` in the return is applied back -- `frontMatter`, `url`, and `path` are read-only context.
 
 ```javascript
-alloy.hook("onPageRendered", {}, (html) => {
-  return html.replace(/\s+/g, ' ').trim();
+alloy.hook("onPageRendered", {}, (page) => {
+  if (page.frontMatter.layout === "demo") return page;
+  page.html = page.html.replace(/<h2/g, '<h2 class="styled"');
+  return page;
 });
 ```
+
+| Field | Type | Mutable | Description |
+|---|---|---|---|
+| `html` | string | yes | Final rendered HTML |
+| `frontMatter` | object | no | Page front matter (read-only context) |
+| `url` | string | no | Page URL |
+| `path` | string | no | Source-relative file path |
 
 Return values can include `addDependencies` to declare external file dependencies for incremental rebuilds during `alloy dev`:
 
@@ -357,6 +366,47 @@ alloy.hook("onPageRendered", {}, (page) => {
   };
 });
 ```
+
+Pages whose `outputs` contains only non-HTML formats (e.g., `outputs: ["json"]`) skip `onPageRendered` entirely. Those pages route through `onFormatRendered` instead.
+
+#### onFormatRendered
+
+Fires once per non-HTML format body after layout rendering. Pages that declare non-HTML entries in their `outputs` front matter (e.g., `"json"`, `"xml"`) have each format body dispatched through this hook individually.
+
+```javascript
+alloy.hook("onFormatRendered", {}, (payload) => {
+  if (payload.format === "json") {
+    // Minify JSON output
+    return { content: JSON.stringify(JSON.parse(payload.content)) };
+  }
+});
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `format` | string | Output format extension (`"json"`, `"xml"`, etc.) |
+| `content` | string | Rendered format body |
+| `url` | string | Page URL |
+| `path` | string | Source-relative file path |
+| `frontMatter` | object | Page front matter (read-only context) |
+
+**Return value:**
+
+| Return | Effect |
+|---|---|
+| `{ content: "..." }` | Replaces the format body in output |
+| `null` / `undefined` | Keeps the original content |
+| Object without `content` key | Keeps the original content |
+
+Only the `content` field is applied back. The `format`, `url`, `path`, and `frontMatter` fields are read-only context for conditional processing.
+
+**Iteration order:** When a page declares multiple non-HTML formats, `onFormatRendered` fires in the order formats appear in the page's `outputs` array, not in arbitrary map iteration order. Front matter is converted once per page and reused across all format invocations for that page.
+
+**Relationship to `onPageRendered`:**
+
+- `onPageRendered` fires only for pages whose `outputs` includes `"html"` (or defaults to `["html"]`). Pages with only non-HTML outputs skip `onPageRendered` entirely.
+- A page with `outputs: ["json"]` routes through `onFormatRendered` only.
+- A page with `outputs: ["html", "json"]` fires both hooks independently -- `onPageRendered` for the HTML body, then `onFormatRendered` for each non-HTML format.
 
 #### Dependency Tracking
 

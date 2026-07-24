@@ -22,14 +22,14 @@ export default function(alloy) {
       .replace(/&amp;/g, '&');
   }
 
-  alloy.hook("onPageRendered", { priority: 10, pages: true, pageFields: ["html"] }, async (html) => {
-    if (typeof html !== 'string') return html;
-    if (!/<alloy-code/.test(html)) return html;
+  alloy.hook("onPageRendered", { priority: 10, pages: true, pageFields: ["html"] }, async (page) => {
+    if (typeof page.html !== 'string') return page;
+    if (!/<alloy-code/.test(page.html)) return page;
 
     await ensureShiki();
 
     const re = /<alloy-code([^>]*)>([\s\S]*?)<\/alloy-code>/g;
-    const matches = [...html.matchAll(re)];
+    const matches = [...page.html.matchAll(re)];
 
     for (const m of matches) {
       const [full, attrs, content] = m;
@@ -50,16 +50,16 @@ export default function(alloy) {
             // #6a737d (comments) fails WCAG AA against #1e1e22 bg (3.45:1); #8b949e passes (5.40:1)
             colorReplacements: { 'github-dark': { '#6a737d': '#8b949e' } },
           });
-          html = html.replace(full, `<alloy-code${attrs}>${highlighted}</alloy-code>`);
+          page.html = page.html.replace(full, `<alloy-code${attrs}>${highlighted}</alloy-code>`);
           continue;
         } catch {
           // language not supported — fall through to plain wrap
         }
       }
 
-      html = html.replace(full, `<alloy-code${attrs}><pre><code>${content.trim()}</code></pre></alloy-code>`);
+      page.html = page.html.replace(full, `<alloy-code${attrs}><pre><code>${content.trim()}</code></pre></alloy-code>`);
     }
 
-    return html;
+    return page;
   });
 }
