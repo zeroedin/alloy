@@ -64,7 +64,8 @@
     "layouts": "layouts",
     "assets": "assets",
     "static": "static",
-    "data": "data"
+    "data": "data",
+    "components": "components"
   },
   "collections": {
     "blog": {

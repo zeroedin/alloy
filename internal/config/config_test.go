@@ -186,6 +186,8 @@ var _ = Describe("Config", func() {
 				Expect(cfg.Structure.Assets).To(Equal("assets"))
 				Expect(cfg.Structure.Static).To(Equal("static"))
 				Expect(cfg.Structure.Data).To(Equal("data"))
+				Expect(cfg.Structure.Components).To(Equal("components"),
+					"YAML must parse structure.components (issue #1116)")
 			})
 
 			It("parses collections config with sortBy and order", func() {
@@ -228,6 +230,8 @@ var _ = Describe("Config", func() {
 				Expect(tomlCfg.Title).To(Equal("Test Site"))
 				Expect(tomlCfg.BaseURL).To(Equal("https://example.com"))
 				Expect(tomlCfg.Build.Output).To(Equal("_site"))
+				Expect(tomlCfg.Structure.Components).To(Equal("components"),
+					"TOML must parse structure.components the same as YAML (issue #1116)")
 			})
 		})
 
@@ -239,6 +243,8 @@ var _ = Describe("Config", func() {
 				Expect(jsonCfg.Title).To(Equal("Test Site"))
 				Expect(jsonCfg.BaseURL).To(Equal("https://example.com"))
 				Expect(jsonCfg.Build.Output).To(Equal("_site"))
+				Expect(jsonCfg.Structure.Components).To(Equal("components"),
+					"JSON must parse structure.components the same as YAML (issue #1116)")
 			})
 		})
 
@@ -398,6 +404,39 @@ structure:
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cfg.Structure.Components).To(Equal("elements"),
 				"structure.components must parse custom directory path from config (issue #1099)")
+		})
+
+		It("parses structure.components from TOML config (issue #1116)", func() {
+			dir := GinkgoT().TempDir()
+			configContent := `title = "Component Config Test"
+baseURL = "https://example.com"
+
+[structure]
+components = "elements"
+`
+			Expect(os.WriteFile(filepath.Join(dir, "alloy.config.toml"), []byte(configContent), 0644)).To(Succeed())
+
+			cfg, err := config.Load(filepath.Join(dir, "alloy.config.toml"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Structure.Components).To(Equal("elements"),
+				"structure.components must parse custom directory path from TOML config (issue #1116)")
+		})
+
+		It("parses structure.components from JSON config (issue #1116)", func() {
+			dir := GinkgoT().TempDir()
+			configContent := `{
+  "title": "Component Config Test",
+  "baseURL": "https://example.com",
+  "structure": {
+    "components": "elements"
+  }
+}`
+			Expect(os.WriteFile(filepath.Join(dir, "alloy.config.json"), []byte(configContent), 0644)).To(Succeed())
+
+			cfg, err := config.Load(filepath.Join(dir, "alloy.config.json"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Structure.Components).To(Equal("elements"),
+				"structure.components must parse custom directory path from JSON config (issue #1116)")
 		})
 
 		It("ApplyDefaults sets structure.components when empty", func() {
