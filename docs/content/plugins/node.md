@@ -295,6 +295,32 @@ Auto-scaling uses `min(CPU_count / 2, 8)` with a floor of 2. Each worker loads t
 
 Only Tier 3 (Node subprocess) plugins use the worker pool -- Tier 2 plugins run in-process.
 
+## Restarting on File Changes
+
+Return `{ restart: true }` from an `onFileChanged` hook to kill and respawn all Node bridge workers before the rebuild. Alloy re-imports every plugin file, which clears Node's ESM module cache so `import()` loads the changed code.
+
+SSR plugins that import component definitions at startup need this. Without it, the workers keep serving stale modules.
+
+```javascript
+// plugins/element-watcher.js
+export const runtime = "node";
+
+export default function(alloy) {
+  alloy.hook("onFileChanged", {}, (events) => {
+    const changed = events
+      .filter(ev => ev.Path.startsWith("elements/") && ev.Path.endsWith(".js"))
+      .map(ev => ev.Path);
+    if (changed.length > 0) {
+      return { invalidateByDependency: changed, restart: true };
+    }
+  });
+}
+```
+
+`restart` only affects Node (Tier 3) plugins. QuickJS and WASM plugins run in-process with no subprocess state.
+
+See [`onFileChanged`](/hooks/#onfilechanged) for the full return value API.
+
 ## Module Resolution
 
 The Alloy bridge script is written to `.alloy/bridge.js` in your project root. This ensures ESM `import()` resolves packages from your project's `node_modules/`. Both `import` and dynamic `import()` work:
