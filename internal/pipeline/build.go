@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/yuin/goldmark"
@@ -885,107 +884,12 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
-	// Fire onPageRendered hooks only for pages whose Outputs includes "html"
-	// (or defaults to ["html"]). Pages with only non-HTML outputs skip this
-	// hook entirely (issue #1102).
-	if ps.Hooks.HasHooks(plugin.OnPageRendered) {
-		timer.Start("Post-render hooks")
-		var htmlPages []*content.Page
-		for _, page := range pages {
-			if pageHasHTMLOutput(page) {
-				htmlPages = append(htmlPages, page)
-			}
-		}
-		if len(htmlPages) > 0 {
-			reportStartStage(reporter, "Transforms", len(htmlPages))
-			payloads := make([]interface{}, len(htmlPages))
-			for i, page := range htmlPages {
-				payloads[i] = buildPageRenderedPayload(page)
-			}
-			var progressFn plugin.BatchProgressFunc
-			if reporter != nil {
-				var mu sync.Mutex
-				var highWater int
-				progressFn = func(completed, total int) {
-					mu.Lock()
-					if completed > highWater {
-						highWater = completed
-						reportUpdate(reporter, completed, "", 0)
-					}
-					mu.Unlock()
-				}
-			}
-			results, err := ps.Hooks.RunBatchWithProgress(plugin.OnPageRendered, payloads, progressFn)
-			if err != nil {
-				return nil, fmt.Errorf("plugin hook onPageRendered: %w", err)
-			}
-			for i, result := range results {
-				if m, ok := toGoMap(result); ok {
-					if html, ok := m["html"].(string); ok {
-						htmlPages[i].SetRenderedBody([]byte(html))
-					}
-					extractAddDependencies(m, htmlPages[i].RelPath, buildCache)
-				} else if result != nil {
-					log.Printf("warning: onPageRendered result for %s: expected page object with html key, got %T — plugin may need migration to the object API", htmlPages[i].RelPath, result)
-				}
-			}
-			reportEndStage(reporter)
-		}
-	}
-
-	// Fire onFormatRendered hooks for each non-HTML format body (issue #1102).
-	// Dispatched per-format-body (iterates pages × formats) — each
-	// invocation receives { format, content, url, path, frontMatter }.
-	// Only "content" from the return value is applied back; other fields
-	// are read-only. Uses RunEachWithTimeout to rebuild the payload
-	// between hooks so mutations to read-only fields are not propagated.
-	if ps.Hooks.HasHooks(plugin.OnFormatRendered) {
-		for _, page := range pages {
-			if len(page.FormatBodies) == 0 {
-				continue
-			}
-			fm := convertOrderedMaps(page.FrontMatter)
-			if fm == nil {
-				fm = map[string]interface{}{}
-			}
-			for _, format := range page.Outputs {
-				if format == "html" {
-					continue
-				}
-				body, ok := page.FormatBodies[format]
-				if !ok {
-					continue
-				}
-				currentContent := string(body)
-				err := ps.Hooks.RunEachWithTimeout(plugin.OnFormatRendered,
-					func(_ int, _ *plugin.HookScope) interface{} {
-						return buildFormatRenderedPayload(page, format, currentContent, fm)
-					},
-					func(_ int, _ *plugin.HookScope, result interface{}) error {
-						if c, ok := extractFormatRenderedContent(result); ok {
-							currentContent = c
-						}
-						return nil
-					},
-				)
-				if err != nil {
-					return nil, fmt.Errorf("plugin hook onFormatRendered (%s, %s): %w", page.RelPath, format, err)
-				}
-				page.FormatBodies[format] = []byte(currentContent)
-			}
-		}
-	}
-
-	// Single non-HTML pages (e.g., outputs: ["json"]) have no HTML body —
-	// apply the sole format body back as the rendered body so it appears
-	// in RenderedContent and is written to disk. Runs unconditionally
-	// regardless of whether onFormatRendered hooks are registered.
-	for _, page := range pages {
-		if !pageHasHTMLOutput(page) && len(page.FormatBodies) == 1 {
-			for _, body := range page.FormatBodies {
-				page.SetRenderedBody(body)
-			}
-		}
+	// Dispatch onPageRendered, onFormatRendered, and single-format writeback.
+	timer.Start("Post-render hooks")
+	if err := dispatchPostRenderHooks(pages, ps.Hooks, buildCache, reporter, func(err error) error {
+		return err
+	}); err != nil {
+		return nil, err
 	}
 
 	// Phase 2: SSR runs when configured and BuildOptions.SkipSSR is false.
