@@ -584,6 +584,168 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Multi-build dependency persistence (issue #1145) ────────────
+	//
+	// This validates that dependency tracking survives across multiple
+	// incremental builds — specifically the scenario where Build N
+	// skips a page (no content change, no dependency change) and
+	// Build N+1 changes that page's dependency. The skipped page's
+	// dependencies must persist in the cache so that the subsequent
+	// build correctly identifies it for re-rendering.
+	//
+	// This is the exact scenario that triggered the P1
+	// ClearDependencies bug (fixed in 8411e8e). Without the fix,
+	// ClearDependencies would wipe dependency entries for skipped
+	// pages, and Build 3 wouldn't know to rebuild them.
+
+	Describe("Multi-build dependency persistence (issue #1145)", func() {
+
+		It("rebuilds dependency-tracked page in Build 3 after Build 2 skipped it", func() {
+			tmpDir, cfg := setupDepTrackingProject()
+
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			pipelineState, psErr := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(psErr).NotTo(HaveOccurred())
+
+			// Build 1: initial — all pages rendered, deps tracked.
+			result1, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Sanity: all 3 pages rendered
+			Expect(result1.RenderedContent).To(HaveKey("index.md"),
+				"sanity: initial build must render index.md")
+			Expect(result1.RenderedContent).To(HaveKey("about.md"),
+				"sanity: initial build must render about.md")
+			Expect(result1.RenderedContent).To(HaveKey("blog.md"),
+				"sanity: initial build must render blog.md")
+
+			// Sanity: deps tracked
+			Expect(result1.Cache.PagesForDependency("elements/rh-icon/rh-icon.js")).To(
+				ConsistOf("index.md", "about.md"),
+				"sanity: initial build must track icon dependency for both pages")
+
+			// Build 2: only blog.md content changed — no dependency files changed.
+			// index.md and about.md must be SKIPPED (content unchanged, deps unchanged).
+			Expect(os.WriteFile(filepath.Join(tmpDir, "content", "blog.md"),
+				[]byte("---\ntitle: Blog Updated\nlayout: default\n---\n# Blog Updated\nStill no components."),
+				0644)).To(Succeed())
+
+			result2, err := pipeline.BuildIncremental(cfg, nil, result1.Cache,
+				[]string{"content/blog.md"},
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
+			Expect(err).NotTo(HaveOccurred())
+
+			// blog.md content changed → rendered
+			Expect(result2.RenderedContent).To(HaveKey("blog.md"),
+				"Build 2: blog.md content changed → must be re-rendered")
+
+			// index.md and about.md SKIPPED in Build 2
+			Expect(result2.RenderedContent).NotTo(HaveKey("index.md"),
+				"Build 2: index.md content unchanged, deps unchanged → must be skipped")
+			Expect(result2.RenderedContent).NotTo(HaveKey("about.md"),
+				"Build 2: about.md content unchanged, deps unchanged → must be skipped")
+
+			// Build 3: rh-icon.js dependency changed — NO content files changed.
+			// index.md and about.md were SKIPPED in Build 2 but they depend on
+			// rh-icon.js. Their dependency entries must have survived Build 2's
+			// cache operations so that Build 3 correctly rebuilds them.
+			result3, err := pipeline.BuildIncremental(cfg, nil, result2.Cache,
+				[]string{"elements/rh-icon/rh-icon.js"},
+				pipeline.BuildOptions{PipelineState: pipelineState, CaptureRenderedContent: true})
+			Expect(err).NotTo(HaveOccurred())
+
+			// index.md: depends on rh-icon.js which changed → MUST rebuild
+			Expect(result3.RenderedContent).To(HaveKey("index.md"),
+				"Build 3: index.md depends on rh-icon.js which changed — "+
+					"even though index.md was skipped in Build 2, its "+
+					"dependency entries must have persisted in the cache so "+
+					"Build 3 knows to rebuild it. This validates the "+
+					"ClearDependencies fix (8411e8e) — without it, skipped "+
+					"pages lose their dependency tracking (issue #1145)")
+
+			// about.md: depends on rh-icon.js which changed → MUST rebuild
+			Expect(result3.RenderedContent).To(HaveKey("about.md"),
+				"Build 3: about.md depends on rh-icon.js which changed — "+
+					"even though about.md was skipped in Build 2, its "+
+					"dependency entries must have persisted. Without the "+
+					"ClearDependencies fix, about.md would be silently "+
+					"skipped and users would see stale SSR output (issue #1145)")
+
+			// blog.md: content unchanged since Build 2, no dep on rh-icon.js → skip
+			Expect(result3.RenderedContent).NotTo(HaveKey("blog.md"),
+				"Build 3: blog.md has no dependency on rh-icon.js and its "+
+					"content is unchanged since Build 2 — must be skipped")
+		})
+	})
+
+	// ── Non-normalized dependency paths (issue #1145) ────────────────
+	//
+	// Plugins may return dependency paths with leading ./ or redundant
+	// parent traversals (e.g., ./data.json, data/../data.json). The
+	// extractAddDependencies function normalizes these via
+	// filepath.ToSlash(filepath.Clean(depPath)). This test verifies
+	// that a plugin returning ./data.json as a dependency matches a
+	// lookup with the normalized form data.json.
+
+	Describe("Non-normalized dependency paths (issue #1145)", func() {
+
+		It("normalizes ./data.json to data.json for store-vs-lookup matching", func() {
+			// Plugin that returns a non-normalized dependency path
+			// with a leading ./
+			pluginJS := `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return {
+      html: page.html,
+      addDependencies: ['./data.json']
+    };
+  });
+}`
+			cfg := setupWithPlugin(pluginJS)
+
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Cache).NotTo(BeNil())
+
+			// The plugin returns ./data.json but the cache must store
+			// the normalized form. PagesForDependency lookup uses the
+			// incoming path as-is, so the changedFiles path (data.json,
+			// without ./) must match.
+			pages := result.Cache.PagesForDependency("data.json")
+			Expect(pages).To(ConsistOf("index.md"),
+				"extractAddDependencies must normalize ./data.json to data.json "+
+					"via filepath.Clean — without normalization, a plugin "+
+					"returning './data.json' would never match a changedFiles "+
+					"entry of 'data.json' and the page would never be rebuilt "+
+					"when data.json changes (issue #1145)")
+		})
+
+		It("normalizes redundant parent traversals in dependency paths", func() {
+			// Plugin that returns a path with data/../data.json
+			pluginJS := `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return {
+      html: page.html,
+      addDependencies: ['data/../data.json']
+    };
+  });
+}`
+			cfg := setupWithPlugin(pluginJS)
+
+			result, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Cache).NotTo(BeNil())
+
+			pages := result.Cache.PagesForDependency("data.json")
+			Expect(pages).To(ConsistOf("index.md"),
+				"extractAddDependencies must normalize data/../data.json to "+
+					"data.json via filepath.Clean — redundant parent traversals "+
+					"must be collapsed so the stored path matches the lookup "+
+					"path used by BuildIncremental (issue #1145)")
+		})
+	})
+
 	// ── onFileChanged return value processing (issue #1100) ────────
 	//
 	// The onFileChanged hook changes from read-only to actionable.
