@@ -272,9 +272,16 @@ func newDevCommand() *cobra.Command {
 				// Restart Node bridges before rebuild when the plugin
 				// requested it — clears Node's ESM module cache so
 				// import()ed component definitions are re-read (issue #1100).
+				// On failure, show an overlay error and skip the rebuild —
+				// proceeding with stale bridges would produce wrong output.
 				if needsRestart {
 					if err := registry.RestartNodeRuntimes(); err != nil {
 						log.Printf("warning: restarting Node bridge: %v", err)
+						srv.Overlay().SetErrors([]server.BuildError{
+							{Message: err.Error(), Stage: "runtime restart"},
+						})
+						srv.BroadcastReload()
+						return
 					}
 				}
 
@@ -308,7 +315,9 @@ func newDevCommand() *cobra.Command {
 					for _, ev := range events {
 						changedFiles = append(changedFiles, ev.Path)
 					}
-					changedFiles = append(changedFiles, depInvalidPaths...)
+					for _, dp := range depInvalidPaths {
+						changedFiles = append(changedFiles, filepath.ToSlash(filepath.Clean(dp)))
+					}
 					if incrResult, err := pipeline.BuildIncremental(cfg, nil, previousCache, changedFiles, pipeline.BuildOptions{SkipSSR: true, PipelineState: ps, Reporter: reporter}); err != nil {
 						log.Printf("rebuild failed: %v", err)
 						srv.Overlay().SetErrors([]server.BuildError{

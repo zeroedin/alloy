@@ -207,14 +207,15 @@ func (r *Registry) Runtimes() []PluginFilterRuntime {
 // restart: true — the plugin's import()ed dependencies have changed on
 // disk and the Node process must re-import them (issue #1100).
 func (r *Registry) RestartNodeRuntimes() error {
+	var firstErr error
 	for _, rt := range r.runtimes {
 		if nr, ok := rt.(*NodeRuntime); ok {
-			if err := nr.Restart(); err != nil {
-				return err
+			if err := nr.Restart(); err != nil && firstErr == nil {
+				firstErr = err
 			}
 		}
 	}
-	return nil
+	return firstErr
 }
 
 // Close releases resources held by all loaded runtimes and any
