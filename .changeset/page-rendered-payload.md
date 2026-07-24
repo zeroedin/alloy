@@ -2,20 +2,16 @@
 type: minor
 ---
 
-`onPageRendered` now sends a page object instead of a raw HTML string. The payload shape is `{ html, frontMatter, url, path }`. Only `html` in the return is applied back — `frontMatter`, `url`, and `path` are read-only context for conditional processing.
+**Breaking:** `onPageRendered` sends a page object `{ html, frontMatter, url, path }` instead of a raw HTML string. Only `html` in the return is applied back — `frontMatter`, `url`, and `path` are read-only context.
 
-```js
-// Before (≤ v0.5.x):
-alloy.hook("onPageRendered", {}, (html) => {
-  return html.replace(/<h2/g, '<h2 class="styled"');
-});
-
-// After:
+```javascript
 alloy.hook("onPageRendered", {}, (page) => {
-  if (page.frontMatter.skipTransforms) return page;
+  if (page.frontMatter.layout === "demo") return page;
   page.html = page.html.replace(/<h2/g, '<h2 class="styled"');
   return page;
 });
 ```
 
-Plugins that conditionally process pages (e.g., skip transforms on demo pages, apply different logic based on layout) no longer need to embed markers in the HTML itself. Check `page.frontMatter` directly instead.
+Plugins that conditionally process pages can read `page.frontMatter` to decide whether to transform. Both `Build()` and `BuildIncremental()` send the same payload shape.
+
+Previously, the hook received a raw HTML string. Plugins that needed to skip certain pages had to embed `<meta>` markers in layout HTML and strip them downstream.
