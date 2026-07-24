@@ -28,6 +28,16 @@ func RegisterRuntime(reg *Registry, rt PluginFilterRuntime, name string, hooks *
 	reg.registerRuntime(rt, name, hooks)
 }
 
+// SetPluginPaths replaces a NodeRuntime's pluginPaths for testing restart error paths.
+func SetPluginPaths(r *NodeRuntime, paths []string) {
+	r.pluginPaths = paths
+}
+
+// AppendPluginPath appends a single path to a NodeRuntime's pluginPaths for testing.
+func AppendPluginPath(r *NodeRuntime, path string) {
+	r.pluginPaths = append(r.pluginPaths, path)
+}
+
 // HookPriorities returns the priorities of all registered hooks for a given event.
 func HookPriorities(r *HookRegistry, event HookName) []int {
 	hooks := r.hooks[event]
