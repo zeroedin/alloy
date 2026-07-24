@@ -70,6 +70,7 @@ structure:
   assets: "assets"
   static: "static"
   data: "data"
+  components: "components"
 
 collections:
   blog:

@@ -63,6 +63,7 @@ layouts = "layouts"
 assets = "assets"
 static = "static"
 data = "data"
+components = "components"
 
 [collections.blog]
 sortBy = "date"
