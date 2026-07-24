@@ -532,16 +532,6 @@ func buildPageRenderedPayload(page *content.Page) plugin.HookRenderedPayload {
 	}
 }
 
-// extractPageRenderedHTML extracts the html field from an onPageRendered hook result.
-// The result may be a map[string]interface{} or *ordered.Map depending on the runtime.
-func extractPageRenderedHTML(result interface{}) (string, bool) {
-	if m, ok := toGoMap(result); ok {
-		html, ok := m["html"].(string)
-		return html, ok
-	}
-	return "", false
-}
-
 // extractAddDependencies extracts the addDependencies array from a hook
 // result map and tracks each valid path in the build cache (issue #1100).
 // Non-array values are ignored with a warning. Non-string entries within
