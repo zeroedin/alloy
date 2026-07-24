@@ -1283,7 +1283,8 @@ Data cascade and front matter are already assembled from Phase 0; taxonomy data 
 15. **Template Resolution** — Match each content file to its layout (lookup order)
 16. **Content Template Rendering** — Content body is rendered through the template engine with page data + site data context, producing an HTML string.
 17. **Layout Rendering** — The rendered content HTML is injected into the resolved layout as `{{ content }}` (Liquid) or `{{ .content }}` (Go), then the layout is rendered. Content and layout have isolated scopes — variables defined in content do not leak into layout or vice versa.
-18. **Plugin Hook: `onPageRendered`** — Plugins can post-process intermediate page HTML. Fires once per page with an object payload: `{ html, frontMatter, url, path }` (see Lifecycle Events in §5 for payload contract). Only `html` in the return is applied back — other fields are read-only context for conditional processing (issue #1095).
+18. **Plugin Hook: `onPageRendered`** — Plugins can post-process intermediate page HTML. Fires once per page **only when the page has HTML output** — i.e., `page.Outputs` is nil/empty (defaults to `["html"]`) or contains `"html"` (issue #1102). Pages with only non-HTML outputs (e.g., `outputs: ["json"]`) are excluded. Payload: `{ html, frontMatter, url, path }` (see Lifecycle Events in §5 for payload contract). Only `html` in the return is applied back — other fields are read-only context for conditional processing (issue #1095).
+19. **Plugin Hook: `onFormatRendered`** — Fires once per non-HTML format body (issue #1102). For pages with `outputs: ["html", "json"]`, fires once with format `"json"`. For pages with `outputs: ["html", "json", "xml"]`, fires twice — once for `"json"`, once for `"xml"`. For pages with only non-HTML outputs (e.g., `outputs: ["json"]`), fires once with the page's rendered body as content and the output format string. Does not fire for HTML-only pages (default). Payload: `{ format, content, url, path, frontMatter }`. Only `content` in the return is applied back — `format`, `url`, `path`, and `frontMatter` are read-only context. See Lifecycle Events in §5 for full payload contract.
 
 **Phase 2 — SSR Transform (opt-in, only runs if `ssr:` is configured)**
 
@@ -2191,7 +2192,7 @@ Not all page filtering modes are available on all hooks. Two constraints apply:
 1. **Pageless hooks** (`onConfig`, `onBeforeValidation`, `onAfterValidation`, `onDataFetched`, `onAssetProcess`, `onBuildComplete`, `onDevServerStart`, `onFileChanged`) do not receive pages — any page scope mode other than `PagesScopeNone` (`pages: false`) produces a validation warning at plugin load time. `pageFields` is meaningless on these hooks (no pages to filter fields from). `data` remains valid — pageless hooks like `onDataFetched` use `{data: ["elements"]}` to request site data in the payload. Omitting the `pages` key (or passing `null`) defaults to `PagesScopeNone`, so `{}` and `{data: [...]}` scopes on pageless hooks do not warn.
 2. **Pre-taxonomy hooks** that do receive pages (`onPagesReady`) cannot use taxonomy filtering because taxonomy indices are built during step 10 (`BuildTaxonomies`).
 
-Per-page hooks (`onContentTransformed`, `onPageRendered`) fire once per page with a fixed payload shape — `pages`/`pageFields` scope does not apply (the pipeline already knows which page to serialize). Both hooks receive a page object (`{ html, frontMatter, url, path }` for `onPageRendered`; `{ html, toc, path, url, frontMatter }` for `onContentTransformed`). Scope options on per-page hooks are limited to `data` (site data subset) and `priority`.
+Per-page hooks (`onContentTransformed`, `onPageRendered`, `onFormatRendered`) fire once per page (or once per format body for `onFormatRendered`) with a fixed payload shape — `pages`/`pageFields` scope does not apply (the pipeline already knows which page to serialize). `onPageRendered` receives `{ html, frontMatter, url, path }`, `onContentTransformed` receives `{ html, toc, path, url, frontMatter }`, and `onFormatRendered` receives `{ format, content, url, path, frontMatter }`. Scope options on per-page hooks are limited to `data` (site data subset) and `priority`.
 
 | Hook | Pipeline step | Pages in payload | Glob filter | Taxonomy filter |
 |---|:---:|:---:|:---:|:---:|
@@ -2203,8 +2204,9 @@ Per-page hooks (`onContentTransformed`, `onPageRendered`) fire once per page wit
 | `onContentLoaded` | 11+ | yes (batch) | yes | yes |
 | `onDataCascadeReady` | 11+ | yes (batch) | yes | yes |
 | `onContentTransformed` | 12+ | yes (per-page) | n/a | n/a |
-| `onPageRendered` | 14+ | yes (per-page) | n/a | n/a |
-| `onAssetProcess` | 16+ | no (per-asset) | n/a | n/a |
+| `onPageRendered` | 18 | yes (per-page, HTML only) | n/a | n/a |
+| `onFormatRendered` | 19 | yes (per-format) | n/a | n/a |
+| `onAssetProcess` | 21+ | no (per-asset) | n/a | n/a |
 | `onBuildComplete` | 24 | no | n/a | n/a |
 | `onDevServerStart` | — | no | n/a | n/a |
 | `onFileChanged` | — | no | n/a | n/a |
@@ -2391,7 +2393,7 @@ For plugins that need Node-specific capabilities:
 
 Alloy scans `plugins/` for `.js` and `.ts` files that export `runtime: "node"`. If any are found, it spawns subprocess workers that load all of them. If none are found, no Node process is started — zero overhead. Communicates via stdin/stdout using length-prefixed JSON-RPC (LSP-style framing). Plugin stderr is redirected to `.alloy/plugin.log`.
 
-**Worker pool for per-page hooks (issue #491)**: For hooks that fire per page (`onPageRendered`, `onContentTransformed`), Alloy distributes pages across multiple subprocess workers. Each worker loads the same plugins and processes a contiguous chunk of pages. This parallelizes the single largest build cost — SSR and HTML transforms.
+**Worker pool for per-page hooks (issue #491)**: For hooks that fire per page (`onPageRendered`, `onContentTransformed`, `onFormatRendered`), Alloy distributes pages across multiple subprocess workers. Each worker loads the same plugins and processes a contiguous chunk of pages. This parallelizes the single largest build cost — SSR and HTML transforms.
 
 ```yaml
 plugins:
@@ -2464,12 +2466,13 @@ Hooks receive JSON-serializable payloads so they work across all plugin tiers (G
 
 #### Per-page hooks (page object)
 
-These fire **once per page**. `onContentTransformed` receives a page-scoped object (mutable — fires before layout, page data still matters). The payload contains only page data — no `site`, `collections`, or `taxonomies`. Site-level mutations belong in `onConfig` or `onAfterValidation`. `onPageRendered` receives a page object with front matter for conditional post-processing (issue #1095). Only the `html` field in the return is applied back — `frontMatter`, `url`, and `path` are read-only context.
+These fire **once per page** (or once per format body for `onFormatRendered`). `onContentTransformed` receives a page-scoped object (mutable — fires before layout, page data still matters). The payload contains only page data — no `site`, `collections`, or `taxonomies`. Site-level mutations belong in `onConfig` or `onAfterValidation`. `onPageRendered` receives a page object with front matter for conditional post-processing (issue #1095). Only the `html` field in the return is applied back — `frontMatter`, `url`, and `path` are read-only context. **`onPageRendered` fires only for pages with HTML output** — pages whose `Outputs` does not include `"html"` are excluded (issue #1102). `onFormatRendered` fires once per non-HTML format body with the format string in the payload (issue #1102).
 
 | Event | Payload | Returns | When |
 |---|---|---|---|
 | `onContentTransformed` | `{ html, toc, path, url, frontMatter }` | Same shape (mutable) | After Markdown→HTML, before layout. Plugin modifies rendered content, TOC, or front matter. |
-| `onPageRendered` | `{ html, frontMatter, url, path }` | `{ html }` (only `html` applied back) | After template rendering. Plugin post-processes final output with front matter context for conditional transforms (issue #1095). |
+| `onPageRendered` | `{ html, frontMatter, url, path }` | `{ html }` (only `html` applied back) | After template rendering, **HTML output only** (issue #1102). Plugin post-processes final HTML with front matter context for conditional transforms. Pages with only non-HTML outputs (e.g., `outputs: ["json"]`) are excluded — use `onFormatRendered` for those. |
+| `onFormatRendered` | `{ format, content, url, path, frontMatter }` | `{ content }` (only `content` applied back) | After format rendering (issue #1102). Fires once per non-HTML format body. `format` is the output format string (e.g., `"json"`, `"xml"`). For pages with only non-HTML outputs, fires for the primary rendered body. Does not fire for HTML-only pages. |
 
 ```javascript
 // Example: add lazy loading + build TOC for non-markdown pages
@@ -2497,7 +2500,33 @@ alloy.hook("onPageRendered", {}, (page) => {
   page.html = page.html.replace(/<h2/g, '<h2 class="styled"');
   return page;
 });
+
+// Example: post-process JSON output format (issue #1102)
+alloy.hook("onFormatRendered", {}, (payload) => {
+  if (payload.format === "json") {
+    // Minify JSON output
+    payload.content = JSON.stringify(JSON.parse(payload.content));
+  }
+  return payload;
+});
+
+// Example: conditional format processing based on front matter (issue #1102)
+alloy.hook("onFormatRendered", {}, (payload) => {
+  if (payload.frontMatter.skipFormatTransforms) return payload;
+  if (payload.format === "xml") {
+    payload.content = payload.content.replace(/<title>/g, '<title xmlns:dc="...">');
+  }
+  return payload;
+});
 ```
+
+**`onPageRendered` HTML-only restriction (issue #1102):** `onPageRendered` fires only for pages whose `Outputs` includes `"html"`. Determination: if `page.Outputs` is nil or empty, the page defaults to `["html"]` and `onPageRendered` fires. If `page.Outputs` contains `"html"` (e.g., `["html", "json"]`), `onPageRendered` fires for the HTML body. If `page.Outputs` does not contain `"html"` (e.g., `["json"]`), `onPageRendered` does not fire — the page's rendered body routes through `onFormatRendered` instead. This matches the hook's name and every existing plugin's assumption that the payload is HTML.
+
+**`onFormatRendered` payload contract (issue #1102):** The payload is a typed struct with five fields: `format` (output format string, e.g., `"json"`, `"xml"`), `content` (rendered format body as string), `url` (page URL), `path` (page relative path), `frontMatter` (page front matter as plain object). Only `content` in the return is applied back to the format body — `format`, `url`, `path`, and `frontMatter` are read-only context for conditional processing. Edge cases mirror `onPageRendered`:
+
+- **`nil`/`undefined` return** — no-op, original content preserved.
+- **Map without `content` key** — original content preserved.
+- **Non-string `content` value** — original content preserved.
 
 **`onPageRendered` return value edge cases (issue #1120):** The apply-back block handles malformed or legacy return values gracefully:
 
@@ -3338,7 +3367,7 @@ Pipeline stages shown in order:
 1. **Discovering** — content discovery + front matter extraction. Total is unknown at start (discovery produces the count). Shown as a single-line message: `[alloy] Discovering content... 480 pages found` — not a progress bar.
 2. **Rendering** — Markdown → HTML + content template rendering (Pass 1b)
 3. **Layouts** — layout chain resolution and rendering (Pass 2)
-4. **Transforms** — post-render hooks (`onPageRendered`). Reports per-page even with worker pools (#491).
+4. **Transforms** — post-render hooks (`onPageRendered`, `onFormatRendered`). Reports per-page even with worker pools (#491).
 5. **SSR** — Phase 2 SSR (only shown when `ssr:` is configured and pages have custom elements)
 6. **Writing** — output files to `_site/`
 
