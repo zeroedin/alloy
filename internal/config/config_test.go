@@ -369,6 +369,79 @@ var _ = Describe("Config", func() {
 				"structure.plugins must default to 'plugins' — "+
 					"same pattern as all other structure fields (issue #802)")
 		})
+
+		It("defaults structure.components to components (issue #1099)", func() {
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Structure.Components).To(Equal("components"),
+				"structure.components must default to 'components' — "+
+					"same pattern as all other structure fields (issue #1099)")
+		})
+	})
+
+	// ── Configurable components directory (issue #1099) ─────────────
+	// The component source directory is used by the watcher and
+	// incremental builder for SSR component invalidation. It must be
+	// configurable via structure.components, consistent with the
+	// existing structure.* pattern.
+
+	Describe("Structure.Components config (issue #1099)", func() {
+		It("parses structure.components from YAML config", func() {
+			dir := GinkgoT().TempDir()
+			configContent := `title: "Component Config Test"
+baseURL: "https://example.com"
+structure:
+  components: "elements"
+`
+			Expect(os.WriteFile(filepath.Join(dir, "alloy.config.yaml"), []byte(configContent), 0644)).To(Succeed())
+
+			cfg, err := config.Load(filepath.Join(dir, "alloy.config.yaml"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Structure.Components).To(Equal("elements"),
+				"structure.components must parse custom directory path from config (issue #1099)")
+		})
+
+		It("ApplyDefaults sets structure.components when empty", func() {
+			cfg := &config.Config{
+				Title:   "Test",
+				BaseURL: "https://example.com",
+			}
+			config.ApplyDefaults(cfg)
+			Expect(cfg.Structure.Components).To(Equal("components"),
+				"structure.components must default to 'components' when not specified — "+
+					"same pattern as all other structure fields (issue #1099)")
+		})
+
+		It("ApplyDefaults preserves explicitly set structure.components", func() {
+			cfg := &config.Config{
+				Title:   "Test",
+				BaseURL: "https://example.com",
+				Structure: config.StructureConfig{
+					Components: "web-components",
+				},
+			}
+			config.ApplyDefaults(cfg)
+			Expect(cfg.Structure.Components).To(Equal("web-components"),
+				"ApplyDefaults must not overwrite an explicitly set components path (issue #1099)")
+		})
+
+		It("rejects watch from: that overlaps configured components directory", func() {
+			cfg := &config.Config{
+				Title:   "Test",
+				BaseURL: "https://example.com",
+				Structure: config.StructureConfig{
+					Components: "elements",
+				},
+				Watch: []config.WatchMapping{
+					{From: "elements", Type: "content"},
+				},
+			}
+			err := config.Validate(cfg)
+			Expect(err).To(HaveOccurred(),
+				"watch from: matching configured components directory must fail validation — "+
+					"components is a managed directory and cannot be watched separately (issue #1099)")
+			Expect(err.Error()).To(ContainSubstring("elements"),
+				"error must name the conflicting directory (issue #1099)")
+		})
 	})
 
 	// ── ApplyDefaults nil taxonomy handling (issue #65) ─────────────
