@@ -2,7 +2,7 @@
 type: minor
 ---
 
-`onFormatRendered` fires once per non-HTML format body after layout rendering. The payload carries `format`, `content`, `url`, `path`, and `frontMatter`. Return an object with a `content` key to replace the rendered body; other fields are read-only.
+`onFormatRendered` fires once per non-HTML format body after layout rendering with `{ format, content, url, path, frontMatter }`. Return an object with a `content` key to replace the rendered body. The build ignores all other keys in the return value.
 
 ```javascript
 alloy.hook("onFormatRendered", {}, (payload) => {
@@ -12,6 +12,6 @@ alloy.hook("onFormatRendered", {}, (payload) => {
 });
 ```
 
-`onPageRendered` no longer fires for pages whose `outputs` contains only non-HTML formats. Pages with `outputs: ["json"]` route through `onFormatRendered` instead. Pages with both HTML and non-HTML outputs fire `onPageRendered` for the HTML body and `onFormatRendered` for each non-HTML format body.
+`onPageRendered` skips pages whose `outputs` contains only non-HTML formats. A page with `outputs: ["json"]` routes through `onFormatRendered` instead. Both hooks fire independently when a page declares HTML and non-HTML outputs together.
 
-Return `null`, `undefined`, or an object without a `content` key to keep the original format body. Non-string `content` values are ignored. Plugins that process `onPageRendered` are unaffected when the page includes HTML output.
+Return `null`, `undefined`, or an object without a `content` key to keep the original format body.
