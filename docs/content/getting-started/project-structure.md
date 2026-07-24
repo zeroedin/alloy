@@ -28,7 +28,8 @@ my-site/
 ├── data/                      # Global data files (YAML, JSON, CSV)
 │   └── navigation.yaml
 ├── plugins/                   # Optional plugins
-└── components/                # SSR component sources (experimental)
+├── components/                # SSR component sources (experimental)
+└── .alloy/                    # Internal (auto-generated, gitignore)
 ```
 
 ## Config file
@@ -187,6 +188,21 @@ Optional directory for plugin files. Alloy detects the plugin tier from the file
 - `.js` files with `runtime: "node"` run as Node subprocess (Tier 3)
 
 The Node bridge is only spawned when the project has Tier 3 plugins.
+
+## `.alloy/`
+
+Alloy creates this directory at runtime for caches, build artifacts, and runtime state. Add it to `.gitignore` -- its contents are safe to delete and regenerated as needed.
+
+| Path | Created by | Purpose |
+|---|---|---|
+| `.alloy/bridge.mjs` | `alloy build`, `alloy dev`, `alloy serve` (when Node plugins exist) | Node plugin IPC bridge script |
+| `.alloy/workers.pid` | `alloy build`, `alloy dev`, `alloy serve` (when Node plugins exist) | Tracks Node worker PIDs for stale process cleanup |
+| `.alloy/fetch-cache/` | `alloy build`, `alloy dev`, `alloy serve` (when `sources:` configured) | Data source response cache |
+| `.alloy/wasm-cache/` | `alloy build`, `alloy dev`, `alloy serve` (when WASM plugins exist) | Compiled WASM module cache |
+| `.alloy/profiles/` | `alloy build --profile` | pprof CPU and memory profiles |
+| `.alloy/server.lock` | `alloy dev`, `alloy serve` | Dev server lockfile for concurrent process detection |
+
+Subdirectories are created on demand -- only the ones relevant to your project appear.
 
 ## Custom directory structure
 
