@@ -43,10 +43,10 @@ var _ = Describe("ParseFileChangedResult (issue #1100)", func() {
 				"rebuild (issue #1100)")
 		})
 
-		It("returns nil for unknown dependency paths", func() {
-			// This tests that ParseFileChangedResult succeeds even when
-			// the dependency paths don't match any tracked pages — the
-			// lookup is the caller's responsibility, not the parser's.
+		It("extracts dependency paths without validation", func() {
+			// ParseFileChangedResult succeeds even when dependency paths
+			// don't match any tracked pages — the lookup is the caller's
+			// responsibility, not the parser's.
 			result := map[string]interface{}{
 				"invalidateByDependency": []interface{}{
 					"nonexistent/file.js",
@@ -226,16 +226,18 @@ var _ = Describe("ParseFileChangedResult (issue #1100)", func() {
 			parsed := plugin.ParseFileChangedResult(result)
 			// Non-array invalidateByDependency is a plugin bug, but the
 			// parser should be lenient — log a warning, don't crash.
-			// parsed may be nil (if restart is also absent) or non-nil
-			// with nil InvalidateByDependency.
-			if parsed != nil {
-				Expect(parsed.InvalidateByDependency).To(BeNil(),
-					"non-array invalidateByDependency must not produce "+
-						"dependency paths — the value is malformed")
-				Expect(parsed.Warnings).To(ContainElement(
-					ContainSubstring("invalidateByDependency"),
-				), "malformed invalidateByDependency must produce a warning")
-			}
+			// The key IS recognized, so parsed must be non-nil with a
+			// warning — returning nil would silently swallow the error.
+			Expect(parsed).NotTo(BeNil(),
+				"ParseFileChangedResult must return non-nil when a recognized "+
+					"key (invalidateByDependency) is present, even if malformed — "+
+					"nil would mean 'no recognized keys found' which is wrong")
+			Expect(parsed.InvalidateByDependency).To(BeNil(),
+				"non-array invalidateByDependency must not produce "+
+					"dependency paths — the value is malformed")
+			Expect(parsed.Warnings).To(ContainElement(
+				ContainSubstring("invalidateByDependency"),
+			), "malformed invalidateByDependency must produce a warning")
 		})
 
 		It("treats numeric invalidateByDependency as no-op with warning", func() {

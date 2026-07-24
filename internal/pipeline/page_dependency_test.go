@@ -297,24 +297,6 @@ var _ = Describe("Build Pipeline", func() {
 	Describe("addDependencies from onContentTransformed (issue #1100)", func() {
 
 		It("tracks dependencies from onContentTransformed return value", func() {
-			tmpDir := GinkgoT().TempDir()
-			contentDir := filepath.Join(tmpDir, "content")
-			layoutsDir := filepath.Join(tmpDir, "layouts")
-			pluginsDir := filepath.Join(tmpDir, "plugins")
-			outputDir := filepath.Join(tmpDir, "_site")
-
-			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
-			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
-			Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
-
-			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
-				[]byte("---\ntitle: Home\nlayout: default\n---\n# Home\nSome content with translations."),
-				0644)).To(Succeed())
-
-			Expect(os.WriteFile(filepath.Join(layoutsDir, "default.liquid"),
-				[]byte("<html><body>{{ content }}</body></html>"),
-				0644)).To(Succeed())
-
 			// Plugin that returns addDependencies from onContentTransformed.
 			// Simulates an i18n plugin that reads translation files.
 			pluginJS := `export default function(alloy) {
@@ -327,20 +309,7 @@ var _ = Describe("Build Pipeline", func() {
     };
   });
 }`
-			Expect(os.WriteFile(filepath.Join(pluginsDir, "i18n-deps.js"),
-				[]byte(pluginJS), 0644)).To(Succeed())
-
-			cfg := &config.Config{
-				Title:       "ContentTransformed Dep Test",
-				BaseURL:     "https://example.com",
-				ProjectRoot: tmpDir,
-				Build:       config.BuildConfig{Output: outputDir},
-				Structure: config.StructureConfig{
-					Content: "content",
-					Layouts: "layouts",
-				},
-			}
-			config.ApplyDefaults(cfg)
+			cfg := setupWithPlugin(pluginJS)
 
 			result, err := pipeline.Build(cfg)
 			Expect(err).NotTo(HaveOccurred())
@@ -446,50 +415,12 @@ var _ = Describe("Build Pipeline", func() {
 	Describe("onFileChanged invalidateByDependency integration (issue #1100)", func() {
 
 		It("dependency-invalidated pages are rebuilt even when content unchanged", func() {
-			tmpDir := GinkgoT().TempDir()
-			contentDir := filepath.Join(tmpDir, "content")
-			layoutsDir := filepath.Join(tmpDir, "layouts")
-			pluginsDir := filepath.Join(tmpDir, "plugins")
-			outputDir := filepath.Join(tmpDir, "_site")
-
-			Expect(os.MkdirAll(contentDir, 0755)).To(Succeed())
-			Expect(os.MkdirAll(layoutsDir, 0755)).To(Succeed())
-			Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
-
-			Expect(os.WriteFile(filepath.Join(contentDir, "index.md"),
-				[]byte("---\ntitle: Home\nlayout: default\n---\n# Home\n<rh-card>card</rh-card>"),
-				0644)).To(Succeed())
-			Expect(os.WriteFile(filepath.Join(contentDir, "about.md"),
-				[]byte("---\ntitle: About\nlayout: default\n---\n# About\nNo components."),
-				0644)).To(Succeed())
-
-			Expect(os.WriteFile(filepath.Join(layoutsDir, "default.liquid"),
-				[]byte("<html><body>{{ content }}</body></html>"),
-				0644)).To(Succeed())
-
-			// Plugin declares dependencies via onPageRendered
-			pluginJS := `export default function(alloy) {
-  alloy.hook('onPageRendered', {}, function(page) {
-    if (page.html.indexOf('rh-card') !== -1) {
-      return { html: page.html, addDependencies: ['elements/rh-card/rh-card.js'] };
-    }
-    return page;
-  });
-}`
-			Expect(os.WriteFile(filepath.Join(pluginsDir, "ssr-plugin.js"),
-				[]byte(pluginJS), 0644)).To(Succeed())
-
-			cfg := &config.Config{
-				Title:       "Invalidation Test",
-				BaseURL:     "https://example.com",
-				ProjectRoot: tmpDir,
-				Build:       config.BuildConfig{Output: outputDir},
-				Structure: config.StructureConfig{
-					Content: "content",
-					Layouts: "layouts",
-				},
-			}
-			config.ApplyDefaults(cfg)
+			// Reuses setupDepTrackingProject which provides index.md
+			// (depends on rh-card + rh-icon), about.md (rh-icon only),
+			// and blog.md (no deps). This test verifies that when only
+			// rh-card.js changes, index.md is rebuilt and about.md is
+			// skipped (it depends on rh-icon, not rh-card).
+			_, cfg := setupDepTrackingProject()
 
 			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
 			defer registry.Close()
@@ -527,11 +458,11 @@ var _ = Describe("Build Pipeline", func() {
 				ContainSubstring("rh-card"),
 				"rendered output must contain the page's content")
 
-			// about.md: no dependency on rh-card.js, content unchanged → skip
+			// about.md: depends on rh-icon.js (not rh-card.js), content unchanged → skip
 			Expect(result2.RenderedContent).NotTo(HaveKey("about.md"),
-				"about.md has no dependency on rh-card.js and its content "+
-					"hasn't changed — it must be skipped during incremental "+
-					"rebuild (issue #1100)")
+				"about.md depends on rh-icon.js, not rh-card.js — since "+
+					"rh-card.js is the only changed dependency and about.md's "+
+					"content is unchanged, it must be skipped (issue #1100)")
 		})
 	})
 })
