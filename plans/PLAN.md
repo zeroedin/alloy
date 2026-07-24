@@ -1382,6 +1382,51 @@ The `dependencies` field on virtual page objects is read by `virtualPageFromMap`
 
 **Component invalidation** — Handled entirely in Phase 2. A component definition change triggers re-SSR of all pages using that component (tracked via `componentToPages` in `.alloy/components.json`). Phase 1 is untouched. See Section 6.
 
+### Plugin Dependency Tracking — Targeted Incremental Rebuilds (issue #1100)
+
+Plugins that transform page output based on external files (SSR components, Sass partials, translation files, schema files) have no way to tell Alloy about those dependencies. When those files change during `alloy dev`, the watcher doesn't know which pages are affected, so either no rebuild fires or a full rebuild is required.
+
+Plugin dependency tracking solves this with two primitives:
+
+1. **`addDependencies` in per-page hook returns** — The plugin reports which external files influenced this page's rendered output (§5 per-page hooks). The pipeline extracts these and builds a reverse index in the build cache: dependency path → set of page RelPaths.
+
+2. **`invalidateByDependency` in `onFileChanged` return** — When a watched file changes, the plugin identifies which changed files are dependencies. The dev server uses the reverse index to determine which pages to rebuild incrementally.
+
+**Cache infrastructure.** The cache maintains a `pageDependencies` reverse map parallel to the existing `virtualDependencies` (issue #1058) but for content pages:
+
+```
+pageDependencies:
+  "elements/rh-icon/rh-icon.js" → {"index.html", "about/index.html"}
+  "elements/rh-card/rh-card.js" → {"index.html"}
+```
+
+`TrackDependency(pageRelPath, depPath)` records a content page's dependency on an external file. `PagesForDependency(depPath)` returns all page RelPaths that depend on the given file. `ClearDependencies()` resets all page dependency tracking without affecting content hashes, template tracking, or virtual page tracking. Dependencies are cleared and re-tracked on each build from the current hook output — stale entries from previous builds do not persist.
+
+**Dev server rebuild flow** (issue #1100):
+
+```
+1. User edits elements/rh-icon/rh-icon.js
+2. Watcher fires, classifies as PassthroughChange
+3. Passthrough recopy runs (client JS updated in _site/)
+4. onFileChanged fires → plugin returns:
+     { invalidateByDependency: ["elements/rh-icon/rh-icon.js"], restart: true }
+5. Dev server calls ParseFileChangedResult to extract the return value
+6. Dev server looks up cache: PagesForDependency("elements/rh-icon/rh-icon.js")
+     → ["index.html", "about/index.html"]
+7. If restart: true, dev server restarts the Node bridge subprocess
+8. Dev server adds dependency path to changedFiles and calls BuildIncremental
+9. BuildIncremental checks each changedFile against PagesForDependency in
+   previousCache — matching pages are added to pagesToRender even if their
+   content hash is unchanged
+10. onPageRendered fires in the fresh Node process — plugin re-renders,
+    returns addDependencies again (deps may have changed)
+11. Cache updated with current dependencies, browser reload broadcast
+```
+
+**`restart: true` — Node bridge restart.** When dependency files are JS modules that were `import()`-ed by the plugin, Node's ESM module cache holds stale references. `restart: true` tells Alloy to restart the Node bridge subprocess before running the incremental rebuild, so the plugin re-imports fresh module code. This is only needed when the plugin executes dependency files as code (e.g., SSR importing component definitions). Plugins that read dependency files from disk via `fs.readFile()` (Sass, i18n, etc.) do not need restart — they get fresh content on the next invocation automatically.
+
+**Dependency tracking is independent of virtual page dependency tracking (issue #1058).** Virtual page dependencies are declared in `onPagesReady` via the `dependencies` field on virtual page objects and tracked via `TrackVirtualDependency`/`InvalidatedVirtualPages`. Content page dependencies are declared in per-page hooks via `addDependencies` and tracked via `TrackDependency`/`PagesForDependency`. Both use reverse maps in the cache but are stored separately and cleared independently.
+
 ### Memory Efficiency — BuildResult.RenderedContent (issue #1098)
 
 `BuildResult.RenderedContent` is a `map[string]string` that holds every page's final rendered HTML, keyed by `RelPath` (or `URL` for generated pages). This duplicates the `page.RenderedBody` `[]byte` already held in memory, roughly doubling peak memory for page bodies. Calling `page.HTML()` to populate the map also caches a `renderedStr` string field on each page — a third reference to the same data. For a site with 3000 pages averaging 500KB of output, this is ~1.5GB of unnecessary heap per copy. In dev mode this peak recurs on every rebuild.
@@ -2476,8 +2521,12 @@ These fire **once per page**. `onContentTransformed` receives a page-scoped obje
 
 | Event | Payload | Returns | When |
 |---|---|---|---|
-| `onContentTransformed` | `{ html, toc, path, url, frontMatter }` | Same shape (mutable) | After Markdown→HTML, before layout. Plugin modifies rendered content, TOC, or front matter. |
-| `onPageRendered` | `{ html, frontMatter, url, path }` | `{ html }` (only `html` applied back) | After template rendering. Plugin post-processes final output with front matter context for conditional transforms (issue #1095). |
+| `onContentTransformed` | `{ html, toc, path, url, frontMatter }` | Same shape (mutable) + optional `addDependencies` | After Markdown→HTML, before layout. Plugin modifies rendered content, TOC, or front matter. |
+| `onPageRendered` | `{ html, frontMatter, url, path }` | `{ html }` (only `html` applied back) + optional `addDependencies` | After template rendering. Plugin post-processes final output with front matter context for conditional transforms (issue #1095). |
+
+**`addDependencies` — plugin dependency tracking (issue #1100).** Both per-page hooks accept an optional `addDependencies` array in the return value. When present, the pipeline tracks a reverse index mapping each dependency path to the pages that depend on it. This enables targeted incremental rebuilds when external files change — only pages whose dependencies changed are re-rendered, not the entire site. See §2 (Plugin Dependency Tracking — Targeted Incremental Rebuilds) for the full rebuild flow.
+
+The `addDependencies` array contains project-relative file paths (forward-slash normalized). Non-array values are ignored with a warning. Non-string entries within the array are filtered out with a warning. An empty array is valid (no dependencies for this page from this hook). Dependencies are re-tracked on each build from the current hook output — stale entries from previous builds do not persist.
 
 ```javascript
 // Example: add lazy loading + build TOC for non-markdown pages
@@ -2504,6 +2553,25 @@ alloy.hook("onPageRendered", {}, (page) => {
   if (page.frontMatter.layout === "demo") return page; // skip demo pages
   page.html = page.html.replace(/<h2/g, '<h2 class="styled"');
   return page;
+});
+
+// Example: SSR plugin declaring component dependencies (issue #1100)
+alloy.hook("onPageRendered", {}, (page) => {
+  const { html, components } = renderSSR(page.html);
+  return {
+    html,
+    addDependencies: components.map(c => `elements/${c}/${c}.js`)
+  };
+});
+
+// Example: i18n plugin declaring translation file dependencies (issue #1100)
+alloy.hook("onContentTransformed", {}, (page) => {
+  const translated = applyTranslations(page.html, page.frontMatter.lang);
+  return {
+    ...page,
+    html: translated,
+    addDependencies: ['locales/en.json', 'locales/shared.json']
+  };
 });
 ```
 
@@ -2729,7 +2797,46 @@ Fire **once per event**. Plugins observe but cannot modify.
 |---|---|---|
 | `onBuildComplete` | `{ pageCount: 42, duration: "127ms", errors: [], outputDir: "_site" }` | After output written. |
 | `onDevServerStart` | `{ port: 3000, url: "http://localhost:3000" }` | Dev server ready. |
-| `onFileChanged` | `"content/blog/post.md"` (string) | File changed in watch mode. |
+
+#### Actionable hooks — `onFileChanged` (issue #1100)
+
+`onFileChanged` fires once per debounced file change batch in watch mode. Unlike read-only hooks, its return value is processed by the dev server to trigger targeted incremental rebuilds and Node bridge restarts.
+
+**Payload:** Array of file change event objects: `[{ path: "elements/rh-icon/rh-icon.js", type: "passthrough" }]`. Each object has `path` (project-relative file path) and `type` (the classified `ChangeType`: `"content"`, `"layout"`, `"data"`, `"asset"`, `"static"`, `"component"`, `"passthrough"`, `"plugin"`).
+
+**Return value:** `{ invalidateByDependency: string[], restart: boolean }` — or nil/undefined for read-only observation (backward compatible).
+
+| Field | Type | Description |
+|---|---|---|
+| `invalidateByDependency` | `string[]` | Dependency file paths to look up in the reverse index. Pages that declared these as dependencies via `addDependencies` are added to the incremental rebuild set. |
+| `restart` | `boolean` | When `true`, the dev server restarts the Node bridge subprocess before running the incremental rebuild. Required when dependency files are JS modules that were `import()`-ed — Node's ESM module cache holds stale references. Not needed when plugins read dependency files via `fs.readFile()`. Default: `false`. |
+
+**Processing:** `ParseFileChangedResult` extracts the structured return value. Non-map returns (nil, string, boolean) are treated as no-op for backward compatibility. Unrecognized keys are ignored (forward compatible). Non-array `invalidateByDependency` produces a warning and is treated as nil. Non-string entries within the array are filtered out with a warning.
+
+```javascript
+// SSR plugin: detect component file changes, trigger targeted rebuild
+alloy.hook("onFileChanged", {}, (events) => {
+  const changed = events
+    .filter(ev => ev.path.startsWith("elements/") && ev.path.endsWith(".js"))
+    .map(ev => ev.path);
+
+  if (changed.length > 0) {
+    return { invalidateByDependency: changed, restart: true };
+  }
+});
+
+// Sass plugin: detect partial changes, rebuild dependent pages
+alloy.hook("onFileChanged", {}, (events) => {
+  const partials = events
+    .filter(ev => ev.path.startsWith("styles/") && ev.path.includes("_"))
+    .map(ev => ev.path);
+
+  if (partials.length > 0) {
+    return { invalidateByDependency: partials };
+    // restart: false — Sass partials are read from disk, no ESM cache
+  }
+});
+```
 
 ### Performance Safeguards
 
