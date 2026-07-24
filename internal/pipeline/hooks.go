@@ -536,12 +536,10 @@ func extractPageRenderedHTML(result interface{}) (string, bool) {
 }
 
 // buildFormatRenderedPayload constructs the onFormatRendered hook payload for a
-// single non-HTML format body (issue #1102).
-func buildFormatRenderedPayload(page *content.Page, format, body string) plugin.HookFormatRenderedPayload {
-	fm := convertOrderedMaps(page.FrontMatter)
-	if fm == nil {
-		fm = map[string]interface{}{}
-	}
+// single non-HTML format body (issue #1102). The caller pre-converts
+// front matter once per page and passes it in to avoid repeated
+// conversion across hooks × formats.
+func buildFormatRenderedPayload(page *content.Page, format, body string, fm map[string]interface{}) plugin.HookFormatRenderedPayload {
 	return plugin.HookFormatRenderedPayload{
 		Format:      format,
 		Content:     body,
@@ -570,6 +568,17 @@ func pageHasHTMLOutput(page *content.Page) bool {
 	}
 	for _, o := range page.Outputs {
 		if o == "html" {
+			return true
+		}
+	}
+	return false
+}
+
+// pageHasNonHTMLOutput returns true if the page's Outputs includes at least one
+// non-HTML format (e.g., "json", "xml").
+func pageHasNonHTMLOutput(page *content.Page) bool {
+	for _, o := range page.Outputs {
+		if o != "html" {
 			return true
 		}
 	}

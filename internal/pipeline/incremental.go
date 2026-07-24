@@ -520,11 +520,19 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 
 	if ps.Hooks != nil && ps.Hooks.HasHooks(plugin.OnFormatRendered) {
 		for _, page := range pagesToRender {
-			for format, body := range page.FormatBodies {
+			fm := convertOrderedMaps(page.FrontMatter)
+			if fm == nil {
+				fm = map[string]interface{}{}
+			}
+			for _, format := range page.Outputs {
+				body, ok := page.FormatBodies[format]
+				if !ok {
+					continue
+				}
 				currentContent := string(body)
 				hookErr := ps.Hooks.RunEachWithTimeout(plugin.OnFormatRendered,
 					func(_ int, _ *plugin.HookScope) interface{} {
-						return buildFormatRenderedPayload(page, format, currentContent)
+						return buildFormatRenderedPayload(page, format, currentContent, fm)
 					},
 					func(_ int, _ *plugin.HookScope, result interface{}) error {
 						if c, ok := extractFormatRenderedContent(result); ok {
@@ -538,10 +546,13 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				}
 				page.FormatBodies[format] = []byte(currentContent)
 			}
-			if !pageHasHTMLOutput(page) && len(page.FormatBodies) == 1 {
-				for _, body := range page.FormatBodies {
-					page.SetRenderedBody(body)
-				}
+		}
+	}
+
+	for _, page := range pagesToRender {
+		if !pageHasHTMLOutput(page) && len(page.FormatBodies) == 1 {
+			for _, body := range page.FormatBodies {
+				page.SetRenderedBody(body)
 			}
 		}
 	}

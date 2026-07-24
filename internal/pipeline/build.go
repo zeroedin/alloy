@@ -927,19 +927,26 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 
 	// Fire onFormatRendered hooks for each non-HTML format body (issue #1102).
-	// Dispatched per-format, not per-page — each invocation receives
-	// { format, content, url, path, frontMatter }. Only "content" from
-	// the return value is applied back; other fields are read-only.
-	// Uses RunEachWithTimeout to rebuild the payload between hooks so
-	// mutations to read-only fields (frontMatter, url, path, format)
-	// are not propagated to subsequent hooks.
+	// Dispatched per-format-body (iterates pages × formats) — each
+	// invocation receives { format, content, url, path, frontMatter }.
+	// Only "content" from the return value is applied back; other fields
+	// are read-only. Uses RunEachWithTimeout to rebuild the payload
+	// between hooks so mutations to read-only fields are not propagated.
 	if ps.Hooks.HasHooks(plugin.OnFormatRendered) {
 		for _, page := range pages {
-			for format, body := range page.FormatBodies {
+			fm := convertOrderedMaps(page.FrontMatter)
+			if fm == nil {
+				fm = map[string]interface{}{}
+			}
+			for _, format := range page.Outputs {
+				body, ok := page.FormatBodies[format]
+				if !ok {
+					continue
+				}
 				currentContent := string(body)
 				err := ps.Hooks.RunEachWithTimeout(plugin.OnFormatRendered,
 					func(_ int, _ *plugin.HookScope) interface{} {
-						return buildFormatRenderedPayload(page, format, currentContent)
+						return buildFormatRenderedPayload(page, format, currentContent, fm)
 					},
 					func(_ int, _ *plugin.HookScope, result interface{}) error {
 						if c, ok := extractFormatRenderedContent(result); ok {
@@ -953,13 +960,17 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				}
 				page.FormatBodies[format] = []byte(currentContent)
 			}
-			// Single non-HTML pages (e.g., outputs: ["json"]) have no HTML
-			// body — apply the sole format body back as the rendered body
-			// so it appears in RenderedContent and is written to disk.
-			if !pageHasHTMLOutput(page) && len(page.FormatBodies) == 1 {
-				for _, body := range page.FormatBodies {
-					page.SetRenderedBody(body)
-				}
+		}
+	}
+
+	// Single non-HTML pages (e.g., outputs: ["json"]) have no HTML body —
+	// apply the sole format body back as the rendered body so it appears
+	// in RenderedContent and is written to disk. Runs unconditionally
+	// regardless of whether onFormatRendered hooks are registered.
+	for _, page := range pages {
+		if !pageHasHTMLOutput(page) && len(page.FormatBodies) == 1 {
+			for _, body := range page.FormatBodies {
+				page.SetRenderedBody(body)
 			}
 		}
 	}
