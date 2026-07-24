@@ -965,6 +965,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			pageStart = time.Now()
 		}
 		if !output.ShouldWrite(page.URL) {
+			page.ReleaseRenderedBody()
 			writeIdx++
 			if reporter != nil {
 				reportUpdate(reporter, writeIdx, page.RelPath, time.Since(pageStart))

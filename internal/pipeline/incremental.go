@@ -645,6 +645,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	dirCache := output.NewDirectoryCache()
 	for _, page := range pagesToRender {
 		if !output.ShouldWrite(page.URL) {
+			page.ReleaseRenderedBody()
 			continue
 		}
 		outPath := output.ComputeOutputPath(page.URL)
