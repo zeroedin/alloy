@@ -1290,15 +1290,15 @@ Data cascade and front matter are already assembled from Phase 0; taxonomy data 
 
 Skipped entirely unless the project has an `ssr:` block in config. Without it, Phase 1b output is the final HTML — Web Components render client-side only.
 
-19. **Component tracking** — Scan each page's intermediate HTML for custom element tags (anything with a hyphen). Record which pages use which components for cache invalidation.
-20. **Per-page SSR** — For each page containing custom elements, pipe the full intermediate HTML to the configured `ssr.command` via stdin. The command reads stdin, transforms the HTML, and writes the result to stdout with Declarative Shadow DOM.
+20. **Component tracking** — Scan each page's intermediate HTML for custom element tags (anything with a hyphen). Record which pages use which components for cache invalidation.
+21. **Per-page SSR** — For each page containing custom elements, pipe the full intermediate HTML to the configured `ssr.command` via stdin. The command reads stdin, transforms the HTML, and writes the result to stdout with Declarative Shadow DOM.
 
 **Phase 3 — Output**
 
-21. **Asset Copy** — Copy `assets/` files to `_site/`, trigger `onAssetProcess` plugin hooks
-22. **Static + Passthrough** — Copy static files and passthrough mappings to `_site/`
-23. **Output Writing** — Write all final HTML + assets to `_site/`
-24. **Plugin Hook: `onBuildComplete`** — Final notification
+22. **Asset Copy** — Copy `assets/` files to `_site/`, trigger `onAssetProcess` plugin hooks
+23. **Static + Passthrough** — Copy static files and passthrough mappings to `_site/`
+24. **Output Writing** — Write all final HTML + assets to `_site/`
+25. **Plugin Hook: `onBuildComplete`** — Final notification
 
 ### Parallelism
 
@@ -2206,8 +2206,8 @@ Per-page hooks (`onContentTransformed`, `onPageRendered`, `onFormatRendered`) fi
 | `onContentTransformed` | 12+ | yes (per-page) | n/a | n/a |
 | `onPageRendered` | 18 | yes (per-page, HTML only) | n/a | n/a |
 | `onFormatRendered` | 19 | yes (per-format) | n/a | n/a |
-| `onAssetProcess` | 21+ | no (per-asset) | n/a | n/a |
-| `onBuildComplete` | 24 | no | n/a | n/a |
+| `onAssetProcess` | 22+ | no (per-asset) | n/a | n/a |
+| `onBuildComplete` | 25 | no | n/a | n/a |
 | `onDevServerStart` | — | no | n/a | n/a |
 | `onFileChanged` | — | no | n/a | n/a |
 
@@ -2537,7 +2537,7 @@ alloy.hook("onFormatRendered", {}, (payload) => {
 
 **`*ordered.Map` front matter conversion:** `buildPageRenderedPayload` calls `convertOrderedMaps()` on `page.FrontMatter` before serialization. Deeply nested YAML maps stored as `*ordered.Map` in Go are recursively flattened to `map[string]interface{}` so plugins receive plain JavaScript objects at all nesting levels.
 
-**`BuildIncremental` parity:** `BuildIncremental` must produce the same `onPageRendered` payload shape as `Build()` — all four fields (`html`, `frontMatter`, `url`, `path`) populated at the field level with correct values, including updated front matter when content changes between incremental rebuilds.
+**`BuildIncremental` parity:** `BuildIncremental` must produce the same `onPageRendered` payload shape as `Build()` — all four fields (`html`, `frontMatter`, `url`, `path`) populated at the field level with correct values, including updated front matter when content changes between incremental rebuilds. `onFormatRendered` must also fire during `BuildIncremental` for pages with non-HTML outputs — the dispatch logic, payload shape, and apply-back behavior must be identical to `Build()`.
 
 #### Per-asset hook (path + content object)
 

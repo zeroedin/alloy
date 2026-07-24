@@ -3301,6 +3301,39 @@ var _ = Describe("Build Pipeline", func() {
 					"page and apply the html mutation back (issue #1102)")
 		})
 
+		It("onPageRendered fires when HTML is not the first output format", func() {
+			cfg := &config.Config{
+				Title:   "HTML Non-First Position Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				// HTML is second in the outputs array — pageHasHTMLOutput must
+				// check all elements, not just index 0.
+				"content/post.md": "---\ntitle: Non-First HTML\nlayout: default\noutputs:\n  - json\n  - html\n---\n# Non-First HTML Post",
+				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
+				"layouts/default.json.liquid": `{"title":"{{ page.title }}"}`,
+				"plugins/non-first-html.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    page.html = page.html + '<!-- html-non-first-ok -->';
+    return page;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onPageRendered must fire when HTML appears anywhere in the "+
+					"outputs array, not just at index 0 — pageHasHTMLOutput "+
+					"must check all elements (issue #1102)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["post.md"]
+			Expect(html).To(ContainSubstring("<!-- html-non-first-ok -->"),
+				"onPageRendered must fire and apply mutations when outputs "+
+					"is [\"json\", \"html\"] — a developer implementing "+
+					"page.Outputs[0] == \"html\" would fail this test (issue #1102)")
+		})
+
 		// ── onFormatRendered basic payload shape ─────────────────────────
 
 		It("onFormatRendered fires with correct payload shape for format bodies", func() {
@@ -3524,6 +3557,17 @@ var _ = Describe("Build Pipeline", func() {
 					"single non-HTML pages route through onFormatRendered instead "+
 					"of onPageRendered (issue #1102)")
 			Expect(result).NotTo(BeNil())
+
+			// Single non-HTML pages apply back to page.SetRenderedBody
+			// (not page.FormatBodies), so the mutation must appear in
+			// RenderedContent. This assertion catches the case where
+			// multi-format write-back works but single-format write-back
+			// is silently skipped.
+			rendered := result.RenderedContent["api.md"]
+			Expect(rendered).To(ContainSubstring("/* single-format-hook */"),
+				"onFormatRendered content mutation must be applied back for "+
+					"single non-HTML pages — the developer must call "+
+					"page.SetRenderedBody with the mutated content (issue #1102)")
 		})
 
 		// ── Multiple format bodies fire onFormatRendered for each ─────────
@@ -3590,7 +3634,8 @@ var _ = Describe("Build Pipeline", func() {
 				"content/post.md": "---\ntitle: Original\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Post",
 				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
 				"layouts/default.json.liquid": `{"title":"{{ page.title }}"}`,
-				"plugins/format-readonly.js": `export default function(alloy) {
+				// First plugin mutates all read-only fields
+				"plugins/01-format-readonly.js": `export default function(alloy) {
   alloy.hook('onFormatRendered', {}, function(payload) {
     // Attempt to mutate read-only fields
     payload.frontMatter = { title: 'Mutated' };
@@ -3602,9 +3647,30 @@ var _ = Describe("Build Pipeline", func() {
     return payload;
   });
 }`,
+				// Second plugin verifies frontMatter was NOT mutated by the first
+				"plugins/02-verify-immutable.js": `export default function(alloy) {
+  alloy.hook('onFormatRendered', {}, function(payload) {
+    if (payload.frontMatter.title !== 'Original') {
+      throw new Error('frontMatter.title was mutated to "' + payload.frontMatter.title +
+        '" — the pipeline must ignore frontMatter in the return value');
+    }
+    if (payload.path !== 'post.md') {
+      throw new Error('path was mutated to "' + payload.path +
+        '" — the pipeline must ignore path in the return value');
+    }
+    if (payload.url === '/mutated/') {
+      throw new Error('url was mutated to "/mutated/" — ' +
+        'the pipeline must ignore url in the return value');
+    }
+    return payload;
+  });
+}`,
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
-			Expect(err).NotTo(HaveOccurred())
+			Expect(err).NotTo(HaveOccurred(),
+				"read-only field mutations in onFormatRendered return must be "+
+					"ignored — if this fails, the pipeline is applying frontMatter, "+
+					"url, path, or format mutations back to the page (issue #1102)")
 			Expect(result).NotTo(BeNil())
 			Expect(result.FormatContent).NotTo(BeNil())
 
