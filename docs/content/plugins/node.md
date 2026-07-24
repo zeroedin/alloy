@@ -296,7 +296,9 @@ Only Tier 3 (Node subprocess) plugins use the worker pool -- Tier 2 plugins run 
 
 ## Restarting on File Changes
 
-During `alloy dev`, an `onFileChanged` hook can return `{ restart: true }` to restart all Node bridge subprocesses before the triggered rebuild. This kills each worker, spawns fresh Node processes, and re-evaluates all plugin files — clearing Node's ESM module cache so `import()` picks up changed modules from disk.
+Return `{ restart: true }` from an `onFileChanged` hook to kill and respawn all Node bridge workers before the rebuild. Alloy re-imports every plugin file, which clears Node's ESM module cache so `import()` loads the changed code.
+
+SSR plugins that import component definitions at startup need this. Without it, the workers keep serving stale modules.
 
 ```javascript
 // plugins/element-watcher.js
@@ -314,14 +316,9 @@ export default function(alloy) {
 }
 ```
 
-This is useful for:
+`restart` only affects Node (Tier 3) plugins. QuickJS and WASM plugins run in-process with no subprocess state.
 
-- **SSR plugins** that import component definitions at startup. Without a restart, the Node process holds stale module references and renders outdated components.
-- **Plugins that cache npm module state** that needs refreshing when source files change on disk.
-
-`restart` only affects Node (Tier 3) plugins. QuickJS and WASM plugins run in-process and have no subprocess state to clear.
-
-See [onFileChanged](/hooks/#onfilechanged) for the full return value API.
+See [`onFileChanged`](/hooks/#onfilechanged) for the full return value API.
 
 ## Module Resolution
 
