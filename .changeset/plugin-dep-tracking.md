@@ -10,6 +10,6 @@ alloy.hook("onContentTransformed", {}, (page) => {
 });
 ```
 
-`onFileChanged` hooks can return `{ invalidateByDependency: ["data/nav.json"] }` to target rebuilds to pages that depend on the changed file, or `{ restart: true }` to request a full dev-server restart.
+`onFileChanged` hooks can return `{ invalidateByDependency: ["data/nav.json"] }` to target rebuilds to pages that depend on the changed file, or `{ restart: true }` to request a full dev-server restart. The hook contract and result parser are implemented; dev-server integration is pending.
 
-Previously, any change to a non-content file triggered a full rebuild. Sites with expensive plugins that read external data files (design tokens, API caches, shared partials) rebuild only the affected pages.
+Previously, any change to a non-content file triggered a full rebuild. Sites with expensive plugins that read external data files (design tokens, API caches, shared partials) will now rebuild only the affected pages.
