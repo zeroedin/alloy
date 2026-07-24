@@ -565,11 +565,24 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 
 	needsRenderedMap := options.CaptureRenderedContent || (cfg.SSR != nil && !options.SkipSSR)
 	var renderedContent map[string]string
+	var formatContent map[string]map[string]string
 	if needsRenderedMap {
 		renderedContent = make(map[string]string, len(pagesToRender))
 		for _, page := range pagesToRender {
 			if len(page.RenderedBody) > 0 {
 				renderedContent[renderedContentKey(page)] = page.HTML()
+			}
+		}
+	}
+	if options.CaptureRenderedContent {
+		formatContent = make(map[string]map[string]string)
+		for _, page := range pagesToRender {
+			if len(page.FormatBodies) > 0 {
+				key := renderedContentKey(page)
+				formatContent[key] = make(map[string]string, len(page.FormatBodies))
+				for format, body := range page.FormatBodies {
+					formatContent[key][format] = string(body)
+				}
 			}
 		}
 	}
@@ -698,6 +711,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	dirCache := output.NewDirectoryCache()
 	for _, page := range pagesToRender {
 		if !output.ShouldWrite(page.URL) {
+			page.ReleaseRenderedBody()
 			continue
 		}
 		outPath := output.ComputeOutputPath(page.URL)
@@ -719,6 +733,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				return nil, fmt.Errorf("writing aliases for %s: %w", page.RelPath, err)
 			}
 		}
+		page.ReleaseRenderedBody()
 	}
 
 	// Build in-memory cache: clone previous (preserves skipped page hashes),
@@ -749,19 +764,8 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	trackVirtualPages(buildCache, allPages, discoveredPaths)
 
 	var capturedContent map[string]string
-	var formatContent map[string]map[string]string
 	if options.CaptureRenderedContent {
 		capturedContent = renderedContent
-		formatContent = make(map[string]map[string]string)
-		for _, page := range pagesToRender {
-			if len(page.FormatBodies) > 0 {
-				key := renderedContentKey(page)
-				formatContent[key] = make(map[string]string, len(page.FormatBodies))
-				for format, body := range page.FormatBodies {
-					formatContent[key][format] = string(body)
-				}
-			}
-		}
 	}
 
 	result := &BuildResult{

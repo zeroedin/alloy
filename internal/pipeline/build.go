@@ -1007,6 +1007,27 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		ssrSkipped = false
 	}
 
+	// Capture rendered content BEFORE output writing so pages are available
+	// before ReleaseRenderedBody nils them (issue #1107).
+	var renderedContent map[string]string
+	var formatContent map[string]map[string]string
+	if options.CaptureRenderedContent {
+		renderedContent = make(map[string]string, len(pages))
+		formatContent = make(map[string]map[string]string)
+		for _, page := range pages {
+			if len(page.RenderedBody) > 0 {
+				renderedContent[renderedContentKey(page)] = page.HTML()
+			}
+			if len(page.FormatBodies) > 0 {
+				key := renderedContentKey(page)
+				formatContent[key] = make(map[string]string, len(page.FormatBodies))
+				for format, body := range page.FormatBodies {
+					formatContent[key][format] = string(body)
+				}
+			}
+		}
+	}
+
 	// Stage 6: Output writing
 	timer.Start("Output writing")
 	reportStartStage(reporter, "Writing", len(pages))
@@ -1018,6 +1039,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			pageStart = time.Now()
 		}
 		if !output.ShouldWrite(page.URL) {
+			page.ReleaseRenderedBody()
 			writeIdx++
 			if reporter != nil {
 				reportUpdate(reporter, writeIdx, page.RelPath, time.Since(pageStart))
@@ -1045,6 +1067,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				return nil, fmt.Errorf("writing aliases for %s: %w", page.RelPath, err)
 			}
 		}
+		page.ReleaseRenderedBody()
 		writeIdx++
 		if reporter != nil {
 			reportUpdate(reporter, writeIdx, page.RelPath, time.Since(pageStart))
@@ -1127,24 +1150,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// in cmd/dev.go.
 	trackVirtualPages(buildCache, pages, discoveredPaths)
 
-	var renderedContent map[string]string
-	var formatContent map[string]map[string]string
-	if options.CaptureRenderedContent {
-		renderedContent = make(map[string]string, len(pages))
-		formatContent = make(map[string]map[string]string)
-		for _, page := range pages {
-			if len(page.RenderedBody) > 0 {
-				renderedContent[renderedContentKey(page)] = page.HTML()
-			}
-			if len(page.FormatBodies) > 0 {
-				key := renderedContentKey(page)
-				formatContent[key] = make(map[string]string, len(page.FormatBodies))
-				for format, body := range page.FormatBodies {
-					formatContent[key][format] = string(body)
-				}
-			}
-		}
-	}
 	reportEndStage(reporter)
 
 	timer.Stop()
