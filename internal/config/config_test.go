@@ -186,6 +186,8 @@ var _ = Describe("Config", func() {
 				Expect(cfg.Structure.Assets).To(Equal("assets"))
 				Expect(cfg.Structure.Static).To(Equal("static"))
 				Expect(cfg.Structure.Data).To(Equal("data"))
+				Expect(cfg.Structure.Components).To(Equal("components"),
+					"YAML must parse structure.components (issue #1116)")
 			})
 
 			It("parses collections config with sortBy and order", func() {
