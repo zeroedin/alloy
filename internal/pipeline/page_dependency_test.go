@@ -481,11 +481,10 @@ var _ = Describe("Build Pipeline", func() {
 
 	Describe("Dual-hook dependency accumulation (issue #1132)", func() {
 
-		It("accumulates dependencies from both onContentTransformed and onPageRendered", func() {
-			// Plugin registers both hooks, each returning different deps.
-			// onContentTransformed: i18n dep (locales/en.json)
-			// onPageRendered: SSR component dep (elements/rh-card/rh-card.js)
-			pluginJS := `export default function(alloy) {
+		// Plugin that registers both hooks, each returning different deps.
+		// onContentTransformed: i18n dep (locales/en.json)
+		// onPageRendered: SSR component dep (elements/rh-card/rh-card.js)
+		dualHookPluginJS := `export default function(alloy) {
   alloy.hook('onContentTransformed', {}, function(page) {
     return {
       html: page.html,
@@ -501,7 +500,9 @@ var _ = Describe("Build Pipeline", func() {
     };
   });
 }`
-			cfg := setupWithPlugin(pluginJS)
+
+		It("accumulates dependencies from both onContentTransformed and onPageRendered", func() {
+			cfg := setupWithPlugin(dualHookPluginJS)
 
 			result, err := pipeline.Build(cfg)
 			Expect(err).NotTo(HaveOccurred())
@@ -525,23 +526,7 @@ var _ = Describe("Build Pipeline", func() {
 		})
 
 		It("incrementally rebuilds page when either hook's dependency changes", func() {
-			pluginJS := `export default function(alloy) {
-  alloy.hook('onContentTransformed', {}, function(page) {
-    return {
-      html: page.html,
-      toc: page.toc,
-      frontMatter: page.frontMatter,
-      addDependencies: ['locales/en.json']
-    };
-  });
-  alloy.hook('onPageRendered', {}, function(page) {
-    return {
-      html: page.html,
-      addDependencies: ['elements/rh-card/rh-card.js']
-    };
-  });
-}`
-			cfg := setupWithPlugin(pluginJS)
+			cfg := setupWithPlugin(dualHookPluginJS)
 
 			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
 			defer registry.Close()
