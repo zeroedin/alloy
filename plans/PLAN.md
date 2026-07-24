@@ -3155,7 +3155,7 @@ To detect this, both `alloy dev` and `alloy serve` write a server lockfile at `.
 }
 ```
 
-**On shutdown:** Remove `.alloy/server.lock` via deferred cleanup and signal handler (`SIGINT`, `SIGTERM`).
+**On shutdown:** Read `.alloy/server.lock` and check the PID matches the current process before removing. If the PID doesn't match (another process overwrote the lockfile), leave it in place — the other process owns it. Remove via deferred cleanup and signal handler (`SIGINT`, `SIGTERM`).
 
 **Why warn instead of refusing to start:** Users may intentionally run `alloy serve` (production preview) alongside `alloy dev` (development) if they use different output directories. Refusing to start would break that workflow. A prominent warning gives them the information to act without blocking legitimate use cases.
 
@@ -3164,6 +3164,9 @@ To detect this, both `alloy dev` and `alloy serve` write a server lockfile at `.
 - **PID reuse**: Unlikely in practice (PIDs cycle through tens of thousands). Not worth the complexity of a secondary process-name check.
 - **Multiple projects**: Not an issue — each project has its own `.alloy/` directory.
 - **CI/containers**: Not an issue — lockfile is per-project and PID check is local.
+- **PID 0 and negative PIDs**: Treated as invalid/stale — no real process has PID 0, and negative PIDs are never valid. `CheckAndWarnLockfile` removes the lockfile and returns no warnings.
+- **Cascade ownership**: Process A writes lockfile → Process B overwrites with its PID → Process A shuts down. Process A must NOT delete the lockfile because Process B owns it. The shutdown path reads the lockfile and only removes it if the PID matches the current process (`info.PID == os.Getpid()`).
+- **Filesystem errors**: If `.alloy` exists as a regular file (not a directory), both `WriteLockfile` and `ReadLockfile` return errors. `WriteLockfile` fails at directory creation; `ReadLockfile` fails with a non-IsNotExist error that surfaces to the caller.
 
 ### Shared Server Features (both modes)
 

@@ -1052,7 +1052,7 @@ Dev server command (`alloy dev`). Uses `ModeDev` — Phase 1 only, in-memory, dr
    - All types → `srv.BroadcastReload()` after rebuild.
    - **Bulk change protection**: If debouncer detects 10+ simultaneous changes (e.g., `git checkout`), always do a full rebuild. Cache is re-persisted by `Build()` Stage 9.
 9. Block until interrupt.
-10. **Remove server lockfile (issue #1094)**: In the shutdown path (after `<-sigCh`), call `server.RemoveLockfile(cfg.ProjectRoot)` before `srv.Stop()`.
+10. **Remove server lockfile (issue #1094)**: In the shutdown path (after `<-sigCh`), read the lockfile and only remove if the PID matches the current process: `if info, _ := server.ReadLockfile(cfg.ProjectRoot); info != nil && info.PID == os.Getpid() { server.RemoveLockfile(cfg.ProjectRoot) }`. This PID guard prevents Process A from deleting a lockfile that Process B has since overwritten (cascade scenario, issue #1124).
 
 #### `cmd/serve.go` (issue #256; watcher #291, fix #371)
 
@@ -1072,7 +1072,7 @@ Production server command (`alloy serve`). Uses `ModePreview` — same pipeline 
    - `ComponentChange` → full rebuild (SSR re-render)
    - All types → `srv.BroadcastReload()` after rebuild/recopy
 9. Block until interrupt.
-10. **Remove server lockfile (issue #1094)**: In the shutdown path (after `<-sigCh`), call `server.RemoveLockfile(cfg.ProjectRoot)` before `srv.Stop()`.
+10. **Remove server lockfile (issue #1094)**: In the shutdown path (after `<-sigCh`), read the lockfile and only remove if the PID matches the current process: `if info, _ := server.ReadLockfile(cfg.ProjectRoot); info != nil && info.PID == os.Getpid() { server.RemoveLockfile(cfg.ProjectRoot) }`. This PID guard prevents Process A from deleting a lockfile that Process B has since overwritten (cascade scenario, issue #1124).
 
 **`server.RecopyPassthroughFile(changedPath string, cfg *config.Config) (string, error)`** — Finds the matching passthrough mapping by checking which `from:` directory the `changedPath` is under. Computes the relative path within `from:`, constructs the output path as `_site/<to>/<relative-path>`, copies the single file, and returns the output path. Returns error if no matching mapping is found or the copy fails.
 
@@ -1202,18 +1202,19 @@ if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.
   - `WriteLockfile(projectRoot string, info LockfileInfo) error` — creates `.alloy/` directory via `os.MkdirAll(dir, 0755)` if it does not exist, marshals `info` to JSON, writes atomically to `.alloy/server.lock`. Overwrites any existing lockfile.
   - `ReadLockfile(projectRoot string) (*LockfileInfo, error)` — reads and unmarshals `.alloy/server.lock`. Returns `(nil, nil)` when the file does not exist (`os.IsNotExist`). Returns parse error for corrupt JSON.
   - `RemoveLockfile(projectRoot string)` — removes `.alloy/server.lock`. No-op when the file does not exist. Does NOT remove the `.alloy/` directory — other files (fetch cache, WASM cache, profiles, plugin logs) live there.
-  - `CheckAndWarnLockfile(projectRoot string) []string` — orchestrates the check-on-startup flow. Reads the lockfile. If missing, returns nil. If corrupt JSON, removes the lockfile and returns nil. If the PID is dead (POSIX: `syscall.Kill(pid, 0)` returns error; Windows: `os.FindProcess` + process signal check), removes the stale lockfile and returns nil. If the PID is alive, returns warning messages (at least 3 strings): (1) identifies the conflicting process with PID, mode, port, and start time; (2) explains the impact (concurrent instances cause missing pages and 404s); (3) provides the kill command (`kill <PID>`). Does NOT remove the lockfile when the PID is alive — the other process owns it. The PID liveness check must use platform-specific code (existing pattern: `internal/plugin/node_posix.go` and `node_windows.go` use `syscall.Kill(pid, 0)` and `os.FindProcess` respectively).
+  - `CheckAndWarnLockfile(projectRoot string) []string` — orchestrates the check-on-startup flow. Reads the lockfile. If missing, returns nil. If corrupt JSON, removes the lockfile and returns nil. If the PID is ≤ 0 (PID 0 or negative — invalid on all platforms), treats as stale, removes the lockfile, and returns nil. If the PID is dead (POSIX: `syscall.Kill(pid, 0)` returns error; Windows: `os.FindProcess` + process signal check), removes the stale lockfile and returns nil. If the PID is alive, returns warning messages (at least 3 strings): (1) identifies the conflicting process with PID, mode, port, and start time; (2) explains the impact (concurrent instances cause missing pages and 404s); (3) provides the kill command (`kill <PID>`). Does NOT remove the lockfile when the PID is alive — the other process owns it. The PID liveness check must use platform-specific code (existing pattern: `internal/plugin/node_posix.go` and `node_windows.go` use `syscall.Kill(pid, 0)` and `os.FindProcess` respectively).
 
   **Wiring in `cmd/dev.go` and `cmd/serve.go`:**
 
-  After config loading but before the initial build, call `server.CheckAndWarnLockfile(cfg.ProjectRoot)`. Print any returned warnings to stderr. After the build and server start, call `server.WriteLockfile(cfg.ProjectRoot, server.LockfileInfo{PID: os.Getpid(), Port: actualPort, Mode: "dev"/"serve", StartedAt: time.Now().Format(time.RFC3339)})`. In the shutdown path (after `<-sigCh`), call `server.RemoveLockfile(cfg.ProjectRoot)` before `srv.Stop()`.
+  After config loading but before the initial build, call `server.CheckAndWarnLockfile(cfg.ProjectRoot)`. Print any returned warnings to stderr. After the build and server start, call `server.WriteLockfile(cfg.ProjectRoot, server.LockfileInfo{PID: os.Getpid(), Port: actualPort, Mode: "dev"/"serve", StartedAt: time.Now().Format(time.RFC3339)})`. In the shutdown path (after `<-sigCh`), read the lockfile and only remove if the PID matches: `if info, _ := server.ReadLockfile(cfg.ProjectRoot); info != nil && info.PID == os.Getpid() { server.RemoveLockfile(cfg.ProjectRoot) }`. This PID guard prevents cascade deletion — if another process overwrote the lockfile, the shutting-down process must not remove it.
 
-  **22 tests** in `lockfile_test.go`:
+  **27 tests** in `lockfile_test.go`:
   - `LockfilePath` returns `.alloy/server.lock` under project root (2 tests)
-  - `WriteLockfile` creates directory and writes correct JSON, overwrites existing, writes correct mode (4 tests)
-  - `ReadLockfile` returns nil/nil when .alloy/ exists but server.lock does not, parses valid JSON, errors on corrupt JSON, returns nil/nil when .alloy/ directory missing (4 tests)
+  - `WriteLockfile` creates directory and writes correct JSON, overwrites existing, returns error when .alloy is a regular file, writes correct mode (5 tests)
+  - `ReadLockfile` returns nil/nil when .alloy/ exists but server.lock does not, parses valid JSON, errors on corrupt JSON, returns error when .alloy is a regular file, returns nil/nil when .alloy/ directory missing (5 tests)
   - `RemoveLockfile` removes file, no-op when missing, preserves .alloy/ directory (3 tests)
-  - `CheckAndWarnLockfile` returns nil when no lockfile, removes stale lockfile (dead PID) and returns nil, returns warnings for active lockfile (live PID) with correct content, format validation, treats corrupt lockfile as stale, non-blocking startup, preserves lockfile when PID alive (7 tests)
+  - `CheckAndWarnLockfile` returns nil when no lockfile, removes stale lockfile (dead PID) and returns nil, returns warnings for active lockfile (live PID) with correct content, format validation, treats corrupt lockfile as stale, non-blocking startup, treats PID 0 as stale and removes lockfile, treats negative PID as stale and removes lockfile, preserves lockfile when PID alive (9 tests)
+  - PID ownership lifecycle: cascade scenario — Process A cannot delete lockfile after Process B overwrites (1 test)
   - `LockfileInfo` JSON round-trip and field name validation (2 tests)
 
 - Error overlay injection

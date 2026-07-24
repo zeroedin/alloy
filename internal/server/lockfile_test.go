@@ -133,6 +133,21 @@ var _ = Describe("Server lockfile (issue #1094)", func() {
 			Expect(read.Mode).To(Equal("serve"))
 		})
 
+		It("returns error when .alloy path is blocked by a regular file (issue #1124)", func() {
+			// If a regular file exists at .alloy (not a directory), MkdirAll fails
+			alloyPath := filepath.Join(tmpDir, ".alloy")
+			Expect(os.WriteFile(alloyPath, []byte("not a directory"), 0644)).To(Succeed())
+
+			info := server.LockfileInfo{PID: 1, Port: 3000, Mode: "dev"}
+			err := server.WriteLockfile(tmpDir, info)
+			Expect(err).To(HaveOccurred(),
+				"WriteLockfile must return an error when .alloy exists as a regular file")
+			Expect(err.Error()).To(SatisfyAny(
+				ContainSubstring("lockfile"),
+				ContainSubstring("directory"),
+			), "error message must reference the lockfile or directory operation")
+		})
+
 		It("writes the mode as dev for dev servers", func() {
 			info := server.LockfileInfo{
 				PID:  os.Getpid(),
@@ -199,6 +214,21 @@ var _ = Describe("Server lockfile (issue #1094)", func() {
 			_, err := server.ReadLockfile(tmpDir)
 			Expect(err).To(HaveOccurred(),
 				"corrupt JSON must return an error — callers decide whether to treat as stale")
+		})
+
+		It("returns error when .alloy path is blocked by a regular file (issue #1124)", func() {
+			// If a regular file exists at .alloy (not a directory),
+			// os.ReadFile(".alloy/server.lock") fails with ENOTDIR,
+			// which is not an IsNotExist error — must surface as a read error.
+			alloyPath := filepath.Join(tmpDir, ".alloy")
+			Expect(os.WriteFile(alloyPath, []byte("not a directory"), 0644)).To(Succeed())
+
+			info, err := server.ReadLockfile(tmpDir)
+			Expect(err).To(HaveOccurred(),
+				"ReadLockfile must return an error when .alloy is a regular file, not a directory")
+			Expect(info).To(BeNil())
+			Expect(err.Error()).To(ContainSubstring("lockfile"),
+				"error message must reference the lockfile operation")
 		})
 
 		It("returns nil,nil when .alloy/ directory does not exist", func() {
@@ -401,6 +431,48 @@ var _ = Describe("Server lockfile (issue #1094)", func() {
 				"must return warnings, not block startup")
 		})
 
+		It("treats PID 0 as stale and removes lockfile (issue #1124)", func() {
+			info := server.LockfileInfo{
+				PID:       0,
+				Port:      3000,
+				Mode:      "dev",
+				StartedAt: "2026-07-14T12:00:00Z",
+			}
+			Expect(server.WriteLockfile(tmpDir, info)).To(Succeed())
+
+			lockPath := filepath.Join(tmpDir, ".alloy", "server.lock")
+			Expect(lockPath).To(BeAnExistingFile(),
+				"precondition: lockfile with PID 0 must exist")
+
+			warnings := server.CheckAndWarnLockfile(tmpDir)
+			Expect(warnings).To(BeNil(),
+				"PID 0 is invalid — no real process has PID 0, must treat as stale")
+
+			Expect(lockPath).NotTo(BeAnExistingFile(),
+				"lockfile with PID 0 must be removed as stale")
+		})
+
+		It("treats negative PID as stale and removes lockfile (issue #1124)", func() {
+			info := server.LockfileInfo{
+				PID:       -1,
+				Port:      3000,
+				Mode:      "dev",
+				StartedAt: "2026-07-14T12:00:00Z",
+			}
+			Expect(server.WriteLockfile(tmpDir, info)).To(Succeed())
+
+			lockPath := filepath.Join(tmpDir, ".alloy", "server.lock")
+			Expect(lockPath).To(BeAnExistingFile(),
+				"precondition: lockfile with negative PID must exist")
+
+			warnings := server.CheckAndWarnLockfile(tmpDir)
+			Expect(warnings).To(BeNil(),
+				"negative PID is invalid — must treat as stale and return no warnings")
+
+			Expect(lockPath).NotTo(BeAnExistingFile(),
+				"lockfile with negative PID must be removed as stale")
+		})
+
 		It("preserves the lockfile when the PID is alive", func() {
 			livePID := os.Getpid()
 
@@ -418,6 +490,76 @@ var _ = Describe("Server lockfile (issue #1094)", func() {
 			Expect(lockPath).To(BeAnExistingFile(),
 				"CheckAndWarnLockfile must NOT remove a lockfile with a live PID — "+
 					"the other process is still running and owns the lockfile")
+		})
+	})
+
+	// ── PID ownership lifecycle ──────────────────────────────────────
+
+	Describe("PID ownership lifecycle (issue #1124)", func() {
+		var tmpDir string
+
+		BeforeEach(func() {
+			var err error
+			tmpDir, err = os.MkdirTemp("", "alloy-lockfile-test-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+		})
+
+		It("does not delete lockfile owned by another process (cascade scenario)", func() {
+			// Scenario: Process A starts and writes lockfile with its PID.
+			// Process B starts later and overwrites the lockfile with its PID.
+			// Process A shuts down and checks PID ownership before removing.
+			// The lockfile must survive because it belongs to Process B.
+
+			// Step 1: "Process A" (current process) writes lockfile
+			infoA := server.LockfileInfo{
+				PID:       os.Getpid(),
+				Port:      3000,
+				Mode:      "dev",
+				StartedAt: "2026-07-14T12:00:00Z",
+			}
+			Expect(server.WriteLockfile(tmpDir, infoA)).To(Succeed())
+
+			// Step 2: "Process B" overwrites lockfile with a different PID
+			otherPID := os.Getpid() + 99999
+			infoB := server.LockfileInfo{
+				PID:       otherPID,
+				Port:      3001,
+				Mode:      "serve",
+				StartedAt: "2026-07-14T13:00:00Z",
+			}
+			Expect(server.WriteLockfile(tmpDir, infoB)).To(Succeed())
+
+			// Step 3: "Process A" shutdown — read lockfile and check PID ownership.
+			// This mirrors the guard in cmd/dev.go and cmd/serve.go:
+			//   if info, _ := server.ReadLockfile(...); info != nil && info.PID == os.Getpid() {
+			//       server.RemoveLockfile(...)
+			//   }
+			info, err := server.ReadLockfile(tmpDir)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(info).NotTo(BeNil())
+			Expect(info.PID).To(Equal(otherPID),
+				"lockfile must contain Process B's PID after overwrite")
+			Expect(info.PID).NotTo(Equal(os.Getpid()),
+				"PID guard (info.PID == os.Getpid()) must evaluate to false — "+
+					"Process A must NOT remove a lockfile it no longer owns")
+
+			// Simulate the call-site guard: only remove if PID matches current process
+			if info != nil && info.PID == os.Getpid() {
+				server.RemoveLockfile(tmpDir)
+			}
+
+			// Lockfile must still exist — Process A's guard prevented deletion
+			lockPath := filepath.Join(tmpDir, ".alloy", "server.lock")
+			Expect(lockPath).To(BeAnExistingFile(),
+				"lockfile must survive — Process B owns it, the PID guard prevented deletion")
+
+			// Verify the surviving lockfile still has Process B's data
+			surviving, err := server.ReadLockfile(tmpDir)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(surviving.PID).To(Equal(otherPID))
+			Expect(surviving.Port).To(Equal(3001))
+			Expect(surviving.Mode).To(Equal("serve"))
 		})
 	})
 
