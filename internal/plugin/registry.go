@@ -202,6 +202,21 @@ func (r *Registry) Runtimes() []PluginFilterRuntime {
 	return r.runtimes
 }
 
+// RestartNodeRuntimes stops and restarts all Node bridge subprocesses so
+// that ESM module caches are cleared. Called when onFileChanged returns
+// restart: true — the plugin's import()ed dependencies have changed on
+// disk and the Node process must re-import them (issue #1100).
+func (r *Registry) RestartNodeRuntimes() error {
+	for _, rt := range r.runtimes {
+		if nr, ok := rt.(*NodeRuntime); ok {
+			if err := nr.Restart(); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // Close releases resources held by all loaded runtimes and any
 // pre-initialized runtimes that were never consumed by LoadPlugins.
 // Also clears global plugin source handlers to prevent stale closures
