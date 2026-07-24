@@ -367,21 +367,25 @@ Return values are ignored. Plugins observe but cannot modify.
 
 #### onBuildComplete
 
-Fires after the build finishes. The payload uses PascalCase keys (the `BuildResult` struct has no JSON tag overrides). `Duration` is raw nanoseconds — divide by `1e6` for milliseconds.
+Fires after the build finishes. The payload contains build stats and any errors that occurred.
 
 ```javascript
 alloy.hook("onBuildComplete", {}, (result) => {
-  const ms = (result.Duration / 1e6).toFixed(0);
-  console.log(`Built ${result.PageCount} pages in ${ms}ms`);
+  console.log(`Built ${result.pageCount} pages in ${result.duration}`);
+  if (result.errors.length > 0) {
+    console.warn(`${result.errors.length} error(s) during build`);
+  }
 });
 ```
 
 | Field | Type | Description |
 |---|---|---|
-| `OutputDir` | string | Output directory path |
-| `PageCount` | number | Total pages built |
-| `PagesSkipped` | number | Pages skipped during incremental rebuilds |
-| `Duration` | number | Build time in nanoseconds |
+| `pageCount` | number | Total pages built |
+| `duration` | string | Build time as a formatted string (e.g., `"53ms"`) |
+| `errors` | string[] | Build errors (empty array when the build succeeds) |
+| `outputDir` | string | Output directory path |
+
+Plugins that need page output content should read from the output directory on disk — Alloy does not pipe rendered HTML to plugins over IPC.
 
 #### onDevServerStart
 
