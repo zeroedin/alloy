@@ -2,7 +2,7 @@
 type: minor
 ---
 
-The SSR component source directory is configurable via `structure.components`, matching the pattern used by all other structure directories.
+`structure.components` controls where Alloy looks for SSR component source files. Defaults to `components/` when omitted.
 
 ```yaml
 # alloy.config.yaml
@@ -10,6 +10,4 @@ structure:
   components: "elements"
 ```
 
-Set `structure.components` to the directory containing your web component source files. The file watcher, change classifier, and incremental SSR invalidation all read from this config. When omitted, Alloy defaults to `components/`, preserving existing behavior.
-
-Projects with component source in a non-standard directory (e.g., `elements/`) get correct `ComponentChange` classification and SSR re-rendering during `alloy serve` without workarounds.
+During `alloy serve`, Alloy watches this directory for changes and re-renders pages that use the affected components. Projects that keep component source outside `components/` previously got no SSR invalidation on file changes.
