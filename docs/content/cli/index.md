@@ -49,6 +49,17 @@ Key behaviors:
 - **Drafts are visible by default.** Pages with `draft: true` appear in the dev server so authors can preview work in progress. Use `--no-drafts` to hide them.
 - **Incremental rebuilds.** After the initial build, file changes trigger incremental rebuilds -- only changed and invalidated pages are re-rendered. Template changes invalidate pages that use that specific template, not all pages.
 - **Port auto-increment.** If the default port (3000) is occupied, Alloy tries up to 10 consecutive ports before failing.
+- **Concurrent process detection.** Alloy writes a lockfile at `.alloy/server.lock` on startup. If another Alloy process is already watching the same directory, a warning prints with the conflicting PID, port, and a `kill` command. Startup continues -- it does not block or fail.
+
+When a conflicting process is detected, the warning looks like this:
+
+```
+warning: another alloy process (PID 4659, alloy serve on port 3003, started 2026-07-14T13:00:00-04:00) is watching this directory
+warning: concurrent instances writing to _site/ will cause missing pages and 404s
+warning: kill the other process with: kill 4659
+```
+
+Stale lockfiles from crashed processes are automatically cleaned up on the next startup. The lockfile is removed on clean shutdown.
 
 ### `alloy serve`
 
@@ -67,6 +78,7 @@ Key behaviors:
 - **Writes to `_site/`.** Output is written to disk and served from there.
 - **Full rebuilds on change.** File changes trigger a complete pipeline rebuild (no incremental mode in serve).
 - **Passthrough watching.** Changes to passthrough source directories trigger targeted file recopy, not full rebuilds.
+- **Concurrent process detection.** Alloy writes a lockfile at `.alloy/server.lock` on startup. If another Alloy process is already watching the same directory, a warning prints with the conflicting PID, port, and a `kill` command. Startup continues -- it does not block or fail.
 
 ### `alloy init`
 
