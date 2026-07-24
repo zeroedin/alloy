@@ -6,6 +6,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/content"
@@ -612,4 +613,114 @@ func pageHasNonHTMLOutput(page *content.Page) bool {
 		}
 	}
 	return false
+}
+
+// dispatchPostRenderHooks fires onPageRendered and onFormatRendered hooks,
+// then applies the single-format writeback for non-HTML pages.
+//
+// reporter controls progress output (nil = silent, used by Build but not
+// BuildIncremental). handleErr determines error semantics: Build returns the
+// error (fatal), BuildIncremental logs a warning and returns nil.
+func dispatchPostRenderHooks(
+	pages []*content.Page,
+	hooks *plugin.HookRegistry,
+	buildCache *cache.Cache,
+	reporter ProgressReporter,
+	handleErr func(error) error,
+) error {
+	if hooks != nil && hooks.HasHooks(plugin.OnPageRendered) {
+		var htmlPages []*content.Page
+		for _, page := range pages {
+			if pageHasHTMLOutput(page) {
+				htmlPages = append(htmlPages, page)
+			}
+		}
+		if len(htmlPages) > 0 {
+			reportStartStage(reporter, "Transforms", len(htmlPages))
+			payloads := make([]interface{}, len(htmlPages))
+			for i, page := range htmlPages {
+				payloads[i] = buildPageRenderedPayload(page)
+			}
+			var progressFn plugin.BatchProgressFunc
+			if reporter != nil {
+				var mu sync.Mutex
+				var highWater int
+				progressFn = func(completed, total int) {
+					mu.Lock()
+					if completed > highWater {
+						highWater = completed
+						reportUpdate(reporter, completed, "", 0)
+					}
+					mu.Unlock()
+				}
+			}
+			results, err := hooks.RunBatchWithProgress(plugin.OnPageRendered, payloads, progressFn)
+			if err != nil {
+				if err := handleErr(fmt.Errorf("plugin hook onPageRendered: %w", err)); err != nil {
+					return err
+				}
+			} else {
+				for i, result := range results {
+					if m, ok := toGoMap(result); ok {
+						if html, ok := m["html"].(string); ok {
+							htmlPages[i].SetRenderedBody([]byte(html))
+						}
+						extractAddDependencies(m, htmlPages[i].RelPath, buildCache)
+					} else if result != nil {
+						log.Printf("warning: onPageRendered result for %s: expected page object with html key, got %T — plugin may need migration to the object API", htmlPages[i].RelPath, result)
+					}
+				}
+			}
+			reportEndStage(reporter)
+		}
+	}
+
+	if hooks != nil && hooks.HasHooks(plugin.OnFormatRendered) {
+		for _, page := range pages {
+			if len(page.FormatBodies) == 0 {
+				continue
+			}
+			fm := convertOrderedMaps(page.FrontMatter)
+			if fm == nil {
+				fm = map[string]interface{}{}
+			}
+			for _, format := range page.Outputs {
+				if format == "html" {
+					continue
+				}
+				body, ok := page.FormatBodies[format]
+				if !ok {
+					continue
+				}
+				currentContent := string(body)
+				hookErr := hooks.RunEachWithTimeout(plugin.OnFormatRendered,
+					func(_ int, _ *plugin.HookScope) interface{} {
+						return buildFormatRenderedPayload(page, format, currentContent, fm)
+					},
+					func(_ int, _ *plugin.HookScope, result interface{}) error {
+						if c, ok := extractFormatRenderedContent(result); ok {
+							currentContent = c
+						}
+						return nil
+					},
+				)
+				if hookErr != nil {
+					if err := handleErr(fmt.Errorf("plugin hook onFormatRendered (%s, %s): %w", page.RelPath, format, hookErr)); err != nil {
+						return err
+					}
+				}
+				page.FormatBodies[format] = []byte(currentContent)
+			}
+		}
+	}
+
+	for _, page := range pages {
+		if !pageHasHTMLOutput(page) && len(page.FormatBodies) == 1 {
+			for _, body := range page.FormatBodies {
+				page.SetRenderedBody(body)
+			}
+		}
+	}
+
+	return nil
 }
