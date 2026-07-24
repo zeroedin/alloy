@@ -510,3 +510,13 @@ func buildPagesReadyPayload(pages []*content.Page, scope *plugin.HookScope, site
 
 	return payload
 }
+
+// extractPageRenderedHTML extracts the html field from an onPageRendered hook result.
+// The result may be a map[string]interface{} or *ordered.Map depending on the runtime.
+func extractPageRenderedHTML(result interface{}) (string, bool) {
+	if m, ok := toGoMap(result); ok {
+		html, ok := m["html"].(string)
+		return html, ok
+	}
+	return "", false
+}

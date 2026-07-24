@@ -494,18 +494,24 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	if ps.Hooks != nil && ps.Hooks.HasHooks(plugin.OnPageRendered) {
 		payloads := make([]interface{}, len(pagesToRender))
 		for i, page := range pagesToRender {
-			payloads[i] = page.HTML()
+			fm := page.FrontMatter
+			if fm == nil {
+				fm = map[string]interface{}{}
+			}
+			payloads[i] = map[string]interface{}{
+				"html":        page.HTML(),
+				"frontMatter": fm,
+				"url":         page.URL,
+				"path":        page.RelPath,
+			}
 		}
 		results, hookErr := ps.Hooks.RunBatchWithProgress(plugin.OnPageRendered, payloads, nil)
 		if hookErr != nil {
 			log.Printf("warning: plugin hook onPageRendered: %v", hookErr)
 		} else {
 			for i, result := range results {
-				switch modified := result.(type) {
-				case string:
-					pagesToRender[i].SetRenderedBody([]byte(modified))
-				case []byte:
-					pagesToRender[i].SetRenderedBody(modified)
+				if html, ok := extractPageRenderedHTML(result); ok {
+					pagesToRender[i].SetRenderedBody([]byte(html))
 				}
 			}
 		}
