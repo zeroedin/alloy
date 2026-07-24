@@ -49,6 +49,9 @@ func ParseFileChangedResult(result interface{}) *FileChangedResult {
 		hasRecognized = true
 		if b, ok := raw.(bool); ok {
 			parsed.Restart = b
+		} else {
+			parsed.Warnings = append(parsed.Warnings,
+				fmt.Sprintf("restart must be a boolean, got %T — value dropped", raw))
 		}
 	}
 
