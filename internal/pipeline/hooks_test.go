@@ -2969,6 +2969,202 @@ var _ = Describe("Build Pipeline", func() {
 				"the plugin must have executed — frontMatter type check passed")
 		})
 
+		// ── extractPageRenderedHTML edge cases (issue #1120) ──
+		// These tests verify that malformed or missing hook return values
+		// don't corrupt the page's rendered body. The original HTML must
+		// be preserved when the hook returns nil, an object without an
+		// html key, an object with a non-string html value, or a raw
+		// string (old API format).
+
+		It("nil return from onPageRendered leaves page HTML unchanged", func() {
+			cfg := &config.Config{
+				Title:   "Nil Return Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Original Content",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				// Plugin returns undefined (nil in Go) — no explicit return statement.
+				"plugins/nil-return.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    // no return — JavaScript returns undefined
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"nil return from onPageRendered must not error — "+
+					"undefined/null results are silently skipped (issue #1120)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("Original Content"),
+				"original page HTML must be preserved when onPageRendered "+
+					"returns nil/undefined — extractPageRenderedHTML must return "+
+					"false for nil input, and the apply-back block must skip "+
+					"nil results without logging a warning (issue #1120)")
+		})
+
+		It("return without html key from onPageRendered leaves page HTML unchanged", func() {
+			cfg := &config.Config{
+				Title:   "Missing HTML Key Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Preserved Content",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				// Plugin returns an object but without an html key.
+				"plugins/missing-html.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return { transformed: true };
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"return without html key must not error — "+
+					"extractPageRenderedHTML returns false when html key is "+
+					"absent, and the pipeline logs a migration warning (issue #1120)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("Preserved Content"),
+				"original page HTML must be preserved when onPageRendered "+
+					"returns a map without an html key — the apply-back block "+
+					"must not call SetRenderedBody with an empty string (issue #1120)")
+		})
+
+		It("non-string html value in return from onPageRendered leaves page HTML unchanged", func() {
+			cfg := &config.Config{
+				Title:   "Non-String HTML Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Intact Content",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				// Plugin returns html as a number instead of a string.
+				"plugins/non-string-html.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return { html: 42 };
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"non-string html value must not error — "+
+					"extractPageRenderedHTML uses a type assertion on m[\"html\"].(string) "+
+					"which returns false for non-string types (issue #1120)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("Intact Content"),
+				"original page HTML must be preserved when onPageRendered "+
+					"returns html as a non-string value — the type assertion "+
+					"fails, extractPageRenderedHTML returns false, and the "+
+					"pipeline logs a migration warning (issue #1120)")
+		})
+
+		It("old string format return from onPageRendered leaves page HTML unchanged", func() {
+			cfg := &config.Config{
+				Title:   "Old Format Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Untouched Content",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				// Plugin returns a raw string instead of an object — old API format.
+				// The new API expects { html: "..." }. Returning a string means
+				// toGoMap returns false → extractPageRenderedHTML returns false.
+				"plugins/old-string.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return page.html + '<!-- old-format -->';
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"old string format return must not error — "+
+					"the pipeline gracefully degrades and logs a migration "+
+					"warning suggesting the object API (issue #1120)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("Untouched Content"),
+				"original page HTML must be preserved when onPageRendered "+
+					"returns a raw string instead of {html: ...} — the old "+
+					"string format is no longer applied. Plugins must migrate "+
+					"to the object API (issue #1120)")
+			Expect(html).NotTo(ContainSubstring("<!-- old-format -->"),
+				"old-format string return must NOT be applied — "+
+					"extractPageRenderedHTML only accepts map types with an "+
+					"html key. The migration warning tells plugin authors to "+
+					"switch to the object API (issue #1120)")
+		})
+
+		// ── *ordered.Map front matter through onPageRendered (issue #1120) ──
+		// When YAML front matter contains nested maps, Go stores them as
+		// *ordered.Map. buildPageRenderedPayload calls convertOrderedMaps()
+		// to flatten them to map[string]interface{} before serialization.
+		// This test verifies deeply nested front matter survives the conversion
+		// and is accessible as plain objects in the plugin.
+
+		It("nested YAML front matter with ordered maps is accessible as plain objects in onPageRendered", func() {
+			cfg := &config.Config{
+				Title:   "Ordered Map FrontMatter Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				// Deeply nested YAML front matter — the YAML parser creates
+				// *ordered.Map values for nested maps. convertOrderedMaps in
+				// buildPageRenderedPayload must flatten these so plugins receive
+				// plain JavaScript objects.
+				"content/index.md": "---\ntitle: Nested FM\nlayout: default\nmetadata:\n  author:\n    name: Jane Doe\n    social:\n      twitter: \"@janedoe\"\n      github: janedoe\n  version: 2\n---\n# Nested Front Matter",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/nested-fm-check.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    if (!page.frontMatter.metadata) {
+      throw new Error('frontMatter.metadata missing — ordered map conversion may have failed');
+    }
+    if (!page.frontMatter.metadata.author) {
+      throw new Error('frontMatter.metadata.author missing — nested ordered map not converted');
+    }
+    if (page.frontMatter.metadata.author.name !== 'Jane Doe') {
+      throw new Error('author.name must be "Jane Doe", got ' + JSON.stringify(page.frontMatter.metadata.author.name));
+    }
+    if (!page.frontMatter.metadata.author.social) {
+      throw new Error('author.social missing — deeply nested ordered map not converted');
+    }
+    if (page.frontMatter.metadata.author.social.twitter !== '@janedoe') {
+      throw new Error('social.twitter must be "@janedoe", got ' + JSON.stringify(page.frontMatter.metadata.author.social.twitter));
+    }
+    if (page.frontMatter.metadata.author.social.github !== 'janedoe') {
+      throw new Error('social.github must be "janedoe", got ' + JSON.stringify(page.frontMatter.metadata.author.social.github));
+    }
+    page.html = page.html + '<!-- fm-nested-ok -->';
+    return page;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"deeply nested YAML front matter must survive ordered map conversion — "+
+					"if this fails, buildPageRenderedPayload is not calling "+
+					"convertOrderedMaps() or the conversion doesn't recurse "+
+					"into nested *ordered.Map values (issue #1120)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("<!-- fm-nested-ok -->"),
+				"plugin must have executed successfully after accessing "+
+					"deeply nested front matter fields — the fm-nested-ok "+
+					"marker proves convertOrderedMaps flattened all levels (issue #1120)")
+		})
+
 		It("html mutation from onPageRendered is visible in final output file", func() {
 			cfg := &config.Config{
 				Title:   "HTML Apply-Back Test",

@@ -2499,6 +2499,17 @@ alloy.hook("onPageRendered", {}, (page) => {
 });
 ```
 
+**`onPageRendered` return value edge cases (issue #1120):** The apply-back block handles malformed or legacy return values gracefully:
+
+- **`nil`/`undefined` return** — no-op, original HTML preserved, no warning logged.
+- **Map without `html` key** (e.g., `{ transformed: true }`) — original HTML preserved, migration warning logged.
+- **Non-string `html` value** (e.g., `{ html: 42 }`) — original HTML preserved, migration warning logged.
+- **Old string format return** (e.g., `return page.html + "..."`) — original HTML preserved, migration warning logged. Plugins must migrate from `(html) => html.replace(...)` to `(page) => { page.html = page.html.replace(...); return page; }`.
+
+**`*ordered.Map` front matter conversion:** `buildPageRenderedPayload` calls `convertOrderedMaps()` on `page.FrontMatter` before serialization. Deeply nested YAML maps stored as `*ordered.Map` in Go are recursively flattened to `map[string]interface{}` so plugins receive plain JavaScript objects at all nesting levels.
+
+**`BuildIncremental` parity:** `BuildIncremental` must produce the same `onPageRendered` payload shape as `Build()` — all four fields (`html`, `frontMatter`, `url`, `path`) populated at the field level with correct values, including updated front matter when content changes between incremental rebuilds.
+
 #### Per-asset hook (path + content object)
 
 Fires **once per asset file** during asset copy. Payload is a JSON object with `path` (relative within the assets directory, e.g. `css/main.css`) and `content` (file content as a string). Return value's `content` key replaces the asset content written to the output directory. The hook does not fire when the assets directory does not exist or contains no files. If the return value is `null`/`undefined` or has no `content` key, the original content is preserved. The `path` key in the return value is ignored — only `content` is applied back.
