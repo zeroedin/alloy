@@ -494,16 +494,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	if ps.Hooks != nil && ps.Hooks.HasHooks(plugin.OnPageRendered) {
 		payloads := make([]interface{}, len(pagesToRender))
 		for i, page := range pagesToRender {
-			fm := page.FrontMatter
-			if fm == nil {
-				fm = map[string]interface{}{}
-			}
-			payloads[i] = map[string]interface{}{
-				"html":        page.HTML(),
-				"frontMatter": fm,
-				"url":         page.URL,
-				"path":        page.RelPath,
-			}
+			payloads[i] = buildPageRenderedPayload(page)
 		}
 		results, hookErr := ps.Hooks.RunBatchWithProgress(plugin.OnPageRendered, payloads, nil)
 		if hookErr != nil {
@@ -512,6 +503,8 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 			for i, result := range results {
 				if html, ok := extractPageRenderedHTML(result); ok {
 					pagesToRender[i].SetRenderedBody([]byte(html))
+				} else if result != nil {
+					log.Printf("warning: onPageRendered result for %s: expected page object with html key, got %T — plugin may need migration to the object API", pagesToRender[i].RelPath, result)
 				}
 			}
 		}

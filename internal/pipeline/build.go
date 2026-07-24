@@ -887,16 +887,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		reportStartStage(reporter, "Transforms", len(pages))
 		payloads := make([]interface{}, len(pages))
 		for i, page := range pages {
-			fm := page.FrontMatter
-			if fm == nil {
-				fm = map[string]interface{}{}
-			}
-			payloads[i] = map[string]interface{}{
-				"html":        page.HTML(),
-				"frontMatter": fm,
-				"url":         page.URL,
-				"path":        page.RelPath,
-			}
+			payloads[i] = buildPageRenderedPayload(page)
 		}
 		var progressFn plugin.BatchProgressFunc
 		if reporter != nil {
@@ -918,6 +909,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		for i, result := range results {
 			if html, ok := extractPageRenderedHTML(result); ok {
 				pages[i].SetRenderedBody([]byte(html))
+			} else if result != nil {
+				log.Printf("warning: onPageRendered result for %s: expected page object with html key, got %T — plugin may need migration to the object API", pages[i].RelPath, result)
 			}
 		}
 		reportEndStage(reporter)
