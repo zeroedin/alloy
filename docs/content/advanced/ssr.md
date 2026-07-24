@@ -50,7 +50,7 @@ export default function(alloy) {
     }
   }
 
-  alloy.hook("onPageRendered", async (page) => {
+  alloy.hook("onPageRendered", {}, async (page) => {
     if (typeof page.html !== 'string') return page;
     if (!/<[a-z]+-[a-z]/.test(page.html)) return page;
 
