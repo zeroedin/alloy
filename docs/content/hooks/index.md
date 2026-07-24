@@ -340,6 +340,47 @@ alloy.hook("onPageRendered", {}, (page) => {
 | `url` | string | no | Page URL |
 | `path` | string | no | Source-relative file path |
 
+Pages whose `outputs` contains only non-HTML formats (e.g., `outputs: ["json"]`) skip `onPageRendered` entirely. Those pages route through `onFormatRendered` instead.
+
+#### onFormatRendered
+
+Fires once per non-HTML format body after layout rendering. Pages that declare non-HTML entries in their `outputs` front matter (e.g., `"json"`, `"xml"`) have each format body dispatched through this hook individually.
+
+```javascript
+alloy.hook("onFormatRendered", {}, (payload) => {
+  if (payload.format === "json") {
+    // Minify JSON output
+    return { content: JSON.stringify(JSON.parse(payload.content)) };
+  }
+});
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `format` | string | Output format extension (`"json"`, `"xml"`, etc.) |
+| `content` | string | Rendered format body |
+| `url` | string | Page URL |
+| `path` | string | Source-relative file path |
+| `frontMatter` | object | Page front matter (read-only context) |
+
+**Return value:**
+
+| Return | Effect |
+|---|---|
+| `{ content: "..." }` | Replaces the format body in output |
+| `null` / `undefined` | Keeps the original content |
+| Object without `content` key | Keeps the original content |
+
+Only the `content` field is applied back. The `format`, `url`, `path`, and `frontMatter` fields are read-only context for conditional processing.
+
+**Iteration order:** When a page declares multiple non-HTML formats, `onFormatRendered` fires in the order formats appear in the page's `outputs` array, not in arbitrary map iteration order. Front matter is converted once per page and reused across all format invocations for that page.
+
+**Relationship to `onPageRendered`:**
+
+- `onPageRendered` fires only for pages whose `outputs` includes `"html"` (or defaults to `["html"]`). Pages with only non-HTML outputs skip `onPageRendered` entirely.
+- A page with `outputs: ["json"]` routes through `onFormatRendered` only.
+- A page with `outputs: ["html", "json"]` fires both hooks independently -- `onPageRendered` for the HTML body, then `onFormatRendered` for each non-HTML format.
+
 ### Per-Asset Hook
 
 #### onAssetProcess
