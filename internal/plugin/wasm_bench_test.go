@@ -40,6 +40,19 @@ func setupBenchQuickJS(b *testing.B) *plugin.QuickJSRuntime {
 	return rt
 }
 
+// buildBenchHTML generates a deterministic HTML string of approximately n cards.
+// Each card is ~186 bytes. Used by both struct and string benchmarks to ensure
+// identical payloads for comparable measurements.
+func buildBenchHTML(n int) string {
+	var sb strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&sb, "<div class=\"card\" id=\"card-%d\"><h3>Card %d</h3>"+
+			"<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. "+
+			"Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p></div>\n", i, i)
+	}
+	return sb.String()
+}
+
 // BenchmarkCallHookRenderedPayload_1KB measures CallHook performance with
 // a ~1KB HTML payload through a QuickJS onPageRendered hook. This is the
 // baseline for small pages. The fast path (issue #1180) should show
@@ -75,11 +88,7 @@ func BenchmarkCallHookRenderedPayload_100KB(b *testing.B) {
 	rt := setupBenchQuickJS(b)
 	defer rt.Close()
 
-	var sb strings.Builder
-	for i := 0; i < 1000; i++ {
-		fmt.Fprintf(&sb, "<div class=\"card\"><h3>Card %d</h3><p>Lorem ipsum dolor sit amet.</p></div>\n", i)
-	}
-	html := sb.String() // ~78KB
+	html := buildBenchHTML(1000) // ~78KB
 
 	payload := plugin.HookRenderedPayload{
 		HTML:        html,
@@ -107,13 +116,7 @@ func BenchmarkCallHookRenderedPayload_800KB(b *testing.B) {
 	rt := setupBenchQuickJS(b)
 	defer rt.Close()
 
-	var sb strings.Builder
-	for i := 0; i < 8000; i++ {
-		fmt.Fprintf(&sb, "<div class=\"card\" id=\"card-%d\"><h3>Card %d</h3>"+
-			"<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. "+
-			"Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p></div>\n", i, i)
-	}
-	html := sb.String() // ~800KB
+	html := buildBenchHTML(4300) // ~800KB
 
 	payload := plugin.HookRenderedPayload{
 		HTML: html,
@@ -140,6 +143,8 @@ func BenchmarkCallHookRenderedPayload_800KB(b *testing.B) {
 // BenchmarkCallHookRenderedPayload_String_Baseline measures the old v0.5.0
 // raw string path for comparison. This is the performance target — the fast
 // path should approach this speed since it also uses native string transfer.
+// Uses a different plugin script than setupBenchQuickJS because the string
+// API hook receives a raw string (not an object) and returns a raw string.
 func BenchmarkCallHookRenderedPayload_String_Baseline(b *testing.B) {
 	tmpDir := b.TempDir()
 	pluginPath := filepath.Join(tmpDir, "bench-string-hook.js")
@@ -162,13 +167,7 @@ func BenchmarkCallHookRenderedPayload_String_Baseline(b *testing.B) {
 	}
 	defer rt.Close()
 
-	var sb strings.Builder
-	for i := 0; i < 8000; i++ {
-		fmt.Fprintf(&sb, "<div class=\"card\" id=\"card-%d\"><h3>Card %d</h3>"+
-			"<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. "+
-			"Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p></div>\n", i, i)
-	}
-	html := sb.String() // ~800KB raw string, same as the struct benchmark
+	html := buildBenchHTML(4300) // ~800KB, same size as the struct benchmark
 
 	b.ResetTimer()
 	b.ReportAllocs()

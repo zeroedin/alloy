@@ -14,15 +14,6 @@ import (
 	"github.com/zeroedin/alloy/internal/plugin"
 )
 
-// toOrderedMap attempts to convert an interface{} to map[string]interface{}
-// via *ordered.Map. Returns the map and true if the value is an *ordered.Map.
-func toOrderedMap(v interface{}) (map[string]interface{}, bool) {
-	if om, ok := v.(*ordered.Map); ok {
-		return om.ToGoMap(), true
-	}
-	return nil, false
-}
-
 // extractGoMap extracts a map[string]interface{} from a CallHook result.
 // Handles both direct map[string]interface{} returns (from the fast path)
 // and *ordered.Map returns (from the JSON parse path).
@@ -30,8 +21,8 @@ func extractGoMap(v interface{}) map[string]interface{} {
 	if m, ok := v.(map[string]interface{}); ok {
 		return m
 	}
-	if m, ok := toOrderedMap(v); ok {
-		return m
+	if om, ok := v.(*ordered.Map); ok {
+		return om.ToGoMap()
 	}
 	return nil
 }
@@ -1678,15 +1669,8 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 					"the type switch must handle this struct type, either via a "+
 					"dedicated fast path case or the existing JSON default case")
 
-			m, ok := result.(map[string]interface{})
-			if !ok {
-				// ordered.Map is also acceptable from the JSON path
-				if om, omOk := toOrderedMap(result); omOk {
-					m = om
-					ok = true
-				}
-			}
-			Expect(ok).To(BeTrue(),
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil(),
 				"CallHook with HookRenderedPayload must return a map — "+
 					"got %T; the hook returns {html: ...} which must be "+
 					"deserialized as a map on the Go side", result)
@@ -1885,6 +1869,24 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 				"identity return must preserve the html field exactly — "+
 					"the fast path outbound extraction must handle the "+
 					"case where the hook returns the input object unmodified")
+
+			url, urlOk := m["url"].(string)
+			Expect(urlOk).To(BeTrue(),
+				"url must be present as string in identity return result")
+			Expect(url).To(Equal("/identity/"),
+				"identity return must preserve the url field")
+
+			path, pathOk := m["path"].(string)
+			Expect(pathOk).To(BeTrue(),
+				"path must be present as string in identity return result")
+			Expect(path).To(Equal("content/identity.md"),
+				"identity return must preserve the path field")
+
+			fm := extractGoMap(m["frontMatter"])
+			Expect(fm).NotTo(BeNil(),
+				"frontMatter must be present as a map in identity return result")
+			Expect(fm["title"]).To(Equal("Identity"),
+				"identity return must preserve frontMatter fields")
 		})
 
 		It("HookFormatRenderedPayload delivers all fields to JS and returns modified content", func() {
@@ -1967,8 +1969,28 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 					"access .text and .level properties")
 			Expect(html).To(ContainSubstring("url:/transform/"),
 				"hook must receive the url field")
+			Expect(html).To(ContainSubstring("path:content/transform.md"),
+				"hook must receive the path field from HookTransformPayload")
 			Expect(html).To(ContainSubstring("title:Transform Test"),
 				"hook must receive frontMatter from the payload")
+
+			// Verify toc in outbound result — the hook returns { html: ..., toc: page.toc }
+			// and the fast path must preserve toc in the result map.
+			tocRaw, tocExists := m["toc"]
+			Expect(tocExists).To(BeTrue(),
+				"toc must be present in the result map — the hook returns "+
+					"{ html: ..., toc: page.toc } and the fast path's outbound "+
+					"extraction must preserve non-html keys like toc")
+			tocSlice, tocOk := tocRaw.([]interface{})
+			Expect(tocOk).To(BeTrue(),
+				"toc must be a []interface{} — got %T; the fast path must "+
+					"extract array values correctly from the JS result", tocRaw)
+			Expect(tocSlice).To(HaveLen(1),
+				"toc must contain exactly 1 entry matching the input")
+			tocEntry := extractGoMap(tocSlice[0])
+			Expect(tocEntry).NotTo(BeNil())
+			Expect(tocEntry["text"]).To(Equal("Introduction"),
+				"toc entry text must be preserved through the round-trip")
 		})
 
 		It("HookRenderedPayload with large HTML does not corrupt content", func() {
