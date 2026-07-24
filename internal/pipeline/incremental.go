@@ -555,7 +555,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		if componentsDir == "" {
 			componentsDir = "components"
 		}
-		componentsDirPrefix := componentsDir + "/"
+		componentsDirPrefix := filepath.ToSlash(componentsDir) + "/"
 		for _, f := range changedFiles {
 			normalized := filepath.ToSlash(f)
 			if strings.HasPrefix(normalized, componentsDirPrefix) {
