@@ -234,55 +234,137 @@ var _ = Describe("Cross-Cutting Integration", func() {
 		})
 	})
 
-	// ── onPageRendered per-page HTML payload ─────────────────────────
-	// Same contract as onContentTransformed: per-page HTML string.
-	// Fires after layout rendering — plugin receives the complete page.
+	// ── onPageRendered per-page object payload (issue #1095) ────────
+	// Fires after layout rendering — plugin receives a page object with
+	// html, frontMatter, url, and path. Only html in the return is
+	// applied back; other fields are read-only context.
 
-	Describe("onPageRendered per-page HTML payload", func() {
-		It("hook receives complete page HTML string per page", func() {
+	Describe("onPageRendered per-page object payload (issue #1095)", func() {
+		It("hook receives page object with html, frontMatter, url, path per page", func() {
 			registry := plugin.NewHookRegistry()
-			receivedPayloads := []string{}
+			type capturedPayload struct {
+				html        string
+				frontMatter map[string]interface{}
+				url         string
+				path        string
+			}
+			var received []capturedPayload
 			registry.Register(plugin.OnPageRendered, func(_ context.Context, payload interface{}) (interface{}, error) {
-				html, ok := payload.(string)
+				pageMap, ok := payload.(map[string]interface{})
 				Expect(ok).To(BeTrue(),
-					"onPageRendered payload must be a string — the complete page HTML after layout")
-				receivedPayloads = append(receivedPayloads, html)
-				return html, nil
+					"onPageRendered payload must be a map/object — not a string (issue #1095)")
+
+				html, htmlOk := pageMap["html"].(string)
+				Expect(htmlOk).To(BeTrue(), "payload must have string 'html' key")
+
+				fm, fmOk := pageMap["frontMatter"].(map[string]interface{})
+				Expect(fmOk).To(BeTrue(), "payload must have 'frontMatter' as map[string]interface{}")
+
+				url, urlOk := pageMap["url"].(string)
+				Expect(urlOk).To(BeTrue(), "payload must have string 'url' key")
+
+				path, pathOk := pageMap["path"].(string)
+				Expect(pathOk).To(BeTrue(), "payload must have string 'path' key")
+
+				received = append(received, capturedPayload{
+					html: html, url: url, path: path,
+					frontMatter: fm,
+				})
+				return pageMap, nil
 			})
 
-			pages := []string{
-				`<!DOCTYPE html><html><body><h1>Page 1</h1></body></html>`,
-				`<!DOCTYPE html><html><body><h1>Page 2</h1></body></html>`,
+			pages := []map[string]interface{}{
+				{
+					"html":        `<!DOCTYPE html><html><body><h1>Page 1</h1></body></html>`,
+					"frontMatter": map[string]interface{}{"title": "Page 1", "layout": "default"},
+					"url":         "/page-1/",
+					"path":        "page-1.md",
+				},
+				{
+					"html":        `<!DOCTYPE html><html><body><h1>Page 2</h1></body></html>`,
+					"frontMatter": map[string]interface{}{"title": "Page 2", "layout": "post"},
+					"url":         "/page-2/",
+					"path":        "page-2.md",
+				},
 			}
-			for _, pageHTML := range pages {
-				_, err := registry.Run(plugin.OnPageRendered, pageHTML)
+			for _, page := range pages {
+				_, err := registry.Run(plugin.OnPageRendered, page)
 				Expect(err).NotTo(HaveOccurred())
 			}
-			Expect(receivedPayloads).To(HaveLen(2),
+			Expect(received).To(HaveLen(2),
 				"onPageRendered must fire once per page")
+			Expect(received[0].html).To(ContainSubstring("Page 1"))
+			Expect(received[0].url).To(Equal("/page-1/"))
+			Expect(received[0].path).To(Equal("page-1.md"))
+			Expect(received[0].frontMatter["title"]).To(Equal("Page 1"))
+			Expect(received[1].frontMatter["layout"]).To(Equal("post"))
 		})
 
-		It("hook can minify final page HTML", func() {
+		It("hook return html replaces rendered body", func() {
 			registry := plugin.NewHookRegistry()
 			registry.Register(plugin.OnPageRendered, func(_ context.Context, payload interface{}) (interface{}, error) {
-				html := payload.(string)
-				// Simulate a minifier that collapses whitespace
-				return strings.Join(strings.Fields(html), " "), nil
+				pageMap := payload.(map[string]interface{})
+				html := pageMap["html"].(string)
+				pageMap["html"] = strings.Join(strings.Fields(html), " ")
+				return pageMap, nil
 			})
 
-			input := `<!DOCTYPE html>
-<html>
-  <body>
-    <h1>Hello</h1>
-  </body>
-</html>`
+			input := map[string]interface{}{
+				"html":        "<!DOCTYPE html>\n<html>\n  <body>\n    <h1>Hello</h1>\n  </body>\n</html>",
+				"frontMatter": map[string]interface{}{"title": "Test"},
+				"url":         "/test/",
+				"path":        "test.md",
+			}
 			result, err := registry.Run(plugin.OnPageRendered, input)
 			Expect(err).NotTo(HaveOccurred())
-			resultStr := result.(string)
-			Expect(resultStr).NotTo(ContainSubstring("\n"),
-				"minifier hook must remove newlines from final page HTML")
-			Expect(resultStr).To(ContainSubstring("Hello"),
+			resultMap, ok := result.(map[string]interface{})
+			Expect(ok).To(BeTrue(), "onPageRendered must return a map/object")
+			resultHTML, ok := resultMap["html"].(string)
+			Expect(ok).To(BeTrue(), "returned map must have string 'html' key")
+			Expect(resultHTML).NotTo(ContainSubstring("\n"),
+				"minifier hook must collapse whitespace in html field")
+			Expect(resultHTML).To(ContainSubstring("Hello"),
 				"minifier hook must preserve content")
+		})
+
+		It("hook can conditionally skip processing based on frontMatter", func() {
+			registry := plugin.NewHookRegistry()
+			registry.Register(plugin.OnPageRendered, func(_ context.Context, payload interface{}) (interface{}, error) {
+				pageMap := payload.(map[string]interface{})
+				fm, _ := pageMap["frontMatter"].(map[string]interface{})
+				if fm["skipTransforms"] == true {
+					return pageMap, nil // skip — return unchanged
+				}
+				html := pageMap["html"].(string)
+				pageMap["html"] = strings.ReplaceAll(html, "<h2", `<h2 class="styled"`)
+				return pageMap, nil
+			})
+
+			// Page that should be transformed
+			normalPage := map[string]interface{}{
+				"html":        "<html><body><h2>Heading</h2></body></html>",
+				"frontMatter": map[string]interface{}{"title": "Normal"},
+				"url":         "/normal/",
+				"path":        "normal.md",
+			}
+			result1, err := registry.Run(plugin.OnPageRendered, normalPage)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result1.(map[string]interface{})["html"]).To(ContainSubstring(`class="styled"`),
+				"pages without skipTransforms must have headings transformed")
+
+			// Page that should be skipped
+			demoPage := map[string]interface{}{
+				"html":        "<html><body><h2>Demo Heading</h2></body></html>",
+				"frontMatter": map[string]interface{}{"title": "Demo", "skipTransforms": true},
+				"url":         "/demo/",
+				"path":        "demo.md",
+			}
+			result2, err := registry.Run(plugin.OnPageRendered, demoPage)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result2.(map[string]interface{})["html"]).NotTo(ContainSubstring(`class="styled"`),
+				"pages with skipTransforms: true must not have headings transformed")
+			Expect(result2.(map[string]interface{})["html"]).To(ContainSubstring("<h2>Demo Heading</h2>"),
+				"skipped page HTML must be preserved unchanged")
 		})
 	})
 

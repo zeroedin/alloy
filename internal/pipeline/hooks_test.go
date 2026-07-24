@@ -2770,4 +2770,232 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(result).NotTo(BeNil())
 		})
 	})
+
+	// ── onPageRendered object payload with front matter (issue #1095) ──
+	// The onPageRendered hook must send an object payload with html,
+	// frontMatter, url, and path — not a raw HTML string. Only html in
+	// the return is applied back to the page's rendered body.
+
+	Describe("onPageRendered object payload with front matter (issue #1095)", func() {
+		It("plugin receives page object with html and frontMatter fields", func() {
+			cfg := &config.Config{
+				Title:   "Page Rendered Payload Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/about.md":       "---\ntitle: About Us\nlayout: default\nauthor: Jane\n---\n# About",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/payload-check.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    if (typeof page === 'string') {
+      throw new Error('onPageRendered payload must be an object, got string (issue #1095)');
+    }
+    if (typeof page.html !== 'string') {
+      throw new Error('page.html must be a string, got ' + typeof page.html);
+    }
+    if (!page.frontMatter || typeof page.frontMatter !== 'object') {
+      throw new Error('page.frontMatter must be an object, got ' + typeof page.frontMatter);
+    }
+    if (typeof page.url !== 'string') {
+      throw new Error('page.url must be a string, got ' + typeof page.url);
+    }
+    if (typeof page.path !== 'string') {
+      throw new Error('page.path must be a string, got ' + typeof page.path);
+    }
+    if (page.frontMatter.title !== 'About Us') {
+      throw new Error('frontMatter.title must be "About Us", got ' + JSON.stringify(page.frontMatter.title));
+    }
+    if (page.frontMatter.author !== 'Jane') {
+      throw new Error('frontMatter.author must be "Jane", got ' + JSON.stringify(page.frontMatter.author));
+    }
+    return page;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onPageRendered must receive a page object with html, frontMatter, url, path — "+
+					"if this fails with 'payload must be an object, got string', "+
+					"the hook still sends a raw HTML string instead of the "+
+					"page object {html, frontMatter, url, path} (issue #1095)")
+			Expect(result).NotTo(BeNil())
+		})
+
+		It("plugin can conditionally transform pages based on front matter", func() {
+			cfg := &config.Config{
+				Title:   "Conditional Transform Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/post.md": "---\ntitle: Blog Post\nlayout: default\n---\n## Post Heading\n\nPost content here.",
+				"content/demo.md": "---\ntitle: Demo Page\nlayout: default\nskipTransforms: true\n---\n## Demo Heading\n\nDemo content here.",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/conditional-transform.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    if (page.frontMatter && page.frontMatter.skipTransforms === true) {
+      return page;
+    }
+    page.html = page.html.replace(/<h2/g, '<h2 class="styled"');
+    return page;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			postHTML := result.RenderedContent["post.md"]
+			Expect(postHTML).To(ContainSubstring(`<h2 class="styled"`),
+				"pages without skipTransforms must have headings transformed — "+
+					"the plugin reads frontMatter to decide whether to apply the "+
+					"transform (issue #1095)")
+
+			demoHTML := result.RenderedContent["demo.md"]
+			Expect(demoHTML).NotTo(ContainSubstring(`class="styled"`),
+				"pages with skipTransforms: true in front matter must not be "+
+					"transformed — the plugin checks page.frontMatter.skipTransforms "+
+					"and returns the page unchanged (issue #1095)")
+			Expect(demoHTML).To(ContainSubstring("<h2"),
+				"demo page must still contain the original h2 heading")
+		})
+
+		It("only html in the return is applied back — frontMatter changes are ignored", func() {
+			cfg := &config.Config{
+				Title:   "Read-Only Fields Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Original Title\nlayout: default\n---\n# Home",
+				"layouts/default.liquid": "<html><body><h1>{{ page.title }}</h1>{{ content }}</body></html>",
+				"plugins/mutate-fm.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    page.frontMatter.title = 'Mutated Title';
+    page.html = page.html + '<!-- rendered -->';
+    return page;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("<!-- rendered -->"),
+				"html mutation must be applied — the hook appends a comment")
+			Expect(html).To(ContainSubstring("Original Title"),
+				"page.title in the layout must still be 'Original Title' — "+
+					"frontMatter mutations in onPageRendered return are not applied "+
+					"back because the page is already rendered (issue #1095)")
+			Expect(html).NotTo(ContainSubstring("Mutated Title"),
+				"mutated frontMatter.title must not appear in output — "+
+					"onPageRendered is post-render, frontMatter is read-only context")
+		})
+
+		It("plugin receives correct url and path values", func() {
+			cfg := &config.Config{
+				Title:   "URL Path Check Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/blog/first-post.md": "---\ntitle: First Post\nlayout: default\n---\n# First Post",
+				"layouts/default.liquid":     "<html><body>{{ content }}</body></html>",
+				"plugins/url-path-check.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    if (!page.path || page.path.length === 0) {
+      throw new Error('page.path must be non-empty');
+    }
+    if (!page.url || page.url.length === 0) {
+      throw new Error('page.url must be non-empty');
+    }
+    if (!page.path.includes('first-post')) {
+      throw new Error('page.path must contain "first-post", got: ' + page.path);
+    }
+    if (!page.url.includes('first-post')) {
+      throw new Error('page.url must contain "first-post", got: ' + page.url);
+    }
+    page.html = page.html + '<!-- path:' + page.path + ' url:' + page.url + ' -->';
+    return page;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onPageRendered must provide correct url and path values — "+
+					"both must contain 'first-post' for the blog/first-post.md page")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["blog/first-post.md"]
+			Expect(html).To(ContainSubstring("<!-- path:"),
+				"the plugin must have executed and appended the path/url comment")
+			Expect(html).To(ContainSubstring("first-post"),
+				"the appended comment must contain the page's path with 'first-post'")
+		})
+
+		It("page with minimal front matter receives frontMatter as an object", func() {
+			cfg := &config.Config{
+				Title:   "Empty FrontMatter Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/bare.md":        "---\nlayout: default\n---\n# Bare Page",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/fm-type-check.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    if (page.frontMatter === null || page.frontMatter === undefined) {
+      throw new Error('frontMatter must be an object (possibly empty), not null/undefined');
+    }
+    if (typeof page.frontMatter !== 'object') {
+      throw new Error('frontMatter must be an object, got ' + typeof page.frontMatter);
+    }
+    page.html = page.html + '<!-- fm-checked -->';
+    return page;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onPageRendered must provide frontMatter as an object even when "+
+					"the page has no custom front matter keys — null or undefined "+
+					"would force plugins to guard every access (issue #1095)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["bare.md"]
+			Expect(html).To(ContainSubstring("<!-- fm-checked -->"),
+				"the plugin must have executed — frontMatter type check passed")
+		})
+
+		It("html mutation from onPageRendered is visible in final output file", func() {
+			cfg := &config.Config{
+				Title:   "HTML Apply-Back Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Welcome",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/append-marker.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    page.html = page.html + '\n<!-- post-rendered by plugin -->';
+    return page;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("<!-- post-rendered by plugin -->"),
+				"the html field returned from onPageRendered must be applied "+
+					"back to the page's rendered body — this is the apply-back "+
+					"contract: only html is written back (issue #1095)")
+			Expect(html).To(ContainSubstring("Welcome"),
+				"the original page content must still be present after the hook")
+		})
+	})
 })

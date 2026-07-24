@@ -1283,7 +1283,7 @@ Data cascade and front matter are already assembled from Phase 0; taxonomy data 
 15. **Template Resolution** — Match each content file to its layout (lookup order)
 16. **Content Template Rendering** — Content body is rendered through the template engine with page data + site data context, producing an HTML string.
 17. **Layout Rendering** — The rendered content HTML is injected into the resolved layout as `{{ content }}` (Liquid) or `{{ .content }}` (Go), then the layout is rendered. Content and layout have isolated scopes — variables defined in content do not leak into layout or vice versa.
-18. **Plugin Hook: `onPageRendered`** — Plugins can post-process intermediate page HTML
+18. **Plugin Hook: `onPageRendered`** — Plugins can post-process intermediate page HTML. Fires once per page with an object payload: `{ html, frontMatter, url, path }` (see Lifecycle Events in §5 for payload contract). Only `html` in the return is applied back — other fields are read-only context for conditional processing (issue #1095).
 
 **Phase 2 — SSR Transform (opt-in, only runs if `ssr:` is configured)**
 
@@ -2101,7 +2101,7 @@ Alloy uses a tiered plugin runtime. Plugin authors write in their preferred lang
 // alloy.hook(event, options, fn)
 // options is required — declares what data the hook needs
 
-// Runs first (priority 10) — onPageRendered receives HTML string, pages/pageFields don't apply
+// Runs first (priority 10) — onPageRendered receives page object, pages/pageFields don't apply
 alloy.hook("onPageRendered", { priority: 10 }, transformsFn);
 
 // Runs second (default priority 50)
@@ -2191,7 +2191,7 @@ Not all page filtering modes are available on all hooks. Two constraints apply:
 1. **Pageless hooks** (`onConfig`, `onBeforeValidation`, `onAfterValidation`, `onDataFetched`, `onAssetProcess`, `onBuildComplete`, `onDevServerStart`, `onFileChanged`) do not receive pages — any page scope mode other than `PagesScopeNone` (`pages: false`) produces a validation warning at plugin load time. `pageFields` is meaningless on these hooks (no pages to filter fields from). `data` remains valid — pageless hooks like `onDataFetched` use `{data: ["elements"]}` to request site data in the payload. Omitting the `pages` key (or passing `null`) defaults to `PagesScopeNone`, so `{}` and `{data: [...]}` scopes on pageless hooks do not warn.
 2. **Pre-taxonomy hooks** that do receive pages (`onPagesReady`) cannot use taxonomy filtering because taxonomy indices are built during step 10 (`BuildTaxonomies`).
 
-Per-page hooks (`onContentTransformed`, `onPageRendered`) fire once per page with a fixed payload shape — `pages`/`pageFields` scope does not apply (the pipeline already knows which page to serialize). `onPageRendered` receives an HTML string, not a page object. Scope options on per-page hooks are limited to `data` (site data subset) and `priority`.
+Per-page hooks (`onContentTransformed`, `onPageRendered`) fire once per page with a fixed payload shape — `pages`/`pageFields` scope does not apply (the pipeline already knows which page to serialize). Both hooks receive a page object (`{ html, frontMatter, url, path }` for `onPageRendered`; `{ html, toc, path, url, frontMatter }` for `onContentTransformed`). Scope options on per-page hooks are limited to `data` (site data subset) and `priority`.
 
 | Hook | Pipeline step | Pages in payload | Glob filter | Taxonomy filter |
 |---|:---:|:---:|:---:|:---:|
@@ -2352,7 +2352,7 @@ hook(ptr i32, len i32) -> (ptr i32, len i32)         # Hook execution: input is 
 last_error() -> (ptr i32, len i32)                   # Error details; host calls after any export returns (0, 0)
 ```
 
-**Hook discovery and execution:** The `hooks` export is called once during `LoadModule` (no input arguments, same pattern as `last_error`). It returns a JSON array of hook registrations — elements can be plain strings (backward compat) or objects with metadata (e.g., `["onBuildComplete", {"name": "onContentTransformed", "priority": 10, "pages": "blog/**", "data": ["navigation"]}]`). String elements default to priority 50, nil scope. Object elements require a `name` field (string); `priority` (int, default 50) and scope fields (`pages`, `data`, `pageFields`) are optional and parsed via `parseScopeMap()`. If no `hooks` export exists, the module has no hooks. The `hook` export receives a JSON object with an `"event"` key containing the hook name. **Payload wrapping:** When the hook payload is a map/object (e.g., `onContentTransformed` with `{html, toc, path, ...}`), the `"event"` key is merged into it: `{"event": "onContentTransformed", "html": "<p>test</p>", ...}`. When the payload is a primitive (e.g., `onPageRendered` with an HTML string), it is wrapped: `{"event": "onPageRendered", "payload": "<p>test</p>"}`. The module dispatches internally by event name and returns the (possibly modified) payload JSON. The host strips the `"event"` key before applying changes.
+**Hook discovery and execution:** The `hooks` export is called once during `LoadModule` (no input arguments, same pattern as `last_error`). It returns a JSON array of hook registrations — elements can be plain strings (backward compat) or objects with metadata (e.g., `["onBuildComplete", {"name": "onContentTransformed", "priority": 10, "pages": "blog/**", "data": ["navigation"]}]`). String elements default to priority 50, nil scope. Object elements require a `name` field (string); `priority` (int, default 50) and scope fields (`pages`, `data`, `pageFields`) are optional and parsed via `parseScopeMap()`. If no `hooks` export exists, the module has no hooks. The `hook` export receives a JSON object with an `"event"` key containing the hook name. **Payload wrapping:** When the hook payload is a map/object (e.g., `onContentTransformed` with `{html, toc, path, ...}` or `onPageRendered` with `{html, frontMatter, url, path}`), the `"event"` key is merged into it: `{"event": "onContentTransformed", "html": "<p>test</p>", ...}`. When the payload is a primitive (e.g., a raw string), it is wrapped: `{"event": "hookName", "payload": "..."}`. The module dispatches internally by event name and returns the (possibly modified) payload JSON. The host strips the `"event"` key before applying changes.
 
 **Hook error handling:** The `(0, 0)` error convention applies to both `hooks()` and `hook()` exports — if either returns `(0, 0)`, the host checks `last_error()` and surfaces the error. Additionally: (1) If `hooks()` returns data that is not a valid JSON array (malformed JSON, a non-array JSON value), `LoadModule` must return an error — do not silently treat the module as hook-less. (2) If an object element in the array is missing the required `name` field or has a non-string `name`, `LoadModule` must return an error mentioning "name". (3) If an array element is neither a string nor an object (e.g., a number, boolean, or null), `LoadModule` must return an error — only strings and objects are valid hook registrations. (4) If `hook()` returns a valid `(ptr, len)` but the bytes are not valid JSON, `CallHook` must return an error — do not silently fall back to the original payload.
 
@@ -2462,14 +2462,14 @@ Content-Length: 82\r\n
 
 Hooks receive JSON-serializable payloads so they work across all plugin tiers (Go built-in, QuickJS, WASM, Node). Go struct pointers are not visible to JS or WASM — the pipeline must serialize before calling and deserialize the return value.
 
-#### Per-page hooks (HTML string)
+#### Per-page hooks (page object)
 
-These fire **once per page**. `onContentTransformed` receives a page-scoped object (mutable — fires before layout, page data still matters). The payload contains only page data — no `site`, `collections`, or `taxonomies`. Site-level mutations belong in `onConfig` or `onAfterValidation`. `onPageRendered` receives an HTML string (post-processing only — page is already rendered).
+These fire **once per page**. `onContentTransformed` receives a page-scoped object (mutable — fires before layout, page data still matters). The payload contains only page data — no `site`, `collections`, or `taxonomies`. Site-level mutations belong in `onConfig` or `onAfterValidation`. `onPageRendered` receives a page object with front matter for conditional post-processing (issue #1095). Only the `html` field in the return is applied back — `frontMatter`, `url`, and `path` are read-only context.
 
 | Event | Payload | Returns | When |
 |---|---|---|---|
 | `onContentTransformed` | `{ html, toc, path, url, frontMatter }` | Same shape (mutable) | After Markdown→HTML, before layout. Plugin modifies rendered content, TOC, or front matter. |
-| `onPageRendered` | HTML string (complete page after layout) | HTML string | After template rendering. Plugin post-processes final output. |
+| `onPageRendered` | `{ html, frontMatter, url, path }` | `{ html }` (only `html` applied back) | After template rendering. Plugin post-processes final output with front matter context for conditional transforms (issue #1095). |
 
 ```javascript
 // Example: add lazy loading + build TOC for non-markdown pages
@@ -2484,10 +2484,18 @@ alloy.hook("onContentTransformed", {}, (page) => {
   return page;
 });
 
-// Example: minify final HTML (post-processing, no page data needed)
-// onPageRendered receives an HTML string, not a page object — pages/pageFields do not apply
-alloy.hook("onPageRendered", {}, (html) => {
-  return html.replace(/\s+/g, ' ').trim();
+// Example: minify final HTML (post-processing with front matter context)
+// onPageRendered receives a page object — pages/pageFields do not apply
+alloy.hook("onPageRendered", {}, (page) => {
+  page.html = page.html.replace(/\s+/g, ' ').trim();
+  return page;
+});
+
+// Example: conditional transform based on front matter (issue #1095)
+alloy.hook("onPageRendered", {}, (page) => {
+  if (page.frontMatter.layout === "demo") return page; // skip demo pages
+  page.html = page.html.replace(/<h2/g, '<h2 class="styled"');
+  return page;
 });
 ```
 
