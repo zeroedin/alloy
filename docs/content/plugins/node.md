@@ -192,10 +192,11 @@ import { render } from '@lit-labs/ssr';
 import { html } from 'lit';
 
 export default function(alloy) {
-  alloy.hook("onPageRendered", { priority: 90 }, async (pageHtml) => {
+  alloy.hook("onPageRendered", { priority: 90 }, async (page) => {
     // SSR Lit components in the final HTML
-    const result = render(html`${pageHtml}`);
-    return collectResult(result);
+    const result = render(html`${page.html}`);
+    page.html = await collectResult(result);
+    return page;
   });
 }
 ```
@@ -281,7 +282,7 @@ The fetched data is available as `site.data.blog` in templates and can drive [vi
 
 ## Worker Pool
 
-For per-page hooks (`onPageRendered`, `onContentTransformed`), Alloy distributes pages across multiple Node subprocess workers to parallelize the work:
+For per-page hooks (`onPageRendered`, `onFormatRendered`, `onContentTransformed`), Alloy distributes pages across multiple Node subprocess workers to parallelize the work:
 
 ```yaml
 # alloy.config.yaml
