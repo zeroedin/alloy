@@ -11,3 +11,5 @@ structure:
 ```
 
 During `alloy serve`, Alloy watches this directory for changes and re-renders pages that use the affected components. Projects that keep component source outside `components/` previously got no SSR invalidation on file changes.
+
+SSR is an experimental feature. This config option and its behavior may change in future releases.
