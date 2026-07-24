@@ -32,7 +32,12 @@ func WriteLockfile(projectRoot string, info LockfileInfo) error {
 	if err != nil {
 		return fmt.Errorf("marshal lockfile: %w", err)
 	}
-	if err := os.WriteFile(lockPath, data, 0644); err != nil {
+	tmp := lockPath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return fmt.Errorf("write lockfile: %w", err)
+	}
+	if err := os.Rename(tmp, lockPath); err != nil {
+		os.Remove(tmp)
 		return fmt.Errorf("write lockfile: %w", err)
 	}
 	return nil
@@ -75,7 +80,7 @@ func CheckAndWarnLockfile(projectRoot string) []string {
 		return nil
 	}
 
-	if !isPIDAlive(info.PID) {
+	if info.PID <= 0 || !isPIDAlive(info.PID) {
 		RemoveLockfile(projectRoot)
 		return nil
 	}

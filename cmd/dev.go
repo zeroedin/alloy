@@ -304,7 +304,9 @@ func newDevCommand() *cobra.Command {
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 			<-sigCh
 
-			server.RemoveLockfile(cfg.ProjectRoot)
+			if info, _ := server.ReadLockfile(cfg.ProjectRoot); info != nil && info.PID == os.Getpid() {
+				server.RemoveLockfile(cfg.ProjectRoot)
+			}
 
 			if !cfg.Quiet {
 				fmt.Fprintln(cmd.OutOrStdout(), "\nShutting down...")
