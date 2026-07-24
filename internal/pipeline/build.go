@@ -77,8 +77,9 @@ type BuildResult struct {
 	Errors              []error
 	SSRSkipped          bool              // true when Phase 2 was skipped (no ssr: config or SkipSSR)
 	PagesRendered       []string          // source paths of pages that were rendered
-	RenderedContent     map[string]string // page key → final rendered HTML (RelPath for regular pages, URL for generated pages)
-	ContentPassthroughs []string          // relative paths of non-content files copied from content/ to output
+	RenderedContent     map[string]string            // page key → final rendered HTML (RelPath for regular pages, URL for generated pages)
+	FormatContent       map[string]map[string]string // page key → format → rendered content (non-HTML format bodies, issue #1102)
+	ContentPassthroughs []string                     // relative paths of non-content files copied from content/ to output
 	StageTimings        []StageTiming     // per-stage durations (populated when BuildOptions.Profile is true)
 	Cache               *cache.Cache      // in-memory cache with content hashes for incremental rebuild (issue #639)
 	SiteData            map[string]interface{} // enriched site data (data files + external sources + hooks)
@@ -880,40 +881,87 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
-	// Fire onPageRendered hooks with batch dispatch for subprocess plugins.
-	// Worker pool distributes pages across multiple subprocesses.
+	// Fire onPageRendered hooks only for pages whose Outputs includes "html"
+	// (or defaults to ["html"]). Pages with only non-HTML outputs skip this
+	// hook entirely (issue #1102).
 	if ps.Hooks.HasHooks(plugin.OnPageRendered) {
 		timer.Start("Post-render hooks")
-		reportStartStage(reporter, "Transforms", len(pages))
-		payloads := make([]interface{}, len(pages))
-		for i, page := range pages {
-			payloads[i] = buildPageRenderedPayload(page)
+		var htmlPages []*content.Page
+		for _, page := range pages {
+			if pageHasHTMLOutput(page) {
+				htmlPages = append(htmlPages, page)
+			}
 		}
-		var progressFn plugin.BatchProgressFunc
-		if reporter != nil {
-			var mu sync.Mutex
-			var highWater int
-			progressFn = func(completed, total int) {
-				mu.Lock()
-				if completed > highWater {
-					highWater = completed
-					reportUpdate(reporter, completed, "", 0)
+		if len(htmlPages) > 0 {
+			reportStartStage(reporter, "Transforms", len(htmlPages))
+			payloads := make([]interface{}, len(htmlPages))
+			for i, page := range htmlPages {
+				payloads[i] = buildPageRenderedPayload(page)
+			}
+			var progressFn plugin.BatchProgressFunc
+			if reporter != nil {
+				var mu sync.Mutex
+				var highWater int
+				progressFn = func(completed, total int) {
+					mu.Lock()
+					if completed > highWater {
+						highWater = completed
+						reportUpdate(reporter, completed, "", 0)
+					}
+					mu.Unlock()
 				}
-				mu.Unlock()
+			}
+			results, err := ps.Hooks.RunBatchWithProgress(plugin.OnPageRendered, payloads, progressFn)
+			if err != nil {
+				return nil, fmt.Errorf("plugin hook onPageRendered: %w", err)
+			}
+			for i, result := range results {
+				if html, ok := extractPageRenderedHTML(result); ok {
+					htmlPages[i].SetRenderedBody([]byte(html))
+				} else if result != nil {
+					log.Printf("warning: onPageRendered result for %s: expected page object with html key, got %T — plugin may need migration to the object API", htmlPages[i].RelPath, result)
+				}
+			}
+			reportEndStage(reporter)
+		}
+	}
+
+	// Fire onFormatRendered hooks for each non-HTML format body (issue #1102).
+	// Dispatched per-format, not per-page — each invocation receives
+	// { format, content, url, path, frontMatter }. Only "content" from
+	// the return value is applied back; other fields are read-only.
+	// Uses RunEachWithTimeout to rebuild the payload between hooks so
+	// mutations to read-only fields (frontMatter, url, path, format)
+	// are not propagated to subsequent hooks.
+	if ps.Hooks.HasHooks(plugin.OnFormatRendered) {
+		for _, page := range pages {
+			for format, body := range page.FormatBodies {
+				currentContent := string(body)
+				err := ps.Hooks.RunEachWithTimeout(plugin.OnFormatRendered,
+					func(_ int, _ *plugin.HookScope) interface{} {
+						return buildFormatRenderedPayload(page, format, currentContent)
+					},
+					func(_ int, _ *plugin.HookScope, result interface{}) error {
+						if c, ok := extractFormatRenderedContent(result); ok {
+							currentContent = c
+						}
+						return nil
+					},
+				)
+				if err != nil {
+					return nil, fmt.Errorf("plugin hook onFormatRendered (%s, %s): %w", page.RelPath, format, err)
+				}
+				page.FormatBodies[format] = []byte(currentContent)
+			}
+			// Single non-HTML pages (e.g., outputs: ["json"]) have no HTML
+			// body — apply the sole format body back as the rendered body
+			// so it appears in RenderedContent and is written to disk.
+			if !pageHasHTMLOutput(page) && len(page.FormatBodies) == 1 {
+				for _, body := range page.FormatBodies {
+					page.SetRenderedBody(body)
+				}
 			}
 		}
-		results, err := ps.Hooks.RunBatchWithProgress(plugin.OnPageRendered, payloads, progressFn)
-		if err != nil {
-			return nil, fmt.Errorf("plugin hook onPageRendered: %w", err)
-		}
-		for i, result := range results {
-			if html, ok := extractPageRenderedHTML(result); ok {
-				pages[i].SetRenderedBody([]byte(html))
-			} else if result != nil {
-				log.Printf("warning: onPageRendered result for %s: expected page object with html key, got %T — plugin may need migration to the object API", pages[i].RelPath, result)
-			}
-		}
-		reportEndStage(reporter)
 	}
 
 	// Phase 2: SSR runs when configured and BuildOptions.SkipSSR is false.
@@ -1063,11 +1111,20 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	trackVirtualPages(buildCache, pages, discoveredPaths)
 
 	var renderedContent map[string]string
+	var formatContent map[string]map[string]string
 	if options.CaptureRenderedContent {
 		renderedContent = make(map[string]string, len(pages))
+		formatContent = make(map[string]map[string]string)
 		for _, page := range pages {
 			if len(page.RenderedBody) > 0 {
 				renderedContent[renderedContentKey(page)] = page.HTML()
+			}
+			if len(page.FormatBodies) > 0 {
+				key := renderedContentKey(page)
+				formatContent[key] = make(map[string]string, len(page.FormatBodies))
+				for format, body := range page.FormatBodies {
+					formatContent[key][format] = string(body)
+				}
 			}
 		}
 	}
@@ -1082,6 +1139,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		SSRSkipped:          ssrSkipped,
 		PagesRendered:       rendered,
 		RenderedContent:     renderedContent,
+		FormatContent:       formatContent,
 		ContentPassthroughs: contentPassthroughs,
 		StageTimings:        timer.Timings(),
 		Cache:               buildCache,

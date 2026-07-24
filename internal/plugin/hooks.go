@@ -22,6 +22,7 @@ const (
 	OnContentLoaded      HookName = "onContentLoaded"
 	OnContentTransformed HookName = "onContentTransformed"
 	OnPageRendered       HookName = "onPageRendered"
+	OnFormatRendered     HookName = "onFormatRendered"
 	OnAssetProcess       HookName = "onAssetProcess"
 	OnBuildComplete      HookName = "onBuildComplete"
 	OnDevServerStart     HookName = "onDevServerStart"

@@ -534,3 +534,44 @@ func extractPageRenderedHTML(result interface{}) (string, bool) {
 	}
 	return "", false
 }
+
+// buildFormatRenderedPayload constructs the onFormatRendered hook payload for a
+// single non-HTML format body (issue #1102).
+func buildFormatRenderedPayload(page *content.Page, format, body string) plugin.HookFormatRenderedPayload {
+	fm := convertOrderedMaps(page.FrontMatter)
+	if fm == nil {
+		fm = map[string]interface{}{}
+	}
+	return plugin.HookFormatRenderedPayload{
+		Format:      format,
+		Content:     body,
+		URL:         page.URL,
+		Path:        page.RelPath,
+		FrontMatter: fm,
+	}
+}
+
+// extractFormatRenderedContent extracts the content field from an onFormatRendered
+// hook result. Only the content field is mutable; format, url, path, and frontMatter
+// are read-only (issue #1102).
+func extractFormatRenderedContent(result interface{}) (string, bool) {
+	if m, ok := toGoMap(result); ok {
+		c, ok := m["content"].(string)
+		return c, ok
+	}
+	return "", false
+}
+
+// pageHasHTMLOutput returns true if the page's Outputs includes "html" or is empty
+// (empty defaults to HTML).
+func pageHasHTMLOutput(page *content.Page) bool {
+	if len(page.Outputs) == 0 {
+		return true
+	}
+	for _, o := range page.Outputs {
+		if o == "html" {
+			return true
+		}
+	}
+	return false
+}

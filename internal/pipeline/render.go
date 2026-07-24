@@ -287,7 +287,14 @@ func formatOutputPath(htmlPath string, format string) string {
 // renders through it, and stores the result in page.FormatBodies.
 // Returns a build error if a declared format has no matching layout.
 func renderPageFormats(page *content.Page, layoutsDir, engineName string, rc *RenderContext) error {
-	if len(page.Outputs) <= 1 {
+	hasNonHTML := false
+	for _, format := range page.Outputs {
+		if format != "html" {
+			hasNonHTML = true
+			break
+		}
+	}
+	if !hasNonHTML {
 		return nil
 	}
 	page.FormatBodies = make(map[string][]byte)

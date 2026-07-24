@@ -31,6 +31,17 @@ type HookRenderedPayload struct {
 	Path        string                 `json:"path"`
 }
 
+// HookFormatRenderedPayload is the outbound payload for onFormatRendered (per-format body).
+// Only the returned content field is applied back; format, frontMatter, url, and path are
+// read-only context for conditional processing (issue #1102).
+type HookFormatRenderedPayload struct {
+	Format      string                 `json:"format"`
+	Content     string                 `json:"content"`
+	URL         string                 `json:"url"`
+	Path        string                 `json:"path"`
+	FrontMatter map[string]interface{} `json:"frontMatter"`
+}
+
 // HookPagesReadyPayload is the outbound payload for onPagesReady (per-batch).
 type HookPagesReadyPayload struct {
 	Pages    []HookPagePayload      `json:"pages"`
