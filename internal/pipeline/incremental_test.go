@@ -579,6 +579,88 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Configurable components directory for SSR invalidation (issue #1099) ──
+	// Component definition change detection in BuildIncremental must use
+	// the configured structure.components path, not the hardcoded "components/".
+
+	Describe("Configurable components directory (issue #1099)", func() {
+		It("component definition change in custom directory triggers re-SSR", func() {
+			cfg := &config.Config{
+				Title:   "Custom Components Dir Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				SSR:     &config.SSRConfig{Command: "cat"},
+				Structure: config.StructureConfig{
+					Components: "elements",
+				},
+			}
+			contentMap := map[string]string{
+				"content/index.md":  "---\ntitle: Home\n---\n<h1>Home</h1>",
+				"content/page-a.md": "---\ntitle: Page A\n---\n<ds-card>A</ds-card>",
+				"content/page-b.md": "---\ntitle: Page B\n---\n<ds-button>B</ds-button>",
+			}
+
+			// Cache from previous build — all pages unchanged
+			previousCache := cache.New()
+			for path, body := range contentMap {
+				relPath := path[len("content/"):]
+				previousCache.SetHash(relPath, cache.HashContent([]byte(body)))
+			}
+
+			// A component source file changed in the custom directory.
+			// BuildIncremental must recognize "elements/" as the component
+			// directory, not the hardcoded "components/".
+			changedFiles := []string{"elements/ds-card/ds-card.js"}
+
+			result, err := pipeline.BuildIncremental(cfg, contentMap, previousCache, changedFiles)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.PageCount).To(Equal(0),
+				"no content changed — Phase 1 must skip all pages")
+			Expect(result.PagesSkipped).To(Equal(3),
+				"all 3 pages skipped in Phase 1")
+			Expect(result.SSRPagesRendered).To(Equal(1),
+				"only page-a.md (uses ds-card) must be re-SSR'd when the component "+
+					"source changes in the custom 'elements/' directory — "+
+					"BuildIncremental must use cfg.Structure.Components, not hardcoded "+
+					"'components/' (issue #1099)")
+		})
+
+		It("component change in default components/ is NOT detected when path is overridden", func() {
+			cfg := &config.Config{
+				Title:   "Custom Components Dir Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				SSR:     &config.SSRConfig{Command: "cat"},
+				Structure: config.StructureConfig{
+					Components: "elements",
+				},
+			}
+			contentMap := map[string]string{
+				"content/index.md":  "---\ntitle: Home\n---\n<h1>Home</h1>",
+				"content/page-a.md": "---\ntitle: Page A\n---\n<ds-card>A</ds-card>",
+			}
+
+			previousCache := cache.New()
+			for path, body := range contentMap {
+				relPath := path[len("content/"):]
+				previousCache.SetHash(relPath, cache.HashContent([]byte(body)))
+			}
+
+			// Changed file is in the default "components/" but config says "elements/".
+			// BuildIncremental must NOT treat this as a component change.
+			changedFiles := []string{"components/ds-card/ds-card.js"}
+
+			result, err := pipeline.BuildIncremental(cfg, contentMap, previousCache, changedFiles)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.SSRPagesRendered).To(Equal(0),
+				"when structure.components is 'elements', changes under 'components/' "+
+					"must not trigger component invalidation — the configured path is "+
+					"the only source of truth (issue #1099)")
+		})
+	})
+
 	// ── SSR Phase 2 with paginated pages (issue #522) ───────────────
 	// Paginated virtual pages share RelPath but have unique URLs.
 	// SSR Phase 2 must use renderedContentKey (URL for paginated pages)

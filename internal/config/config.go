@@ -72,7 +72,8 @@ type StructureConfig struct {
 	Assets  string `yaml:"assets" toml:"assets" json:"assets"`    // default: "assets"
 	Static  string `yaml:"static" toml:"static" json:"static"`    // default: "static"
 	Data    string `yaml:"data" toml:"data" json:"data"`          // default: "data"
-	Plugins string `yaml:"plugins" toml:"plugins" json:"plugins"` // default: "plugins"
+	Plugins    string `yaml:"plugins" toml:"plugins" json:"plugins"`       // default: "plugins"
+	Components string `yaml:"components" toml:"components" json:"components"` // default: "components"
 }
 
 // ContentConfig holds content format and Markdown settings.

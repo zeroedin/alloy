@@ -368,6 +368,98 @@ var _ = Describe("File Watcher", func() {
 		})
 	})
 
+	// ── Configurable components directory (issue #1099) ──────────────
+	// The component source directory used for SSR component invalidation
+	// must be configurable via structure.components, not hardcoded to
+	// "components/". This follows the same pattern as structure.plugins.
+
+	Describe("Configurable components directory (issue #1099)", func() {
+		It("WatchDirs uses configured components directory when SSR is enabled", func() {
+			cfg := &config.Config{
+				Title: "Custom Components Site",
+				SSR:   &config.SSRConfig{Command: "golit render"},
+				Structure: config.StructureConfig{
+					Components: "elements",
+				},
+			}
+			dirs := server.WatchDirs(cfg)
+			Expect(dirs).To(ContainElement("elements"),
+				"WatchDirs must use cfg.Structure.Components — "+
+					"not the hardcoded default (issue #1099)")
+		})
+
+		It("WatchDirs does not include default components/ when overridden", func() {
+			cfg := &config.Config{
+				Title: "Custom Components Site",
+				SSR:   &config.SSRConfig{Command: "golit render"},
+				Structure: config.StructureConfig{
+					Components: "elements",
+				},
+			}
+			dirs := server.WatchDirs(cfg)
+			Expect(dirs).NotTo(ContainElement("components"),
+				"default components/ must not appear when overridden by config — "+
+					"watching both would cause duplicate events (issue #1099)")
+		})
+
+		It("WatchDirs uses default components/ when structure.components is empty and SSR is enabled", func() {
+			cfg := &config.Config{
+				Title: "Default Components Site",
+				SSR:   &config.SSRConfig{Command: "golit render"},
+			}
+			dirs := server.WatchDirs(cfg)
+			Expect(dirs).To(ContainElement("components"),
+				"when structure.components is empty, WatchDirs must fall back to 'components' — "+
+					"preserving backward compatibility (issue #1099)")
+		})
+
+		It("ClassifyChange uses configured components path for ComponentChange", func() {
+			cfg := &config.Config{
+				Title: "Custom Components Site",
+				Structure: config.StructureConfig{
+					Components: "elements",
+				},
+			}
+			changeType := server.ClassifyChange("elements/ds-card/ds-card.js", cfg)
+			Expect(changeType).To(Equal(server.ComponentChange),
+				"files under the configured components directory must be classified as "+
+					"ComponentChange — not the default ContentChange fallback (issue #1099)")
+		})
+
+		It("ClassifyChange does not match default components/ when overridden", func() {
+			cfg := &config.Config{
+				Title: "Custom Components Site",
+				Structure: config.StructureConfig{
+					Components: "elements",
+				},
+			}
+			changeType := server.ClassifyChange("components/ds-card/ds-card.js", cfg)
+			Expect(changeType).NotTo(Equal(server.ComponentChange),
+				"when components path is overridden to 'elements', files under the "+
+					"default 'components/' must not classify as ComponentChange (issue #1099)")
+		})
+
+		It("ClassifyChange does not match prefix-overlapping path as ComponentChange", func() {
+			cfg := &config.Config{
+				Title: "Components Site",
+				Structure: config.StructureConfig{
+					Components: "elements",
+				},
+			}
+			changeType := server.ClassifyChange("elementsextra/file.js", cfg)
+			Expect(changeType).NotTo(Equal(server.ComponentChange),
+				"elementsextra/ must not match elements/ prefix — "+
+					"classification must respect directory boundaries (issue #1099)")
+		})
+
+		It("ComponentChange triggers RebuildPipeline", func() {
+			scope := server.RebuildScopeForChangeType(server.ComponentChange)
+			Expect(scope).To(Equal(server.RebuildPipeline),
+				"ComponentChange must trigger a pipeline rebuild — "+
+					"component source changes need SSR re-rendering (issue #1099)")
+		})
+	})
+
 	// ── Debounce ──────────────────────────────────────────────────────
 
 	Describe("Debouncer", func() {
