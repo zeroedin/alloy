@@ -666,6 +666,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				return nil, fmt.Errorf("writing aliases for %s: %w", page.RelPath, err)
 			}
 		}
+		page.ReleaseRenderedBody()
 	}
 
 	// Build in-memory cache: clone previous (preserves skipped page hashes),

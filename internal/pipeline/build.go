@@ -942,6 +942,18 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		ssrSkipped = false
 	}
 
+	// Capture rendered content BEFORE output writing so pages are available
+	// before ReleaseRenderedBody nils them (issue #1107).
+	var renderedContent map[string]string
+	if options.CaptureRenderedContent {
+		renderedContent = make(map[string]string, len(pages))
+		for _, page := range pages {
+			if len(page.RenderedBody) > 0 {
+				renderedContent[renderedContentKey(page)] = page.HTML()
+			}
+		}
+	}
+
 	// Stage 6: Output writing
 	timer.Start("Output writing")
 	reportStartStage(reporter, "Writing", len(pages))
@@ -980,6 +992,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				return nil, fmt.Errorf("writing aliases for %s: %w", page.RelPath, err)
 			}
 		}
+		page.ReleaseRenderedBody()
 		writeIdx++
 		if reporter != nil {
 			reportUpdate(reporter, writeIdx, page.RelPath, time.Since(pageStart))
@@ -1062,15 +1075,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// in cmd/dev.go.
 	trackVirtualPages(buildCache, pages, discoveredPaths)
 
-	var renderedContent map[string]string
-	if options.CaptureRenderedContent {
-		renderedContent = make(map[string]string, len(pages))
-		for _, page := range pages {
-			if len(page.RenderedBody) > 0 {
-				renderedContent[renderedContentKey(page)] = page.HTML()
-			}
-		}
-	}
 	reportEndStage(reporter)
 
 	timer.Stop()
