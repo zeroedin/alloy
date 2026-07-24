@@ -3194,4 +3194,589 @@ var _ = Describe("Build Pipeline", func() {
 				"the original page content must still be present after the hook")
 		})
 	})
+
+	// ── onFormatRendered hook and onPageRendered HTML-only restriction (issue #1102) ──
+	// onPageRendered must fire only for pages whose Outputs includes "html"
+	// (or defaults to ["html"]). A new onFormatRendered hook fires once per
+	// non-HTML format body with { format, content, url, path, frontMatter }.
+	// Only "content" in the return is applied back — other fields are read-only.
+
+	Describe("onFormatRendered hook and onPageRendered HTML-only (issue #1102)", func() {
+
+		// ── onPageRendered HTML-only restriction ──────────────────────────
+
+		It("onPageRendered fires for pages with default HTML output", func() {
+			cfg := &config.Config{
+				Title:   "HTML Default Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Welcome",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/html-marker.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    page.html = page.html + '<!-- html-hook-fired -->';
+    return page;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onPageRendered must still fire for pages with default HTML output — "+
+					"the HTML-only restriction only excludes pages with explicit "+
+					"non-HTML outputs (issue #1102)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("<!-- html-hook-fired -->"),
+				"onPageRendered must fire for the default HTML output and the "+
+					"plugin's html mutation must be applied back (issue #1102)")
+			Expect(html).To(ContainSubstring("Welcome"),
+				"original page content must be preserved alongside the hook marker")
+		})
+
+		It("onPageRendered does not fire for pages with only non-HTML outputs", func() {
+			cfg := &config.Config{
+				Title:   "JSON Only Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				// Page declares outputs: ["json"] — no HTML output.
+				// onPageRendered must NOT fire for this page.
+				"content/search.md": "---\ntitle: Search Index\nlayout: default\noutputs:\n  - json\n---\nSearch data here.",
+				"layouts/default.liquid":      "{{ content }}",
+				"layouts/default.json.liquid": `{"title":"{{ page.title }}","body":"{{ content | strip_html }}"}`,
+				"plugins/page-rendered-guard.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    // If this hook fires for a JSON-only page, throw an error.
+    // The pipeline must skip onPageRendered when page.Outputs
+    // does not include "html".
+    throw new Error('onPageRendered must not fire for JSON-only page: ' + page.path);
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onPageRendered must NOT fire for pages with outputs: [\"json\"] — "+
+					"if this fails with 'must not fire for JSON-only page', the "+
+					"pipeline still fires onPageRendered for non-HTML pages (issue #1102)")
+			Expect(result).NotTo(BeNil())
+		})
+
+		It("onPageRendered fires for HTML output on multi-format pages", func() {
+			cfg := &config.Config{
+				Title:   "Multi-Format HTML Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				// Page has both HTML and JSON outputs.
+				// onPageRendered must fire with the HTML body, not the JSON body.
+				"content/post.md": "---\ntitle: Blog Post\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Blog Content",
+				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
+				"layouts/default.json.liquid": `{"title":"{{ page.title }}"}`,
+				"plugins/html-only-check.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    // Verify the payload is HTML, not JSON
+    if (page.html.trim().startsWith('{')) {
+      throw new Error('onPageRendered received JSON content instead of HTML for multi-format page');
+    }
+    page.html = page.html + '<!-- multi-format-html-ok -->';
+    return page;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onPageRendered must fire with HTML content for multi-format "+
+					"pages — if this fails with 'received JSON', the pipeline "+
+					"is sending format bodies through onPageRendered (issue #1102)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["post.md"]
+			Expect(html).To(ContainSubstring("<!-- multi-format-html-ok -->"),
+				"onPageRendered must fire for the HTML output of a multi-format "+
+					"page and apply the html mutation back (issue #1102)")
+		})
+
+		It("onPageRendered fires when HTML is not the first output format", func() {
+			cfg := &config.Config{
+				Title:   "HTML Non-First Position Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				// HTML is second in the outputs array — pageHasHTMLOutput must
+				// check all elements, not just index 0.
+				"content/post.md": "---\ntitle: Non-First HTML\nlayout: default\noutputs:\n  - json\n  - html\n---\n# Non-First HTML Post",
+				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
+				"layouts/default.json.liquid": `{"title":"{{ page.title }}"}`,
+				"plugins/non-first-html.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    page.html = page.html + '<!-- html-non-first-ok -->';
+    return page;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onPageRendered must fire when HTML appears anywhere in the "+
+					"outputs array, not just at index 0 — pageHasHTMLOutput "+
+					"must check all elements (issue #1102)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["post.md"]
+			Expect(html).To(ContainSubstring("<!-- html-non-first-ok -->"),
+				"onPageRendered must fire and apply mutations when outputs "+
+					"is [\"json\", \"html\"] — a developer implementing "+
+					"page.Outputs[0] == \"html\" would fail this test (issue #1102)")
+		})
+
+		// ── onFormatRendered basic payload shape ─────────────────────────
+
+		It("onFormatRendered fires with correct payload shape for format bodies", func() {
+			cfg := &config.Config{
+				Title:   "Format Rendered Payload Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/post.md": "---\ntitle: Payload Check\nlayout: default\nauthor: Jane\noutputs:\n  - html\n  - json\n---\n# Post",
+				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
+				"layouts/default.json.liquid": `{"title":"{{ page.title }}"}`,
+				"plugins/format-payload-check.js": `export default function(alloy) {
+  alloy.hook('onFormatRendered', {}, function(payload) {
+    if (typeof payload.format !== 'string' || payload.format.length === 0) {
+      throw new Error('payload.format must be a non-empty string, got: ' + typeof payload.format);
+    }
+    if (typeof payload.content !== 'string') {
+      throw new Error('payload.content must be a string, got: ' + typeof payload.content);
+    }
+    if (typeof payload.url !== 'string' || payload.url.length === 0) {
+      throw new Error('payload.url must be a non-empty string, got: ' + typeof payload.url);
+    }
+    if (typeof payload.path !== 'string' || payload.path.length === 0) {
+      throw new Error('payload.path must be a non-empty string, got: ' + typeof payload.path);
+    }
+    if (!payload.frontMatter || typeof payload.frontMatter !== 'object') {
+      throw new Error('payload.frontMatter must be an object, got: ' + typeof payload.frontMatter);
+    }
+    if (payload.frontMatter.title !== 'Payload Check') {
+      throw new Error('frontMatter.title must be "Payload Check", got: ' + JSON.stringify(payload.frontMatter.title));
+    }
+    if (payload.frontMatter.author !== 'Jane') {
+      throw new Error('frontMatter.author must be "Jane", got: ' + JSON.stringify(payload.frontMatter.author));
+    }
+    if (payload.format !== 'json') {
+      throw new Error('format must be "json" for this page, got: ' + payload.format);
+    }
+    return payload;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onFormatRendered must fire with { format, content, url, path, frontMatter } — "+
+					"if this fails, either the hook is not registered, not fired, or the "+
+					"payload shape is wrong (issue #1102)")
+			Expect(result).NotTo(BeNil())
+		})
+
+		// ── onFormatRendered content mutation ─────────────────────────────
+
+		It("onFormatRendered content mutation is applied to format body", func() {
+			cfg := &config.Config{
+				Title:   "Format Content Mutation Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/post.md": "---\ntitle: Mutate Me\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Post Body",
+				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
+				"layouts/default.json.liquid": `{"title":"{{ page.title }}","original":true}`,
+				"plugins/format-mutate.js": `export default function(alloy) {
+  alloy.hook('onFormatRendered', {}, function(payload) {
+    if (payload.format === 'json') {
+      payload.content = payload.content + '\n/* format-mutated */';
+    }
+    return payload;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			// FormatContent captures format bodies (page key → format → content).
+			// The developer must add this field to BuildResult alongside
+			// RenderedContent, populated when CaptureRenderedContent is true.
+			Expect(result.FormatContent).NotTo(BeNil(),
+				"BuildResult.FormatContent must be populated when "+
+					"CaptureRenderedContent is true — it captures format bodies "+
+					"from page.FormatBodies after hooks fire (issue #1102)")
+
+			jsonContent, exists := result.FormatContent["post.md"]["json"]
+			Expect(exists).To(BeTrue(),
+				"FormatContent must contain the JSON format body for post.md — "+
+					"the page declares outputs: [html, json] so a JSON format "+
+					"body must be rendered and captured (issue #1102)")
+			Expect(jsonContent).To(ContainSubstring("/* format-mutated */"),
+				"onFormatRendered must apply content mutation back to the format "+
+					"body — the plugin appends '/* format-mutated */' and the "+
+					"returned content must replace the original (issue #1102)")
+			Expect(jsonContent).To(ContainSubstring("original"),
+				"the original JSON template content must still be present "+
+					"alongside the mutation marker")
+		})
+
+		// ── onFormatRendered nil return ───────────────────────────────────
+
+		It("nil return from onFormatRendered preserves original format content", func() {
+			cfg := &config.Config{
+				Title:   "Format Nil Return Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/post.md": "---\ntitle: Keep Me\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Preserved",
+				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
+				"layouts/default.json.liquid": `{"title":"{{ page.title }}","preserved":true}`,
+				"plugins/format-nil-return.js": `export default function(alloy) {
+  alloy.hook('onFormatRendered', {}, function(payload) {
+    // No return — JavaScript returns undefined
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"nil/undefined return from onFormatRendered must not error — "+
+					"the pipeline preserves the original content (issue #1102)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.FormatContent).NotTo(BeNil())
+
+			jsonContent, exists := result.FormatContent["post.md"]["json"]
+			Expect(exists).To(BeTrue(),
+				"FormatContent must contain the JSON body even when the hook "+
+					"returns nil — the original rendered content is preserved")
+			Expect(jsonContent).To(ContainSubstring("preserved"),
+				"original JSON content must be preserved when onFormatRendered "+
+					"returns nil/undefined — the pipeline must not replace the "+
+					"content with an empty string (issue #1102)")
+		})
+
+		// ── onFormatRendered return without content key ───────────────────
+
+		It("return without content key from onFormatRendered preserves original", func() {
+			cfg := &config.Config{
+				Title:   "Format No Content Key Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/post.md": "---\ntitle: Still Here\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Intact",
+				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
+				"layouts/default.json.liquid": `{"title":"{{ page.title }}","intact":true}`,
+				"plugins/format-no-content.js": `export default function(alloy) {
+  alloy.hook('onFormatRendered', {}, function(payload) {
+    return { processed: true };
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"return without content key must not error — the pipeline "+
+					"preserves original content when the key is absent (issue #1102)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.FormatContent).NotTo(BeNil())
+
+			jsonContent, exists := result.FormatContent["post.md"]["json"]
+			Expect(exists).To(BeTrue())
+			Expect(jsonContent).To(ContainSubstring("intact"),
+				"original JSON content must be preserved when the return "+
+					"object has no content key — only the content key triggers "+
+					"a content replacement (issue #1102)")
+		})
+
+		// ── onFormatRendered does not fire for HTML-only pages ────────────
+
+		It("onFormatRendered does not fire for pages with only HTML output", func() {
+			cfg := &config.Config{
+				Title:   "HTML Only No Format Hook Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				// Default outputs: ["html"] — no non-HTML formats.
+				// onFormatRendered must NOT fire.
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Just HTML",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/format-guard.js": `export default function(alloy) {
+  alloy.hook('onFormatRendered', {}, function(payload) {
+    throw new Error('onFormatRendered must not fire for HTML-only page: ' + payload.path);
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onFormatRendered must NOT fire for pages with only HTML output — "+
+					"if this fails with 'must not fire for HTML-only page', the "+
+					"pipeline incorrectly fires the hook for HTML-only pages (issue #1102)")
+			Expect(result).NotTo(BeNil())
+		})
+
+		// ── Single non-HTML page fires onFormatRendered ───────────────────
+
+		It("page with only JSON output fires onFormatRendered with format='json'", func() {
+			cfg := &config.Config{
+				Title:   "Single JSON Format Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/api.md": "---\ntitle: API Data\nlayout: default\noutputs:\n  - json\n---\nRaw API content.",
+				"layouts/default.liquid":      "{{ content }}",
+				"layouts/default.json.liquid": `{"title":"{{ page.title }}"}`,
+				"plugins/single-format-check.js": `export default function(alloy) {
+  alloy.hook('onFormatRendered', {}, function(payload) {
+    if (payload.format !== 'json') {
+      throw new Error('format must be "json" for JSON-only page, got: ' + payload.format);
+    }
+    if (typeof payload.content !== 'string' || payload.content.length === 0) {
+      throw new Error('content must be a non-empty string for the rendered JSON body');
+    }
+    payload.content = payload.content + '\n/* single-format-hook */';
+    return payload;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onFormatRendered must fire for pages with outputs: [\"json\"] — "+
+					"single non-HTML pages route through onFormatRendered instead "+
+					"of onPageRendered (issue #1102)")
+			Expect(result).NotTo(BeNil())
+
+			// Single non-HTML pages apply back to page.SetRenderedBody
+			// (not page.FormatBodies), so the mutation must appear in
+			// RenderedContent. This assertion catches the case where
+			// multi-format write-back works but single-format write-back
+			// is silently skipped.
+			rendered := result.RenderedContent["api.md"]
+			Expect(rendered).To(ContainSubstring("/* single-format-hook */"),
+				"onFormatRendered content mutation must be applied back for "+
+					"single non-HTML pages — the developer must call "+
+					"page.SetRenderedBody with the mutated content (issue #1102)")
+		})
+
+		// ── Multiple format bodies fire onFormatRendered for each ─────────
+
+		It("page with multiple non-HTML formats fires onFormatRendered for each", func() {
+			cfg := &config.Config{
+				Title:   "Multi-Format Hook Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/feed.md": "---\ntitle: Feed Page\nlayout: default\noutputs:\n  - html\n  - json\n  - xml\n---\n# Feed",
+				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
+				"layouts/default.json.liquid": `{"title":"{{ page.title }}"}`,
+				"layouts/default.xml.liquid":  `<feed><title>{{ page.title }}</title></feed>`,
+				"plugins/multi-format-tracker.js": `export default function(alloy) {
+  var formatsReceived = [];
+  alloy.hook('onFormatRendered', {}, function(payload) {
+    formatsReceived.push(payload.format);
+    if (payload.format === 'html') {
+      throw new Error('onFormatRendered must not fire for format "html" — ' +
+        'HTML goes through onPageRendered, not onFormatRendered');
+    }
+    // Mark each format body so we can verify both fired
+    payload.content = payload.content + '\n<!-- format:' + payload.format + ' -->';
+    return payload;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"onFormatRendered must fire for each non-HTML format body — "+
+					"if this fails with 'must not fire for format html', the "+
+					"pipeline incorrectly routes HTML through onFormatRendered (issue #1102)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.FormatContent).NotTo(BeNil())
+
+			jsonContent, jsonExists := result.FormatContent["feed.md"]["json"]
+			Expect(jsonExists).To(BeTrue(),
+				"FormatContent must have JSON body for feed.md — the page "+
+					"declares outputs: [html, json, xml] (issue #1102)")
+			Expect(jsonContent).To(ContainSubstring("<!-- format:json -->"),
+				"JSON format body must contain the hook marker proving "+
+					"onFormatRendered fired for the json format (issue #1102)")
+
+			xmlContent, xmlExists := result.FormatContent["feed.md"]["xml"]
+			Expect(xmlExists).To(BeTrue(),
+				"FormatContent must have XML body for feed.md — the page "+
+					"declares outputs: [html, json, xml] (issue #1102)")
+			Expect(xmlContent).To(ContainSubstring("<!-- format:xml -->"),
+				"XML format body must contain the hook marker proving "+
+					"onFormatRendered fired for the xml format (issue #1102)")
+		})
+
+		// ── Read-only fields in onFormatRendered return ───────────────────
+
+		It("frontMatter, url, path, format in onFormatRendered return are read-only", func() {
+			cfg := &config.Config{
+				Title:   "Format Read-Only Fields Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/post.md": "---\ntitle: Original\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Post",
+				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
+				"layouts/default.json.liquid": `{"title":"{{ page.title }}"}`,
+				// First plugin mutates all read-only fields
+				"plugins/01-format-readonly.js": `export default function(alloy) {
+  alloy.hook('onFormatRendered', {}, function(payload) {
+    // Attempt to mutate read-only fields
+    payload.frontMatter = { title: 'Mutated' };
+    payload.url = '/mutated/';
+    payload.path = 'mutated.md';
+    payload.format = 'mutated';
+    // Only content mutation should be applied
+    payload.content = payload.content + '\n/* content-applied */';
+    return payload;
+  });
+}`,
+				// Second plugin verifies frontMatter was NOT mutated by the first
+				"plugins/02-verify-immutable.js": `export default function(alloy) {
+  alloy.hook('onFormatRendered', {}, function(payload) {
+    if (payload.frontMatter.title !== 'Original') {
+      throw new Error('frontMatter.title was mutated to "' + payload.frontMatter.title +
+        '" — the pipeline must ignore frontMatter in the return value');
+    }
+    if (payload.path !== 'post.md') {
+      throw new Error('path was mutated to "' + payload.path +
+        '" — the pipeline must ignore path in the return value');
+    }
+    if (payload.url === '/mutated/') {
+      throw new Error('url was mutated to "/mutated/" — ' +
+        'the pipeline must ignore url in the return value');
+    }
+    return payload;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"read-only field mutations in onFormatRendered return must be "+
+					"ignored — if this fails, the pipeline is applying frontMatter, "+
+					"url, path, or format mutations back to the page (issue #1102)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.FormatContent).NotTo(BeNil())
+
+			jsonContent, exists := result.FormatContent["post.md"]["json"]
+			Expect(exists).To(BeTrue(),
+				"FormatContent must have JSON body keyed by original page path "+
+					"'post.md' — url/path mutations in the return are not applied (issue #1102)")
+			Expect(jsonContent).To(ContainSubstring("/* content-applied */"),
+				"content mutation must be applied — only the content field in "+
+					"the return is written back (issue #1102)")
+		})
+
+		// ── E2E pipeline: both hooks work together ───────────────────────
+
+		It("onPageRendered and onFormatRendered work independently on the same page", func() {
+			cfg := &config.Config{
+				Title:   "Dual Hook E2E Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/post.md": "---\ntitle: Dual Hook\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Dual Hook Post",
+				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
+				"layouts/default.json.liquid": `{"title":"{{ page.title }}","body":"dual-hook-body"}`,
+				"plugins/dual-hooks.js": `export default function(alloy) {
+  // HTML post-processing via onPageRendered
+  alloy.hook('onPageRendered', {}, function(page) {
+    page.html = page.html + '\n<!-- html-transformed -->';
+    return page;
+  });
+
+  // JSON post-processing via onFormatRendered
+  alloy.hook('onFormatRendered', {}, function(payload) {
+    if (payload.format === 'json') {
+      payload.content = payload.content + '\n/* json-transformed */';
+    }
+    return payload;
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"both onPageRendered and onFormatRendered must fire independently — "+
+					"onPageRendered for HTML, onFormatRendered for JSON (issue #1102)")
+			Expect(result).NotTo(BeNil())
+
+			// Verify HTML got the HTML transform
+			html := result.RenderedContent["post.md"]
+			Expect(html).To(ContainSubstring("<!-- html-transformed -->"),
+				"onPageRendered must apply the HTML transform to the page's "+
+					"primary rendered body — this is the existing behavior for "+
+					"HTML output (issue #1102)")
+			Expect(html).To(ContainSubstring("Dual Hook Post"),
+				"original HTML content must be preserved alongside the transform marker")
+			Expect(html).NotTo(ContainSubstring("json-transformed"),
+				"the JSON transform marker must NOT appear in the HTML output — "+
+					"onFormatRendered and onPageRendered operate on separate bodies")
+
+			// Verify JSON got the JSON transform
+			Expect(result.FormatContent).NotTo(BeNil())
+			jsonContent, exists := result.FormatContent["post.md"]["json"]
+			Expect(exists).To(BeTrue(),
+				"FormatContent must contain the JSON body for post.md")
+			Expect(jsonContent).To(ContainSubstring("/* json-transformed */"),
+				"onFormatRendered must apply the JSON transform to the format "+
+					"body — the plugin appends '/* json-transformed */' and the "+
+					"returned content replaces the original (issue #1102)")
+			Expect(jsonContent).To(ContainSubstring("dual-hook-body"),
+				"original JSON template content must be preserved alongside "+
+					"the transform marker")
+			Expect(jsonContent).NotTo(ContainSubstring("html-transformed"),
+				"the HTML transform marker must NOT appear in the JSON output — "+
+					"the two hooks operate on completely separate content bodies")
+		})
+
+		// ── Non-string content in onFormatRendered return ─────────────────
+
+		It("non-string content value in onFormatRendered return preserves original", func() {
+			cfg := &config.Config{
+				Title:   "Format Non-String Content Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/post.md": "---\ntitle: Type Safe\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Post",
+				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
+				"layouts/default.json.liquid": `{"title":"{{ page.title }}","safe":true}`,
+				"plugins/format-non-string.js": `export default function(alloy) {
+  alloy.hook('onFormatRendered', {}, function(payload) {
+    return { content: 42 };
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"non-string content value must not error — the pipeline "+
+					"preserves the original content (issue #1102)")
+			Expect(result).NotTo(BeNil())
+			Expect(result.FormatContent).NotTo(BeNil())
+
+			jsonContent, exists := result.FormatContent["post.md"]["json"]
+			Expect(exists).To(BeTrue())
+			Expect(jsonContent).To(ContainSubstring("safe"),
+				"original JSON content must be preserved when onFormatRendered "+
+					"returns a non-string content value — the type assertion "+
+					"for string fails and the original is kept (issue #1102)")
+		})
+	})
 })
