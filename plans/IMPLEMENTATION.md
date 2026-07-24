@@ -454,6 +454,35 @@ ssrSkipped := cfg.SSR == nil || (len(opts) > 0 && opts[0].SkipSSR)
 
 **`CaptureRenderedContent` (issue #1098)**: When true, `Build()` and `BuildIncremental()` populate `BuildResult.RenderedContent` by iterating all pages and calling `page.HTML()`. When false (the default — Go zero-value), the `renderedContent` map population loop is skipped entirely: no `make(map[string]string, ...)`, no `page.HTML()` calls (avoiding the `renderedStr` caching allocation), and `BuildResult.RenderedContent` is set to nil. The flag is independent of `SkipSSR` — both are off by default and neither implies the other. Production callers (`cmd/build.go`, `cmd/dev.go`, `cmd/serve.go`) must NOT set this flag. `BuildWithContent()` — the test utility function — must always force `CaptureRenderedContent: true` on the resolved options before delegating to `Build()`, regardless of whether the caller passed `BuildOptions` or what value they set. This preserves backward compatibility for all existing tests that read `result.RenderedContent`.
 
+**Release `page.RenderedBody` after disk write (issue #1107)**: The developer must add a `ReleaseRenderedBody()` method to `Page` in `internal/content/page.go`:
+
+```go
+// ReleaseRenderedBody frees all rendered output data. Call after
+// writing the page to disk to release memory immediately rather
+// than holding all pages' rendered HTML for the full build lifetime.
+func (p *Page) ReleaseRenderedBody() {
+    p.RenderedBody = nil
+    p.renderedStr = ""
+    p.FormatBodies = nil
+}
+```
+
+The method must nil `RenderedBody`, clear `renderedStr` (so `HTML()` returns `""`), and nil `FormatBodies`. It must be idempotent and safe to call on pages with no rendered data (nil `RenderedBody`, nil `FormatBodies`).
+
+**`Build()` pipeline reordering (issue #1107)**: The `CaptureRenderedContent` map construction currently runs AFTER the output writing loop. With release, it must move BEFORE the output write loop — between SSR Phase 2 and the output writing stage. The output writing loop must call `page.ReleaseRenderedBody()` after writing each page's primary output, alternate format outputs (`FormatBodies`), and alias redirect files. The reordered sequence in `Build()`:
+
+1. SSR Phase 2 (reads `page.HTML()`, writes back via `SetRenderedBody`) — unchanged
+2. **NEW**: Build `renderedContent` map if `CaptureRenderedContent` is true (moved from after output writing)
+3. Output writing loop — for each page:
+   a. Write primary output (`page.RenderedBody`) to disk
+   b. Write alternate format outputs (`page.FormatBodies`) to disk
+   c. Write alias redirect files (uses `page.RenderedBody`) to disk
+   d. **NEW**: Call `page.ReleaseRenderedBody()` to free rendered data
+4. Sitemap generation (reads `page.URL`, `page.Date` — not `RenderedBody`) — unchanged
+5. Cache building (reads `page.Content` for hashing — not `RenderedBody`) — unchanged
+
+**`BuildIncremental()` pipeline changes (issue #1107)**: The `renderedContent` map is already built before SSR and output writing (used as SSR working state), so no reordering is needed. After writing each page's output and alias files in the output writing loop, call `page.ReleaseRenderedBody()`. The `capturedContent` variable (assigned from `renderedContent` when `CaptureRenderedContent` is true) retains the captured strings independently of the page's `RenderedBody` field — Go strings are reference types, so clearing `renderedStr` on the page does not invalidate the map entry that already copied the string value.
+
 #### `Build()` full orchestration (issue #30)
 
 `Build()` must orchestrate all pipeline stages from §2. Currently it stops after markdown+template rendering. The individual packages for each stage are implemented and pass tests — they need to be called in order:

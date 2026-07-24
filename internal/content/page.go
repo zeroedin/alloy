@@ -41,6 +41,15 @@ func (p *Page) SetRenderedBody(b []byte) {
 	p.renderedStr = ""
 }
 
+// ReleaseRenderedBody frees all rendered output data to reduce peak memory.
+// Nils RenderedBody, clears the cached HTML string, and nils FormatBodies.
+// Safe to call multiple times and on pages with nil fields (issue #1107).
+func (p *Page) ReleaseRenderedBody() {
+	p.RenderedBody = nil
+	p.renderedStr = ""
+	p.FormatBodies = nil
+}
+
 // HTML returns the string conversion of RenderedBody, caching the result
 // so subsequent calls avoid redundant []byte→string allocations.
 func (p *Page) HTML() string {

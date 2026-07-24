@@ -645,6 +645,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	dirCache := output.NewDirectoryCache()
 	for _, page := range pagesToRender {
 		if !output.ShouldWrite(page.URL) {
+			page.ReleaseRenderedBody()
 			continue
 		}
 		outPath := output.ComputeOutputPath(page.URL)
@@ -666,6 +667,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				return nil, fmt.Errorf("writing aliases for %s: %w", page.RelPath, err)
 			}
 		}
+		page.ReleaseRenderedBody()
 	}
 
 	// Build in-memory cache: clone previous (preserves skipped page hashes),
