@@ -1392,6 +1392,14 @@ The `dependencies` field on virtual page objects is read by `virtualPageFromMap`
 
 **`onBuildComplete` hook payload** must not include rendered HTML content. The documented payload shape is `{ pageCount, duration, errors, outputDir }` (see §5 read-only hooks table). The pipeline must pass a trimmed payload matching this shape, not the full `*BuildResult`. This eliminates the JSON serialization of all rendered HTML to Node plugin subprocesses on every build — a transient third copy of the entire site's output. `outputDir` is the configured output directory path (`cfg.Build.Output`) passed through as-is — a cheap string field that plugins need to write post-build artifacts (e.g., `search-index.json`). Plugin subprocesses run with CWD set to the project root, so relative paths like `_site` resolve correctly via `path.join(result.outputDir, ...)`. It was accidentally omitted in the initial trimming (issue #1110).
 
+**Release `page.RenderedBody` after disk write (issue #1107).** With #1104 (Directions 1+2), `BuildResult.RenderedContent` (the second copy) is eliminated for production builds and the `onBuildComplete` payload no longer serializes rendered HTML. The remaining bottleneck is `page.RenderedBody` — the `[]byte` holding each page's rendered HTML from the render stage through output writing. Currently all pages' `RenderedBody` slices live simultaneously in heap, so peak memory is O(total site HTML). Releasing each page's `RenderedBody` immediately after its output write converts peak to O(largest single page).
+
+`Page.ReleaseRenderedBody()` nils `RenderedBody`, clears the cached `renderedStr` string (so `HTML()` returns `""`), and nils `FormatBodies`. The method is idempotent and safe to call on pages with no rendered data.
+
+**Pipeline ordering.** The `CaptureRenderedContent` map (when enabled) must be built BEFORE the output write loop, not after it — release makes the post-write position read nil `RenderedBody`. In `Build()`: after SSR Phase 2 transforms `RenderedBody`, and before the output writing loop, build the `renderedContent` map if `CaptureRenderedContent` is true. Then, after writing each page's primary output, alternate format outputs (`FormatBodies`), and alias redirect files, call `page.ReleaseRenderedBody()`. In `BuildIncremental()`: the `renderedContent` map is already built before SSR and output writing; after writing each page's output and alias files, call `page.ReleaseRenderedBody()`. Subsequent pipeline stages (sitemap generation, cache building) read page metadata (`URL`, `Date`, `Content`) not `RenderedBody`, so they are unaffected by the release.
+
+**Expected impact.** For a 3000-page site averaging 500KB rendered output: current peak ~1.5GB for `RenderedBody` alone → reduced to ~500KB (largest single page). Combined with #1104 eliminating the second copy, total peak drops from ~3GB to ~500KB for page bodies.
+
 ---
 
 ## 3. Data Cascade
