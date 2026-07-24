@@ -3123,6 +3123,48 @@ ssr:
 
 Without an `ssr:` config block, `alloy serve` still works — it just serves Phase 1 output with full reload (useful for verifying templates, data cascade, and layouts without dev tooling).
 
+### Server Lockfile — Concurrent Instance Detection (issue #1094)
+
+When a stale `alloy serve` or `alloy dev` process is running in the background and a new instance starts in the same project directory, both processes watch the same files and write to the same `_site/` output directory. On file changes, the stale process runs a full `Build()` with `clean: true`, wiping `_site/`, while the new process runs `BuildIncremental()`, writing only changed pages. Most output files vanish silently. No errors appear in either console.
+
+To detect this, both `alloy dev` and `alloy serve` write a server lockfile at `.alloy/server.lock` on startup and check for it before starting.
+
+**On startup:**
+
+1. Check for `.alloy/server.lock`
+2. If it exists, read the contents (`{ pid, port, mode, startedAt }`)
+3. Check if the PID is still alive (POSIX: `kill -0`; Windows: `os.FindProcess`)
+4. If alive: **print a warning and continue** (don't block startup):
+   ```
+   warning: another alloy process (PID 4659, alloy serve on port 3003, started 2026-07-14 13:00:00) is watching this directory
+   warning: concurrent instances writing to _site/ will cause missing pages and 404s
+   warning: kill the other process with: kill 4659
+   ```
+5. If the PID is dead: remove the stale lockfile and proceed normally
+6. If the lockfile is corrupt (invalid JSON): treat as stale, remove, and proceed
+7. Write the new lockfile with the current process info
+
+**Lockfile format** (`.alloy/server.lock`):
+
+```json
+{
+  "pid": 4659,
+  "port": 3003,
+  "mode": "serve",
+  "startedAt": "2026-07-14T13:00:00-04:00"
+}
+```
+
+**On shutdown:** Remove `.alloy/server.lock` via deferred cleanup and signal handler (`SIGINT`, `SIGTERM`).
+
+**Why warn instead of refusing to start:** Users may intentionally run `alloy serve` (production preview) alongside `alloy dev` (development) if they use different output directories. Refusing to start would break that workflow. A prominent warning gives them the information to act without blocking legitimate use cases.
+
+**Edge cases:**
+- **Crash without cleanup**: The PID check handles this — a dead PID means the lockfile is stale and gets replaced.
+- **PID reuse**: Unlikely in practice (PIDs cycle through tens of thousands). Not worth the complexity of a secondary process-name check.
+- **Multiple projects**: Not an issue — each project has its own `.alloy/` directory.
+- **CI/containers**: Not an issue — lockfile is per-project and PID check is local.
+
 ### Shared Server Features (both modes)
 
 - **File watcher**: `fsnotify` with 50ms debounce. Watches `content/`, `layouts/`, `data/`, `assets/`, `static/`, passthrough `from:` directories, and component source dirs. Both `alloy dev` and `alloy serve` must set up watchers — `alloy serve` is NOT a one-shot build.
