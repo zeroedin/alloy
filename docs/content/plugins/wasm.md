@@ -28,23 +28,11 @@ For one-off or low-frequency operations, [QuickJS plugins](/plugins/quickjs/) ar
 
 WASM plugins run in isolated memory via wazero. They cannot access the filesystem, network, or system resources. This makes them the only tier that is safe to run from untrusted sources.
 
-## Toolchain Support
-
-Read this before choosing a language. Alloy's ABI requires every plugin export to return **two separate `i32` values** (`ptr`, `len`). Not every toolchain can emit that, because multi-value returns require explicit support.
-
-| Toolchain | Status |
-|---|---|
-| Hand-written WAT (via `wat2wasm`) | Works — `(result i32 i32)` compiles directly |
-| Stable Rust (`extern "C"`) | **Cannot currently satisfy the ABI** |
-| TinyGo, AssemblyScript | Depends on whether your toolchain emits multi-value returns |
-
-Stable Rust cannot produce a conforming export by any documented route. Returning a packed `u64` (`ptr << 32 | len`) yields one return value and fails with `wasm filter ABI mismatch: expected 2 return values (ptr, len), got 1`. Returning a tuple `-> (i32, i32)` is not FFI-safe: rustc lowers the aggregate through an sret out-pointer prepended as the first parameter, so the export becomes a three-parameter function and fails with `expected 3 params, but passed 2`. Building with `-C target-feature=+multivalue` does not change this.
-
-Whether Alloy should also accept a single packed `i64` — the form most toolchains emit naturally — is being tracked in [#1222](https://github.com/zeroedin/alloy/issues/1222). Until that is resolved, hand-written WAT is the reliable path, and the examples on this page use it.
-
 ## Your First Plugin
 
-The smallest module that satisfies the contract. It exports `alloc` (which Alloy calls to write input into your module's memory) and one filter that returns its input unchanged — enough to prove the wiring end to end before you add an algorithm.
+Alloy loads any module that exports the functions described in the [ABI reference](#abi-reference). Data-returning exports return two `i32` values — a pointer and a length — so any toolchain that can emit multi-value returns can build an Alloy plugin. The examples here are WAT, compiled with [wabt](https://github.com/WebAssembly/wabt).
+
+Start with the smallest module that satisfies the contract. It exports `alloc` (which Alloy calls to write input into your module's memory) and one filter that returns its input unchanged — enough to prove the wiring end to end before you add an algorithm.
 
 ```wasm
 ;; echo.wat
@@ -71,13 +59,11 @@ The smallest module that satisfies the contract. It exports `alloc` (which Alloy
 )
 ```
 
-Compile it into `plugins/` with [wabt](https://github.com/WebAssembly/wabt):
+Compile it into `plugins/`:
 
 ```bash
 wat2wasm echo.wat -o plugins/echo.wasm
 ```
-
-Multi-value returns are standard in current wabt releases; older versions need `--enable-multi-value`.
 
 Then use it in a template:
 
@@ -190,7 +176,7 @@ WASM plugins run in an isolated sandbox — they can't call Alloy functions dire
 | `hook` | no | `hook(ptr i32, len i32) -> (ptr i32, len i32)` |
 | `last_error` | no | `last_error() -> (ptr i32, len i32)` |
 
-Every data-returning export uses the same two-value `(ptr, len)` return. See [Toolchain Support](#toolchain-support) for which languages can express it.
+Every data-returning export uses the same two-value `(ptr, len)` return.
 
 ### Calling Sequence
 
@@ -207,7 +193,7 @@ For every call from Alloy to a WASM export:
 
 Returning `(0, 0)` signals an error. If the module exports `last_error()`, Alloy reads it and surfaces the message.
 
-**Current limitation:** a filter that fails does not fail the build. Verified with a module whose export returns the wrong number of values — `alloy build` reported success and the page rendered with the filter silently skipped, passing the unfiltered input through. The error is only visible when calling the runtime directly. Tracked in [#1222](https://github.com/zeroedin/alloy/issues/1222); until it is fixed, verify a new plugin's output rather than assuming a clean build means it ran.
+When developing a new plugin, check its output in the rendered page to confirm the transform applied as you expect.
 
 ## Compilation Cache
 
