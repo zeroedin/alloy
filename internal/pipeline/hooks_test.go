@@ -1,11 +1,15 @@
 package pipeline_test
 
 import (
+	"context"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/zeroedin/alloy/internal/config"
+	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/pipeline"
+	"github.com/zeroedin/alloy/internal/plugin"
 )
 
 var _ = Describe("Build Pipeline", func() {
@@ -50,6 +54,55 @@ var _ = Describe("Build Pipeline", func() {
 				"plugin-built TOC must be available in layout via page.toc — "+
 					"the onContentTransformed hook must be able to set page.toc "+
 					"for non-markdown pages that don't go through goldmark (issue #448)")
+		})
+
+		It("onContentTransformed does not apply frontMatter modifications back to page (issue #1201)", func() {
+			// frontMatter is read-only context for all per-page hooks.
+			// The pipeline must NOT read frontMatter from the return value
+			// of onContentTransformed — consistent with onPageRendered and
+			// onFormatRendered (issue #1185, #1201).
+			//
+			// This test calls fireContentTransformedHooks directly with a
+			// Go hook function (bypassing QuickJS/Node serialization) to
+			// exercise the pipeline apply-back code path. The hook returns
+			// a map with modified frontMatter. The pipeline must ignore it.
+			hooks := plugin.NewHookRegistry()
+			hooks.Register(plugin.OnContentTransformed,
+				func(_ context.Context, payload interface{}) (interface{}, error) {
+					// Return a map with modified frontMatter — the pipeline
+					// must ignore the frontMatter key entirely.
+					return map[string]interface{}{
+						"html":        "<p>transformed</p>",
+						"frontMatter": map[string]interface{}{"title": "Modified By Plugin"},
+					}, nil
+				})
+
+			page := &content.Page{
+				RelPath:      "content/test.md",
+				URL:          "/test/",
+				FrontMatter:  map[string]interface{}{"title": "Original Title"},
+				RenderedBody: []byte("<p>original</p>"),
+			}
+
+			err := pipeline.FireContentTransformedHooks(
+				[]*content.Page{page}, hooks)
+			Expect(err).NotTo(HaveOccurred())
+
+			// html IS applied back (mutable field)
+			Expect(string(page.RenderedBody)).To(Equal("<p>transformed</p>"),
+				"html must be applied back from the hook return — "+
+					"it is a mutable field for onContentTransformed")
+
+			// frontMatter is NOT applied back (read-only context)
+			title, ok := page.FrontMatter["title"].(string)
+			Expect(ok).To(BeTrue(),
+				"page.FrontMatter must still have a title key after hook")
+			Expect(title).To(Equal("Original Title"),
+				"page.FrontMatter must retain the original title — "+
+					"frontMatter is read-only context in onContentTransformed, "+
+					"the pipeline must NOT read frontMatter back from the "+
+					"return value. Remove the frontMatter apply-back block "+
+					"from fireContentTransformedHooks (issue #1201)")
 		})
 	})
 

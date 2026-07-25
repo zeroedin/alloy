@@ -119,6 +119,27 @@ func buildTaxonomiesContext(taxonomies map[string]*collection.TaxonomyCollection
 	return taxMap
 }
 
+// convertedFrontMatter replaces convertOrderedMaps(page.FrontMatter) at call
+// sites. Converts *ordered.Map values to map[string]interface{} in-place and
+// stores the result back on page.FrontMatter so subsequent calls (across hook
+// types for the same page) skip the deep walk (issue #1185).
+//
+// Thread-safety: mutates page.FrontMatter in-place. Safe because the pipeline
+// processes pages sequentially per hook stage — no concurrent readers during
+// conversion. If page-level parallelism is added, this must be revisited.
+func convertedFrontMatter(page *content.Page) map[string]interface{} {
+	if page.FrontMatter == nil {
+		return nil
+	}
+	if !needsOrderedMapConversion(page.FrontMatter) {
+		return page.FrontMatter
+	}
+	for k, v := range page.FrontMatter {
+		page.FrontMatter[k] = convertOrderedValue(v)
+	}
+	return page.FrontMatter
+}
+
 // convertOrderedMaps recursively converts *ordered.Map values to
 // map[string]interface{} for fast JSON serialization in hook payloads.
 func convertOrderedMaps(m map[string]interface{}) map[string]interface{} {

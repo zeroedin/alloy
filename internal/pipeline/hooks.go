@@ -200,7 +200,7 @@ func serializePagesForHook(pages []*content.Page, scope *plugin.HookScope) []plu
 			URL:  page.URL,
 		}
 		if scope == nil || scope.WantsField("frontMatter") {
-			p.FrontMatter = convertOrderedMaps(page.FrontMatter)
+			p.FrontMatter = convertedFrontMatter(page)
 		}
 		if scope == nil || scope.WantsField("content") {
 			p.Content = string(page.Content)
@@ -226,7 +226,7 @@ func serializePagesForCascadeHook(pages []*content.Page, scope *plugin.HookScope
 		}
 		result = append(result, plugin.HookCascadePayload{
 			Path: page.RelPath,
-			Data: convertOrderedMaps(page.FrontMatter),
+			Data: convertedFrontMatter(page),
 		})
 	}
 	return result
@@ -284,7 +284,7 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 			URL:  page.URL,
 		}
 		if scope == nil || scope.WantsField("frontMatter") {
-			payload.FrontMatter = convertOrderedMaps(page.FrontMatter)
+			payload.FrontMatter = convertedFrontMatter(page)
 		}
 		if scope == nil || scope.WantsField("html") {
 			payload.HTML = page.HTML()
@@ -301,7 +301,7 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 		if modified, ok := toGoMap(result); ok {
 			if scope == nil || scope.WantsField("html") {
 				if html, ok := modified["html"].(string); ok {
-					page.SetRenderedBody([]byte(html))
+					page.SetRenderedHTML(html)
 				}
 			}
 			if scope == nil || scope.WantsField("toc") {
@@ -309,16 +309,15 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 					page.TOC = deserializeTOC(tocSlice)
 				}
 			}
-			if scope == nil || scope.WantsField("frontMatter") {
-				if returnedFM, ok := toGoMap(modified["frontMatter"]); ok {
-					page.FrontMatter = returnedFM
-				}
-			}
+			// frontMatter is read-only context for onContentTransformed —
+			// the pipeline does not apply frontMatter back from the return
+			// value, consistent with onPageRendered and onFormatRendered
+			// (issue #1185, #1201).
 			if len(buildCache) > 0 && buildCache[0] != nil {
 				extractAddDependencies(modified, page.RelPath, buildCache[0])
 			}
 		} else if s, ok := result.(string); ok {
-			page.SetRenderedBody([]byte(s))
+			page.SetRenderedHTML(s)
 		} else if b, ok := result.([]byte); ok {
 			page.SetRenderedBody(b)
 		}
@@ -490,7 +489,7 @@ func buildPagesReadyPayload(pages []*content.Page, scope *plugin.HookScope, site
 				URL:  page.URL,
 			}
 			if scope == nil || scope.WantsField("frontMatter") {
-				p.FrontMatter = convertOrderedMaps(page.FrontMatter)
+				p.FrontMatter = convertedFrontMatter(page)
 			}
 			if scope == nil || scope.WantsField("content") {
 				p.Content = string(page.Body)
@@ -520,7 +519,7 @@ func buildPagesReadyPayload(pages []*content.Page, scope *plugin.HookScope, site
 
 // buildPageRenderedPayload constructs the onPageRendered hook payload for a page.
 func buildPageRenderedPayload(page *content.Page) plugin.HookRenderedPayload {
-	fm := convertOrderedMaps(page.FrontMatter)
+	fm := convertedFrontMatter(page)
 	if fm == nil {
 		fm = map[string]interface{}{}
 	}
@@ -653,7 +652,7 @@ func dispatchPostRenderHooks(
 				for i, result := range results {
 					if m, ok := toGoMap(result); ok {
 						if html, ok := m["html"].(string); ok {
-							htmlPages[i].SetRenderedBody([]byte(html))
+							htmlPages[i].SetRenderedHTML(html)
 						}
 						extractAddDependencies(m, htmlPages[i].RelPath, buildCache)
 					} else if result != nil {
@@ -670,7 +669,7 @@ func dispatchPostRenderHooks(
 			if len(page.FormatBodies) == 0 {
 				continue
 			}
-			fm := convertOrderedMaps(page.FrontMatter)
+			fm := convertedFrontMatter(page)
 			if fm == nil {
 				fm = map[string]interface{}{}
 			}
