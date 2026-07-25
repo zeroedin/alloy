@@ -82,4 +82,30 @@ var _ = Describe("Page.SetRenderedHTML (issue #1185)", func() {
 				"the page must be usable again with new content")
 		Expect(page.RenderedBody).To(Equal([]byte("<p>restored</p>")))
 	})
+
+	// ── Cache invalidation interaction (issue #1189) ─────────────────
+	// SetRenderedBody after SetRenderedHTML must clear the cached string
+	// so HTML() re-converts from the new RenderedBody. Without this,
+	// the stale renderedStr from SetRenderedHTML would survive and
+	// HTML() would return the wrong content.
+
+	It("SetRenderedBody after SetRenderedHTML clears cached string", func() {
+		page := &content.Page{}
+		page.SetRenderedHTML("<p>from-hook</p>")
+
+		// Verify the cache is populated
+		Expect(page.HTML()).To(Equal("<p>from-hook</p>"),
+			"precondition: SetRenderedHTML must populate the HTML cache")
+
+		// SetRenderedBody must clear the cache set by SetRenderedHTML
+		page.SetRenderedBody([]byte("<p>from-bytes</p>"))
+
+		Expect(page.HTML()).To(Equal("<p>from-bytes</p>"),
+			"SetRenderedBody after SetRenderedHTML must invalidate the "+
+				"cached string so HTML() re-converts from the new RenderedBody. "+
+				"If HTML() still returns '<p>from-hook</p>', SetRenderedBody "+
+				"did not clear the renderedStr cache (issue #1189)")
+		Expect(page.RenderedBody).To(Equal([]byte("<p>from-bytes</p>")),
+			"RenderedBody must reflect the new []byte value")
+	})
 })
