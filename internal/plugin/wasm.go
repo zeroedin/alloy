@@ -647,22 +647,20 @@ func (r *QuickJSRuntime) setPayloadFrontMatter(obj *qjs.Value, fm map[string]int
 }
 
 // invokeHookFastPath calls a hook function with a pre-built JS object using
-// the pre-compiled __callHookByName function (issue #1185) and extracts the
-// result using a type-specific extractor for targeted outbound extraction.
+// the pre-compiled __callHookByName function (issue #1185, #1186) and extracts
+// the result using a type-specific extractor for targeted outbound extraction.
+// The input is passed directly as a function argument — no globals are set
+// (issue #1186: eliminates __callInput/__callHookName global setup).
 func (r *QuickJSRuntime) invokeHookFastPath(name string, input *qjs.Value, ptype payloadType) (interface{}, error) {
-	r.ctx.Global().SetPropertyStr("__callInput", input)
-
+	defer input.Free()
 	defer func() {
-		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewUndefined())
 		r.pendingFM = nil
 		r.pendingTOC = nil
 	}()
 
-	inputRef := r.ctx.Global().GetPropertyStr("__callInput")
 	nameVal := r.ctx.NewString(name)
-	result, err := r.ctx.Global().InvokeJS("__callHookByName", nameVal, inputRef)
+	result, err := r.ctx.Global().InvokeJS("__callHookByName", nameVal, input)
 	nameVal.Free()
-	inputRef.Free()
 	if err != nil {
 		return nil, fmt.Errorf("hook %q: %w", name, err)
 	}
