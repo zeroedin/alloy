@@ -3542,7 +3542,8 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
     var u = (typeof page.url !== 'undefined') ? page.url : 'MISSING';
     var p = (typeof page.path !== 'undefined') ? page.path : 'MISSING';
     var fm = (typeof page.frontMatter === 'object' && page.frontMatter !== null) ? 'PRESENT' : 'MISSING';
-    return { html: page.html + '<!-- url:' + u + ' --><!-- path:' + p + ' --><!-- fm:' + fm + ' -->' };
+    var fmTitle = (page.frontMatter && page.frontMatter.title) ? page.frontMatter.title : 'MISSING';
+    return { html: page.html + '<!-- url:' + u + ' --><!-- path:' + p + ' --><!-- fm:' + fm + ' --><!-- fm-title:' + fmTitle + ' -->' };
   });
 }`)
 
@@ -3577,6 +3578,10 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 				"second hook must receive frontMatter from original payload — "+
 					"the chaining layer must install a lazy frontMatter getter "+
 					"so the next hook can access page.frontMatter (issue #1216)")
+			Expect(html).To(ContainSubstring("<!-- fm-title:Test Page -->"),
+				"second hook must receive actual frontMatter content, not just an "+
+					"empty object — page.frontMatter.title must equal the original "+
+					"payload's value to prove FM data fidelity (issue #1216)")
 		})
 
 		It("onContentTransformed chain: second hook receives url, path, frontMatter", func() {
@@ -3668,6 +3673,9 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			html, ok := m["html"].(string)
 			Expect(ok).To(BeTrue())
 
+			Expect(html).To(ContainSubstring("<!-- hook-a -->"),
+				"precondition: hook A must have executed — without this guard, "+
+					"a silent hook-A failure would pass the test for the wrong reason")
 			Expect(html).To(ContainSubstring("<!-- received-url:/original/ -->"),
 				"second hook must receive the ORIGINAL url (/original/), not the "+
 					"mutated url (/mutated/) from hook A's return — url is read-only "+
