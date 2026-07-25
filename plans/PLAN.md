@@ -1506,6 +1506,27 @@ Deep merging happens **lazily** — only when a nested key is accessed at multip
 
 **QuickJS native object fast path (issue #1180)**: Per-page hook payloads (`onPageRendered`, `onFormatRendered`, `onContentTransformed`) contain large HTML/content string fields (~800KB avg on large sites). The QuickJS `CallHook` type switch must have dedicated `case` branches for `HookRenderedPayload`, `HookFormatRenderedPayload`, and `HookTransformPayload` that build JS objects directly via the QuickJS API — transferring large string fields as native strings (zero JSON serialization), and only JSON-serializing small metadata fields (`frontMatter`, `toc`). On the return path, extract `html`/`content` as native string properties from the JS result object instead of `JSON.stringify`-ing the entire result. This eliminates 4 JSON serialization passes per page for large string fields. The behavioral contract is unchanged — hooks receive the same JS object shape and return the same result shape. See IMPLEMENTATION.md §Plugin System for detailed guidance.
 
+**QuickJS outbound extraction and lazy fields (issue #1185)**: The inbound fast path (issue #1180) closed half the performance gap vs v0.5.0. The remaining gap is in the outbound path (`extractHookResult`), which uses `GetOwnPropertyNames` → iterate → `JSONStringify` per non-primitive property. Issue #1185 addresses this with several optimizations:
+
+1. **Targeted outbound extraction**: Replace the generic `extractHookResult` (iterates all own properties) with three type-aware extractors that read only the fields the pipeline consumes from each hook return. No `GetOwnPropertyNames`, no `JSONStringify` on the hot path:
+   - `onPageRendered` return: extract `html` (native string read) + `addDependencies` (JSONStringify only if present). Skip `url`, `path`, `frontMatter` (read-only context, pipeline ignores on return).
+   - `onFormatRendered` return: extract `content` (native string read) + `addDependencies`. Skip `format`, `url`, `path`, `frontMatter`.
+   - `onContentTransformed` return: extract `html` (native string read) + `toc` (JSONStringify only if present) + `addDependencies`. Skip `url`, `path`, `frontMatter`.
+
+2. **Lazy frontMatter via `Object.defineProperty` getter**: `setPayloadFrontMatter` no longer calls `jsonCodec.Marshal` + `ParseJSON` on every page. Instead, a lazy getter is installed via `Object.defineProperty`. A Go callback marshals only if the plugin actually reads `page.frontMatter`. Includes a setter (replaces the accessor with a data property) so plugins that write `page.frontMatter = {...}` before reading don't throw TypeError.
+
+3. **Lazy TOC via same `Object.defineProperty` getter pattern**: `setPayloadTOC` uses the same lazy getter backed by a Go callback. Marshal only on read.
+
+4. **Hook chain fast path for `map[string]interface{}`**: When hooks chain (first hook's `map[string]interface{}` result becomes second hook's payload), `CallHook` must detect page-like maps (containing `html` or `content` key) and build a JS object directly instead of JSON-serializing. Non-page maps (e.g., `onBuildComplete` payloads without `html`/`content` keys) fall through to the JSON path.
+
+5. **`BatchCallHook` on `QuickJSRuntime`**: Synchronous loop without per-item goroutine/channel/context overhead. Registered via the existing `registerRuntime` batch detection (type assertion for `BatchCallHook` method). Results must match sequential `CallHook` calls. `onProgress(i+1)` is called after each item (1-based). Empty payloads return an empty (non-nil) slice and nil error without invoking JS.
+
+6. **Pre-compiled JS functions**: Three functions compiled once during `Init()`, called via `InvokeJS` on hot paths: `__callHookByName(name, input)` (replaces per-call `Eval` of hook invocation string), `__installLazyFM(target)`, `__installLazyTOC(target)`.
+
+7. **`Page.SetRenderedHTML(string)`**: Stores both `RenderedBody` (as `[]byte`) and the cached HTML string simultaneously, avoiding the `string→[]byte→string` round-trip when applying hook results back. `page.HTML()` returns the string directly without re-conversion.
+
+8. **`convertedFrontMatter(page)` caching**: Replaces `convertOrderedMaps(page.FrontMatter)` at pipeline call sites. Converts `*ordered.Map` values once and stores the result back on `page.FrontMatter` so subsequent calls (across hook types for the same page) skip the deep walk.
+
 **Memory**: 3000 pages with 50KB shared data ≈ 50KB (shared) + 1.5MB (front matter), not 150MB (deep copies).
 
 ### Collections

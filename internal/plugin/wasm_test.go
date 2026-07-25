@@ -1618,6 +1618,22 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 		})
 	})
 
+	// setupQuickJSWithHook creates a QuickJS runtime, inlines the given
+	// plugin JS (which must register a hook via alloy.hook), and returns
+	// the runtime. Caller must DeferCleanup(rt.Close).
+	// Shared by both #1180 and #1185 test Describes.
+	setupQuickJSWithHook := func(hookJS string) *plugin.QuickJSRuntime {
+		tmpDir := GinkgoT().TempDir()
+		pluginPath := filepath.Join(tmpDir, "test-hook.js")
+		Expect(os.WriteFile(pluginPath, []byte(hookJS), 0644)).To(Succeed())
+
+		rt := plugin.NewQuickJSRuntime()
+		Expect(rt.Init()).To(Succeed())
+		Expect(rt.EvalFile(pluginPath)).To(Succeed())
+		DeferCleanup(rt.Close)
+		return rt
+	}
+
 	// ── CallHook payload struct fast path (issue #1180) ──────────────
 	// QuickJS CallHook currently JSON-serializes the entire payload for
 	// struct types (HookRenderedPayload, HookFormatRenderedPayload,
@@ -1628,21 +1644,6 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 	// the behavioral contract that the fast path must satisfy.
 
 	Describe("CallHook payload struct fast path (issue #1180)", func() {
-
-		// setupQuickJSWithHook creates a QuickJS runtime, inlines the given
-		// plugin JS (which must register a hook via alloy.hook), and returns
-		// the runtime. Caller must DeferCleanup(rt.Close).
-		setupQuickJSWithHook := func(hookJS string) *plugin.QuickJSRuntime {
-			tmpDir := GinkgoT().TempDir()
-			pluginPath := filepath.Join(tmpDir, "test-hook.js")
-			Expect(os.WriteFile(pluginPath, []byte(hookJS), 0644)).To(Succeed())
-
-			rt := plugin.NewQuickJSRuntime()
-			Expect(rt.Init()).To(Succeed())
-			Expect(rt.EvalFile(pluginPath)).To(Succeed())
-			DeferCleanup(rt.Close)
-			return rt
-		}
 
 		It("HookRenderedPayload delivers all fields to JS and returns modified html", func() {
 			rt := setupQuickJSWithHook(`export default function(alloy) {
@@ -1844,7 +1845,12 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(depsSlice[1]).To(Equal("elements/rh-icon/rh-icon.js"))
 		})
 
-		It("HookRenderedPayload identity return preserves all fields", func() {
+		It("HookRenderedPayload identity return preserves pipeline-consumed fields", func() {
+			// Issue #1185: targeted outbound extraction reads only the fields
+			// the pipeline consumes from the return value. For onPageRendered,
+			// the pipeline reads html and addDependencies. Read-only context
+			// fields (url, path, frontMatter) are NOT extracted — they are
+			// inbound-only (sent to JS for conditional logic, never read back).
 			rt := setupQuickJSWithHook(`export default function(alloy) {
   alloy.hook('onPageRendered', {}, function(page) {
     return page;
@@ -1867,26 +1873,26 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(ok).To(BeTrue())
 			Expect(html).To(Equal("<p>unchanged</p>"),
 				"identity return must preserve the html field exactly — "+
-					"the fast path outbound extraction must handle the "+
+					"the targeted outbound extraction must handle the "+
 					"case where the hook returns the input object unmodified")
 
-			url, urlOk := m["url"].(string)
-			Expect(urlOk).To(BeTrue(),
-				"url must be present as string in identity return result")
-			Expect(url).To(Equal("/identity/"),
-				"identity return must preserve the url field")
-
-			path, pathOk := m["path"].(string)
-			Expect(pathOk).To(BeTrue(),
-				"path must be present as string in identity return result")
-			Expect(path).To(Equal("content/identity.md"),
-				"identity return must preserve the path field")
-
-			fm := extractGoMap(m["frontMatter"])
-			Expect(fm).NotTo(BeNil(),
-				"frontMatter must be present as a map in identity return result")
-			Expect(fm["title"]).To(Equal("Identity"),
-				"identity return must preserve frontMatter fields")
+			// url, path, and frontMatter are read-only context fields.
+			// The targeted extractor does NOT extract them from the return
+			// value because the pipeline never reads them back. Their
+			// absence from the result map is correct behavior.
+			_, hasURL := m["url"]
+			Expect(hasURL).To(BeFalse(),
+				"url must NOT be present in the result — it is a read-only "+
+					"inbound field that the pipeline does not consume from "+
+					"the return value (issue #1185 targeted extraction)")
+			_, hasPath := m["path"]
+			Expect(hasPath).To(BeFalse(),
+				"path must NOT be present in the result — same as url, "+
+					"it is read-only context for conditional processing")
+			_, hasFM := m["frontMatter"]
+			Expect(hasFM).To(BeFalse(),
+				"frontMatter must NOT be present in the result — the pipeline "+
+					"does not read frontMatter back from onPageRendered returns")
 		})
 
 		It("HookFormatRenderedPayload delivers all fields to JS and returns modified content", func() {
@@ -2131,7 +2137,12 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 					"HookRenderedPayload but for the content field")
 		})
 
-		It("HookFormatRenderedPayload identity return preserves all fields", func() {
+		It("HookFormatRenderedPayload identity return preserves pipeline-consumed fields", func() {
+			// Issue #1185: targeted outbound extraction reads only the fields
+			// the pipeline consumes from the return value. For onFormatRendered,
+			// the pipeline reads only content (and addDependencies if present).
+			// Read-only context fields (format, url, path, frontMatter) are NOT
+			// extracted — they are inbound-only.
 			rt := setupQuickJSWithHook(`export default function(alloy) {
   alloy.hook('onFormatRendered', {}, function(payload) {
     return payload;
@@ -2151,17 +2162,80 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(m).NotTo(BeNil(),
 				"identity return from HookFormatRenderedPayload must produce a map")
 			Expect(m["content"]).To(Equal("<root><item>data</item></root>"),
-				"identity return must preserve content")
-			Expect(m["format"]).To(Equal("xml"),
-				"identity return must preserve format")
-			Expect(m["url"]).To(Equal("/feed/"),
-				"identity return must preserve url")
-			Expect(m["path"]).To(Equal("content/feed.md"),
-				"identity return must preserve path")
-			fm := extractGoMap(m["frontMatter"])
-			Expect(fm).NotTo(BeNil())
-			Expect(fm["title"]).To(Equal("RSS Feed"),
-				"identity return must preserve frontMatter")
+				"identity return must preserve content — the only mutable field "+
+					"the pipeline reads from onFormatRendered returns")
+
+			// format, url, path, and frontMatter are read-only context fields.
+			// The targeted extractor does NOT extract them from the return value.
+			_, hasFormat := m["format"]
+			Expect(hasFormat).To(BeFalse(),
+				"format must NOT be present in the result — it is a read-only "+
+					"inbound field (issue #1185 targeted extraction)")
+			_, hasURL := m["url"]
+			Expect(hasURL).To(BeFalse(),
+				"url must NOT be present in the result — read-only context field")
+			_, hasPath := m["path"]
+			Expect(hasPath).To(BeFalse(),
+				"path must NOT be present in the result — read-only context field")
+			_, hasFM := m["frontMatter"]
+			Expect(hasFM).To(BeFalse(),
+				"frontMatter must NOT be present in the result — the pipeline "+
+					"does not read frontMatter back from onFormatRendered returns")
+		})
+
+		It("HookTransformPayload identity return preserves pipeline-consumed fields", func() {
+			// Issue #1185: targeted outbound extraction reads only the fields
+			// the pipeline consumes from the return value. For onContentTransformed,
+			// the pipeline reads html, toc, and addDependencies. Read-only context
+			// fields (url, path, frontMatter) are NOT extracted — they are
+			// inbound-only (sent to JS for conditional logic, never read back).
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    return page;
+  });
+}`)
+			payload := plugin.HookTransformPayload{
+				HTML:        "<h2>Section</h2><p>Body text</p>",
+				FrontMatter: map[string]interface{}{"title": "Transform Identity"},
+				URL:         "/transform-id/",
+				Path:        "content/transform-id.md",
+				TOC: []content.TOCEntry{
+					{ID: "section", Text: "Section", Level: 2},
+				},
+			}
+			result, err := rt.CallHook("onContentTransformed", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil(),
+				"identity return from HookTransformPayload must produce a map")
+
+			// html and toc ARE pipeline-consumed — they must be present.
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue(),
+				"html must be present in the result — it is a mutable field "+
+					"the pipeline reads from onContentTransformed returns")
+			Expect(html).To(Equal("<h2>Section</h2><p>Body text</p>"),
+				"identity return must preserve html exactly")
+
+			_, hasTOC := m["toc"]
+			Expect(hasTOC).To(BeTrue(),
+				"toc must be present in the result — the pipeline reads toc "+
+					"from onContentTransformed returns (unlike onPageRendered)")
+
+			// url, path, and frontMatter are read-only context fields.
+			// The targeted extractor does NOT extract them from the return value.
+			_, hasURL := m["url"]
+			Expect(hasURL).To(BeFalse(),
+				"url must NOT be present in the result — read-only context field "+
+					"(issue #1185 targeted extraction)")
+			_, hasPath := m["path"]
+			Expect(hasPath).To(BeFalse(),
+				"path must NOT be present in the result — read-only context field")
+			_, hasFM := m["frontMatter"]
+			Expect(hasFM).To(BeFalse(),
+				"frontMatter must NOT be present in the result — the pipeline "+
+					"does not read frontMatter back from onContentTransformed returns")
 		})
 
 		It("HookRenderedPayload hook returning raw string is handled as backward compat", func() {
@@ -2232,6 +2306,477 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(html).To(ContainSubstring("Card 999"),
 				"end of large HTML must be preserved — "+
 					"if missing, the fast path truncated the string")
+		})
+	})
+
+	Describe("QuickJS outbound fast path and lazy fields (issue #1185)", func() {
+
+		// --- Lazy frontMatter via Object.defineProperty getter ---
+
+		It("lazy frontMatter: plugin reading page.frontMatter.title receives correct data", func() {
+			// Issue #1185: frontMatter is installed as a lazy getter via
+			// Object.defineProperty. The Go side stores the map in pendingFM
+			// and only marshals+parses when JS actually reads the property.
+			// This test verifies the lazy getter delivers correct data.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return {
+      html: page.html + '<!-- title:' + page.frontMatter.title +
+        ' count:' + page.frontMatter.count + ' -->'
+    };
+  });
+}`)
+			payload := plugin.HookRenderedPayload{
+				HTML:        "<p>content</p>",
+				FrontMatter: map[string]interface{}{"title": "Lazy FM", "count": 42},
+				URL:         "/lazy-fm/",
+				Path:        "content/lazy-fm.md",
+			}
+			result, err := rt.CallHook("onPageRendered", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(ContainSubstring("title:Lazy FM"),
+				"lazy frontMatter getter must deliver the title field — "+
+					"the Go callback must marshal frontMatter on first access "+
+					"and the parsed JS object must have correct string values")
+			Expect(html).To(ContainSubstring("count:42"),
+				"lazy frontMatter getter must deliver numeric fields — "+
+					"JSON parse inside the getter must preserve number types")
+		})
+
+		It("lazy frontMatter: plugin writing page.frontMatter before reading does not error", func() {
+			// Issue #1185: the lazy getter installs a setter (no-op that
+			// replaces the accessor with a data property) so plugins that
+			// write page.frontMatter = {...} before reading don't throw
+			// TypeError ("Cannot set property frontMatter of #<Object>
+			// which has only a getter").
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    page.frontMatter = { title: 'Overwritten' };
+    return {
+      html: page.html + '<!-- title:' + page.frontMatter.title + ' -->'
+    };
+  });
+}`)
+			payload := plugin.HookRenderedPayload{
+				HTML:        "<p>content</p>",
+				FrontMatter: map[string]interface{}{"title": "Original"},
+				URL:         "/lazy-fm-write/",
+				Path:        "content/lazy-fm-write.md",
+			}
+			result, err := rt.CallHook("onPageRendered", payload)
+			Expect(err).NotTo(HaveOccurred(),
+				"writing page.frontMatter before reading must not throw — "+
+					"the lazy getter's setter must replace the accessor with "+
+					"a data property so the assignment succeeds")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(ContainSubstring("title:Overwritten"),
+				"after writing page.frontMatter = {...}, subsequent reads "+
+					"must see the overwritten value, not the original Go data")
+		})
+
+		It("lazy frontMatter: plugin that never reads frontMatter does not trigger errors", func() {
+			// Issue #1185: when no plugin reads page.frontMatter, the lazy
+			// getter's Go callback is never invoked. No marshal, no parse,
+			// no errors. The hook must complete successfully.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return { html: page.html + '<!-- no-fm-access -->' };
+  });
+}`)
+			payload := plugin.HookRenderedPayload{
+				HTML:        "<p>content</p>",
+				FrontMatter: map[string]interface{}{"title": "Untouched"},
+				URL:         "/lazy-fm-skip/",
+				Path:        "content/lazy-fm-skip.md",
+			}
+			result, err := rt.CallHook("onPageRendered", payload)
+			Expect(err).NotTo(HaveOccurred(),
+				"hook that never reads page.frontMatter must not error — "+
+					"lazy getter must not eagerly materialize or throw")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(Equal("<p>content</p><!-- no-fm-access -->"),
+				"hook output must be correct when frontMatter is never accessed")
+		})
+
+		// --- Lazy TOC via same Object.defineProperty getter pattern ---
+
+		It("lazy TOC: plugin reading page.toc receives correct entries", func() {
+			// Issue #1185: TOC uses the same lazy getter pattern as frontMatter.
+			// Marshal+parse only when JS reads page.toc.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    var tocInfo = 'none';
+    if (page.toc && page.toc.length > 0) {
+      tocInfo = page.toc[0].text + ':L' + page.toc[0].level +
+        ':' + page.toc[0].id;
+    }
+    return {
+      html: page.html + '<!-- toc:' + tocInfo + ' -->',
+      toc: page.toc
+    };
+  });
+}`)
+			payload := plugin.HookTransformPayload{
+				HTML: "<h2>Getting Started</h2><p>Body</p>",
+				TOC: []content.TOCEntry{
+					{Text: "Getting Started", ID: "getting-started", Level: 2},
+				},
+				URL:         "/lazy-toc/",
+				Path:        "content/lazy-toc.md",
+				FrontMatter: map[string]interface{}{"title": "Lazy TOC"},
+			}
+			result, err := rt.CallHook("onContentTransformed", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(ContainSubstring("toc:Getting Started:L2:getting-started"),
+				"lazy TOC getter must deliver correct TOCEntry fields — "+
+					"text, level, and id must all survive the lazy marshal+parse")
+		})
+
+		It("lazy TOC: plugin writing page.toc before reading does not error", func() {
+			// Issue #1185: same setter pattern as frontMatter — writing
+			// page.toc = [...] before reading must not throw TypeError.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    page.toc = [{ text: 'Custom', id: 'custom', level: 1 }];
+    return {
+      html: page.html + '<!-- custom-toc:' + page.toc[0].text + ' -->',
+      toc: page.toc
+    };
+  });
+}`)
+			payload := plugin.HookTransformPayload{
+				HTML: "<h2>Original</h2>",
+				TOC: []content.TOCEntry{
+					{Text: "Original", ID: "original", Level: 2},
+				},
+				URL:         "/lazy-toc-write/",
+				Path:        "content/lazy-toc-write.md",
+				FrontMatter: map[string]interface{}{},
+			}
+			result, err := rt.CallHook("onContentTransformed", payload)
+			Expect(err).NotTo(HaveOccurred(),
+				"writing page.toc = [...] before reading must not throw — "+
+					"the lazy getter's setter must replace the accessor with "+
+					"a data property so the assignment succeeds")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(ContainSubstring("custom-toc:Custom"),
+				"after writing page.toc = [...], subsequent reads must see "+
+					"the overwritten value, not the original Go TOC data")
+		})
+
+		It("lazy TOC: plugin that never reads toc does not trigger errors", func() {
+			// Issue #1185: when no plugin reads page.toc, the lazy getter's
+			// Go callback is never invoked. No marshal, no parse, no errors.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    return { html: page.html + '<!-- no-toc-access -->' };
+  });
+}`)
+			payload := plugin.HookTransformPayload{
+				HTML: "<h2>Heading</h2><p>Text</p>",
+				TOC: []content.TOCEntry{
+					{Text: "Heading", ID: "heading", Level: 2},
+				},
+				URL:         "/lazy-toc-skip/",
+				Path:        "content/lazy-toc-skip.md",
+				FrontMatter: map[string]interface{}{},
+			}
+			result, err := rt.CallHook("onContentTransformed", payload)
+			Expect(err).NotTo(HaveOccurred(),
+				"hook that never reads page.toc must not error — "+
+					"lazy getter must not eagerly materialize or throw")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(Equal("<h2>Heading</h2><p>Text</p><!-- no-toc-access -->"),
+				"hook output must be correct when toc is never accessed")
+		})
+
+		// --- Hook chain: map[string]interface{} fast path ---
+
+		It("hook chain: second hook receives html from first hook's map result", func() {
+			// Issue #1185: when hooks chain (first hook returns map, second
+			// hook receives that map as payload), CallHook must handle the
+			// map[string]interface{} payload via the map fast path. The map
+			// has an "html" key, indicating it's a page-like payload that
+			// should build a JS object directly (same as HookRenderedPayload).
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return { html: page.html + '<!-- hook-applied -->' };
+  });
+}`)
+			// Simulate what the hook registry does on a chain: the second
+			// invocation receives a map[string]interface{} (the first hook's
+			// result) instead of a typed HookRenderedPayload struct.
+			chainPayload := map[string]interface{}{
+				"html": "<p>from first hook</p>",
+				"url":  "/chain/",
+				"path": "content/chain.md",
+			}
+			result, err := rt.CallHook("onPageRendered", chainPayload)
+			Expect(err).NotTo(HaveOccurred(),
+				"CallHook must handle map[string]interface{} with 'html' key — "+
+					"this is the payload shape when hooks chain (second hook "+
+					"receives first hook's map result)")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(Equal("<p>from first hook</p><!-- hook-applied -->"),
+				"second hook in chain must receive the html from the first "+
+					"hook's map result and apply its own transformation")
+		})
+
+		It("hook chain: second hook receives content from first hook's map result", func() {
+			// Issue #1185: the map fast path is guarded by html OR content key
+			// presence. This test uses a "content"-keyed map (the onFormatRendered
+			// chain scenario) to verify the content key guard is implemented,
+			// not just the html key guard.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onFormatRendered', {}, function(payload) {
+    return { content: payload.content + '<!-- format-chain -->' };
+  });
+}`)
+			chainPayload := map[string]interface{}{
+				"content": `{"items":[1,2,3]}`,
+				"format":  "json",
+				"url":     "/feed.json",
+				"path":    "content/feed.md",
+			}
+			result, err := rt.CallHook("onFormatRendered", chainPayload)
+			Expect(err).NotTo(HaveOccurred(),
+				"CallHook must handle map[string]interface{} with 'content' key — "+
+					"this is the payload shape when onFormatRendered hooks chain "+
+					"(second hook receives first hook's map result)")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			content, ok := m["content"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(content).To(Equal(`{"items":[1,2,3]}<!-- format-chain -->`),
+				"second hook in chain must receive the content from the first "+
+					"hook's map result — the map fast path must detect the "+
+					"'content' key (not just 'html') as a page-like payload")
+		})
+
+		It("hook chain: non-page map payload passes through correctly", func() {
+			// Issue #1185: the map fast path is guarded by html/content key
+			// presence. Non-page maps (e.g., onBuildComplete payloads) do
+			// NOT have html/content keys and must fall through to the JSON
+			// serialization path. Verify correct behavior for both paths.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onBuildComplete', {}, function(data) {
+    return {
+      pageCount: data.pageCount,
+      marker: 'processed'
+    };
+  });
+}`)
+			nonPageMap := map[string]interface{}{
+				"pageCount": 42,
+				"duration":  "1.5s",
+				"outputDir": "_site",
+			}
+			result, err := rt.CallHook("onBuildComplete", nonPageMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"CallHook must handle map[string]interface{} without html/content "+
+					"keys — these maps must fall through to the JSON path, not "+
+					"be caught by the page-like map fast path")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			marker, ok := m["marker"].(string)
+			Expect(ok).To(BeTrue(),
+				"non-page map result must be extractable as a map")
+			Expect(marker).To(Equal("processed"),
+				"hook must receive and return data from non-page maps correctly")
+		})
+
+		// --- BatchCallHook on QuickJSRuntime ---
+
+		It("BatchCallHook results match sequential CallHook calls", func() {
+			// Issue #1185: QuickJSRuntime.BatchCallHook loops synchronously
+			// without per-item goroutine/channel/context overhead. Results
+			// must be identical to calling CallHook sequentially.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return { html: page.html + '<!-- transformed -->' };
+  });
+}`)
+			payloads := []interface{}{
+				plugin.HookRenderedPayload{
+					HTML:        "<p>page one</p>",
+					FrontMatter: map[string]interface{}{},
+					URL:         "/one/",
+					Path:        "content/one.md",
+				},
+				plugin.HookRenderedPayload{
+					HTML:        "<p>page two</p>",
+					FrontMatter: map[string]interface{}{},
+					URL:         "/two/",
+					Path:        "content/two.md",
+				},
+				plugin.HookRenderedPayload{
+					HTML:        "<p>page three</p>",
+					FrontMatter: map[string]interface{}{},
+					URL:         "/three/",
+					Path:        "content/three.md",
+				},
+			}
+
+			// Sequential CallHook — the reference results
+			seqResults := make([]interface{}, len(payloads))
+			for i, p := range payloads {
+				r, err := rt.CallHook("onPageRendered", p)
+				Expect(err).NotTo(HaveOccurred())
+				seqResults[i] = r
+			}
+
+			// BatchCallHook — must produce identical results
+			batchResults, err := rt.BatchCallHook("onPageRendered", payloads, nil)
+			Expect(err).NotTo(HaveOccurred(),
+				"BatchCallHook must not error for valid payloads")
+			Expect(batchResults).To(HaveLen(len(payloads)),
+				"BatchCallHook must return one result per payload")
+
+			for i, batchResult := range batchResults {
+				bm := extractGoMap(batchResult)
+				sm := extractGoMap(seqResults[i])
+				Expect(bm).NotTo(BeNil())
+				Expect(sm).NotTo(BeNil())
+
+				bHTML, bOk := bm["html"].(string)
+				sHTML, sOk := sm["html"].(string)
+				Expect(bOk).To(BeTrue())
+				Expect(sOk).To(BeTrue())
+				Expect(bHTML).To(Equal(sHTML),
+					fmt.Sprintf("BatchCallHook result[%d] must match sequential "+
+						"CallHook result — both must produce identical html", i))
+			}
+		})
+
+		It("BatchCallHook calls onProgress callback with 1-based indices", func() {
+			// Issue #1185: onProgress is part of the BatchCallHook API per
+			// IMPLEMENTATION.md. The callback receives 1-based item count
+			// (i+1) after each item completes. A nil callback is the no-op
+			// path (tested above); this test exercises the non-nil path.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return { html: page.html + '<!-- batch -->' };
+  });
+}`)
+			payloads := []interface{}{
+				plugin.HookRenderedPayload{
+					HTML: "<p>a</p>", FrontMatter: map[string]interface{}{},
+					URL: "/a/", Path: "content/a.md",
+				},
+				plugin.HookRenderedPayload{
+					HTML: "<p>b</p>", FrontMatter: map[string]interface{}{},
+					URL: "/b/", Path: "content/b.md",
+				},
+				plugin.HookRenderedPayload{
+					HTML: "<p>c</p>", FrontMatter: map[string]interface{}{},
+					URL: "/c/", Path: "content/c.md",
+				},
+			}
+
+			var progressIndices []int
+			onProgress := func(i int) {
+				progressIndices = append(progressIndices, i)
+			}
+
+			results, err := rt.BatchCallHook("onPageRendered", payloads, onProgress)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(HaveLen(3))
+			Expect(progressIndices).To(Equal([]int{1, 2, 3}),
+				"onProgress must be called with 1-based indices [1, 2, 3] — "+
+					"the callback receives i+1 after each item completes")
+		})
+
+		It("BatchCallHook with empty payloads returns empty slice", func() {
+			// Edge case: empty input must return an empty (non-nil) slice
+			// and nil error, without invoking any JS.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return { html: page.html + '<!-- should-not-fire -->' };
+  });
+}`)
+			results, err := rt.BatchCallHook("onPageRendered", []interface{}{}, nil)
+			Expect(err).NotTo(HaveOccurred(),
+				"BatchCallHook with empty payloads must not error")
+			Expect(results).NotTo(BeNil(),
+				"BatchCallHook must return a non-nil slice even for empty input")
+			Expect(results).To(HaveLen(0),
+				"BatchCallHook with empty payloads must return an empty slice")
+		})
+
+		// --- Pre-compiled JS hook invocation ---
+
+		It("pre-compiled hook invocation produces correct results across multiple calls", func() {
+			// Issue #1185: __callHookByName is a pre-compiled JS function
+			// (compiled once during Init) that replaces per-call Eval of
+			// "__hooks[__callHookName](__callInput)". This test verifies that
+			// the hook invocation path produces correct results when called
+			// repeatedly — the key property of pre-compiled functions.
+			// NOTE: This is a baseline guard — the pre-compiled optimization
+			// is purely internal with no observable behavioral difference.
+			// It passes on the base branch (confirms current behavior) and
+			// guards against regressions when the implementation changes the
+			// invocation mechanism.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  var callCount = 0;
+  alloy.hook('onPageRendered', {}, function(page) {
+    callCount++;
+    return { html: page.html + '<!-- call:' + callCount + ' -->' };
+  });
+}`)
+			// Call the same hook multiple times to exercise the pre-compiled
+			// invocation path. Each call must produce a distinct result
+			// (incrementing counter) to prove the function state is preserved.
+			for i := 1; i <= 3; i++ {
+				payload := plugin.HookRenderedPayload{
+					HTML:        "<p>test</p>",
+					FrontMatter: map[string]interface{}{},
+					URL:         "/precompiled/",
+					Path:        "content/precompiled.md",
+				}
+				result, err := rt.CallHook("onPageRendered", payload)
+				Expect(err).NotTo(HaveOccurred())
+
+				m := extractGoMap(result)
+				Expect(m).NotTo(BeNil())
+				html, ok := m["html"].(string)
+				Expect(ok).To(BeTrue())
+				Expect(html).To(Equal(fmt.Sprintf("<p>test</p><!-- call:%d -->", i)),
+					fmt.Sprintf("call %d must produce correct result with "+
+						"incrementing counter — pre-compiled JS function must "+
+						"preserve closure state across invocations", i))
+			}
 		})
 	})
 
