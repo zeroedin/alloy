@@ -733,31 +733,33 @@ The method must nil `RenderedBody`, clear `renderedStr` (so `HTML()` returns `""
          return __hooks[name](input);
        }
        function __installLazyFM(target, jsonStr) {
-         var _parsed = null;
+         var _UNSET = {};
+         var _parsed = _UNSET;
          Object.defineProperty(target, 'frontMatter', {
-           get: function() { if (_parsed === null) _parsed = JSON.parse(jsonStr); return _parsed; },
+           get: function() { if (_parsed === _UNSET) _parsed = JSON.parse(jsonStr); return _parsed; },
            set: function(v) { _parsed = v; },
            enumerable: true,
            configurable: true
          });
        }
        function __installLazyTOC(target, jsonStr) {
-         var _parsed = null;
+         var _UNSET = {};
+         var _parsed = _UNSET;
          Object.defineProperty(target, 'toc', {
-           get: function() { if (_parsed === null) _parsed = JSON.parse(jsonStr); return _parsed; },
+           get: function() { if (_parsed === _UNSET) _parsed = JSON.parse(jsonStr); return _parsed; },
            set: function(v) { _parsed = v; },
            enumerable: true,
            configurable: true
          });
        }
        ```
-    2. **Store function references on QuickJSRuntime**: After the `alloy-setup.js` eval completes, retrieve `*qjs.Value` references to the three functions via `r.ctx.Global().GetPropertyStr("__callHookByName")` (and similarly for `__installLazyFM`, `__installLazyTOC`). Store them as fields on the `QuickJSRuntime` struct (e.g., `callHookByNameFn`, `installLazyFMFn`, `installLazyTOCFn`). These references are used by `ctx.Invoke` to call the functions without re-parsing.
+    2. **Store function references on QuickJSRuntime**: After the `alloy-setup.js` eval completes, retrieve `*qjs.Value` references to the three functions via `r.ctx.Global().GetPropertyStr("__callHookByName")` (and similarly for `__installLazyFM`, `__installLazyTOC`). Store them as fields on the `QuickJSRuntime` struct (e.g., `callHookByNameFn`, `installLazyFMFn`, `installLazyTOCFn`). These references are used by `ctx.Invoke` to call the functions without re-parsing. **Lifetime**: These `*qjs.Value` references are reference-counted by the `fastschema/qjs` WASM bridge. They must be explicitly freed in `QuickJSRuntime.Close()` via `v.Free()` before the context and runtime are closed. Free in reverse order of creation (TOC, FM, hook) before the existing `r.ctx` / `r.rt` teardown.
     3. **Replace Eval with Invoke in hot paths**:
        - `invokeHookFastPath`: Replace `r.ctx.Eval("hook-call.js", qjs.Code("__hooks[__callHookName](__callInput)"))` with `r.ctx.Invoke(r.callHookByNameFn, r.ctx.Global(), r.ctx.NewString(name), input)`. This eliminates the global variable setup (`__callInput`, `__callHookName`) and the per-call parse/compile. The cleanup `defer` that clears these globals is no longer needed.
        - `setPayloadFrontMatter`: For non-nil frontMatter, replace `obj.SetPropertyStr("frontMatter", r.ctx.ParseJSON(string(fmJSON)))` with `r.ctx.Invoke(r.installLazyFMFn, r.ctx.Global(), obj, r.ctx.NewString(string(fmJSON)))`. Nil frontMatter continues to use `obj.SetPropertyStr("frontMatter", r.ctx.NewObject())`.
        - `callHookTransformPayload`: For non-empty TOC, replace the inline `obj.SetPropertyStr("toc", r.ctx.ParseJSON(string(tocJSON)))` with `r.ctx.Invoke(r.installLazyTOCFn, r.ctx.Global(), obj, r.ctx.NewString(string(tocJSON)))`. Nil/empty TOC is omitted (unchanged).
     **Behavioral contract**: The lazy getter pattern is transparent to plugins. `page.frontMatter.title` triggers the getter on first access, parses the JSON, caches the result, and returns it. Subsequent accesses return the cached object. `page.frontMatter = {...}` triggers the setter, replacing the cached value. `Object.keys(page)` includes `frontMatter` and `toc` because the descriptors set `enumerable: true`. The existing spec tests in the #1180 section continue to pass unchanged — they exercise the functional contract (field delivery, identity return, etc.) which is preserved. The #1186 tests verify the pre-compiled helpers exist and that frontMatter/toc use lazy getters (property descriptor has `get` function).
-    **Test coverage**: 9 spec tests in `internal/plugin/wasm_test.go` under "Pre-compiled JS helpers (issue #1186)": 3 helper function existence checks (`__callHookByName`, `__installLazyFM`, `__installLazyTOC` must be `typeof === 'function'` after Init()), 2 lazy getter property descriptor checks (frontMatter and toc must have `Object.getOwnPropertyDescriptor(...).get`), lazy frontMatter setter override, lazy frontMatter enumerability, lazy TOC value correctness, and lazy TOC enumerability.
+    **Test coverage**: 14 spec tests in `internal/plugin/wasm_test.go` under "Pre-compiled JS helpers (issue #1186)": 3 helper function existence checks (`__callHookByName`, `__installLazyFM`, `__installLazyTOC` must be `typeof === 'function'` after Init()), 3 lazy getter property descriptor checks (frontMatter on `HookRenderedPayload` and `HookFormatRenderedPayload`, toc on `HookTransformPayload`), lazy frontMatter setter override, lazy frontMatter null-assignment sentinel test, lazy frontMatter enumerability, lazy frontMatter configurability, lazy TOC value correctness, lazy TOC setter override, lazy TOC enumerability, and `invokeHookFastPath` no-globals disambiguation (verifies `__callInput`/`__callHookName` are NOT set during hook execution).
 - **JSON library replacement (issue #529)**: Replace `encoding/json` with `sonic.ConfigStd` in `internal/plugin`. Add `var json = sonic.ConfigStd` package-level alias — all existing `json.Marshal`/`json.Unmarshal` calls work unchanged. sonic v1.15.1 (Apache 2.0) auto-falls back to `encoding/json` on non-amd64/arm64 architectures via build constraints. `sonic.ConfigStd` matches `encoding/json` behavior: HTML escaping enabled, map keys sorted, strings copied on decode. One known difference: backspace encoded as `\b` vs `` — both valid JSON, no behavioral impact. Add `github.com/bytedance/sonic` to `go.mod`.
 - **WASM runtime (issue #181)**: `WASMRuntime.LoadModule()` uses wazero to compile and instantiate the WASM binary, discover exported functions (`alloc`, `filter`, `shortcode`, `hook`, `hooks`), and register them. `alloc` export is required — used by the host to get a safe write offset in WASM linear memory (issue #186). `CallExport(name, args...)` must call `alloc(inputLen)`, write input bytes at the returned pointer, call the export with `(ptr, len)`, and read the result from the returned `(resultPtr, resultLen)` (issue #190). `RegisteredFilters()` must return filter names from the module's exports. `LoadModule` must return an error for invalid WASM binaries. See PLAN.md §5 WASM Calling Convention for full ABI.
 - **WASM hook support (issue #444)**: `WASMRuntime` must support hook registration and execution via the `hooks()`/`hook()` export ABI:

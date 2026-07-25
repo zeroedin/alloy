@@ -29,6 +29,21 @@ func extractGoMap(v interface{}) map[string]interface{} {
 
 var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 
+	// setupQuickJSWithHook creates a QuickJS runtime, inlines the given
+	// plugin JS (which must register a hook via alloy.hook), and returns
+	// the runtime. Caller must DeferCleanup(rt.Close).
+	setupQuickJSWithHook := func(hookJS string) *plugin.QuickJSRuntime {
+		tmpDir := GinkgoT().TempDir()
+		pluginPath := filepath.Join(tmpDir, "test-hook.js")
+		Expect(os.WriteFile(pluginPath, []byte(hookJS), 0644)).To(Succeed())
+
+		rt := plugin.NewQuickJSRuntime()
+		Expect(rt.Init()).To(Succeed())
+		Expect(rt.EvalFile(pluginPath)).To(Succeed())
+		DeferCleanup(rt.Close)
+		return rt
+	}
+
 	// ── QuickJS Runtime ──────────────────────────────────────────────
 
 	Describe("QuickJS Runtime", func() {
@@ -1629,21 +1644,6 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 
 	Describe("CallHook payload struct fast path (issue #1180)", func() {
 
-		// setupQuickJSWithHook creates a QuickJS runtime, inlines the given
-		// plugin JS (which must register a hook via alloy.hook), and returns
-		// the runtime. Caller must DeferCleanup(rt.Close).
-		setupQuickJSWithHook := func(hookJS string) *plugin.QuickJSRuntime {
-			tmpDir := GinkgoT().TempDir()
-			pluginPath := filepath.Join(tmpDir, "test-hook.js")
-			Expect(os.WriteFile(pluginPath, []byte(hookJS), 0644)).To(Succeed())
-
-			rt := plugin.NewQuickJSRuntime()
-			Expect(rt.Init()).To(Succeed())
-			Expect(rt.EvalFile(pluginPath)).To(Succeed())
-			DeferCleanup(rt.Close)
-			return rt
-		}
-
 		It("HookRenderedPayload delivers all fields to JS and returns modified html", func() {
 			rt := setupQuickJSWithHook(`export default function(alloy) {
   alloy.hook('onPageRendered', {}, function(page) {
@@ -2247,39 +2247,29 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 
 	Describe("Pre-compiled JS helpers (issue #1186)", func() {
 
-		// setupQuickJSWithHookFor1186 creates a QuickJS runtime with a
-		// plugin that registers the given hook JS. Caller must
-		// DeferCleanup(rt.Close).
-		setupQuickJSWithHookFor1186 := func(hookJS string) *plugin.QuickJSRuntime {
+		// checkGlobalIsFunction verifies that a named global JS function
+		// exists after Init(). Used by the helper existence tests.
+		checkGlobalIsFunction := func(name, failureMsg string) {
 			tmpDir := GinkgoT().TempDir()
-			pluginPath := filepath.Join(tmpDir, "hook.js")
-			Expect(os.WriteFile(pluginPath, []byte(hookJS), 0644)).To(Succeed())
+			pluginPath := filepath.Join(tmpDir, "check.js")
+			pluginJS := fmt.Sprintf(`export default function(alloy) {
+  alloy.filter('checkType', function() { return typeof %s; });
+}`, name)
+			Expect(os.WriteFile(pluginPath, []byte(pluginJS), 0644)).To(Succeed())
 
 			rt := plugin.NewQuickJSRuntime()
 			Expect(rt.Init()).To(Succeed())
 			Expect(rt.EvalFile(pluginPath)).To(Succeed())
 			DeferCleanup(rt.Close)
-			return rt
+
+			result, err := rt.CallFilter("checkType", "ignored")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("function"), failureMsg)
 		}
 
 		Context("helper function existence", func() {
 			It("Init() defines __callHookByName as a pre-compiled JS function", func() {
-				tmpDir := GinkgoT().TempDir()
-				pluginPath := filepath.Join(tmpDir, "check.js")
-				Expect(os.WriteFile(pluginPath, []byte(`export default function(alloy) {
-  alloy.filter('checkType', function() {
-    return typeof __callHookByName;
-  });
-}`), 0644)).To(Succeed())
-
-				rt := plugin.NewQuickJSRuntime()
-				Expect(rt.Init()).To(Succeed())
-				Expect(rt.EvalFile(pluginPath)).To(Succeed())
-				DeferCleanup(rt.Close)
-
-				result, err := rt.CallFilter("checkType", "ignored")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal("function"),
+				checkGlobalIsFunction("__callHookByName",
 					"Init() must define __callHookByName as a global JS function — "+
 						"invokeHookFastPath must use ctx.Invoke(fn) with this pre-compiled "+
 						"function instead of ctx.Eval() to avoid re-parsing the expression "+
@@ -2287,22 +2277,7 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			})
 
 			It("Init() defines __installLazyFM as a pre-compiled JS function", func() {
-				tmpDir := GinkgoT().TempDir()
-				pluginPath := filepath.Join(tmpDir, "check.js")
-				Expect(os.WriteFile(pluginPath, []byte(`export default function(alloy) {
-  alloy.filter('checkType', function() {
-    return typeof __installLazyFM;
-  });
-}`), 0644)).To(Succeed())
-
-				rt := plugin.NewQuickJSRuntime()
-				Expect(rt.Init()).To(Succeed())
-				Expect(rt.EvalFile(pluginPath)).To(Succeed())
-				DeferCleanup(rt.Close)
-
-				result, err := rt.CallFilter("checkType", "ignored")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal("function"),
+				checkGlobalIsFunction("__installLazyFM",
 					"Init() must define __installLazyFM as a global JS function — "+
 						"setPayloadFrontMatter must use ctx.Invoke(fn) with this "+
 						"pre-compiled function to install a lazy getter that defers "+
@@ -2310,22 +2285,7 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			})
 
 			It("Init() defines __installLazyTOC as a pre-compiled JS function", func() {
-				tmpDir := GinkgoT().TempDir()
-				pluginPath := filepath.Join(tmpDir, "check.js")
-				Expect(os.WriteFile(pluginPath, []byte(`export default function(alloy) {
-  alloy.filter('checkType', function() {
-    return typeof __installLazyTOC;
-  });
-}`), 0644)).To(Succeed())
-
-				rt := plugin.NewQuickJSRuntime()
-				Expect(rt.Init()).To(Succeed())
-				Expect(rt.EvalFile(pluginPath)).To(Succeed())
-				DeferCleanup(rt.Close)
-
-				result, err := rt.CallFilter("checkType", "ignored")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal("function"),
+				checkGlobalIsFunction("__installLazyTOC",
 					"Init() must define __installLazyTOC as a global JS function — "+
 						"callHookTransformPayload must use ctx.Invoke(fn) with this "+
 						"pre-compiled function to install a lazy getter that defers "+
@@ -2335,7 +2295,7 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 
 		Context("lazy frontMatter getter", func() {
 			It("HookRenderedPayload frontMatter is delivered via lazy getter", func() {
-				rt := setupQuickJSWithHookFor1186(`export default function(alloy) {
+				rt := setupQuickJSWithHook(`export default function(alloy) {
   alloy.hook('onPageRendered', {}, function(page) {
     var desc = Object.getOwnPropertyDescriptor(page, 'frontMatter');
     var isLazy = desc && typeof desc.get === 'function';
@@ -2363,8 +2323,38 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 						"via SetPropertyStr/ParseJSON (issue #1186)")
 			})
 
+			It("HookFormatRenderedPayload frontMatter is delivered via lazy getter", func() {
+				rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onFormatRendered', {}, function(payload) {
+    var desc = Object.getOwnPropertyDescriptor(payload, 'frontMatter');
+    var isLazy = desc && typeof desc.get === 'function';
+    return { content: 'lazy:' + isLazy };
+  });
+}`)
+				payload := plugin.HookFormatRenderedPayload{
+					Format:      "json",
+					Content:     "{}",
+					URL:         "/lazy-fmt-fm/",
+					Path:        "content/lazy-fmt-fm.md",
+					FrontMatter: map[string]interface{}{"title": "Format Lazy FM"},
+				}
+				result, err := rt.CallHook("onFormatRendered", payload)
+				Expect(err).NotTo(HaveOccurred())
+
+				m := extractGoMap(result)
+				Expect(m).NotTo(BeNil())
+				content, ok := m["content"].(string)
+				Expect(ok).To(BeTrue())
+				Expect(content).To(Equal("lazy:true"),
+					"frontMatter on HookFormatRenderedPayload must also use the "+
+						"lazy getter — setPayloadFrontMatter is shared across all "+
+						"three payload types. If this fails but onPageRendered passes, "+
+						"the developer wired HookFormatRenderedPayload differently "+
+						"(issue #1186)")
+			})
+
 			It("lazy frontMatter setter allows override and re-access", func() {
-				rt := setupQuickJSWithHookFor1186(`export default function(alloy) {
+				rt := setupQuickJSWithHook(`export default function(alloy) {
   alloy.hook('onPageRendered', {}, function(page) {
     var original = page.frontMatter.title;
     page.frontMatter = { title: 'overridden', extra: 42 };
@@ -2395,8 +2385,40 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 						"not the original parsed JSON (issue #1186)")
 			})
 
+			It("lazy frontMatter setter handles null assignment without re-parsing", func() {
+				rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    var original = page.frontMatter.title;
+    page.frontMatter = null;
+    var afterNull = page.frontMatter;
+    return {
+      html: 'original:' + original + ' afterNull:' + afterNull
+    };
+  });
+}`)
+				payload := plugin.HookRenderedPayload{
+					HTML:        "<p>test</p>",
+					FrontMatter: map[string]interface{}{"title": "Before Null"},
+					URL:         "/lazy-null-set/",
+					Path:        "content/lazy-null-set.md",
+				}
+				result, err := rt.CallHook("onPageRendered", payload)
+				Expect(err).NotTo(HaveOccurred())
+
+				m := extractGoMap(result)
+				Expect(m).NotTo(BeNil())
+				html, ok := m["html"].(string)
+				Expect(ok).To(BeTrue())
+				Expect(html).To(Equal("original:Before Null afterNull:null"),
+					"setting page.frontMatter = null must stick — the getter must "+
+						"not re-trigger JSON.parse because the sentinel matched null. "+
+						"Use a boolean flag or unique sentinel object instead of "+
+						"_parsed === null to distinguish 'not yet parsed' from "+
+						"'explicitly set to null' (issue #1186)")
+			})
+
 			It("lazy frontMatter property is enumerable", func() {
-				rt := setupQuickJSWithHookFor1186(`export default function(alloy) {
+				rt := setupQuickJSWithHook(`export default function(alloy) {
   alloy.hook('onPageRendered', {}, function(page) {
     var keys = Object.keys(page);
     var hasFM = keys.indexOf('frontMatter') >= 0;
@@ -2423,11 +2445,38 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 						"JSON.stringify(page) and Object.keys(page) silently drop "+
 						"the frontMatter property (issue #1186)")
 			})
+
+			It("lazy frontMatter property is configurable", func() {
+				rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    var desc = Object.getOwnPropertyDescriptor(page, 'frontMatter');
+    var isConfigurable = desc && desc.configurable === true;
+    return { html: 'configurable:' + isConfigurable };
+  });
+}`)
+				payload := plugin.HookRenderedPayload{
+					HTML:        "<p>test</p>",
+					FrontMatter: map[string]interface{}{"title": "Configurable"},
+					URL:         "/lazy-config/",
+					Path:        "content/lazy-config.md",
+				}
+				result, err := rt.CallHook("onPageRendered", payload)
+				Expect(err).NotTo(HaveOccurred())
+
+				m := extractGoMap(result)
+				Expect(m).NotTo(BeNil())
+				html, ok := m["html"].(string)
+				Expect(ok).To(BeTrue())
+				Expect(html).To(Equal("configurable:true"),
+					"lazy frontMatter must be configurable — plugins that re-define "+
+						"the property via Object.defineProperty must not throw. "+
+						"__installLazyFM must set configurable: true (issue #1186)")
+			})
 		})
 
 		Context("lazy toc getter", func() {
 			It("HookTransformPayload toc is delivered via lazy getter", func() {
-				rt := setupQuickJSWithHookFor1186(`export default function(alloy) {
+				rt := setupQuickJSWithHook(`export default function(alloy) {
   alloy.hook('onContentTransformed', {}, function(page) {
     var desc = Object.getOwnPropertyDescriptor(page, 'toc');
     var isLazy = desc && typeof desc.get === 'function';
@@ -2459,7 +2508,7 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			})
 
 			It("lazy toc getter returns correct parsed values on access", func() {
-				rt := setupQuickJSWithHookFor1186(`export default function(alloy) {
+				rt := setupQuickJSWithHook(`export default function(alloy) {
   alloy.hook('onContentTransformed', {}, function(page) {
     var tocLen = page.toc ? page.toc.length : 0;
     var firstText = tocLen > 0 ? page.toc[0].text : 'none';
@@ -2494,8 +2543,44 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 						"intact (issue #1186)")
 			})
 
+			It("lazy toc setter allows override", func() {
+				rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    var originalLen = page.toc.length;
+    page.toc = [{ text: 'Custom', id: 'custom', level: 2 }];
+    var newLen = page.toc.length;
+    var newText = page.toc[0].text;
+    return {
+      html: 'origLen:' + originalLen + ' newLen:' + newLen + ' text:' + newText,
+      toc: page.toc
+    };
+  });
+}`)
+				payload := plugin.HookTransformPayload{
+					HTML: "<h2>Original</h2>",
+					TOC: []content.TOCEntry{
+						{Text: "Original", ID: "original", Level: 2},
+						{Text: "Second", ID: "second", Level: 2},
+					},
+					URL:         "/lazy-toc-setter/",
+					Path:        "content/lazy-toc-setter.md",
+					FrontMatter: map[string]interface{}{"title": "TOC Setter"},
+				}
+				result, err := rt.CallHook("onContentTransformed", payload)
+				Expect(err).NotTo(HaveOccurred())
+
+				m := extractGoMap(result)
+				Expect(m).NotTo(BeNil())
+				html, ok := m["html"].(string)
+				Expect(ok).To(BeTrue())
+				Expect(html).To(Equal("origLen:2 newLen:1 text:Custom"),
+					"lazy toc setter must replace the lazy getter value — "+
+						"setting page.toc = [...] must override the deferred parse "+
+						"so subsequent reads return the new array (issue #1186)")
+			})
+
 			It("lazy toc property is enumerable", func() {
-				rt := setupQuickJSWithHookFor1186(`export default function(alloy) {
+				rt := setupQuickJSWithHook(`export default function(alloy) {
   alloy.hook('onContentTransformed', {}, function(page) {
     var keys = Object.keys(page);
     var hasTOC = keys.indexOf('toc') >= 0;
@@ -2523,6 +2608,37 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 						"include 'toc'. __installLazyTOC must set enumerable: true "+
 						"in the Object.defineProperty descriptor, otherwise "+
 						"JSON.stringify(page) silently drops toc (issue #1186)")
+			})
+		})
+
+		Context("dispatch mechanism", func() {
+			It("invokeHookFastPath does not set __callInput/__callHookName globals", func() {
+				rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    var hasCallInput = typeof __callInput !== 'undefined';
+    var hasCallHookName = typeof __callHookName !== 'undefined';
+    return { html: 'globals:' + hasCallInput + ',' + hasCallHookName };
+  });
+}`)
+				payload := plugin.HookRenderedPayload{
+					HTML:        "<p>test</p>",
+					FrontMatter: map[string]interface{}{},
+					URL:         "/no-globals/",
+					Path:        "content/no-globals.md",
+				}
+				result, err := rt.CallHook("onPageRendered", payload)
+				Expect(err).NotTo(HaveOccurred())
+
+				m := extractGoMap(result)
+				Expect(m).NotTo(BeNil())
+				html, ok := m["html"].(string)
+				Expect(ok).To(BeTrue())
+				Expect(html).To(Equal("globals:false,false"),
+					"invokeHookFastPath must use ctx.Invoke(callHookByNameFn, ...) "+
+						"which passes name and input as function arguments — the old "+
+						"__callInput and __callHookName globals must not be set. "+
+						"If 'globals:true,true', invokeHookFastPath still uses "+
+						"ctx.Eval() with global variables (issue #1186)")
 			})
 		})
 	})
