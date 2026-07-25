@@ -21,6 +21,17 @@ ssr:
 
 With this config, every page containing custom element tags is sent through the configured command for server-side rendering.
 
+## Component directory
+
+Alloy looks for SSR component source files in `components/` by default. To use a different directory, set `structure.components`:
+
+```yaml
+structure:
+  components: "elements"
+```
+
+During `alloy serve`, Alloy watches this directory and re-renders pages that use changed components. See [Configuration — structure](/configuration/#structure) for all directory overrides.
+
 ## Exec vs stream modes
 
 | Mode | Behavior | Best for |

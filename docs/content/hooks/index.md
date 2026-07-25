@@ -305,7 +305,7 @@ These fire once per page. They receive page-scoped payloads.
 
 #### onContentTransformed
 
-Fires after Markdown-to-HTML conversion but before layout rendering. Receives a page-scoped object with `html`, `toc`, `path`, `url`, and `frontMatter`.
+Fires after Markdown-to-HTML conversion but before layout rendering. Receives a page-scoped object with `html`, `toc`, `path`, `url`, and `frontMatter`. Return values can include `html`, `toc`, `frontMatter`, and `addDependencies`.
 
 ```javascript
 alloy.hook("onContentTransformed", {}, (page) => {
@@ -321,15 +321,104 @@ alloy.hook("onContentTransformed", {}, (page) => {
 });
 ```
 
-#### onPageRendered
-
-Fires after template rendering produces the final page HTML. Receives an HTML string and returns an HTML string.
+Declaring dependencies for incremental rebuilds:
 
 ```javascript
-alloy.hook("onPageRendered", {}, (html) => {
-  return html.replace(/\s+/g, ' ').trim();
+alloy.hook("onContentTransformed", {}, (page) => {
+  const deps = extractImports(page.html);
+  page.html = page.html.replace(/<img /g, '<img loading="lazy" ');
+  return { ...page, addDependencies: deps };
 });
 ```
+
+`addDependencies` is an array of project-root-relative file paths (e.g., `["locales/en.json", "data/nav.yaml"]`). During `alloy dev`, Alloy tracks a reverse index from these paths to pages and rebuilds only affected pages when a dependency changes. See [Dependency Tracking](#dependency-tracking) below.
+
+#### onPageRendered
+
+Fires after template rendering produces the final page HTML. Receives a page object with `html`, `frontMatter`, `url`, and `path`. Only `html` in the return is applied back -- `frontMatter`, `url`, and `path` are read-only context.
+
+```javascript
+alloy.hook("onPageRendered", {}, (page) => {
+  if (page.frontMatter.layout === "demo") return page;
+  page.html = page.html.replace(/<h2/g, '<h2 class="styled"');
+  return page;
+});
+```
+
+| Field | Type | Mutable | Description |
+|---|---|---|---|
+| `html` | string | yes | Final rendered HTML |
+| `frontMatter` | object | no | Page front matter (read-only context) |
+| `url` | string | no | Page URL |
+| `path` | string | no | Source-relative file path |
+
+Return values can include `addDependencies` to declare external file dependencies for incremental rebuilds during `alloy dev`:
+
+```javascript
+alloy.hook("onPageRendered", {}, (page) => {
+  const result = renderSSR(page.html);
+  return {
+    html: result,
+    addDependencies: [
+      "elements/rh-card/rh-card.js",
+      "elements/rh-icon/rh-icon.js",
+    ],
+  };
+});
+```
+
+Pages whose `outputs` contains only non-HTML formats (e.g., `outputs: ["json"]`) skip `onPageRendered` entirely. Those pages route through `onFormatRendered` instead.
+
+#### onFormatRendered
+
+Fires once per non-HTML format body after layout rendering. Pages that declare non-HTML entries in their `outputs` front matter (e.g., `"json"`, `"xml"`) have each format body dispatched through this hook individually.
+
+```javascript
+alloy.hook("onFormatRendered", {}, (payload) => {
+  if (payload.format === "json") {
+    // Minify JSON output
+    return { content: JSON.stringify(JSON.parse(payload.content)) };
+  }
+});
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `format` | string | Output format extension (`"json"`, `"xml"`, etc.) |
+| `content` | string | Rendered format body |
+| `url` | string | Page URL |
+| `path` | string | Source-relative file path |
+| `frontMatter` | object | Page front matter (read-only context) |
+
+**Return value:**
+
+| Return | Effect |
+|---|---|
+| `{ content: "..." }` | Replaces the format body in output |
+| `null` / `undefined` | Keeps the original content |
+| Object without `content` key | Keeps the original content |
+
+Only the `content` field is applied back. The `format`, `url`, `path`, and `frontMatter` fields are read-only context for conditional processing.
+
+**Iteration order:** When a page declares multiple non-HTML formats, `onFormatRendered` fires in the order formats appear in the page's `outputs` array, not in arbitrary map iteration order. Front matter is converted once per page and reused across all format invocations for that page.
+
+**Relationship to `onPageRendered`:**
+
+- `onPageRendered` fires only for pages whose `outputs` includes `"html"` (or defaults to `["html"]`). Pages with only non-HTML outputs skip `onPageRendered` entirely.
+- A page with `outputs: ["json"]` routes through `onFormatRendered` only.
+- A page with `outputs: ["html", "json"]` fires both hooks independently -- `onPageRendered` for the HTML body, then `onFormatRendered` for each non-HTML format.
+
+#### Dependency Tracking
+
+Both `onContentTransformed` and `onPageRendered` support `addDependencies` in their return values. This drives targeted incremental rebuilds during `alloy dev`:
+
+1. A plugin returns `addDependencies: ["path/to/file.js"]` from a per-page hook.
+2. Alloy records each path in a reverse index keyed by page.
+3. When a watched file changes, `onFileChanged` can return `invalidateByDependency` with the changed paths. Only pages whose reverse-index entries match are rebuilt.
+
+Dependencies accumulate per page per build. If a plugin stops returning a path (e.g., a component tag is removed from the page template), that dependency drops from the index on the next rebuild.
+
+Paths are normalized with `filepath.Clean` -- `./data.json` and `data/../data.json` both resolve to `data.json`. Non-array `addDependencies` values produce a warning and are ignored.
 
 ### Per-Asset Hook
 
@@ -361,37 +450,7 @@ alloy.hook("onAssetProcess", {}, (asset) => {
 
 The `path` key in the return value is ignored — the file is always written to its original relative path in the output directory. A hook error stops the build.
 
-### Read-Only Hooks
-
-Return values are ignored. Plugins observe but cannot modify.
-
-#### onBuildComplete
-
-Fires after the build finishes. The payload uses PascalCase keys (the `BuildResult` struct has no JSON tag overrides). `Duration` is raw nanoseconds — divide by `1e6` for milliseconds.
-
-```javascript
-alloy.hook("onBuildComplete", {}, (result) => {
-  const ms = (result.Duration / 1e6).toFixed(0);
-  console.log(`Built ${result.PageCount} pages in ${ms}ms`);
-});
-```
-
-| Field | Type | Description |
-|---|---|---|
-| `OutputDir` | string | Output directory path |
-| `PageCount` | number | Total pages built |
-| `PagesSkipped` | number | Pages skipped during incremental rebuilds |
-| `Duration` | number | Build time in nanoseconds |
-
-#### onDevServerStart
-
-Fires when the dev server starts. The payload is the full site configuration object — there is no `url` field with the server address.
-
-```javascript
-alloy.hook("onDevServerStart", {}, (config) => {
-  console.log(`Dev server started for "${config.Title}"`);
-});
-```
+### Dev Server Hooks
 
 #### onFileChanged
 
@@ -405,11 +464,73 @@ alloy.hook("onFileChanged", {}, (events) => {
 });
 ```
 
+**Payload fields:**
+
 | Field | Type | Description |
 |---|---|---|
 | `Path` | string | File path relative to project root |
-| `ChangeType` | number | Change category (1–8: content, template, data, asset, etc.) |
+| `ChangeType` | number | Change category (1--8: content, layout, data, asset, static, component, passthrough, plugin) |
 | `IsRemove` | boolean | `true` when the file was deleted |
+
+**Return value:**
+
+Return an object to control how Alloy responds to the file change. Omitting the return value (or returning `undefined`) preserves the default behavior.
+
+| Return field | Type | Description |
+|---|---|---|
+| `invalidateByDependency` | string[] | File paths to match against the dependency reverse index -- only pages that declared these as dependencies are rebuilt |
+| `restart` | boolean | Restart Node bridge subprocesses before the rebuild (clears ESM module cache) |
+
+```javascript
+alloy.hook("onFileChanged", {}, (events) => {
+  const changed = events
+    .filter(ev => ev.Path.startsWith("elements/") && ev.Path.endsWith(".js"))
+    .map(ev => ev.Path);
+  if (changed.length > 0) {
+    return { invalidateByDependency: changed, restart: true };
+  }
+});
+```
+
+`invalidateByDependency` paths are matched against the reverse index built from `addDependencies` declarations in `onContentTransformed` and `onPageRendered`. Only pages that declared a matching dependency are rebuilt. If a path has no reverse-index entries, it has no effect.
+
+`restart` must be a boolean. Non-boolean values are dropped with a warning.
+
+### Read-Only Hooks
+
+Return values are ignored. Plugins observe but cannot modify.
+
+#### onBuildComplete
+
+Fires after the build finishes. The payload contains build stats and any errors that occurred.
+
+```javascript
+alloy.hook("onBuildComplete", {}, (result) => {
+  console.log(`Built ${result.pageCount} pages in ${result.duration}`);
+  if (result.errors.length > 0) {
+    console.warn(`${result.errors.length} error(s) during build`);
+  }
+});
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `pageCount` | number | Total pages built |
+| `duration` | string | Build time as a formatted string (e.g., `"53ms"`) |
+| `errors` | string[] | Build errors (empty array when the build succeeds) |
+| `outputDir` | string | Output directory path |
+
+Plugins that need page output content should read from the output directory on disk — Alloy does not pipe rendered HTML to plugins over IPC.
+
+#### onDevServerStart
+
+Fires when the dev server starts. The payload is the full site configuration object — there is no `url` field with the server address.
+
+```javascript
+alloy.hook("onDevServerStart", {}, (config) => {
+  console.log(`Dev server started for "${config.Title}"`);
+});
+```
 
 ## Hook Execution Order
 

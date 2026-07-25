@@ -40,3 +40,7 @@ Move the built binary to your `PATH` if it is not already there.
 ```bash
 alloy version
 ```
+
+## Breaking changes
+
+Check the [release notes](/releases/) for breaking changes before upgrading.

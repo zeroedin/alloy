@@ -50,20 +50,21 @@ export default function(alloy) {
     }
   }
 
-  alloy.hook("onPageRendered", async (html) => {
-    if (typeof html !== 'string') return html;
-    if (!/<[a-z]+-[a-z]/.test(html)) return html;
+  alloy.hook("onPageRendered", {}, async (page) => {
+    if (typeof page.html !== 'string') return page;
+    if (!/<[a-z]+-[a-z]/.test(page.html)) return page;
 
     await ensureLoaded();
 
     try {
-      const tpl = litHtml(new UnsafeHTMLStringsArray(html));
+      const tpl = litHtml(new UnsafeHTMLStringsArray(page.html));
       const result = renderLit(tpl);
-      return await collectResult(result);
+      page.html = await collectResult(result);
     } catch (e) {
       console.error(`[lit-ssr] SSR failed: ${e.message}`);
-      return html;
     }
+
+    return page;
   });
 }
 ```

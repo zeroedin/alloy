@@ -192,10 +192,11 @@ import { render } from '@lit-labs/ssr';
 import { html } from 'lit';
 
 export default function(alloy) {
-  alloy.hook("onPageRendered", { priority: 90 }, async (pageHtml) => {
+  alloy.hook("onPageRendered", { priority: 90 }, async (page) => {
     // SSR Lit components in the final HTML
-    const result = render(html`${pageHtml}`);
-    return collectResult(result);
+    const result = render(html`${page.html}`);
+    page.html = await collectResult(result);
+    return page;
   });
 }
 ```
@@ -281,7 +282,7 @@ The fetched data is available as `site.data.blog` in templates and can drive [vi
 
 ## Worker Pool
 
-For per-page hooks (`onPageRendered`, `onContentTransformed`), Alloy distributes pages across multiple Node subprocess workers to parallelize the work:
+For per-page hooks (`onPageRendered`, `onFormatRendered`, `onContentTransformed`), Alloy distributes pages across multiple Node subprocess workers to parallelize the work:
 
 ```yaml
 # alloy.config.yaml
@@ -293,6 +294,32 @@ plugins:
 Auto-scaling uses `min(CPU_count / 2, 8)` with a floor of 2. Each worker loads the same plugins via ESM `import()` so Node's module cache prevents side-effect collisions.
 
 Only Tier 3 (Node subprocess) plugins use the worker pool -- Tier 2 plugins run in-process.
+
+## Restarting on File Changes
+
+Return `{ restart: true }` from an `onFileChanged` hook to kill and respawn all Node bridge workers before the rebuild. Alloy re-imports every plugin file, which clears Node's ESM module cache so `import()` loads the changed code.
+
+SSR plugins that import component definitions at startup need this. Without it, the workers keep serving stale modules.
+
+```javascript
+// plugins/element-watcher.js
+export const runtime = "node";
+
+export default function(alloy) {
+  alloy.hook("onFileChanged", {}, (events) => {
+    const changed = events
+      .filter(ev => ev.Path.startsWith("elements/") && ev.Path.endsWith(".js"))
+      .map(ev => ev.Path);
+    if (changed.length > 0) {
+      return { invalidateByDependency: changed, restart: true };
+    }
+  });
+}
+```
+
+`restart` only affects Node (Tier 3) plugins. QuickJS and WASM plugins run in-process with no subprocess state.
+
+See [`onFileChanged`](/hooks/#onfilechanged) for the full return value API.
 
 ## Module Resolution
 

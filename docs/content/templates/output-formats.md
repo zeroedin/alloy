@@ -348,6 +348,18 @@ permalink: "/tokens.css"
 
 This generates a CSS file from your design token data.
 
+## Plugin hooks for formats
+
+`onPageRendered` fires only for HTML output. Non-HTML formats fire [`onFormatRendered`](/hooks/#onformatrendered) instead.
+
+| `outputs` value | Hook |
+|---|---|
+| `["html"]` (default) | `onPageRendered` |
+| `["json"]` | `onFormatRendered` |
+| `["html", "json"]` | Both, independently |
+
+Return `{ content: "..." }` from `onFormatRendered` to replace the rendered body. See the [`onFormatRendered` reference](/hooks/#onformatrendered) for payload fields and return value rules.
+
 ## Engine-specific notes
 
 The template engine is a global, project-wide setting. One engine is active per build. You cannot mix Liquid and Go template syntax within a single project's active templates.
