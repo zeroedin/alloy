@@ -885,14 +885,17 @@ var _ = Describe("NodeBridge", func() {
 
 					raw := string(encoded)
 
-					// Must have split-body headers
-					Expect(raw).To(ContainSubstring(fmt.Sprintf("X-Body-Length: %d", len(expectedBody))),
+					// Must have split-body headers (suffix \r\n prevents 50 matching 500)
+					Expect(raw).To(ContainSubstring(fmt.Sprintf("X-Body-Length: %d\r\n", len(expectedBody))),
 						"X-Body-Length must equal the byte length of the split field value")
 					Expect(raw).To(ContainSubstring(fmt.Sprintf("X-Body-Field: %s\r\n", expectedField)),
 						"X-Body-Field must name the field sent as raw bytes")
 
 					headers, jsonBody, rawBody := parseSplitFrame(encoded)
-					_ = headers
+
+					// Header value must match actual raw body length
+					Expect(headers["X-Body-Length"]).To(Equal(strconv.Itoa(len(rawBody))),
+						"X-Body-Length header value must match the actual raw body byte count")
 
 					// JSON body must be valid and must NOT contain the split field
 					var parsed map[string]interface{}
@@ -962,6 +965,16 @@ var _ = Describe("NodeBridge", func() {
 					"content",
 					"processed format body",
 				),
+				Entry("multi-byte characters — X-Body-Length is byte count not rune count",
+					plugin.HookRenderedPayload{
+						HTML:        "<p>日本語テスト 🎉 données françaises</p>",
+						FrontMatter: map[string]interface{}{"title": "i18n"},
+						URL:         "/i18n/",
+						Path:        "i18n.md",
+					},
+					"html",
+					"<p>日本語テスト 🎉 données françaises</p>",
+				),
 			)
 
 			It("preserves single-header format for non-hook messages", func() {
@@ -999,6 +1012,87 @@ var _ = Describe("NodeBridge", func() {
 				Expect(payloadMap).To(HaveKey("html"),
 					"html must remain in JSON body for non-hook messages — "+
 						"split-body optimization only applies to hook type messages")
+			})
+
+			It("falls back to single-header format when split field is empty string", func() {
+				msg := &plugin.Message{
+					Type: "hook",
+					Name: "onPageRendered",
+					Payload: plugin.HookRenderedPayload{
+						HTML:        "", // empty — no benefit from split-body
+						FrontMatter: map[string]interface{}{"title": "Empty"},
+						URL:         "/empty/",
+						Path:        "empty.md",
+					},
+				}
+
+				encoded, err := plugin.EncodeMessage(msg)
+				Expect(err).NotTo(HaveOccurred())
+
+				raw := string(encoded)
+				Expect(raw).NotTo(ContainSubstring("X-Body-Length"),
+					"empty split field must not trigger split-body — "+
+						"X-Body-Length: 0 has no performance benefit and adds unnecessary protocol complexity")
+				Expect(raw).NotTo(ContainSubstring("X-Body-Field"),
+					"empty split field must not trigger split-body headers")
+			})
+
+			It("splits html field when map payload contains both html and content keys", func() {
+				msg := &plugin.Message{
+					Type: "hook",
+					Name: "testHook",
+					Payload: map[string]interface{}{
+						"html":        "<p>the html field</p>",
+						"content":     "the content field",
+						"frontMatter": map[string]interface{}{},
+					},
+				}
+
+				encoded, err := plugin.EncodeMessage(msg)
+				Expect(err).NotTo(HaveOccurred())
+
+				raw := string(encoded)
+				Expect(raw).To(ContainSubstring("X-Body-Field: html\r\n"),
+					"when both html and content keys exist in a map payload, "+
+						"html must take priority — it is the larger field in the common case "+
+						"(onPageRendered ~800KB vs onFormatRendered ~100KB)")
+
+				_, jsonBody, rawBody := parseSplitFrame(encoded)
+
+				var parsed map[string]interface{}
+				Expect(json.Unmarshal(jsonBody, &parsed)).To(Succeed())
+				payloadMap, ok := parsed["payload"].(map[string]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(payloadMap).NotTo(HaveKey("html"),
+					"html must be stripped from JSON body")
+				Expect(payloadMap).To(HaveKey("content"),
+					"content must remain in JSON body when html is the split field")
+
+				Expect(string(rawBody)).To(Equal("<p>the html field</p>"),
+					"raw body must be the html field value")
+			})
+
+			It("does not mutate the caller's map payload", func() {
+				original := map[string]interface{}{
+					"html":        "<p>original</p>",
+					"frontMatter": map[string]interface{}{"title": "Test"},
+					"url":         "/test/",
+				}
+
+				msg := &plugin.Message{
+					Type:    "hook",
+					Name:    "testHook",
+					Payload: original,
+				}
+
+				_, err := plugin.EncodeMessage(msg)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(original).To(HaveKey("html"),
+					"EncodeMessage must not delete keys from the caller's map — "+
+						"the same map may be reused for chained hook dispatch or logging")
+				Expect(original["html"]).To(Equal("<p>original</p>"),
+					"html value in caller's map must be unchanged after EncodeMessage")
 			})
 		})
 
