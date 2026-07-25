@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -829,6 +830,237 @@ var _ = Describe("NodeBridge", func() {
 			), "error must indicate the source call timed out — currently CallSource "+
 				"uses bridge.Send() with no timeout, unlike hook calls which go through "+
 				"RunWithTimeout with context.WithTimeout")
+		})
+	})
+
+	// ── Split-body binary framing (issue #1181) ──────────────────
+	// Hook payloads with large HTML/content fields use split-body framing
+	// to avoid JSON-encoding the large string. The large field is stripped
+	// from the JSON body and sent as raw bytes after it, with additional
+	// headers (X-Body-Length, X-Body-Field) describing the split.
+
+	Describe("Split-body binary framing (issue #1181)", func() {
+
+		// parseSplitFrame extracts headers, JSON body, and raw body from
+		// a split-body frame. Fails the test if the frame is malformed.
+		parseSplitFrame := func(data []byte) (headers map[string]string, jsonBody []byte, rawBody []byte) {
+			raw := string(data)
+			sepIdx := strings.Index(raw, "\r\n\r\n")
+			Expect(sepIdx).To(BeNumerically(">=", 0), "frame must contain \\r\\n\\r\\n separator")
+
+			headerBlock := raw[:sepIdx]
+			afterSep := data[sepIdx+4:]
+
+			headers = make(map[string]string)
+			for _, line := range strings.Split(headerBlock, "\r\n") {
+				if kv := strings.SplitN(line, ": ", 2); len(kv) == 2 {
+					headers[kv[0]] = kv[1]
+				}
+			}
+
+			clStr, hasContentLen := headers["Content-Length"]
+			Expect(hasContentLen).To(BeTrue(), "frame must have Content-Length header")
+			contentLen, err := strconv.Atoi(clStr)
+			Expect(err).NotTo(HaveOccurred())
+
+			jsonBody = afterSep[:contentLen]
+			rawBody = afterSep[contentLen:]
+			return
+		}
+
+		// ── EncodeMessage outbound framing ───────────────────────
+
+		Describe("EncodeMessage outbound framing", func() {
+
+			DescribeTable("emits split-body headers for hook payloads with large string fields",
+				func(payload interface{}, expectedField string, expectedBody string) {
+					msg := &plugin.Message{
+						Type:    "hook",
+						Name:    "testHook",
+						Payload: payload,
+					}
+
+					encoded, err := plugin.EncodeMessage(msg)
+					Expect(err).NotTo(HaveOccurred())
+
+					raw := string(encoded)
+
+					// Must have split-body headers
+					Expect(raw).To(ContainSubstring(fmt.Sprintf("X-Body-Length: %d", len(expectedBody))),
+						"X-Body-Length must equal the byte length of the split field value")
+					Expect(raw).To(ContainSubstring(fmt.Sprintf("X-Body-Field: %s\r\n", expectedField)),
+						"X-Body-Field must name the field sent as raw bytes")
+
+					headers, jsonBody, rawBody := parseSplitFrame(encoded)
+					_ = headers
+
+					// JSON body must be valid and must NOT contain the split field
+					var parsed map[string]interface{}
+					Expect(json.Unmarshal(jsonBody, &parsed)).To(Succeed(),
+						"JSON portion of split-body frame must be valid JSON")
+
+					payloadMap, ok := parsed["payload"].(map[string]interface{})
+					Expect(ok).To(BeTrue(), "payload must be a JSON object in the frame body")
+					Expect(payloadMap).NotTo(HaveKey(expectedField),
+						expectedField+" must be stripped from JSON body — "+
+							"the whole point of split-body is to avoid JSON-encoding this field")
+
+					// Raw body must be the exact field value (no JSON escaping)
+					Expect(string(rawBody)).To(Equal(expectedBody),
+						"raw body bytes after JSON must equal the split field value exactly — "+
+							"no JSON escaping, no length-prefix, just raw bytes")
+				},
+				Entry("HookRenderedPayload — html field",
+					plugin.HookRenderedPayload{
+						HTML:        "<h1>Hello</h1><p>Page with \"quotes\" and <tags></p>",
+						FrontMatter: map[string]interface{}{"title": "Test"},
+						URL:         "/test/",
+						Path:        "test.md",
+					},
+					"html",
+					"<h1>Hello</h1><p>Page with \"quotes\" and <tags></p>",
+				),
+				Entry("HookFormatRenderedPayload — content field",
+					plugin.HookFormatRenderedPayload{
+						Content:     `{"key":"value","items":[1,2,3]}`,
+						Format:      "json",
+						URL:         "/api/",
+						Path:        "api.md",
+						FrontMatter: map[string]interface{}{"title": "API"},
+					},
+					"content",
+					`{"key":"value","items":[1,2,3]}`,
+				),
+				Entry("HookTransformPayload — html field",
+					plugin.HookTransformPayload{
+						HTML:        "<h2>Intro</h2><p>Transformed content</p>",
+						FrontMatter: map[string]interface{}{"title": "Guide"},
+						URL:         "/docs/guide/",
+						Path:        "docs/guide.md",
+					},
+					"html",
+					"<h2>Intro</h2><p>Transformed content</p>",
+				),
+				Entry("map[string]interface{} with html key — chained hook result",
+					map[string]interface{}{
+						"html":        "<p>chained result</p>",
+						"frontMatter": map[string]interface{}{"title": "Chained"},
+						"url":         "/chained/",
+						"path":        "chained.md",
+					},
+					"html",
+					"<p>chained result</p>",
+				),
+				Entry("map[string]interface{} with content key — chained onFormatRendered result",
+					map[string]interface{}{
+						"content":     "processed format body",
+						"format":      "json",
+						"url":         "/api/data/",
+						"path":        "api/data.md",
+						"frontMatter": map[string]interface{}{},
+					},
+					"content",
+					"processed format body",
+				),
+			)
+
+			It("preserves single-header format for non-hook messages", func() {
+				msg := &plugin.Message{
+					Type: "filter",
+					Name: "slugify",
+					Payload: map[string]interface{}{
+						"input": "Hello World",
+						"html":  "<p>this html key must not trigger split-body for filter messages</p>",
+					},
+				}
+
+				encoded, err := plugin.EncodeMessage(msg)
+				Expect(err).NotTo(HaveOccurred())
+
+				raw := string(encoded)
+				Expect(raw).To(HavePrefix("Content-Length: "),
+					"non-hook message must use standard Content-Length framing")
+				Expect(raw).NotTo(ContainSubstring("X-Body-Length"),
+					"non-hook message must not emit X-Body-Length — "+
+						"split-body is reserved for hook payloads with large HTML/content fields")
+				Expect(raw).NotTo(ContainSubstring("X-Body-Field"),
+					"non-hook message must not emit X-Body-Field")
+
+				// The full payload including html must be in the JSON body
+				sepIdx := strings.Index(raw, "\r\n\r\n")
+				Expect(sepIdx).To(BeNumerically(">=", 0))
+				jsonBody := encoded[sepIdx+4:]
+
+				var parsed map[string]interface{}
+				Expect(json.Unmarshal(jsonBody, &parsed)).To(Succeed())
+
+				payloadMap, ok := parsed["payload"].(map[string]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(payloadMap).To(HaveKey("html"),
+					"html must remain in JSON body for non-hook messages — "+
+						"split-body optimization only applies to hook type messages")
+			})
+		})
+
+		// ── DecodeMessage split-body parsing ─────────────────────
+
+		Describe("DecodeMessage split-body parsing", func() {
+
+			It("parses multi-header frame and injects raw body into result map under X-Body-Field name", func() {
+				jsonPart := `{"id":1,"result":{"processed":true}}`
+				rawPart := "<p>injected html content</p>"
+
+				frame := fmt.Sprintf(
+					"Content-Length: %d\r\nX-Body-Length: %d\r\nX-Body-Field: html\r\n\r\n%s%s",
+					len(jsonPart), len(rawPart), jsonPart, rawPart,
+				)
+
+				msg, err := plugin.DecodeMessage([]byte(frame))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(msg).NotTo(BeNil())
+				Expect(msg.ID).To(Equal(1))
+
+				result, ok := msg.Result.(map[string]interface{})
+				Expect(ok).To(BeTrue(),
+					"Result must be a map after JSON unmarshal + split-body injection")
+				Expect(result).To(HaveKeyWithValue("processed", true),
+					"existing JSON fields in Result must be preserved after split-body injection")
+				Expect(result).To(HaveKeyWithValue("html", rawPart),
+					"raw body bytes must be injected into Result map under the X-Body-Field name — "+
+						"this is how the large string field is reassembled without JSON deserialization")
+			})
+		})
+
+		// ── Send multi-header response reading ───────────────────
+
+		Describe("Send multi-header response reading", func() {
+
+			It("reads multi-header response and injects raw body into result under correct field name", func() {
+				jsonPart := `{"id":1,"result":{"status":"ok"}}`
+				rawPart := "<div>rendered page content</div>"
+
+				response := fmt.Sprintf(
+					"Content-Length: %d\r\nX-Body-Length: %d\r\nX-Body-Field: html\r\n\r\n%s%s",
+					len(jsonPart), len(rawPart), jsonPart, rawPart,
+				)
+
+				reader := bufio.NewReader(strings.NewReader(response))
+				bridge := plugin.NewBridgeWithReader(reader)
+
+				resp, err := bridge.Send(&plugin.Message{Type: "hook", Name: "test"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp).NotTo(BeNil())
+
+				result, ok := resp.Result.(map[string]interface{})
+				Expect(ok).To(BeTrue(),
+					"Result must be a map after multi-header response reading")
+				Expect(result).To(HaveKeyWithValue("status", "ok"),
+					"existing JSON fields must be preserved through multi-header response reading")
+				Expect(result).To(HaveKeyWithValue("html", rawPart),
+					"raw body bytes must be injected into Result under X-Body-Field name — "+
+						"this proves Send's multi-header parser correctly reads X-Body-Length "+
+						"bytes after the JSON body and injects them as a string value")
+			})
 		})
 	})
 })
