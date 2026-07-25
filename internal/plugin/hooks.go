@@ -330,13 +330,19 @@ func parseScopeJSON(raw string) (*HookScope, error) {
 }
 
 // Run executes all hooks for an event in priority order, chaining results.
+// Context fields from the original payload are merged for chain carry-forward (issue #1216).
 func (r *HookRegistry) Run(event HookName, payload interface{}) (interface{}, error) {
 	hooks := r.hooks[event]
 	current := payload
+	cc := extractChainContext(payload, len(hooks))
+
 	for _, h := range hooks {
 		result, err := h.fn(context.Background(), current)
 		if err != nil {
 			return nil, err
+		}
+		if cc.has {
+			injectChainContext(result, &cc)
 		}
 		current = result
 	}
@@ -347,9 +353,13 @@ func (r *HookRegistry) Run(event HookName, payload interface{}) (interface{}, er
 // If a hook exceeds the timeout, its modifications are discarded (the pre-hook
 // payload is kept), a warning is logged, and the build continues.
 // Each hook receives a context with the timeout deadline for cooperative cancellation.
+// Context fields (url, path, frontMatter) from the original payload are merged
+// into hook results for chain carry-forward (issue #1216).
 func (r *HookRegistry) RunWithTimeout(event HookName, payload interface{}) (interface{}, error) {
 	hooks := r.hooks[event]
 	current := payload
+	cc := extractChainContext(payload, len(hooks))
+
 	for _, h := range hooks {
 		preHook := current
 		timeout := time.Duration(r.timeout) * time.Millisecond
@@ -370,6 +380,9 @@ func (r *HookRegistry) RunWithTimeout(event HookName, payload interface{}) (inte
 			cancel()
 			if res.err != nil {
 				return nil, res.err
+			}
+			if cc.has {
+				injectChainContext(res.val, &cc)
 			}
 			current = res.val
 		case <-ctx.Done():
@@ -433,10 +446,19 @@ func (r *HookRegistry) RunBatchWithTimeout(event HookName, payloads []interface{
 
 // RunBatchWithProgress is like RunBatchWithTimeout but accepts a progress
 // callback that fires after each item completes during batch hook execution.
+// Context fields (url, path, frontMatter) from the original payloads are
+// merged into hook results for chain carry-forward (issue #1216).
 func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface{}, onProgress BatchProgressFunc) ([]interface{}, error) {
 	hooks := r.hooks[event]
 	current := make([]interface{}, len(payloads))
 	copy(current, payloads)
+
+	contexts := make([]chainContext, len(payloads))
+	if len(hooks) > 1 {
+		for i, p := range payloads {
+			contexts[i] = extractChainContext(p, 2)
+		}
+	}
 
 	for _, h := range hooks {
 		if len(current) == 0 {
@@ -475,6 +497,11 @@ func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface
 					return nil, fmt.Errorf("batch hook %s returned %d results for %d inputs",
 						string(event), len(res.val), itemCount)
 				}
+				for i := range contexts {
+					if contexts[i].has && i < len(res.val) {
+						injectChainContext(res.val[i], &contexts[i])
+					}
+				}
 				current = res.val
 			case <-ctx.Done():
 				cancel()
@@ -504,6 +531,9 @@ func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface
 					if res.err != nil {
 						return nil, fmt.Errorf("%s item %d: %w", string(event), j, res.err)
 					}
+					if contexts[j].has {
+						injectChainContext(res.val, &contexts[j])
+					}
 					current[j] = res.val
 					if onProgress != nil {
 						onProgress(j+1, len(current))
@@ -521,4 +551,58 @@ func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface
 		}
 	}
 	return current, nil
+}
+
+// chainContext holds read-only page context fields extracted from the
+// original typed payload for carry-forward through hook chains (issue #1216).
+type chainContext struct {
+	pageURL  string
+	pagePath string
+	fm       map[string]interface{}
+	has      bool
+}
+
+// extractChainContext extracts read-only context fields from a typed hook
+// payload. Returns a zero chainContext (has=false) when hookCount < 2 or
+// the payload is not a recognized page type.
+func extractChainContext(payload interface{}, hookCount int) chainContext {
+	if hookCount < 2 {
+		return chainContext{}
+	}
+	var pageURL, pagePath string
+	var fm map[string]interface{}
+	switch v := payload.(type) {
+	case HookRenderedPayload:
+		pageURL, pagePath, fm = v.URL, v.Path, v.FrontMatter
+	case HookTransformPayload:
+		pageURL, pagePath, fm = v.URL, v.Path, v.FrontMatter
+	case HookFormatRenderedPayload:
+		pageURL, pagePath, fm = v.URL, v.Path, v.FrontMatter
+	default:
+		return chainContext{}
+	}
+	if pageURL == "" && pagePath == "" && fm == nil {
+		return chainContext{}
+	}
+	return chainContext{pageURL: pageURL, pagePath: pagePath, fm: fm, has: true}
+}
+
+// injectChainContext mutates a hook result map in place, setting read-only
+// context fields (url, path, frontMatter) so the next hook in the chain can
+// access page context (issue #1216). The original payload's values always
+// win — hooks cannot mutate context fields. Non-map results are left unchanged.
+func injectChainContext(result interface{}, cc *chainContext) {
+	m, ok := result.(map[string]interface{})
+	if !ok {
+		return
+	}
+	if cc.pageURL != "" {
+		m["url"] = cc.pageURL
+	}
+	if cc.pagePath != "" {
+		m["path"] = cc.pagePath
+	}
+	if cc.fm != nil {
+		m["frontMatter"] = cc.fm
+	}
 }
