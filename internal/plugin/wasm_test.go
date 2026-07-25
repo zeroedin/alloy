@@ -3073,6 +3073,228 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 					"proves the hook received and processed the full data payload correctly")
 		})
 
+		// --- Hook chain map: hook name dispatch (issue #1202) ---
+		//
+		// The map fast path must determine the payload type from the hook
+		// name — NOT from the map's key contents. The key-based heuristic
+		// (html + toc → payloadTransform) fails when a plugin returns
+		// extra keys (e.g., onPageRendered returning {html, toc}).
+
+		It("hook chain: onPageRendered map with toc key must use rendered extraction, not transform", func() {
+			// Issue #1202: a plugin's onPageRendered hook returns {html, toc}.
+			// When this map feeds the next hook in the chain, the key heuristic
+			// sees html + toc and misclassifies as payloadTransform. The correct
+			// behavior is payloadRendered (based on the hook name), which means
+			// extractRenderedResult runs — it extracts html + addDependencies
+			// but NOT toc. If the wrong extractor runs (extractTransformResult),
+			// toc would appear in the result map.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    // Return both html and toc — a valid return from any hook.
+    // The toc key must NOT trick the classifier on the next chain call.
+    return { html: page.html + '<!-- rendered-hook -->', toc: page.toc };
+  });
+}`)
+			// Simulate a chained payload: the map comes from a prior hook
+			// (e.g., Node IPC) that returned both html and toc.
+			chainPayload := map[string]interface{}{
+				"html": "<p>original</p>",
+				"toc":  []interface{}{map[string]interface{}{"level": 2, "text": "Heading"}},
+				"url":  "/test/",
+				"path": "content/test.md",
+			}
+			result, err := rt.CallHook("onPageRendered", chainPayload)
+			Expect(err).NotTo(HaveOccurred(),
+				"CallHook must handle onPageRendered map with toc key without error")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil(), "result must be a map")
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue(), "result must contain html as string")
+			Expect(html).To(Equal("<p>original</p><!-- rendered-hook -->"),
+				"hook must have modified html correctly")
+
+			// Key assertion: toc must NOT be in the result. extractRenderedResult
+			// only extracts html + addDependencies. If this fails, the classifier
+			// used the key heuristic (html + toc → payloadTransform) instead of
+			// the hook name (onPageRendered → payloadRendered).
+			_, hasTOC := m["toc"]
+			Expect(hasTOC).To(BeFalse(),
+				"onPageRendered result must NOT contain toc — "+
+					"extractRenderedResult only extracts html + addDependencies. "+
+					"If toc is present, the map fast path used the key heuristic "+
+					"(html + toc → payloadTransform) instead of the hook name "+
+					"(onPageRendered → payloadRendered) — issue #1202")
+		})
+
+		It("hook chain: onContentTransformed map without toc key must use transform extraction", func() {
+			// Issue #1202 (reverse case): an onContentTransformed hook receives
+			// a chained map that has html but no toc key (e.g., prior hook
+			// stripped toc or never returned it). The key heuristic sees html
+			// without toc and classifies as payloadRendered. The correct
+			// behavior is payloadTransform (based on the hook name), which
+			// means extractTransformResult runs — it extracts html + toc +
+			// addDependencies. If the wrong extractor runs (extractRenderedResult),
+			// the toc field returned by this hook would be dropped.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    // Return html + toc. The toc must survive extraction because
+    // this is onContentTransformed (payloadTransform), not onPageRendered.
+    return {
+      html: page.html + '<!-- transform-hook -->',
+      toc: [{ level: 2, text: 'Generated Heading' }]
+    };
+  });
+}`)
+			// Simulate a chained payload: map has html but NO toc key.
+			// Under the key heuristic, this maps to payloadRendered (WRONG).
+			// Under hook name dispatch, this maps to payloadTransform (CORRECT).
+			chainPayload := map[string]interface{}{
+				"html": "<h2>Heading</h2><p>Text</p>",
+				"url":  "/test/",
+				"path": "content/test.md",
+			}
+			result, err := rt.CallHook("onContentTransformed", chainPayload)
+			Expect(err).NotTo(HaveOccurred(),
+				"CallHook must handle onContentTransformed map without toc key without error")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil(), "result must be a map")
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue(), "result must contain html as string")
+			Expect(html).To(Equal("<h2>Heading</h2><p>Text</p><!-- transform-hook -->"),
+				"hook must have modified html correctly")
+
+			// Key assertion: toc MUST be in the result. extractTransformResult
+			// extracts html + toc + addDependencies. If this fails, the classifier
+			// used the key heuristic (html without toc → payloadRendered) instead
+			// of the hook name (onContentTransformed → payloadTransform).
+			toc, hasTOC := m["toc"]
+			Expect(hasTOC).To(BeTrue(),
+				"onContentTransformed result MUST contain toc — "+
+					"extractTransformResult extracts html + toc + addDependencies. "+
+					"If toc is missing, the map fast path used the key heuristic "+
+					"(html without toc → payloadRendered) instead of the hook name "+
+					"(onContentTransformed → payloadTransform) — issue #1202")
+
+			tocSlice, ok := toc.([]interface{})
+			Expect(ok).To(BeTrue(), "toc must be an array")
+			Expect(tocSlice).To(HaveLen(1), "toc must contain the single heading entry")
+		})
+
+		It("hook chain: onFormatRendered map with html key must use format-rendered extraction, not rendered", func() {
+			// Issue #1211: a plugin's onFormatRendered hook receives a chained
+			// map with both html and content keys. The key heuristic sees html
+			// first (wasm.go:494) and classifies as payloadRendered. The correct
+			// behavior is payloadFormatRendered (based on the hook name), which
+			// means extractFormatRenderedResult runs — it extracts content +
+			// addDependencies. If the wrong extractor runs (extractRenderedResult),
+			// the content field would be lost from the result.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onFormatRendered', {}, function(page) {
+    // Return both content and html. The html key must NOT trick the
+    // classifier — onFormatRendered uses payloadFormatRendered.
+    return {
+      content: page.content + '<!-- format-hook -->',
+      html: '<p>stale html</p>'
+    };
+  });
+}`)
+			// Simulate a chained payload: the map has both html and content.
+			// Under the key heuristic, hasHTML fires first → payloadRendered (WRONG).
+			// Under hook name dispatch, onFormatRendered → payloadFormatRendered (CORRECT).
+			chainPayload := map[string]interface{}{
+				"content": "<article>Original</article>",
+				"html":    "<p>leftover html from prior hook</p>",
+				"url":     "/test/",
+				"path":    "content/test.md",
+			}
+			result, err := rt.CallHook("onFormatRendered", chainPayload)
+			Expect(err).NotTo(HaveOccurred(),
+				"CallHook must handle onFormatRendered map with html key without error")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil(), "result must be a map")
+
+			// Key assertion: content MUST be in the result. extractFormatRenderedResult
+			// extracts content + addDependencies. If this fails, the classifier
+			// used the key heuristic (html present → payloadRendered) instead of
+			// the hook name (onFormatRendered → payloadFormatRendered).
+			content, hasContent := m["content"].(string)
+			Expect(hasContent).To(BeTrue(),
+				"onFormatRendered result MUST contain content — "+
+					"extractFormatRenderedResult extracts content + addDependencies. "+
+					"If content is missing, the map fast path used the key heuristic "+
+					"(html present → payloadRendered) instead of the hook name "+
+					"(onFormatRendered → payloadFormatRendered) — issue #1211")
+			Expect(content).To(Equal("<article>Original</article><!-- format-hook -->"),
+				"hook must have modified content correctly")
+
+			// html must NOT be in the result — extractFormatRenderedResult does
+			// not extract html (only content + addDependencies).
+			_, hasHTML := m["html"]
+			Expect(hasHTML).To(BeFalse(),
+				"onFormatRendered result must NOT contain html — "+
+					"extractFormatRenderedResult only extracts content + addDependencies. "+
+					"If html is present, the wrong extractor ran — issue #1211")
+		})
+
+		It("hook chain: onContentTransformed map with content key but no html must use transform extraction, not format-rendered", func() {
+			// Issue #1212: a chained onContentTransformed map has a content key
+			// but no html key (e.g., a prior hook returned only content and toc).
+			// The key heuristic misses hasHTML (no html key), falls through to
+			// hasContent (wasm.go:502), and classifies as payloadFormatRendered.
+			// The correct behavior is payloadTransform (based on the hook name),
+			// which means extractTransformResult runs — it extracts html + toc +
+			// addDependencies. If the wrong extractor runs (extractFormatRenderedResult),
+			// the toc field returned by the hook would be dropped.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    // Return html + toc from the transformation. The content key in the
+    // INPUT must not cause misclassification of the OUTPUT extraction.
+    return {
+      html: '<h2>Rebuilt</h2><p>' + page.content + '</p>',
+      toc: [{ level: 2, text: 'Rebuilt' }]
+    };
+  });
+}`)
+			// Simulate a chained payload: map has content but NO html key.
+			// Under the key heuristic, hasHTML is false, hasContent is true →
+			// payloadFormatRendered (WRONG).
+			// Under hook name dispatch, onContentTransformed → payloadTransform (CORRECT).
+			chainPayload := map[string]interface{}{
+				"content": "raw markdown content",
+				"url":     "/test/",
+				"path":    "content/test.md",
+			}
+			result, err := rt.CallHook("onContentTransformed", chainPayload)
+			Expect(err).NotTo(HaveOccurred(),
+				"CallHook must handle onContentTransformed map with content key without error")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil(), "result must be a map")
+
+			// Key assertion: toc MUST be in the result. extractTransformResult
+			// extracts html + toc + addDependencies. If this fails, the classifier
+			// used the key heuristic (content present → payloadFormatRendered)
+			// instead of the hook name (onContentTransformed → payloadTransform).
+			toc, hasTOC := m["toc"]
+			Expect(hasTOC).To(BeTrue(),
+				"onContentTransformed result MUST contain toc — "+
+					"extractTransformResult extracts html + toc + addDependencies. "+
+					"If toc is missing, the map fast path used the key heuristic "+
+					"(content present, no html → payloadFormatRendered) instead of "+
+					"the hook name (onContentTransformed → payloadTransform) — issue #1212")
+			tocSlice, ok := toc.([]interface{})
+			Expect(ok).To(BeTrue(), "toc must be an array")
+			Expect(tocSlice).To(HaveLen(1), "toc must contain the single heading entry")
+
+			html, hasHTML := m["html"].(string)
+			Expect(hasHTML).To(BeTrue(), "result must contain html as string")
+			Expect(html).To(Equal("<h2>Rebuilt</h2><p>raw markdown content</p>"),
+				"hook must have built html from the content input correctly")
+		})
+
 		// --- BatchCallHook on QuickJSRuntime ---
 
 		It("BatchCallHook results match sequential CallHook calls", func() {
