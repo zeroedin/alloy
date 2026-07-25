@@ -2,6 +2,7 @@ package plugin_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -3226,6 +3227,10 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(err.Error()).To(ContainSubstring("deliberate test error"),
 				"error must preserve the original JS error message so callers "+
 					"can diagnose the root cause (issue #1190)")
+			Expect(errors.Unwrap(err)).NotTo(BeNil(),
+				"error must use %%w verb so callers can unwrap the original error "+
+					"via errors.Is/errors.As — using %%s or %%v would produce identical "+
+					"string output but break error chain traversal (issue #1190)")
 		})
 
 		// --- Pre-compiled JS hook invocation ---
