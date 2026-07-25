@@ -37,17 +37,25 @@ Without this marker, your plugin runs sandboxed on QuickJS with no system access
 
 ## Your First Node Plugin
 
-This filter reads a file from disk and inlines it into the page at build time — useful for dropping an SVG into your markup without an extra HTTP request:
+Setting `width` and `height` on an `<img>` prevents layout shift, but the dimensions live in the image file. This filter reads them at build time with the `image-size` package:
+
+```bash
+npm install image-size
+```
 
 ```javascript
-// plugins/inline.js
+// plugins/image-dimensions.js
 export const runtime = "node";
 
+import { imageSize } from 'image-size';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 export default function(alloy) {
-  alloy.filter("inline", (path) => {
-    return readFileSync(path, 'utf8');
+  alloy.filter("dimensions", (src) => {
+    // Plugins run with the project root as the working directory.
+    const { width, height } = imageSize(readFileSync(join('static', src)));
+    return `width="${width}" height="${height}"`;
   });
 }
 ```
@@ -60,15 +68,17 @@ Use it in a template:
 <wa-tab slot="nav" panel="nodehello-go">Go templates</wa-tab>
 
 <wa-tab-panel name="nodehello-liquid" active>
-<alloy-code language="liquid">{{ "static/icons/logo.svg" | inline }}</alloy-code>
+<alloy-code language="liquid">&lt;img src="/hero.jpg" {{ "hero.jpg" | dimensions }} alt="Hero"&gt;</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="nodehello-go">
-<alloy-code language="html">{{ inline "static/icons/logo.svg" }}</alloy-code>
+<alloy-code language="html">&lt;img src="/hero.jpg" {{ dimensions "hero.jpg" }} alt="Hero"&gt;</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>
 {% endraw %}
 
-There is nothing to `npm install` here — `node:fs` is built into Node. But this plugin *does* require the Node runtime: drop the `runtime = "node"` marker and it stops working, because the QuickJS sandbox has no filesystem access. That is the dividing line for choosing Node. Reaching for an npm package, as the examples below do, is the other half of it.
+This is what Node plugins are for, and it needs both halves of the runtime: an npm package to parse the image header, and filesystem access to read the file. Neither is available to a QuickJS plugin, and neither can be done from a template. Drop the `runtime = "node"` marker and this plugin stops working.
+
+Plugins run with your project root as the working directory, so relative paths like `static/hero.jpg` resolve the way you would expect. A missing file throws — wrap the read in a `try`/`catch` if you would rather emit nothing than fail the build.
 
 Run `alloy build`. If you add a `console.log()` inside the filter, it prints to your terminal alongside the rest of the build output.
 
