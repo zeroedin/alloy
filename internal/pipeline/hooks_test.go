@@ -2,6 +2,8 @@ package pipeline_test
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -3832,6 +3834,116 @@ var _ = Describe("Build Pipeline", func() {
 				"original JSON content must be preserved when onFormatRendered "+
 					"returns a non-string content value — the type assertion "+
 					"for string fails and the original is kept (issue #1102)")
+		})
+	})
+
+	// ── Hook chain fast path: two onPageRendered hooks through pipeline (issue #1188) ──
+	// When two plugins register onPageRendered hooks, the second hook receives
+	// a map[string]interface{} (the first hook's result) instead of a typed
+	// HookRenderedPayload. The pipeline must handle this chaining correctly:
+	// the map[string]interface{} payload must be dispatched through the fast path
+	// (not the full JSON serialization path), and the final output must reflect
+	// both hooks' modifications.
+
+	Describe("Hook chain fast path through pipeline (issue #1188)", func() {
+		It("two onPageRendered hooks chain: second hook receives and modifies first hook's result", func() {
+			cfg := &config.Config{
+				Title:   "Hook Chain Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"content/page.md":       "---\ntitle: Chain Test\nlayout: default\n---\n# Hello",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				// Plugin 01 runs first (alphabetical order, same default priority 50).
+				// It appends a marker to the HTML.
+				"plugins/01-transforms.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return { html: page.html + '<!-- hook-1-applied -->' };
+  });
+}`,
+				// Plugin 02 runs second. It receives a map[string]interface{}
+				// (the first hook's result), NOT a typed HookRenderedPayload.
+				// This exercises the map[string]interface{} fast path in CallHook.
+				"plugins/02-ssr.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return { html: page.html + '<!-- hook-2-applied -->' };
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"build with two chained onPageRendered hooks must not error — "+
+					"if this fails, the second hook failed to receive or process "+
+					"the map[string]interface{} payload from the first hook (issue #1188)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["page.md"]
+			Expect(html).To(ContainSubstring("<!-- hook-1-applied -->"),
+				"first hook's modification must be present in the final output — "+
+					"if missing, the first hook did not execute or its result was lost")
+			Expect(html).To(ContainSubstring("<!-- hook-2-applied -->"),
+				"second hook's modification must be present in the final output — "+
+					"if missing, the second hook failed to receive the first hook's "+
+					"map[string]interface{} result through the fast path (issue #1188)")
+			Expect(html).To(ContainSubstring("<!-- hook-1-applied --><!-- hook-2-applied -->"),
+				"hooks must chain in order: hook-1 marker must appear before hook-2 marker — "+
+					"hook-2 appends to the HTML that already contains hook-1's marker")
+		})
+
+		It("two onPageRendered hooks chain with large HTML through pipeline", func() {
+			// Issue #1188: the performance regression occurs with large HTML (~800KB).
+			// This test verifies that large HTML survives the chain correctly —
+			// the second hook receives the full HTML from the first hook's
+			// map[string]interface{} result without truncation or corruption.
+			cfg := &config.Config{
+				Title:   "Large Chain Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+
+			// Build content that produces ~50KB of rendered HTML —
+			// large enough to exercise the serialization path but fast for tests
+			var mdContent strings.Builder
+			mdContent.WriteString("---\ntitle: Large Page\nlayout: default\n---\n")
+			for i := 0; i < 500; i++ {
+				mdContent.WriteString(fmt.Sprintf("## Section %d\n\nLorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor.\n\n", i))
+			}
+
+			contentMap := map[string]string{
+				"content/large.md":       mdContent.String(),
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+				"plugins/01-marker.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return { html: page.html + '<!-- length-after-hook1:' + page.html.length + ' -->' };
+  });
+}`,
+				"plugins/02-verify.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    if (!page.html.includes('Section 499')) {
+      throw new Error('hook 2 received truncated HTML — Section 499 missing');
+    }
+    if (!page.html.includes('<!-- length-after-hook1:')) {
+      throw new Error('hook 2 did not receive hook 1 marker — chain broken');
+    }
+    return { html: page.html + '<!-- hook2-verified -->' };
+  });
+}`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"build with two chained hooks on large HTML must not error — "+
+					"if this fails with 'truncated HTML' or 'chain broken', "+
+					"the map[string]interface{} fast path corrupted or truncated "+
+					"the HTML during hook chaining (issue #1188)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["large.md"]
+			Expect(html).To(ContainSubstring("Section 499"),
+				"large HTML content must survive the hook chain intact — "+
+					"Section 499 must be present in the final output")
+			Expect(html).To(ContainSubstring("<!-- hook2-verified -->"),
+				"second hook must have verified and processed the large HTML")
 		})
 	})
 })

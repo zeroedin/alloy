@@ -3024,6 +3024,54 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 				"hook must receive and return data from non-page maps correctly")
 		})
 
+		It("hook chain: onDataFetched map payload is NOT caught by page-like fast path", func() {
+			// Issue #1188: the map[string]interface{} fast path is guarded by
+			// html/content key presence. onDataFetched payloads are site-wide data
+			// maps that should never use the page-like fast path — they use the
+			// full JSON round-trip. This test specifically targets onDataFetched
+			// (the issue's primary example of a non-page map payload) to verify
+			// the guard doesn't accidentally catch data-shaped maps.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onDataFetched', { data: ["*"] }, function(data) {
+    return {
+      demos: (data.demos || []).concat([{ name: 'new-demo', slug: 'new' }]),
+      navigation: data.navigation,
+      injected: true
+    };
+  });
+}`)
+			dataPayload := map[string]interface{}{
+				"demos": []interface{}{
+					map[string]interface{}{"name": "button", "slug": "button"},
+				},
+				"navigation": []interface{}{
+					map[string]interface{}{"title": "Home", "url": "/"},
+				},
+			}
+			result, err := rt.CallHook("onDataFetched", dataPayload)
+			Expect(err).NotTo(HaveOccurred(),
+				"CallHook must handle onDataFetched map payload without error — "+
+					"the map has no html/content keys, so it must fall through "+
+					"to the JSON serialization path (issue #1188)")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil(),
+				"onDataFetched result must be extractable as a map")
+			injected, ok := m["injected"].(bool)
+			Expect(ok).To(BeTrue(),
+				"result must contain the 'injected' key set by the hook")
+			Expect(injected).To(BeTrue(),
+				"hook must have executed and returned injected: true")
+
+			demos, ok := m["demos"].([]interface{})
+			Expect(ok).To(BeTrue(),
+				"result must contain 'demos' as an array — "+
+					"if this fails, the data map was corrupted by the serialization path")
+			Expect(demos).To(HaveLen(2),
+				"demos array must contain original entry plus the concatenated new-demo — "+
+					"proves the hook received and processed the full data payload correctly")
+		})
+
 		// --- BatchCallHook on QuickJSRuntime ---
 
 		It("BatchCallHook results match sequential CallHook calls", func() {
