@@ -765,10 +765,12 @@ func (r *QuickJSRuntime) extractStructuredProperty(result *qjs.Value, key string
 	}
 	s, err := prop.JSONStringify()
 	if err != nil {
+		log.Printf("warning: hook result property %q: JSONStringify failed: %v", key, err)
 		return
 	}
 	var parsed interface{}
 	if err := jsonCodec.Unmarshal([]byte(s), &parsed); err != nil {
+		log.Printf("warning: hook result property %q: unmarshal failed: %v", key, err)
 		return
 	}
 	m[key] = parsed
