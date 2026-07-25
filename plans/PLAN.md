@@ -2515,6 +2515,28 @@ Content-Length: 82\r\n
 {"id": 3, "result": "transformed value"}
 ```
 
+**Node IPC binary framing (issue #1181)**: Hook messages carrying per-page payloads with large HTML/content fields (`onPageRendered`, `onFormatRendered`, `onContentTransformed`) use split-body framing to avoid JSON-encoding the large string field. Instead of embedding ~800KB of HTML inside a JSON envelope (requiring JSON escaping on encode and unescaping on decode on both Go and Node sides), the large field is stripped from the JSON body and sent as raw bytes after it, described by additional headers:
+
+```
+Content-Length: 200\r\n
+X-Body-Length: 800000\r\n
+X-Body-Field: html\r\n
+\r\n
+{"id":1,"type":"hook","name":"onPageRendered","payload":{"frontMatter":{"title":"T"},"url":"/","path":"index.md"}}<raw 800KB HTML bytes>
+```
+
+`Content-Length` gives the JSON body size. `X-Body-Length` gives the raw body size. `X-Body-Field` names the field to inject the raw bytes into (`html` or `content`). The JSON body contains all fields except the split field. The raw bytes follow the JSON body immediately with no separator.
+
+**Outbound (Go→Node)**: `EncodeMessage` detects hook messages (`msg.Type == "hook"`) with payload types `HookRenderedPayload` (html), `HookFormatRenderedPayload` (content), `HookTransformPayload` (html), or `map[string]interface{}` containing an `html` or `content` string key (chained hook results). For these, the large field is stripped from the JSON and appended as raw bytes with split-body headers. When a map payload contains both `html` and `content` keys, `html` takes priority (it is the larger field in the common case). Empty split fields (zero-length string) fall back to single-header format — `X-Body-Length: 0` has no performance benefit. Non-hook messages and hook messages without these payload types use the existing single-header format. `EncodeMessage` must not mutate the caller's map — it works on a shallow copy.
+
+**Inbound (Node→Go)**: `DecodeMessage` and `NodeBridge.Send`'s response reader parse the header block for `X-Body-Length` and `X-Body-Field`. If present, after reading the JSON body (`Content-Length` bytes), they read `X-Body-Length` additional bytes and inject them into the Result map under the `X-Body-Field` key. When `DecodeMessage` processes an outbound-encoded frame (no Result, Payload is a map), the split field is injected back into the Payload map — this preserves round-trip fidelity.
+
+**Error handling (issues #1194)**: Both `DecodeMessage` and `Send` validate split-body headers: (1) `Content-Length` exceeding available bytes returns an error with available-vs-requested byte counts. (2) Negative `X-Body-Length` is rejected (not silently accepted — `strconv.Atoi("-1")` succeeds, so explicit `< 0` checks are required). (3) `X-Body-Length` present without `X-Body-Field` returns an error identifying the missing header. (4) Stdout pollution in `key: value` format (e.g., `debug: loading plugin`) is rejected by the first-line `Content-Length:` prefix check — without this, `SplitN(line, ": ", 2)` would silently accept arbitrary `key: value` lines as headers.
+
+**Node bridge.js**: The `process.stdin` parser reads multi-header frames, injecting the raw body into `msg.payload[bodyField]`. `sendMessage` strips `html`/`content` string fields from hook results and sends them as raw bytes with split-body headers.
+
+**Backward compatibility**: The multi-header parser handles both single-header and multi-header frames — messages without `X-Body-Length` parse identically to before. The malformed frame diagnostic (non-`Content-Length` data on the first line triggers the stdout pollution error) is unchanged.
+
 ### Lifecycle Events (all tiers)
 
 Hooks receive JSON-serializable payloads so they work across all plugin tiers (Go built-in, QuickJS, WASM, Node). Go struct pointers are not visible to JS or WASM — the pipeline must serialize before calling and deserialize the return value.
