@@ -95,12 +95,20 @@ var _ = Describe("convertedFrontMatter caching (issue #1185)", func() {
 				"second call detects no *ordered.Map values and returns "+
 				"the already-converted map")
 
-		// Verify it's the same map object (pointer equality) — the
-		// function returns page.FrontMatter directly when no conversion
-		// is needed.
-		firstData := first["data"].(map[string]interface{})
-		secondData := second["data"].(map[string]interface{})
-		Expect(firstData["x"]).To(Equal(secondData["x"]))
+		// Verify both calls return the same underlying map by checking
+		// that the nested "data" key resolves to identical content.
+		// After the first call converts in place, the second call detects
+		// no *ordered.Map values and returns page.FrontMatter directly.
+		firstData, ok1 := first["data"].(map[string]interface{})
+		Expect(ok1).To(BeTrue(),
+			"first call must convert *ordered.Map to map[string]interface{}")
+		secondData, ok2 := second["data"].(map[string]interface{})
+		Expect(ok2).To(BeTrue(),
+			"second call must return the already-converted map[string]interface{}")
+		Expect(firstData).To(BeIdenticalTo(secondData),
+			"second call must return the same map object (pointer identity) — "+
+				"convertedFrontMatter stores the converted map back on "+
+				"page.FrontMatter, so no re-conversion occurs")
 	})
 
 	It("handles nil FrontMatter", func() {

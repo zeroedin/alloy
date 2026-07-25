@@ -1618,6 +1618,22 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 		})
 	})
 
+	// setupQuickJSWithHook creates a QuickJS runtime, inlines the given
+	// plugin JS (which must register a hook via alloy.hook), and returns
+	// the runtime. Caller must DeferCleanup(rt.Close).
+	// Shared by both #1180 and #1185 test Describes.
+	setupQuickJSWithHook := func(hookJS string) *plugin.QuickJSRuntime {
+		tmpDir := GinkgoT().TempDir()
+		pluginPath := filepath.Join(tmpDir, "test-hook.js")
+		Expect(os.WriteFile(pluginPath, []byte(hookJS), 0644)).To(Succeed())
+
+		rt := plugin.NewQuickJSRuntime()
+		Expect(rt.Init()).To(Succeed())
+		Expect(rt.EvalFile(pluginPath)).To(Succeed())
+		DeferCleanup(rt.Close)
+		return rt
+	}
+
 	// ── CallHook payload struct fast path (issue #1180) ──────────────
 	// QuickJS CallHook currently JSON-serializes the entire payload for
 	// struct types (HookRenderedPayload, HookFormatRenderedPayload,
@@ -1628,21 +1644,6 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 	// the behavioral contract that the fast path must satisfy.
 
 	Describe("CallHook payload struct fast path (issue #1180)", func() {
-
-		// setupQuickJSWithHook creates a QuickJS runtime, inlines the given
-		// plugin JS (which must register a hook via alloy.hook), and returns
-		// the runtime. Caller must DeferCleanup(rt.Close).
-		setupQuickJSWithHook := func(hookJS string) *plugin.QuickJSRuntime {
-			tmpDir := GinkgoT().TempDir()
-			pluginPath := filepath.Join(tmpDir, "test-hook.js")
-			Expect(os.WriteFile(pluginPath, []byte(hookJS), 0644)).To(Succeed())
-
-			rt := plugin.NewQuickJSRuntime()
-			Expect(rt.Init()).To(Succeed())
-			Expect(rt.EvalFile(pluginPath)).To(Succeed())
-			DeferCleanup(rt.Close)
-			return rt
-		}
 
 		It("HookRenderedPayload delivers all fields to JS and returns modified html", func() {
 			rt := setupQuickJSWithHook(`export default function(alloy) {
@@ -2182,6 +2183,61 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 					"does not read frontMatter back from onFormatRendered returns")
 		})
 
+		It("HookTransformPayload identity return preserves pipeline-consumed fields", func() {
+			// Issue #1185: targeted outbound extraction reads only the fields
+			// the pipeline consumes from the return value. For onContentTransformed,
+			// the pipeline reads html, toc, and addDependencies. Read-only context
+			// fields (url, path, frontMatter) are NOT extracted — they are
+			// inbound-only (sent to JS for conditional logic, never read back).
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    return page;
+  });
+}`)
+			payload := plugin.HookTransformPayload{
+				HTML:        "<h2>Section</h2><p>Body text</p>",
+				FrontMatter: map[string]interface{}{"title": "Transform Identity"},
+				URL:         "/transform-id/",
+				Path:        "content/transform-id.md",
+				TOC: []content.TOCEntry{
+					{ID: "section", Text: "Section", Level: 2},
+				},
+			}
+			result, err := rt.CallHook("onContentTransformed", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil(),
+				"identity return from HookTransformPayload must produce a map")
+
+			// html and toc ARE pipeline-consumed — they must be present.
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue(),
+				"html must be present in the result — it is a mutable field "+
+					"the pipeline reads from onContentTransformed returns")
+			Expect(html).To(Equal("<h2>Section</h2><p>Body text</p>"),
+				"identity return must preserve html exactly")
+
+			_, hasTOC := m["toc"]
+			Expect(hasTOC).To(BeTrue(),
+				"toc must be present in the result — the pipeline reads toc "+
+					"from onContentTransformed returns (unlike onPageRendered)")
+
+			// url, path, and frontMatter are read-only context fields.
+			// The targeted extractor does NOT extract them from the return value.
+			_, hasURL := m["url"]
+			Expect(hasURL).To(BeFalse(),
+				"url must NOT be present in the result — read-only context field "+
+					"(issue #1185 targeted extraction)")
+			_, hasPath := m["path"]
+			Expect(hasPath).To(BeFalse(),
+				"path must NOT be present in the result — read-only context field")
+			_, hasFM := m["frontMatter"]
+			Expect(hasFM).To(BeFalse(),
+				"frontMatter must NOT be present in the result — the pipeline "+
+					"does not read frontMatter back from onContentTransformed returns")
+		})
+
 		It("HookRenderedPayload hook returning raw string is handled as backward compat", func() {
 			// A hook registered for the object API that returns page.html
 			// (a raw string) instead of { html: page.html } (an object).
@@ -2254,21 +2310,6 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 	})
 
 	Describe("QuickJS outbound fast path and lazy fields (issue #1185)", func() {
-
-		// setupQuickJSWithHook creates a QuickJS runtime, inlines the given
-		// plugin JS (which must register a hook via alloy.hook), and returns
-		// the runtime. Caller must DeferCleanup(rt.Close).
-		setupQuickJSWithHook := func(hookJS string) *plugin.QuickJSRuntime {
-			tmpDir := GinkgoT().TempDir()
-			pluginPath := filepath.Join(tmpDir, "test-hook.js")
-			Expect(os.WriteFile(pluginPath, []byte(hookJS), 0644)).To(Succeed())
-
-			rt := plugin.NewQuickJSRuntime()
-			Expect(rt.Init()).To(Succeed())
-			Expect(rt.EvalFile(pluginPath)).To(Succeed())
-			DeferCleanup(rt.Close)
-			return rt
-		}
 
 		// --- Lazy frontMatter via Object.defineProperty getter ---
 
@@ -2511,6 +2552,38 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 					"hook's map result and apply its own transformation")
 		})
 
+		It("hook chain: second hook receives content from first hook's map result", func() {
+			// Issue #1185: the map fast path is guarded by html OR content key
+			// presence. This test uses a "content"-keyed map (the onFormatRendered
+			// chain scenario) to verify the content key guard is implemented,
+			// not just the html key guard.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onFormatRendered', {}, function(payload) {
+    return { content: payload.content + '<!-- format-chain -->' };
+  });
+}`)
+			chainPayload := map[string]interface{}{
+				"content": `{"items":[1,2,3]}`,
+				"format":  "json",
+				"url":     "/feed.json",
+				"path":    "content/feed.md",
+			}
+			result, err := rt.CallHook("onFormatRendered", chainPayload)
+			Expect(err).NotTo(HaveOccurred(),
+				"CallHook must handle map[string]interface{} with 'content' key — "+
+					"this is the payload shape when onFormatRendered hooks chain "+
+					"(second hook receives first hook's map result)")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			content, ok := m["content"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(content).To(Equal(`{"items":[1,2,3]}<!-- format-chain -->`),
+				"second hook in chain must receive the content from the first "+
+					"hook's map result — the map fast path must detect the "+
+					"'content' key (not just 'html') as a page-like payload")
+		})
+
 		It("hook chain: non-page map payload passes through correctly", func() {
 			// Issue #1185: the map fast path is guarded by html/content key
 			// presence. Non-page maps (e.g., onBuildComplete payloads) do
@@ -2607,6 +2680,61 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			}
 		})
 
+		It("BatchCallHook calls onProgress callback with 1-based indices", func() {
+			// Issue #1185: onProgress is part of the BatchCallHook API per
+			// IMPLEMENTATION.md. The callback receives 1-based item count
+			// (i+1) after each item completes. A nil callback is the no-op
+			// path (tested above); this test exercises the non-nil path.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return { html: page.html + '<!-- batch -->' };
+  });
+}`)
+			payloads := []interface{}{
+				plugin.HookRenderedPayload{
+					HTML: "<p>a</p>", FrontMatter: map[string]interface{}{},
+					URL: "/a/", Path: "content/a.md",
+				},
+				plugin.HookRenderedPayload{
+					HTML: "<p>b</p>", FrontMatter: map[string]interface{}{},
+					URL: "/b/", Path: "content/b.md",
+				},
+				plugin.HookRenderedPayload{
+					HTML: "<p>c</p>", FrontMatter: map[string]interface{}{},
+					URL: "/c/", Path: "content/c.md",
+				},
+			}
+
+			var progressIndices []int
+			onProgress := func(i int) {
+				progressIndices = append(progressIndices, i)
+			}
+
+			results, err := rt.BatchCallHook("onPageRendered", payloads, onProgress)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(HaveLen(3))
+			Expect(progressIndices).To(Equal([]int{1, 2, 3}),
+				"onProgress must be called with 1-based indices [1, 2, 3] — "+
+					"the callback receives i+1 after each item completes")
+		})
+
+		It("BatchCallHook with empty payloads returns empty slice", func() {
+			// Edge case: empty input must return an empty (non-nil) slice
+			// and nil error, without invoking any JS.
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return { html: page.html + '<!-- should-not-fire -->' };
+  });
+}`)
+			results, err := rt.BatchCallHook("onPageRendered", []interface{}{}, nil)
+			Expect(err).NotTo(HaveOccurred(),
+				"BatchCallHook with empty payloads must not error")
+			Expect(results).NotTo(BeNil(),
+				"BatchCallHook must return a non-nil slice even for empty input")
+			Expect(results).To(HaveLen(0),
+				"BatchCallHook with empty payloads must return an empty slice")
+		})
+
 		// --- Pre-compiled JS hook invocation ---
 
 		It("pre-compiled hook invocation produces correct results across multiple calls", func() {
@@ -2615,6 +2743,11 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			// "__hooks[__callHookName](__callInput)". This test verifies that
 			// the hook invocation path produces correct results when called
 			// repeatedly — the key property of pre-compiled functions.
+			// NOTE: This is a baseline guard — the pre-compiled optimization
+			// is purely internal with no observable behavioral difference.
+			// It passes on the base branch (confirms current behavior) and
+			// guards against regressions when the implementation changes the
+			// invocation mechanism.
 			rt := setupQuickJSWithHook(`export default function(alloy) {
   var callCount = 0;
   alloy.hook('onPageRendered', {}, function(page) {

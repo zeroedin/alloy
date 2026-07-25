@@ -1519,7 +1519,7 @@ Deep merging happens **lazily** — only when a nested key is accessed at multip
 
 4. **Hook chain fast path for `map[string]interface{}`**: When hooks chain (first hook's `map[string]interface{}` result becomes second hook's payload), `CallHook` must detect page-like maps (containing `html` or `content` key) and build a JS object directly instead of JSON-serializing. Non-page maps (e.g., `onBuildComplete` payloads without `html`/`content` keys) fall through to the JSON path.
 
-5. **`BatchCallHook` on `QuickJSRuntime`**: Synchronous loop without per-item goroutine/channel/context overhead. Registered via the existing `registerRuntime` batch detection (type assertion for `BatchCallHook` method). Results must match sequential `CallHook` calls.
+5. **`BatchCallHook` on `QuickJSRuntime`**: Synchronous loop without per-item goroutine/channel/context overhead. Registered via the existing `registerRuntime` batch detection (type assertion for `BatchCallHook` method). Results must match sequential `CallHook` calls. `onProgress(i+1)` is called after each item (1-based). Empty payloads return an empty (non-nil) slice and nil error without invoking JS.
 
 6. **Pre-compiled JS functions**: Three functions compiled once during `Init()`, called via `InvokeJS` on hot paths: `__callHookByName(name, input)` (replaces per-call `Eval` of hook invocation string), `__installLazyFM(target)`, `__installLazyTOC(target)`.
 
