@@ -57,7 +57,28 @@ const alloy = {
   },
 };
 
-function sendMessage(msg) {
+function sendMessage(msg, requestType) {
+  // For hook results with html or content string fields, use split-body framing
+  // to avoid JSON-encoding the large string (issue #1181).
+  if (requestType === 'hook' && msg.result && typeof msg.result === 'object') {
+    const splitField = typeof msg.result.html === 'string' ? 'html'
+      : typeof msg.result.content === 'string' ? 'content'
+      : null;
+    if (splitField && msg.result[splitField].length > 0) {
+      const rawValue = msg.result[splitField];
+      const clone = Object.assign({}, msg.result);
+      delete clone[splitField];
+      const stripped = Object.assign({}, msg, { result: clone });
+      const jsonBody = JSON.stringify(stripped);
+      const jsonLen = Buffer.byteLength(jsonBody);
+      const rawLen = Buffer.byteLength(rawValue);
+      const header = `Content-Length: ${jsonLen}\r\nX-Body-Length: ${rawLen}\r\nX-Body-Field: ${splitField}\r\n\r\n`;
+      realStdoutWrite(header);
+      realStdoutWrite(jsonBody);
+      realStdoutWrite(rawValue);
+      return;
+    }
+  }
   const body = JSON.stringify(msg);
   const frame = `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
   realStdoutWrite(frame);
@@ -72,18 +93,38 @@ process.stdin.on('data', (chunk) => {
     if (headerEnd < 0) break;
 
     const header = buffer.slice(0, headerEnd).toString('utf8');
-    const match = header.match(/Content-Length:\s*(\d+)/);
-    if (!match) { buffer = buffer.slice(headerEnd + 4); continue; }
+    const clMatch = header.match(/Content-Length:\s*(\d+)/);
+    if (!clMatch) { buffer = buffer.slice(headerEnd + 4); continue; }
 
-    const len = parseInt(match[1], 10);
+    const contentLen = parseInt(clMatch[1], 10);
     const bodyStart = headerEnd + 4;
-    if (buffer.length < bodyStart + len) break;
 
-    const body = buffer.slice(bodyStart, bodyStart + len).toString('utf8');
-    buffer = buffer.slice(bodyStart + len);
+    // Parse optional split-body headers (issue #1181)
+    const blMatch = header.match(/X-Body-Length:\s*(\d+)/);
+    const bfMatch = header.match(/X-Body-Field:\s*(\S+)/);
+    const splitBodyLen = blMatch ? parseInt(blMatch[1], 10) : 0;
+    const splitBodyField = bfMatch ? bfMatch[1] : null;
+
+    const totalLen = contentLen + splitBodyLen;
+    if (buffer.length < bodyStart + totalLen) break;
+
+    const jsonBody = buffer.slice(bodyStart, bodyStart + contentLen).toString('utf8');
+    let rawBody = null;
+    if (splitBodyLen > 0 && splitBodyField) {
+      rawBody = buffer.slice(bodyStart + contentLen, bodyStart + totalLen).toString('utf8');
+    }
+    buffer = buffer.slice(bodyStart + totalLen);
 
     try {
-      const msg = JSON.parse(body);
+      const msg = JSON.parse(jsonBody);
+      // Inject split-body field into payload or result
+      if (rawBody !== null && splitBodyField) {
+        if (msg.payload && typeof msg.payload === 'object') {
+          msg.payload[splitBodyField] = rawBody;
+        } else if (msg.result && typeof msg.result === 'object') {
+          msg.result[splitBodyField] = rawBody;
+        }
+      }
       handleMessage(msg);
     } catch (e) {
       sendMessage({ id: 0, error: e.message });
@@ -136,7 +177,7 @@ async function handleMessage(msg) {
         const fn = hooks[msg.name];
         if (!fn) { sendMessage({ id: msg.id, error: `hook "${msg.name}" not found` }); return; }
         const result = await fn(msg.payload);
-        sendMessage({ id: msg.id, result });
+        sendMessage({ id: msg.id, result }, 'hook');
         break;
       }
       case 'shortcode': {

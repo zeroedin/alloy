@@ -125,49 +125,24 @@ func EncodeMessage(msg *Message) ([]byte, error) {
 		return nil, fmt.Errorf("message encoding error: %w", err)
 	}
 
-	rawBytes := []byte(fieldValue)
+	rawByteLen := len(fieldValue)
 	header := fmt.Sprintf("Content-Length: %d\r\nX-Body-Length: %d\r\nX-Body-Field: %s\r\n\r\n",
-		len(body), len(rawBytes), fieldName)
+		len(body), rawByteLen, fieldName)
 
-	frame := make([]byte, 0, len(header)+len(body)+len(rawBytes))
+	frame := make([]byte, 0, len(header)+len(body)+rawByteLen)
 	frame = append(frame, header...)
 	frame = append(frame, body...)
-	frame = append(frame, rawBytes...)
+	frame = append(frame, fieldValue...)
 	return frame, nil
 }
 
 // stripField returns a shallow copy of the message with the named field
 // removed from the payload. Does not mutate the original message.
-// Converts struct payloads to maps so the field is fully absent from JSON
-// (struct zero values would still appear as "html":"").
+// For struct payloads, uses JSON round-trip to derive a map so new fields
+// added to the struct are automatically included without manual maintenance.
 func stripField(msg *Message, fieldName string) *Message {
 	cp := *msg
 	switch p := msg.Payload.(type) {
-	case HookRenderedPayload:
-		m := map[string]interface{}{
-			"frontMatter": p.FrontMatter,
-			"url":         p.URL,
-			"path":        p.Path,
-		}
-		cp.Payload = m
-	case HookFormatRenderedPayload:
-		m := map[string]interface{}{
-			"format":      p.Format,
-			"url":         p.URL,
-			"path":        p.Path,
-			"frontMatter": p.FrontMatter,
-		}
-		cp.Payload = m
-	case HookTransformPayload:
-		m := map[string]interface{}{
-			"frontMatter": p.FrontMatter,
-			"url":         p.URL,
-			"path":        p.Path,
-		}
-		if len(p.TOC) > 0 {
-			m["toc"] = p.TOC
-		}
-		cp.Payload = m
 	case map[string]interface{}:
 		m := make(map[string]interface{}, len(p))
 		for k, v := range p {
@@ -175,6 +150,17 @@ func stripField(msg *Message, fieldName string) *Message {
 				m[k] = v
 			}
 		}
+		cp.Payload = m
+	default:
+		raw, err := jsonCodec.Marshal(p)
+		if err != nil {
+			return &cp
+		}
+		var m map[string]interface{}
+		if err := jsonCodec.Unmarshal(raw, &m); err != nil {
+			return &cp
+		}
+		delete(m, fieldName)
 		cp.Payload = m
 	}
 	return &cp
@@ -202,6 +188,9 @@ func DecodeMessage(data []byte) (*Message, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid Content-Length: %s", headers["Content-Length"])
 	}
+	if contentLen < 0 || contentLen > len(afterSep) {
+		return nil, fmt.Errorf("invalid Content-Length: %d (available bytes: %d)", contentLen, len(afterSep))
+	}
 
 	jsonBody := afterSep[:contentLen]
 
@@ -210,21 +199,33 @@ func DecodeMessage(data []byte) (*Message, error) {
 		return nil, fmt.Errorf("message decode error: %w", err)
 	}
 
-	// Inject split-body raw bytes into result map if present
+	// Inject split-body raw bytes if present
 	if bodyLenStr, ok := headers["X-Body-Length"]; ok {
 		bodyLen, err := strconv.Atoi(bodyLenStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid X-Body-Length: %s", bodyLenStr)
 		}
 		bodyField := headers["X-Body-Field"]
-		rawBody := afterSep[contentLen : contentLen+bodyLen]
-
-		resultMap, ok := msg.Result.(map[string]interface{})
-		if !ok {
-			resultMap = make(map[string]interface{})
+		if bodyField == "" {
+			return nil, fmt.Errorf("split-body frame has X-Body-Length but missing X-Body-Field")
 		}
-		resultMap[bodyField] = string(rawBody)
-		msg.Result = resultMap
+		if bodyLen < 0 || contentLen+bodyLen > len(afterSep) {
+			return nil, fmt.Errorf("invalid X-Body-Length: %d (available bytes after JSON: %d)", bodyLen, len(afterSep)-contentLen)
+		}
+		rawBody := string(afterSep[contentLen : contentLen+bodyLen])
+
+		// Prefer Result map; fall back to Payload map when Result is nil
+		if resultMap, ok := msg.Result.(map[string]interface{}); ok {
+			resultMap[bodyField] = rawBody
+		} else if msg.Result == nil {
+			if payloadMap, ok := msg.Payload.(map[string]interface{}); ok {
+				payloadMap[bodyField] = rawBody
+			} else {
+				msg.Result = map[string]interface{}{bodyField: rawBody}
+			}
+		} else {
+			msg.Result = map[string]interface{}{bodyField: rawBody}
+		}
 	}
 
 	return &msg, nil
@@ -872,8 +873,11 @@ func (b *NodeBridge) Send(msg *Message) (*Message, error) {
 		return nil, fmt.Errorf("writing to node: %w", err)
 	}
 
-	// Read response headers (multi-header loop until blank line)
+	// Read response headers (multi-header loop until blank line).
+	// The first line must start with "Content-Length:" — anything else
+	// is stdout pollution from a plugin or its dependencies.
 	headers := make(map[string]string)
+	first := true
 	for {
 		line, readErr := b.stdout.ReadString('\n')
 		line = strings.TrimRight(line, "\r\n")
@@ -885,9 +889,14 @@ func (b *NodeBridge) Send(msg *Message) (*Message, error) {
 			break // blank line = end of headers
 		}
 
+		if first && !strings.HasPrefix(line, "Content-Length:") {
+			return nil, fmt.Errorf(stdoutPollutionErrFmt, truncateSnippet(line, 80))
+		}
+		first = false
+
 		if kv := strings.SplitN(line, ": ", 2); len(kv) == 2 {
 			headers[kv[0]] = kv[1]
-		} else if !strings.HasPrefix(line, "Content-Length:") && !strings.HasPrefix(line, "X-Body-") {
+		} else if !strings.HasPrefix(line, "X-Body-") {
 			return nil, fmt.Errorf(stdoutPollutionErrFmt, truncateSnippet(line, 80))
 		}
 
@@ -903,6 +912,9 @@ func (b *NodeBridge) Send(msg *Message) (*Message, error) {
 	contentLen, err := strconv.Atoi(clStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid Content-Length: %s", clStr)
+	}
+	if contentLen < 0 {
+		return nil, fmt.Errorf("invalid Content-Length: %d", contentLen)
 	}
 
 	// Read JSON body
@@ -923,6 +935,12 @@ func (b *NodeBridge) Send(msg *Message) (*Message, error) {
 			return nil, fmt.Errorf("invalid X-Body-Length: %s", bodyLenStr)
 		}
 		bodyField := headers["X-Body-Field"]
+		if bodyField == "" {
+			return nil, fmt.Errorf("split-body response has X-Body-Length but missing X-Body-Field")
+		}
+		if bodyLen < 0 {
+			return nil, fmt.Errorf("invalid X-Body-Length: %d", bodyLen)
+		}
 		rawBody := make([]byte, bodyLen)
 		if _, err := io.ReadFull(b.stdout, rawBody); err != nil {
 			return nil, fmt.Errorf("reading split body: %w", err)
