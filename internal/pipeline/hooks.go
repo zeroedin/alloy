@@ -301,7 +301,7 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 		if modified, ok := toGoMap(result); ok {
 			if scope == nil || scope.WantsField("html") {
 				if html, ok := modified["html"].(string); ok {
-					page.SetRenderedBody([]byte(html))
+					page.SetRenderedHTML(html)
 				}
 			}
 			if scope == nil || scope.WantsField("toc") {
@@ -318,7 +318,7 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 				extractAddDependencies(modified, page.RelPath, buildCache[0])
 			}
 		} else if s, ok := result.(string); ok {
-			page.SetRenderedBody([]byte(s))
+			page.SetRenderedHTML(s)
 		} else if b, ok := result.([]byte); ok {
 			page.SetRenderedBody(b)
 		}
@@ -653,7 +653,7 @@ func dispatchPostRenderHooks(
 				for i, result := range results {
 					if m, ok := toGoMap(result); ok {
 						if html, ok := m["html"].(string); ok {
-							htmlPages[i].SetRenderedBody([]byte(html))
+							htmlPages[i].SetRenderedHTML(html)
 						}
 						extractAddDependencies(m, htmlPages[i].RelPath, buildCache)
 					} else if result != nil {

@@ -158,6 +158,7 @@ func (r *QuickJSRuntime) Init() error {
 		}
 		fmJSON, err := jsonCodec.Marshal(r.pendingFM)
 		if err != nil {
+			log.Printf("warning: lazy frontMatter marshal failed: %v", err)
 			return this.Context().NewObject(), nil
 		}
 		return this.Context().ParseJSON(string(fmJSON)), nil
@@ -169,6 +170,7 @@ func (r *QuickJSRuntime) Init() error {
 		}
 		tocJSON, err := jsonCodec.Marshal(r.pendingTOC)
 		if err != nil {
+			log.Printf("warning: lazy TOC marshal failed: %v", err)
 			return this.Context().NewUndefined(), nil
 		}
 		return this.Context().ParseJSON(string(tocJSON)), nil
@@ -499,6 +501,11 @@ func (r *QuickJSRuntime) callHookLocked(name string, payload interface{}) (inter
 		// Page-like maps (with html or content key) build JS objects directly.
 		// Non-page maps fall through to the JSON path.
 		if _, hasHTML := v["html"]; hasHTML {
+			// Disambiguate transform vs rendered: onContentTransformed returns
+			// html + toc, while onPageRendered returns only html.
+			if _, hasTOC := v["toc"]; hasTOC {
+				return r.callHookMapPayload(name, v, payloadTransform)
+			}
 			return r.callHookMapPayload(name, v, payloadRendered)
 		}
 		if _, hasContent := v["content"]; hasContent {
@@ -604,7 +611,7 @@ func (r *QuickJSRuntime) callHookMapPayload(name string, m map[string]interface{
 		case string:
 			obj.SetPropertyStr(k, r.ctx.NewString(val))
 		case int:
-			obj.SetPropertyStr(k, r.ctx.NewInt32(int32(val)))
+			obj.SetPropertyStr(k, r.ctx.NewFloat64(float64(val)))
 		case float64:
 			obj.SetPropertyStr(k, r.ctx.NewFloat64(val))
 		case bool:
@@ -612,6 +619,7 @@ func (r *QuickJSRuntime) callHookMapPayload(name string, m map[string]interface{
 		default:
 			jsonBytes, err := jsonCodec.Marshal(val)
 			if err != nil {
+				log.Printf("warning: hook chain map key %q: marshal failed: %v", k, err)
 				continue
 			}
 			obj.SetPropertyStr(k, r.ctx.ParseJSON(string(jsonBytes)))
