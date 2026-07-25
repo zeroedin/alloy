@@ -1618,6 +1618,21 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 		})
 	})
 
+	// setupQuickJSWithHook creates a QuickJS runtime, inlines the given
+	// plugin JS (which must register a hook via alloy.hook), and returns
+	// the runtime. Caller must DeferCleanup(rt.Close).
+	setupQuickJSWithHook := func(hookJS string) *plugin.QuickJSRuntime {
+		tmpDir := GinkgoT().TempDir()
+		pluginPath := filepath.Join(tmpDir, "test-hook.js")
+		Expect(os.WriteFile(pluginPath, []byte(hookJS), 0644)).To(Succeed())
+
+		rt := plugin.NewQuickJSRuntime()
+		Expect(rt.Init()).To(Succeed())
+		Expect(rt.EvalFile(pluginPath)).To(Succeed())
+		DeferCleanup(rt.Close)
+		return rt
+	}
+
 	// ── CallHook payload struct fast path (issue #1180) ──────────────
 	// QuickJS CallHook currently JSON-serializes the entire payload for
 	// struct types (HookRenderedPayload, HookFormatRenderedPayload,
@@ -1628,21 +1643,6 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 	// the behavioral contract that the fast path must satisfy.
 
 	Describe("CallHook payload struct fast path (issue #1180)", func() {
-
-		// setupQuickJSWithHook creates a QuickJS runtime, inlines the given
-		// plugin JS (which must register a hook via alloy.hook), and returns
-		// the runtime. Caller must DeferCleanup(rt.Close).
-		setupQuickJSWithHook := func(hookJS string) *plugin.QuickJSRuntime {
-			tmpDir := GinkgoT().TempDir()
-			pluginPath := filepath.Join(tmpDir, "test-hook.js")
-			Expect(os.WriteFile(pluginPath, []byte(hookJS), 0644)).To(Succeed())
-
-			rt := plugin.NewQuickJSRuntime()
-			Expect(rt.Init()).To(Succeed())
-			Expect(rt.EvalFile(pluginPath)).To(Succeed())
-			DeferCleanup(rt.Close)
-			return rt
-		}
 
 		It("HookRenderedPayload delivers all fields to JS and returns modified html", func() {
 			rt := setupQuickJSWithHook(`export default function(alloy) {
@@ -2246,21 +2246,6 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 
 	Describe("Lazy frontMatter and TOC serialization (issue #1187)", func() {
 
-		// setupQuickJSWithHook creates a QuickJS runtime, inlines the given
-		// plugin JS (which must register a hook via alloy.hook), and returns
-		// the runtime. Caller must DeferCleanup(rt.Close).
-		setupQuickJSWithHook := func(hookJS string) *plugin.QuickJSRuntime {
-			tmpDir := GinkgoT().TempDir()
-			pluginPath := filepath.Join(tmpDir, "test-hook.js")
-			Expect(os.WriteFile(pluginPath, []byte(hookJS), 0644)).To(Succeed())
-
-			rt := plugin.NewQuickJSRuntime()
-			Expect(rt.Init()).To(Succeed())
-			Expect(rt.EvalFile(pluginPath)).To(Succeed())
-			DeferCleanup(rt.Close)
-			return rt
-		}
-
 		// ── frontMatter lazy getter ──────────────────────────────────
 
 		It("frontMatter is installed as lazy accessor that resolves and self-caches on HookRenderedPayload", func() {
@@ -2687,6 +2672,96 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(ok).To(BeTrue())
 			Expect(html).To(Equal("<h2>Heading</h2><!-- no-toc-read -->"),
 				"html must be delivered correctly even when toc is never accessed")
+		})
+
+		It("reading toc twice returns same cached array reference", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    // First read — triggers lazy getter
+    var text1 = page.toc[0].text;
+    // Second read — should hit cached data property
+    var text2 = page.toc[0].text;
+    // Verify the array reference is stable
+    var toc1 = page.toc;
+    var toc2 = page.toc;
+    var sameRef = (toc1 === toc2);
+    return {
+      html: 'text1:' + text1 + ' text2:' + text2 + ' sameRef:' + sameRef,
+      toc: page.toc
+    };
+  });
+}`)
+			payload := plugin.HookTransformPayload{
+				HTML: "<h2>Cached</h2>",
+				TOC: []content.TOCEntry{
+					{Text: "Cached Heading", ID: "cached", Level: 2},
+				},
+				URL:         "/toc-cache/",
+				Path:        "content/toc-cache.md",
+				FrontMatter: map[string]interface{}{},
+			}
+			result, err := rt.CallHook("onContentTransformed", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(Equal("text1:Cached Heading text2:Cached Heading sameRef:true"),
+				"reading toc twice must return the same array reference — "+
+					"the lazy getter must self-replace with a data property "+
+					"on first access so subsequent reads return the cached "+
+					"array (sameRef:true), not a fresh JSON.parse each time")
+		})
+
+		It("consecutive hook calls resolve correct TOC per call", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    var tocText = (page.toc && page.toc.length > 0) ? page.toc[0].text : 'none';
+    return { html: 'toc:' + tocText, toc: page.toc };
+  });
+}`)
+			// First call with one TOC
+			payload1 := plugin.HookTransformPayload{
+				HTML: "<h2>First</h2>",
+				TOC: []content.TOCEntry{
+					{Text: "First Heading", ID: "first", Level: 2},
+				},
+				URL:         "/first-toc/",
+				Path:        "content/first-toc.md",
+				FrontMatter: map[string]interface{}{},
+			}
+			result1, err := rt.CallHook("onContentTransformed", payload1)
+			Expect(err).NotTo(HaveOccurred())
+
+			m1 := extractGoMap(result1)
+			Expect(m1).NotTo(BeNil())
+			html1, ok := m1["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html1).To(Equal("toc:First Heading"),
+				"first call must resolve its own TOC")
+
+			// Second call with different TOC
+			payload2 := plugin.HookTransformPayload{
+				HTML: "<h2>Second</h2>",
+				TOC: []content.TOCEntry{
+					{Text: "Second Heading", ID: "second", Level: 2},
+				},
+				URL:         "/second-toc/",
+				Path:        "content/second-toc.md",
+				FrontMatter: map[string]interface{}{},
+			}
+			result2, err := rt.CallHook("onContentTransformed", payload2)
+			Expect(err).NotTo(HaveOccurred())
+
+			m2 := extractGoMap(result2)
+			Expect(m2).NotTo(BeNil())
+			html2, ok := m2["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html2).To(Equal("toc:Second Heading"),
+				"second call must resolve its own TOC, not stale data "+
+					"from the first call — the Go callback must read "+
+					"fresh pendingTOC on each hook invocation")
 		})
 
 		It("nil TOC does not install lazy getter — property is absent", func() {

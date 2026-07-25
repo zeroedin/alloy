@@ -733,11 +733,11 @@ The method must nil `RenderedBody`, clear `renderedStr` (so `HTML()` returns `""
     4. **Replace `setPayloadFrontMatter`**: Instead of eager `jsonCodec.Marshal(fm)` + `ParseJSON()`, set `r.pendingFM = fm` (or `r.pendingFM = nil` for nil fm) and call `__installLazyFM(obj)` in JS. The `pendingFM` is valid for the duration of the hook call (QuickJS is single-threaded, mutex held).
     5. **Replace TOC serialization in `callHookTransformPayload`**: When `len(v.TOC) > 0`, set `r.pendingTOC = v.TOC` and call `__installLazyTOC(obj)` in JS. When `len(v.TOC) == 0` (nil or empty slice), do not install a lazy getter — the `toc` property is absent (undefined), matching the current omitempty behavior.
     6. **Clear pending state after hook call**: After `invokeHookFastPath` returns, set `r.pendingFM = nil` and `r.pendingTOC = nil` to avoid stale references.
-    **Test coverage**: 14 spec tests in `internal/plugin/wasm_test.go` under "Lazy frontMatter and TOC serialization (issue #1187)":
-    - frontMatter: lazy accessor detection + self-caching on `HookRenderedPayload` (4 RED tests that verify `Object.getOwnPropertyDescriptor` returns a getter before read and a data property after read — fail with current eager implementation)
-    - frontMatter: write-before-read (setter replaces accessor), never-read (lazy getter inert), consecutive calls (per-call resolution), nil FM → empty object, empty FM → empty object
-    - frontMatter: lazy accessor on `HookFormatRenderedPayload` and `HookTransformPayload` (RED)
-    - TOC: lazy accessor detection + self-caching on `HookTransformPayload` (RED), write-before-read, never-read, nil TOC absent, empty TOC absent
+    **Test coverage**: 16 spec tests in `internal/plugin/wasm_test.go` under "Lazy frontMatter and TOC serialization (issue #1187)":
+    - frontMatter: lazy accessor detection + self-caching on `HookRenderedPayload` (RED — verifies `Object.getOwnPropertyDescriptor` returns a getter before read and a data property after read, fails with current eager implementation)
+    - frontMatter: write-before-read (setter replaces accessor), never-read (lazy getter inert), reading twice returns cached reference, consecutive calls (per-call resolution), nil FM → empty object, empty FM → empty object
+    - frontMatter: lazy accessor on `HookFormatRenderedPayload` (RED) and `HookTransformPayload` (RED)
+    - TOC: lazy accessor detection + self-caching on `HookTransformPayload` (RED), write-before-read, never-read, reading twice returns cached array reference, consecutive calls (per-call resolution), nil TOC absent, empty TOC absent
 - **JSON library replacement (issue #529)**: Replace `encoding/json` with `sonic.ConfigStd` in `internal/plugin`. Add `var json = sonic.ConfigStd` package-level alias — all existing `json.Marshal`/`json.Unmarshal` calls work unchanged. sonic v1.15.1 (Apache 2.0) auto-falls back to `encoding/json` on non-amd64/arm64 architectures via build constraints. `sonic.ConfigStd` matches `encoding/json` behavior: HTML escaping enabled, map keys sorted, strings copied on decode. One known difference: backspace encoded as `\b` vs `` — both valid JSON, no behavioral impact. Add `github.com/bytedance/sonic` to `go.mod`.
 - **WASM runtime (issue #181)**: `WASMRuntime.LoadModule()` uses wazero to compile and instantiate the WASM binary, discover exported functions (`alloc`, `filter`, `shortcode`, `hook`, `hooks`), and register them. `alloc` export is required — used by the host to get a safe write offset in WASM linear memory (issue #186). `CallExport(name, args...)` must call `alloc(inputLen)`, write input bytes at the returned pointer, call the export with `(ptr, len)`, and read the result from the returned `(resultPtr, resultLen)` (issue #190). `RegisteredFilters()` must return filter names from the module's exports. `LoadModule` must return an error for invalid WASM binaries. See PLAN.md §5 WASM Calling Convention for full ABI.
 - **WASM hook support (issue #444)**: `WASMRuntime` must support hook registration and execution via the `hooks()`/`hook()` export ABI:
@@ -910,9 +910,9 @@ At this point, `alloy build` works end-to-end on test fixtures.
 
 ---
 
-## Phase 5: Plugin + Fetch + I18n + CLI (~136 tests)
+## Phase 5: Plugin + Fetch + I18n + CLI (~152 tests)
 
-### 5A: `internal/plugin` — 93 tests
+### 5A: `internal/plugin` — 109 tests
 **Files**: `hooks.go`, `registry.go`, `node.go`, `wasm.go`
 
 - **hooks.go**: Hook registry with timeout, chained execution, warnings. `HookFunc` signature is `func(ctx context.Context, payload interface{}) (interface{}, error)` — context carries timeout deadline for cooperative cancellation (issue #13). `Run()` passes `context.Background()`. `RunWithTimeout()` uses `context.WithTimeout()` and passes the derived context to each hook.
@@ -1361,7 +1361,7 @@ Cross-package integration paths that should mostly pass once pipeline works:
 | 2 | config, content | ~119 | ~228 |
 | 3 | permalink, collection, template (context/layout/shortcodes), output, assets | ~79 | ~307 |
 | 4 | template (liquid/go engines), static, pipeline **[WALKING SKELETON]** | ~56 | ~363 |
-| 5 | plugin, fetch, i18n, cmd | ~129 | ~492 |
+| 5 | plugin, fetch, i18n, cmd | ~145 | ~508 |
 | 6 | server, ssr | ~96 | ~588 |
 | 7 | integration tests + remaining | ~86 | ~674 |
 
