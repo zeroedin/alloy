@@ -455,7 +455,7 @@ func (r *QuickJSRuntime) BatchCallHook(name string, payloads []interface{}, onPr
 	for i, p := range payloads {
 		result, err := r.callHookLocked(name, p)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("item %d: %w", i, err)
 		}
 		results[i] = result
 		if onProgress != nil {
