@@ -606,9 +606,16 @@ func (r *QuickJSRuntime) callHookTransformPayload(name string, v HookTransformPa
 // callHookMapPayload is the fast path for map[string]interface{} payloads
 // from hook chaining (issue #1185). Builds a JS object directly, using
 // native strings for the large html/content field.
+// When the map contains a "frontMatter" key (injected by the chaining layer,
+// issue #1216), it is installed as a lazy getter instead of JSON-serialized.
 func (r *QuickJSRuntime) callHookMapPayload(name string, m map[string]interface{}, ptype payloadType) (interface{}, error) {
+	fm, hasFM := m["frontMatter"].(map[string]interface{})
+
 	obj := r.ctx.NewObject()
 	for k, v := range m {
+		if k == "frontMatter" {
+			continue
+		}
 		switch val := v.(type) {
 		case string:
 			obj.SetPropertyStr(k, r.ctx.NewString(val))
@@ -625,6 +632,11 @@ func (r *QuickJSRuntime) callHookMapPayload(name string, m map[string]interface{
 				continue
 			}
 			obj.SetPropertyStr(k, r.ctx.ParseJSON(string(jsonBytes)))
+		}
+	}
+	if hasFM {
+		if err := r.setPayloadFrontMatter(obj, fm); err != nil {
+			return nil, fmt.Errorf("hook %q: %w", name, err)
 		}
 	}
 	return r.invokeHookFastPath(name, obj, ptype)
