@@ -334,22 +334,15 @@ func parseScopeJSON(raw string) (*HookScope, error) {
 func (r *HookRegistry) Run(event HookName, payload interface{}) (interface{}, error) {
 	hooks := r.hooks[event]
 	current := payload
-
-	var ctxURL, ctxPath string
-	var ctxFM map[string]interface{}
-	var hasCtx bool
-	if len(hooks) > 1 {
-		ctxURL, ctxPath, ctxFM = extractPayloadContext(payload)
-		hasCtx = ctxURL != "" || ctxPath != "" || ctxFM != nil
-	}
+	cc := extractChainContext(payload, len(hooks))
 
 	for _, h := range hooks {
 		result, err := h.fn(context.Background(), current)
 		if err != nil {
 			return nil, err
 		}
-		if hasCtx {
-			result = mergeChainContext(result, ctxURL, ctxPath, ctxFM)
+		if cc.has {
+			injectChainContext(result, &cc)
 		}
 		current = result
 	}
@@ -365,14 +358,7 @@ func (r *HookRegistry) Run(event HookName, payload interface{}) (interface{}, er
 func (r *HookRegistry) RunWithTimeout(event HookName, payload interface{}) (interface{}, error) {
 	hooks := r.hooks[event]
 	current := payload
-
-	var ctxURL, ctxPath string
-	var ctxFM map[string]interface{}
-	var hasCtx bool
-	if len(hooks) > 1 {
-		ctxURL, ctxPath, ctxFM = extractPayloadContext(payload)
-		hasCtx = ctxURL != "" || ctxPath != "" || ctxFM != nil
-	}
+	cc := extractChainContext(payload, len(hooks))
 
 	for _, h := range hooks {
 		preHook := current
@@ -395,8 +381,8 @@ func (r *HookRegistry) RunWithTimeout(event HookName, payload interface{}) (inte
 			if res.err != nil {
 				return nil, res.err
 			}
-			if hasCtx {
-				res.val = mergeChainContext(res.val, ctxURL, ctxPath, ctxFM)
+			if cc.has {
+				injectChainContext(res.val, &cc)
 			}
 			current = res.val
 		case <-ctx.Done():
@@ -467,20 +453,10 @@ func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface
 	current := make([]interface{}, len(payloads))
 	copy(current, payloads)
 
-	// Pre-extract context from original payloads for chain carry-forward (issue #1216).
-	type chainCtx struct {
-		url  string
-		path string
-		fm   map[string]interface{}
-		has  bool
-	}
-	contexts := make([]chainCtx, len(payloads))
+	contexts := make([]chainContext, len(payloads))
 	if len(hooks) > 1 {
 		for i, p := range payloads {
-			u, pa, fm := extractPayloadContext(p)
-			if u != "" || pa != "" || fm != nil {
-				contexts[i] = chainCtx{u, pa, fm, true}
-			}
+			contexts[i] = extractChainContext(p, 2)
 		}
 	}
 
@@ -521,9 +497,9 @@ func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface
 					return nil, fmt.Errorf("batch hook %s returned %d results for %d inputs",
 						string(event), len(res.val), itemCount)
 				}
-				for i, c := range contexts {
-					if c.has && i < len(res.val) {
-						res.val[i] = mergeChainContext(res.val[i], c.url, c.path, c.fm)
+				for i := range contexts {
+					if contexts[i].has && i < len(res.val) {
+						injectChainContext(res.val[i], &contexts[i])
 					}
 				}
 				current = res.val
@@ -556,7 +532,7 @@ func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface
 						return nil, fmt.Errorf("%s item %d: %w", string(event), j, res.err)
 					}
 					if contexts[j].has {
-						res.val = mergeChainContext(res.val, contexts[j].url, contexts[j].path, contexts[j].fm)
+						injectChainContext(res.val, &contexts[j])
 					}
 					current[j] = res.val
 					if onProgress != nil {
@@ -577,37 +553,56 @@ func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface
 	return current, nil
 }
 
-// extractPayloadContext returns read-only context fields (url, path, frontMatter)
-// from a typed hook payload. Returns zero values for unrecognized types.
-func extractPayloadContext(payload interface{}) (url, path string, fm map[string]interface{}) {
-	switch v := payload.(type) {
-	case HookRenderedPayload:
-		return v.URL, v.Path, v.FrontMatter
-	case HookTransformPayload:
-		return v.URL, v.Path, v.FrontMatter
-	case HookFormatRenderedPayload:
-		return v.URL, v.Path, v.FrontMatter
-	}
-	return "", "", nil
+// chainContext holds read-only page context fields extracted from the
+// original typed payload for carry-forward through hook chains (issue #1216).
+type chainContext struct {
+	pageURL  string
+	pagePath string
+	fm       map[string]interface{}
+	has      bool
 }
 
-// mergeChainContext carries forward read-only context fields (url, path,
-// frontMatter) into a hook result map so the next hook in the chain can
+// extractChainContext extracts read-only context fields from a typed hook
+// payload. Returns a zero chainContext (has=false) when hookCount < 2 or
+// the payload is not a recognized page type.
+func extractChainContext(payload interface{}, hookCount int) chainContext {
+	if hookCount < 2 {
+		return chainContext{}
+	}
+	var pageURL, pagePath string
+	var fm map[string]interface{}
+	switch v := payload.(type) {
+	case HookRenderedPayload:
+		pageURL, pagePath, fm = v.URL, v.Path, v.FrontMatter
+	case HookTransformPayload:
+		pageURL, pagePath, fm = v.URL, v.Path, v.FrontMatter
+	case HookFormatRenderedPayload:
+		pageURL, pagePath, fm = v.URL, v.Path, v.FrontMatter
+	default:
+		return chainContext{}
+	}
+	if pageURL == "" && pagePath == "" && fm == nil {
+		return chainContext{}
+	}
+	return chainContext{pageURL: pageURL, pagePath: pagePath, fm: fm, has: true}
+}
+
+// injectChainContext mutates a hook result map in place, setting read-only
+// context fields (url, path, frontMatter) so the next hook in the chain can
 // access page context (issue #1216). The original payload's values always
-// win — hooks cannot mutate context fields.
-func mergeChainContext(result interface{}, url, path string, fm map[string]interface{}) interface{} {
+// win — hooks cannot mutate context fields. Non-map results are left unchanged.
+func injectChainContext(result interface{}, cc *chainContext) {
 	m, ok := result.(map[string]interface{})
 	if !ok {
-		return result
+		return
 	}
-	if url != "" {
-		m["url"] = url
+	if cc.pageURL != "" {
+		m["url"] = cc.pageURL
 	}
-	if path != "" {
-		m["path"] = path
+	if cc.pagePath != "" {
+		m["path"] = cc.pagePath
 	}
-	if fm != nil {
-		m["frontMatter"] = fm
+	if cc.fm != nil {
+		m["frontMatter"] = cc.fm
 	}
-	return m
 }
