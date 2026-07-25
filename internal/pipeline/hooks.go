@@ -309,11 +309,10 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 					page.TOC = deserializeTOC(tocSlice)
 				}
 			}
-			if scope == nil || scope.WantsField("frontMatter") {
-				if returnedFM, ok := toGoMap(modified["frontMatter"]); ok {
-					page.FrontMatter = returnedFM
-				}
-			}
+			// frontMatter is read-only context for onContentTransformed —
+			// the pipeline does not apply frontMatter back from the return
+			// value, consistent with onPageRendered and onFormatRendered
+			// (issue #1185, #1201).
 			if len(buildCache) > 0 && buildCache[0] != nil {
 				extractAddDependencies(modified, page.RelPath, buildCache[0])
 			}
