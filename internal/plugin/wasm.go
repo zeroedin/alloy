@@ -652,6 +652,7 @@ func (r *QuickJSRuntime) setPayloadFrontMatter(obj *qjs.Value, fm map[string]int
 // The input is passed directly as a function argument — no globals are set
 // (issue #1186: eliminates __callInput/__callHookName global setup).
 func (r *QuickJSRuntime) invokeHookFastPath(name string, input *qjs.Value, ptype payloadType) (interface{}, error) {
+	defer input.Free()
 	defer func() {
 		r.pendingFM = nil
 		r.pendingTOC = nil
