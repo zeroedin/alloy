@@ -3500,4 +3500,243 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 		})
 	})
 
+	// ── Hook chain context preservation (issue #1216) ────────────────
+	// When multiple hooks chain on the same event (different priorities),
+	// the second hook must receive the full payload context (url, path,
+	// frontMatter) — not just the mutable field (html/content). The
+	// outbound fast path extractors strip context fields because the
+	// pipeline doesn't consume them on return, but the chained hook
+	// still needs them for conditional processing.
+
+	Describe("Hook chain context preservation (issue #1216)", func() {
+		// setupChainedHooks creates two QuickJS runtimes with hooks on the
+		// same event at different priorities, registers both into a shared
+		// HookRegistry via RegisterRuntime, and returns the registry.
+		setupChainedHooks := func(hookAJS, hookBJS string) *plugin.HookRegistry {
+			rtA := setupQuickJSWithHook(hookAJS)
+			rtB := setupQuickJSWithHook(hookBJS)
+
+			hooks := plugin.NewHookRegistry()
+			reg := plugin.NewRegistry(GinkgoT().TempDir())
+			plugin.RegisterRuntime(reg, rtA, "plugin-a", hooks)
+			plugin.RegisterRuntime(reg, rtB, "plugin-b", hooks)
+
+			return hooks
+		}
+
+		It("onPageRendered chain: second hook receives url, path, frontMatter", func() {
+			// Issue #1216: extractRenderedResult strips url/path/frontMatter
+			// from the first hook's result. The second hook receives only
+			// { html } — context fields are lost. The fix must carry forward
+			// url and path as strings and install a lazy frontMatter getter.
+			hooks := setupChainedHooks(
+				// Plugin A (priority 10): modifies html, strips context on return
+				`export default function(alloy) {
+  alloy.hook('onPageRendered', { priority: 10 }, function(page) {
+    return { html: page.html + '<!-- hook-a -->' };
+  });
+}`,
+				// Plugin B (priority 20): reports received context in html
+				`export default function(alloy) {
+  alloy.hook('onPageRendered', { priority: 20 }, function(page) {
+    var u = (typeof page.url !== 'undefined') ? page.url : 'MISSING';
+    var p = (typeof page.path !== 'undefined') ? page.path : 'MISSING';
+    var fm = (typeof page.frontMatter === 'object' && page.frontMatter !== null) ? 'PRESENT' : 'MISSING';
+    return { html: page.html + '<!-- url:' + u + ' --><!-- path:' + p + ' --><!-- fm:' + fm + ' -->' };
+  });
+}`)
+
+			payloads := []interface{}{
+				plugin.HookRenderedPayload{
+					HTML:        "<p>hello</p>",
+					FrontMatter: map[string]interface{}{"title": "Test Page"},
+					URL:         "/test/",
+					Path:        "content/test.md",
+				},
+			}
+
+			results, err := hooks.RunBatchWithProgress(plugin.OnPageRendered, payloads, nil)
+			Expect(err).NotTo(HaveOccurred(),
+				"chained onPageRendered hooks must not error")
+			Expect(results).To(HaveLen(1))
+
+			m := extractGoMap(results[0])
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+
+			Expect(html).To(ContainSubstring("<!-- hook-a -->"),
+				"first hook's html modification must be present in chain output")
+			Expect(html).To(ContainSubstring("<!-- url:/test/ -->"),
+				"second hook must receive url from original payload — "+
+					"extractRenderedResult must preserve url through the chain (issue #1216)")
+			Expect(html).To(ContainSubstring("<!-- path:content/test.md -->"),
+				"second hook must receive path from original payload — "+
+					"extractRenderedResult must preserve path through the chain (issue #1216)")
+			Expect(html).To(ContainSubstring("<!-- fm:PRESENT -->"),
+				"second hook must receive frontMatter from original payload — "+
+					"the chaining layer must install a lazy frontMatter getter "+
+					"so the next hook can access page.frontMatter (issue #1216)")
+		})
+
+		It("onContentTransformed chain: second hook receives url, path, frontMatter", func() {
+			// Issue #1216: extractTransformResult strips url/path/frontMatter.
+			// Same bug as onPageRendered but through RunWithTimeout chaining.
+			hooks := setupChainedHooks(
+				// Plugin A (priority 10): modifies html
+				`export default function(alloy) {
+  alloy.hook('onContentTransformed', { priority: 10 }, function(page) {
+    return { html: page.html + '<!-- transform-a -->' };
+  });
+}`,
+				// Plugin B (priority 20): reports received context in html
+				`export default function(alloy) {
+  alloy.hook('onContentTransformed', { priority: 20 }, function(page) {
+    var u = (typeof page.url !== 'undefined') ? page.url : 'MISSING';
+    var p = (typeof page.path !== 'undefined') ? page.path : 'MISSING';
+    var fm = (typeof page.frontMatter === 'object' && page.frontMatter !== null) ? 'PRESENT' : 'MISSING';
+    return { html: page.html + '<!-- url:' + u + ' --><!-- path:' + p + ' --><!-- fm:' + fm + ' -->' };
+  });
+}`)
+
+			payload := plugin.HookTransformPayload{
+				HTML:        "<p>content</p>",
+				FrontMatter: map[string]interface{}{"category": "docs"},
+				URL:         "/docs/intro/",
+				Path:        "content/docs/intro.md",
+			}
+
+			result, err := hooks.RunWithTimeout(plugin.OnContentTransformed, payload)
+			Expect(err).NotTo(HaveOccurred(),
+				"chained onContentTransformed hooks must not error")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+
+			Expect(html).To(ContainSubstring("<!-- transform-a -->"),
+				"first hook's html modification must be present in chain output")
+			Expect(html).To(ContainSubstring("<!-- url:/docs/intro/ -->"),
+				"second hook must receive url from original payload — "+
+					"extractTransformResult must preserve url through the chain (issue #1216)")
+			Expect(html).To(ContainSubstring("<!-- path:content/docs/intro.md -->"),
+				"second hook must receive path from original payload — "+
+					"extractTransformResult must preserve path through the chain (issue #1216)")
+			Expect(html).To(ContainSubstring("<!-- fm:PRESENT -->"),
+				"second hook must receive frontMatter from original payload — "+
+					"the chaining layer must install a lazy frontMatter getter "+
+					"so the next hook can access page.frontMatter (issue #1216)")
+		})
+
+		It("onPageRendered chain: url mutation in hook return does not propagate (read-only)", func() {
+			// Issue #1216: url and path are read-only context. If hook A
+			// returns { html: "...", url: "/mutated/" }, the chaining layer
+			// must carry forward the ORIGINAL url from the input payload,
+			// not the hook's returned url. This prevents one plugin from
+			// corrupting context for downstream plugins.
+			hooks := setupChainedHooks(
+				// Plugin A (priority 10): returns mutated url alongside html
+				`export default function(alloy) {
+  alloy.hook('onPageRendered', { priority: 10 }, function(page) {
+    return { html: page.html + '<!-- hook-a -->', url: '/mutated/' };
+  });
+}`,
+				// Plugin B (priority 20): reports the url it received
+				`export default function(alloy) {
+  alloy.hook('onPageRendered', { priority: 20 }, function(page) {
+    var u = (typeof page.url !== 'undefined') ? page.url : 'MISSING';
+    return { html: page.html + '<!-- received-url:' + u + ' -->' };
+  });
+}`)
+
+			payloads := []interface{}{
+				plugin.HookRenderedPayload{
+					HTML:        "<p>read-only test</p>",
+					FrontMatter: map[string]interface{}{},
+					URL:         "/original/",
+					Path:        "content/original.md",
+				},
+			}
+
+			results, err := hooks.RunBatchWithProgress(plugin.OnPageRendered, payloads, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(HaveLen(1))
+
+			m := extractGoMap(results[0])
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+
+			Expect(html).To(ContainSubstring("<!-- received-url:/original/ -->"),
+				"second hook must receive the ORIGINAL url (/original/), not the "+
+					"mutated url (/mutated/) from hook A's return — url is read-only "+
+					"context that reflects page state, not hook output (issue #1216)")
+			Expect(html).NotTo(ContainSubstring("<!-- received-url:/mutated/ -->"),
+				"mutated url from hook A must NOT propagate to hook B — "+
+					"the chaining layer must use the original payload's url (issue #1216)")
+		})
+
+		It("onFormatRendered chain: second hook receives full context (regression guard)", func() {
+			// Issue #1216: onFormatRendered is immune to the context-stripping
+			// bug because the pipeline dispatches via RunEachWithTimeout with
+			// a payloadFn that rebuilds a fresh HookFormatRenderedPayload
+			// before each hook. This test verifies that behavior as a
+			// regression guard — it must pass green on the current codebase.
+			rtA := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onFormatRendered', { priority: 10 }, function(payload) {
+    return { content: payload.content + '<!-- format-a -->' };
+  });
+}`)
+			rtB := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onFormatRendered', { priority: 20 }, function(payload) {
+    var u = (typeof payload.url !== 'undefined') ? payload.url : 'MISSING';
+    var p = (typeof payload.path !== 'undefined') ? payload.path : 'MISSING';
+    var fm = (typeof payload.frontMatter === 'object' && payload.frontMatter !== null) ? 'PRESENT' : 'MISSING';
+    return { content: payload.content + '<!-- url:' + u + ' --><!-- path:' + p + ' --><!-- fm:' + fm + ' -->' };
+  });
+}`)
+
+			hooks := plugin.NewHookRegistry()
+			reg := plugin.NewRegistry(GinkgoT().TempDir())
+			plugin.RegisterRuntime(reg, rtA, "format-plugin-a", hooks)
+			plugin.RegisterRuntime(reg, rtB, "format-plugin-b", hooks)
+
+			currentContent := `{"items":[1,2,3]}`
+			fm := map[string]interface{}{"title": "Feed"}
+
+			err := hooks.RunEachWithTimeout(plugin.OnFormatRendered,
+				func(_ int, _ *plugin.HookScope) interface{} {
+					return plugin.HookFormatRenderedPayload{
+						Format:      "json",
+						Content:     currentContent,
+						URL:         "/feed.json",
+						Path:        "content/feed.md",
+						FrontMatter: fm,
+					}
+				},
+				func(_ int, _ *plugin.HookScope, result interface{}) error {
+					if m := extractGoMap(result); m != nil {
+						if c, ok := m["content"].(string); ok {
+							currentContent = c
+						}
+					}
+					return nil
+				},
+			)
+			Expect(err).NotTo(HaveOccurred(),
+				"chained onFormatRendered hooks must not error")
+
+			Expect(currentContent).To(ContainSubstring("<!-- format-a -->"),
+				"first hook's content modification must be present")
+			Expect(currentContent).To(ContainSubstring("<!-- url:/feed.json -->"),
+				"second hook must receive url — onFormatRendered rebuilds payload "+
+					"per hook via payloadFn, so context is always fresh (issue #1216)")
+			Expect(currentContent).To(ContainSubstring("<!-- path:content/feed.md -->"),
+				"second hook must receive path from fresh payload (issue #1216)")
+			Expect(currentContent).To(ContainSubstring("<!-- fm:PRESENT -->"),
+				"second hook must receive frontMatter from fresh payload (issue #1216)")
+		})
+	})
+
 })

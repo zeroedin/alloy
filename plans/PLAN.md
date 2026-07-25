@@ -2164,7 +2164,7 @@ Alloy uses a tiered plugin runtime. Plugin authors write in their preferred lang
         overwrites built-in filter "slugify"
 ```
 
-**Hook execution order**: Hooks execute by priority (lower runs first), then by alphabetical filename order within the same priority. Default priority is 50. Each hook receives the output of the previous one — they chain, not race.
+**Hook execution order**: Hooks execute by priority (lower runs first), then by alphabetical filename order within the same priority. Default priority is 50. Each hook receives the output of the previous one — they chain, not race. **Hook chain context preservation (issue #1216)**: When hooks chain, the next hook must receive the full payload context (`url`, `path`, `frontMatter`) from the original input — not just the mutable field (`html`/`content`) from the previous hook's return. Context fields are read-only: if a hook returns `{ url: "/mutated/" }`, the chaining layer carries forward the original `url`, not the hook's returned value. For `frontMatter`, the chaining layer installs a lazy getter backed by the original payload's FM — FM is only serialized if the next hook reads `page.frontMatter`. This applies to `onPageRendered` (chains via `RunBatchWithProgress`) and `onContentTransformed` (chains via `RunWithTimeout`). `onFormatRendered` is immune — it uses `RunEachWithTimeout` with per-hook payload reconstruction.
 
 ```javascript
 // alloy.hook(event, options, fn)
