@@ -1,6 +1,8 @@
 package pipeline_test
 
 import (
+	"reflect"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -105,7 +107,8 @@ var _ = Describe("convertedFrontMatter caching (issue #1185)", func() {
 		secondData, ok2 := second["data"].(map[string]interface{})
 		Expect(ok2).To(BeTrue(),
 			"second call must return the already-converted map[string]interface{}")
-		Expect(firstData).To(BeIdenticalTo(secondData),
+		Expect(reflect.ValueOf(firstData).Pointer()).To(
+			Equal(reflect.ValueOf(secondData).Pointer()),
 			"second call must return the same map object (pointer identity) — "+
 				"convertedFrontMatter stores the converted map back on "+
 				"page.FrontMatter, so no re-conversion occurs")
