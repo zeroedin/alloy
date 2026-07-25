@@ -771,7 +771,7 @@ Manual `{#id}` overrides take precedence over auto-generated IDs. Alloy enables 
 
 **Extraction** — TOC is extracted from the goldmark AST during markdown rendering (Phase 1, step 3), not from rendered HTML. This is fast and reliable — no HTML parsing pass needed. The AST contains the heading nodes with their auto-generated or attribute-overridden IDs.
 
-**Important:** If a render hook (`render-heading.liquid`) modifies heading IDs in the HTML output, the TOC data will not reflect those changes — it reflects the AST-level IDs. To sync, use the `onContentTransformed` plugin hook to mutate `page.toc` after markdown rendering but before layout rendering. The hook receives `{ html, toc, path, url, frontMatter }` — modify `page.toc` and return the updated object (`frontMatter` is read-only context — the pipeline does not apply frontMatter modifications back from the return). For non-markdown pages (HTML, paginated data pages), `toc` will be empty — plugins can build it from the rendered HTML.
+**Important:** If a render hook (`render-heading.liquid`) modifies heading IDs in the HTML output, the TOC data will not reflect those changes — it reflects the AST-level IDs. To sync, use the `onContentTransformed` plugin hook to mutate `page.toc` after markdown rendering but before layout rendering. The hook receives `{ html, toc, path, url, frontMatter }` — modify `page.toc` and return the updated object. For non-markdown pages (HTML, paginated data pages), `toc` will be empty — plugins can build it from the rendered HTML.
 
 **Config:**
 
@@ -1278,7 +1278,7 @@ Each language batch is processed independently. The following steps run inside `
 Data cascade and front matter are already assembled from Phase 0; taxonomy data is available from Phase 1a.
 
 12. **Content Transformation** — Markdown → HTML (via goldmark with template tag auto-detection), raw HTML passthrough. `{{ }}` and `{% %}` patterns survive goldmark automatically.
-13. **Plugin Hook: `onContentTransformed`** — Plugins can modify rendered content and TOC. Fires once per page with a page-scoped object payload: `{ html, toc, path, url, frontMatter }` (see Lifecycle Events in §5 for payload contract). Only `html`, `toc`, and `addDependencies` in the return are applied back — `frontMatter`, `url`, and `path` are read-only context for conditional processing (consistent with `onPageRendered` and `onFormatRendered` — issue #1201). **This hook fires after Markdown→HTML but before layout rendering in all modes** — single-language and i18n pipelines must fire at the same stage. The i18n pipeline must not defer this hook to after layout rendering or taxonomy generation.
+13. **Plugin Hook: `onContentTransformed`** — Plugins can modify rendered content, TOC, and front matter. Fires once per page with a page-scoped object payload: `{ html, toc, path, url, frontMatter }` (see Lifecycle Events in §5 for payload contract). **This hook fires after Markdown→HTML but before layout rendering in all modes** — single-language and i18n pipelines must fire at the same stage. The i18n pipeline must not defer this hook to after layout rendering or taxonomy generation.
 14. **Plugin Hook: `onContentLoaded`** — Plugins can modify `frontMatter` and `html` on existing pages after content rendering. Fires once with the full pages array. Other fields (`content`, `path`, `url`) are present for inspection but mutations are not applied back. Cannot inject virtual pages — return array must be same length and same order as input (use `onPagesReady` for injection).
 15. **Template Resolution** — Match each content file to its layout (lookup order)
 16. **Content Template Rendering** — Content body is rendered through the template engine with page data + site data context, producing an HTML string.
@@ -1506,26 +1506,7 @@ Deep merging happens **lazily** — only when a nested key is accessed at multip
 
 **QuickJS native object fast path (issue #1180)**: Per-page hook payloads (`onPageRendered`, `onFormatRendered`, `onContentTransformed`) contain large HTML/content string fields (~800KB avg on large sites). The QuickJS `CallHook` type switch must have dedicated `case` branches for `HookRenderedPayload`, `HookFormatRenderedPayload`, and `HookTransformPayload` that build JS objects directly via the QuickJS API — transferring large string fields as native strings (zero JSON serialization), and only JSON-serializing small metadata fields (`frontMatter`, `toc`). On the return path, extract `html`/`content` as native string properties from the JS result object instead of `JSON.stringify`-ing the entire result. This eliminates 4 JSON serialization passes per page for large string fields. The behavioral contract is unchanged — hooks receive the same JS object shape and return the same result shape. See IMPLEMENTATION.md §Plugin System for detailed guidance.
 
-**QuickJS outbound extraction and lazy fields (issue #1185)**: The inbound fast path (issue #1180) closed half the performance gap vs v0.5.0. The remaining gap is in the outbound path (`extractHookResult`), which uses `GetOwnPropertyNames` → iterate → `JSONStringify` per non-primitive property. Issue #1185 addresses this with several optimizations:
-
-1. **Targeted outbound extraction**: Replace the generic `extractHookResult` (iterates all own properties) with three type-aware extractors that read only the fields the pipeline consumes from each hook return. No `GetOwnPropertyNames`, no `JSONStringify` on the hot path:
-   - `onPageRendered` return: extract `html` (native string read) + `addDependencies` (JSONStringify only if present). Skip `url`, `path`, `frontMatter` (read-only context, pipeline ignores on return).
-   - `onFormatRendered` return: extract `content` (native string read) + `addDependencies`. Skip `format`, `url`, `path`, `frontMatter`.
-   - `onContentTransformed` return: extract `html` (native string read) + `toc` (JSONStringify only if present) + `addDependencies`. Skip `url`, `path`, `frontMatter`.
-
-2. **Lazy frontMatter via `Object.defineProperty` getter**: `setPayloadFrontMatter` no longer calls `jsonCodec.Marshal` + `ParseJSON` on every page. Instead, a lazy getter is installed via `Object.defineProperty`. A Go callback marshals only if the plugin actually reads `page.frontMatter`. Includes a setter (replaces the accessor with a data property) so plugins that write `page.frontMatter = {...}` before reading don't throw TypeError.
-
-3. **Lazy TOC via same `Object.defineProperty` getter pattern**: `setPayloadTOC` uses the same lazy getter backed by a Go callback. Marshal only on read.
-
-4. **Hook chain fast path for `map[string]interface{}`**: When hooks chain (first hook's `map[string]interface{}` result becomes second hook's payload), `CallHook` must detect page-like maps (containing `html` or `content` key) and build a JS object directly instead of JSON-serializing. Non-page maps (e.g., `onBuildComplete` payloads without `html`/`content` keys) fall through to the JSON path.
-
-5. **`BatchCallHook` on `QuickJSRuntime`**: Synchronous loop without per-item goroutine/channel/context overhead. Registered via the existing `registerRuntime` batch detection (type assertion for `BatchCallHook` method). Results must match sequential `CallHook` calls. `onProgress(i+1)` is called after each item (1-based). Empty payloads return an empty (non-nil) slice and nil error without invoking JS.
-
-6. **Pre-compiled JS functions**: Three functions compiled once during `Init()`, called via `InvokeJS` on hot paths: `__callHookByName(name, input)` (replaces per-call `Eval` of hook invocation string), `__installLazyFM(target)`, `__installLazyTOC(target)`.
-
-7. **`Page.SetRenderedHTML(string)`**: Stores both `RenderedBody` (as `[]byte`) and the cached HTML string simultaneously, avoiding the `string→[]byte→string` round-trip when applying hook results back. `page.HTML()` returns the string directly without re-conversion.
-
-8. **`convertedFrontMatter(page)` caching**: Replaces `convertOrderedMaps(page.FrontMatter)` at pipeline call sites. Converts `*ordered.Map` values once and stores the result back on `page.FrontMatter` so subsequent calls (across hook types for the same page) skip the deep walk.
+**Lazy frontMatter and TOC serialization (issue #1187)**: The fast path (issue #1180) still eagerly JSON-serializes `frontMatter` and `toc` on every hook call, even though most post-render hooks never read these properties. On large sites (820 pages), frontMatter serialization alone costs ~3.2 seconds of JSON work on small maps that are never accessed. The fix replaces eager serialization with lazy `Object.defineProperty` accessors backed by Go callbacks: `frontMatter` is installed as a getter/setter pair on all three per-page payload types (`HookRenderedPayload`, `HookFormatRenderedPayload`, `HookTransformPayload`); `toc` is installed on `HookTransformPayload` only when `len(TOC) > 0`. The getter calls a Go callback (`__resolveFM` / `__resolveTOC`) that marshals the pending Go data to JSON on demand, then self-replaces with a data property (caching the parsed value for subsequent reads). The setter replaces the accessor with a writable data property so `page.frontMatter = {...}` works without TypeError. Nil frontMatter resolves to an empty JS object (not null, not undefined), matching pipeline behavior. Nil/empty TOC does not install a lazy getter — the property is absent (undefined), matching omitempty semantics. Behavioral contract is unchanged — hooks see the same JS object shape. See IMPLEMENTATION.md §Plugin System for detailed guidance.
 
 **Memory**: 3000 pages with 50KB shared data ≈ 50KB (shared) + 1.5MB (front matter), not 150MB (deep copies).
 
@@ -2536,17 +2517,39 @@ Content-Length: 82\r\n
 {"id": 3, "result": "transformed value"}
 ```
 
+**Node IPC binary framing (issue #1181)**: Hook messages carrying per-page payloads with large HTML/content fields (`onPageRendered`, `onFormatRendered`, `onContentTransformed`) use split-body framing to avoid JSON-encoding the large string field. Instead of embedding ~800KB of HTML inside a JSON envelope (requiring JSON escaping on encode and unescaping on decode on both Go and Node sides), the large field is stripped from the JSON body and sent as raw bytes after it, described by additional headers:
+
+```
+Content-Length: 200\r\n
+X-Body-Length: 800000\r\n
+X-Body-Field: html\r\n
+\r\n
+{"id":1,"type":"hook","name":"onPageRendered","payload":{"frontMatter":{"title":"T"},"url":"/","path":"index.md"}}<raw 800KB HTML bytes>
+```
+
+`Content-Length` gives the JSON body size. `X-Body-Length` gives the raw body size. `X-Body-Field` names the field to inject the raw bytes into (`html` or `content`). The JSON body contains all fields except the split field. The raw bytes follow the JSON body immediately with no separator.
+
+**Outbound (Go→Node)**: `EncodeMessage` detects hook messages (`msg.Type == "hook"`) with payload types `HookRenderedPayload` (html), `HookFormatRenderedPayload` (content), `HookTransformPayload` (html), or `map[string]interface{}` containing an `html` or `content` string key (chained hook results). For these, the large field is stripped from the JSON and appended as raw bytes with split-body headers. When a map payload contains both `html` and `content` keys, `html` takes priority (it is the larger field in the common case). Empty split fields (zero-length string) fall back to single-header format — `X-Body-Length: 0` has no performance benefit. Non-hook messages and hook messages without these payload types use the existing single-header format. `EncodeMessage` must not mutate the caller's map — it works on a shallow copy.
+
+**Inbound (Node→Go)**: `DecodeMessage` and `NodeBridge.Send`'s response reader parse the header block for `X-Body-Length` and `X-Body-Field`. If present, after reading the JSON body (`Content-Length` bytes), they read `X-Body-Length` additional bytes and inject them into the Result map under the `X-Body-Field` key. When `DecodeMessage` processes an outbound-encoded frame (no Result, Payload is a map), the split field is injected back into the Payload map — this preserves round-trip fidelity.
+
+**Error handling (issues #1194)**: Both `DecodeMessage` and `Send` validate split-body headers: (1) `Content-Length` exceeding available bytes returns an error with available-vs-requested byte counts. (2) Negative `X-Body-Length` is rejected (not silently accepted — `strconv.Atoi("-1")` succeeds, so explicit `< 0` checks are required). (3) `X-Body-Length` present without `X-Body-Field` returns an error identifying the missing header. (4) Stdout pollution in `key: value` format (e.g., `debug: loading plugin`) is rejected by the first-line `Content-Length:` prefix check — without this, `SplitN(line, ": ", 2)` would silently accept arbitrary `key: value` lines as headers.
+
+**Node bridge.js**: The `process.stdin` parser reads multi-header frames, injecting the raw body into `msg.payload[bodyField]`. `sendMessage` strips `html`/`content` string fields from hook results and sends them as raw bytes with split-body headers.
+
+**Backward compatibility**: The multi-header parser handles both single-header and multi-header frames — messages without `X-Body-Length` parse identically to before. The malformed frame diagnostic (non-`Content-Length` data on the first line triggers the stdout pollution error) is unchanged.
+
 ### Lifecycle Events (all tiers)
 
 Hooks receive JSON-serializable payloads so they work across all plugin tiers (Go built-in, QuickJS, WASM, Node). Go struct pointers are not visible to JS or WASM — the pipeline must serialize before calling and deserialize the return value.
 
 #### Per-page hooks (page object)
 
-These fire **once per page** (or once per format body for `onFormatRendered`). All three per-page hooks follow the same read-only context convention: `frontMatter`, `url`, and `path` are present in the payload for conditional logic but are NOT applied back from the return value. `onContentTransformed` applies back `html`, `toc`, and `addDependencies` only (issue #1201). `onPageRendered` applies back `html` and `addDependencies` only. `onFormatRendered` applies back `content` and `addDependencies` only. The payload contains only page data — no `site`, `collections`, or `taxonomies`. Site-level mutations belong in `onConfig` or `onAfterValidation`. **`onPageRendered` fires only for pages with HTML output** — pages whose `Outputs` does not include `"html"` are excluded (issue #1102). `onFormatRendered` fires once per non-HTML format body with the format string in the payload (issue #1102).
+These fire **once per page** (or once per format body for `onFormatRendered`). `onContentTransformed` receives a page-scoped object (mutable — fires before layout, page data still matters). The payload contains only page data — no `site`, `collections`, or `taxonomies`. Site-level mutations belong in `onConfig` or `onAfterValidation`. `onPageRendered` receives a page object with front matter for conditional post-processing (issue #1095). Only the `html` field in the return is applied back — `frontMatter`, `url`, and `path` are read-only context. **`onPageRendered` fires only for pages with HTML output** — pages whose `Outputs` does not include `"html"` are excluded (issue #1102). `onFormatRendered` fires once per non-HTML format body with the format string in the payload (issue #1102).
 
 | Event | Payload | Returns | When |
 |---|---|---|---|
-| `onContentTransformed` | `{ html, toc, path, url, frontMatter }` | `{ html, toc }` (only `html` and `toc` applied back) + optional `addDependencies` | After Markdown→HTML, before layout. Plugin modifies rendered content and TOC. `frontMatter`, `url`, `path` are read-only context (issue #1201). |
+| `onContentTransformed` | `{ html, toc, path, url, frontMatter }` | Same shape (mutable) + optional `addDependencies` | After Markdown→HTML, before layout. Plugin modifies rendered content, TOC, or front matter. |
 | `onPageRendered` | `{ html, frontMatter, url, path }` | `{ html }` (only `html` applied back) + optional `addDependencies` | After template rendering, **HTML output only** (issue #1102). Plugin post-processes final HTML with front matter context for conditional transforms. Pages with only non-HTML outputs (e.g., `outputs: ["json"]`) are excluded — use `onFormatRendered` for those. |
 | `onFormatRendered` | `{ format, content, url, path, frontMatter }` | `{ content }` (only `content` applied back) | After format rendering (issue #1102). Fires once per non-HTML format body. `format` is the output format string (e.g., `"json"`, `"xml"`). For pages with only non-HTML outputs, fires for the primary rendered body. Does not fire for HTML-only pages. |
 
