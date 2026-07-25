@@ -83,12 +83,7 @@ var _ = Describe("Page.SetRenderedHTML (issue #1185)", func() {
 		Expect(page.RenderedBody).To(Equal([]byte("<p>restored</p>")))
 	})
 
-	// ── Cache invalidation interaction (issue #1189) ─────────────────
-	// SetRenderedBody after SetRenderedHTML must clear the cached string
-	// so HTML() re-converts from the new RenderedBody. Without this,
-	// the stale renderedStr from SetRenderedHTML would survive and
-	// HTML() would return the wrong content.
-
+	// Cache invalidation interaction (issue #1189)
 	It("SetRenderedBody after SetRenderedHTML clears cached string", func() {
 		page := &content.Page{}
 		page.SetRenderedHTML("<p>from-hook</p>")
