@@ -2,6 +2,7 @@ package plugin_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -3188,6 +3189,48 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 				"BatchCallHook must return a non-nil slice even for empty input")
 			Expect(results).To(HaveLen(0),
 				"BatchCallHook with empty payloads must return an empty slice")
+		})
+
+		It("BatchCallHook propagates errors with 0-based item index", func() {
+			// Issue #1190: When a JS hook throws for a specific payload,
+			// BatchCallHook must return an error that includes the 0-based
+			// item index so callers can identify which payload failed.
+			// The error must wrap the original error with fmt.Errorf("item %d: %w", i, err).
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    if (page.url === '/fail/') throw new Error('deliberate test error');
+    return { html: page.html + '<!-- ok -->' };
+  });
+}`)
+			payloads := []interface{}{
+				plugin.HookRenderedPayload{
+					HTML: "<p>ok</p>", FrontMatter: map[string]interface{}{},
+					URL: "/ok/", Path: "content/ok.md",
+				},
+				plugin.HookRenderedPayload{
+					HTML: "<p>fail</p>", FrontMatter: map[string]interface{}{},
+					URL: "/fail/", Path: "content/fail.md",
+				},
+				plugin.HookRenderedPayload{
+					HTML: "<p>never reached</p>", FrontMatter: map[string]interface{}{},
+					URL: "/never/", Path: "content/never.md",
+				},
+			}
+
+			_, err := rt.BatchCallHook("onPageRendered", payloads, nil)
+			Expect(err).To(HaveOccurred(),
+				"BatchCallHook must return an error when a JS hook throws")
+			Expect(err.Error()).To(ContainSubstring("item 1"),
+				"error must include the 0-based item index (1) identifying "+
+					"which payload triggered the failure — without the index, "+
+					"callers cannot diagnose which page caused the error (issue #1190)")
+			Expect(err.Error()).To(ContainSubstring("deliberate test error"),
+				"error must preserve the original JS error message so callers "+
+					"can diagnose the root cause (issue #1190)")
+			Expect(errors.Unwrap(err)).NotTo(BeNil(),
+				"error must use %%w verb so callers can unwrap the original error "+
+					"via errors.Is/errors.As — using %%s or %%v would produce identical "+
+					"string output but break error chain traversal (issue #1190)")
 		})
 
 		// --- Pre-compiled JS hook invocation ---
