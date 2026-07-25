@@ -13,6 +13,7 @@ import (
 	"github.com/fastschema/qjs"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
+	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/ordered"
 )
 
@@ -29,6 +30,8 @@ type QuickJSRuntime struct {
 	hooks        map[string]int        // hook name → priority
 	hookScopes   map[string]*HookScope // hook name → scope
 	evalWarnings []string              // warnings from plugin eval (e.g., duplicate hooks)
+	pendingFM    map[string]interface{} // lazy frontMatter: set before hook call, read by __resolveFM callback
+	pendingTOC   []content.TOCEntry     // lazy TOC: set before hook call, read by __resolveTOC callback
 }
 
 // NewQuickJSRuntime creates a new QuickJS runtime instance.
@@ -136,6 +139,71 @@ func (r *QuickJSRuntime) Init() error {
 	if err != nil {
 		r.rt.Close()
 		return fmt.Errorf("setting up alloy global: %w", err)
+	}
+
+	// Register Go callbacks for lazy frontMatter/TOC resolution (issue #1187).
+	// These are called from JS lazy getters only when the plugin reads the property.
+	r.ctx.SetFunc("__resolveFM", func(this *qjs.This) (*qjs.Value, error) {
+		fm := r.pendingFM
+		if fm == nil {
+			return this.Context().NewString("{}"), nil
+		}
+		b, err := jsonCodec.Marshal(fm)
+		if err != nil {
+			log.Printf("warning: lazy frontMatter marshal failed: %v", err)
+			return this.Context().NewString("{}"), nil
+		}
+		return this.Context().NewString(string(b)), nil
+	})
+
+	r.ctx.SetFunc("__resolveTOC", func(this *qjs.This) (*qjs.Value, error) {
+		toc := r.pendingTOC
+		if toc == nil {
+			return this.Context().NewString("[]"), nil
+		}
+		b, err := jsonCodec.Marshal(toc)
+		if err != nil {
+			log.Printf("warning: lazy TOC marshal failed: %v", err)
+			return this.Context().NewString("[]"), nil
+		}
+		return this.Context().NewString(string(b)), nil
+	})
+
+	// Pre-compile lazy getter installer functions (issue #1187).
+	// Called once per hook invocation via ctx.Invoke, not Eval.
+	_, err = r.ctx.Eval("lazy-getters.js", qjs.Code(`
+		function __installLazyFM(target) {
+			Object.defineProperty(target, 'frontMatter', {
+				get: function() {
+					var v = JSON.parse(__resolveFM());
+					Object.defineProperty(this, 'frontMatter', {value: v, writable: true, enumerable: true, configurable: true});
+					return v;
+				},
+				set: function(v) {
+					Object.defineProperty(this, 'frontMatter', {value: v, writable: true, enumerable: true, configurable: true});
+				},
+				enumerable: true,
+				configurable: true
+			});
+		}
+		function __installLazyTOC(target) {
+			Object.defineProperty(target, 'toc', {
+				get: function() {
+					var v = JSON.parse(__resolveTOC());
+					Object.defineProperty(this, 'toc', {value: v, writable: true, enumerable: true, configurable: true});
+					return v;
+				},
+				set: function(v) {
+					Object.defineProperty(this, 'toc', {value: v, writable: true, enumerable: true, configurable: true});
+				},
+				enumerable: true,
+				configurable: true
+			});
+		}
+	`))
+	if err != nil {
+		r.rt.Close()
+		return fmt.Errorf("setting up lazy getter helpers: %w", err)
 	}
 
 	r.initialized = true
@@ -464,7 +532,7 @@ func (r *QuickJSRuntime) callHookFormatRenderedPayload(name string, v HookFormat
 
 // callHookTransformPayload is the fast path for HookTransformPayload (issue #1180).
 // Builds a JS object directly instead of JSON-serializing the ~800KB HTML field.
-// TOC is small and uses JSON; nil/empty TOC is omitted (matching omitempty).
+// TOC uses a lazy getter (issue #1187); nil/empty TOC is omitted (matching omitempty).
 func (r *QuickJSRuntime) callHookTransformPayload(name string, v HookTransformPayload) (interface{}, error) {
 	obj := r.ctx.NewObject()
 	obj.SetPropertyStr("html", r.ctx.NewString(v.HTML))
@@ -474,30 +542,27 @@ func (r *QuickJSRuntime) callHookTransformPayload(name string, v HookTransformPa
 		return nil, fmt.Errorf("hook %q: %w", name, err)
 	}
 	if len(v.TOC) > 0 {
-		tocJSON, err := jsonCodec.Marshal(v.TOC)
-		if err != nil {
-			return nil, fmt.Errorf("hook %q: marshaling toc: %w", name, err)
+		r.pendingTOC = v.TOC
+		installFn := r.ctx.Global().GetPropertyStr("__installLazyTOC")
+		defer installFn.Free()
+		if _, err := r.ctx.Invoke(installFn, r.ctx.Global(), obj); err != nil {
+			return nil, fmt.Errorf("hook %q: installing lazy toc getter: %w", name, err)
 		}
-		obj.SetPropertyStr("toc", r.ctx.ParseJSON(string(tocJSON)))
 	}
 	return r.invokeHookFastPath(name, obj)
 }
 
-// setPayloadFrontMatter sets the frontMatter property on a JS payload object.
-// Nil frontMatter is coerced to an empty JS object, matching pipeline behavior
-// in buildPageRenderedPayload.
+// setPayloadFrontMatter installs a lazy frontMatter accessor on a JS payload
+// object (issue #1187). The Go map is stored in r.pendingFM and only
+// JSON-serialized when the plugin actually reads page.frontMatter.
 func (r *QuickJSRuntime) setPayloadFrontMatter(obj *qjs.Value, fm map[string]interface{}) error {
-	if fm == nil {
-		obj.SetPropertyStr("frontMatter", r.ctx.NewObject())
-		return nil
-	}
-	fmJSON, err := jsonCodec.Marshal(fm)
+	r.pendingFM = fm
+	installFn := r.ctx.Global().GetPropertyStr("__installLazyFM")
+	defer installFn.Free()
+	_, err := r.ctx.Invoke(installFn, r.ctx.Global(), obj)
 	if err != nil {
-		return fmt.Errorf("marshaling frontMatter: %w", err)
+		return fmt.Errorf("installing lazy frontMatter getter: %w", err)
 	}
-	// ParseJSON returns *qjs.Value without an error channel; safe here because
-	// input is always the output of jsonCodec.Marshal (always valid JSON).
-	obj.SetPropertyStr("frontMatter", r.ctx.ParseJSON(string(fmJSON)))
 	return nil
 }
 
@@ -510,6 +575,8 @@ func (r *QuickJSRuntime) invokeHookFastPath(name string, input *qjs.Value) (inte
 	defer func() {
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewUndefined())
 		r.ctx.Global().SetPropertyStr("__callHookName", r.ctx.NewUndefined())
+		r.pendingFM = nil
+		r.pendingTOC = nil
 	}()
 
 	result, err := r.ctx.Eval("hook-call.js", qjs.Code(
