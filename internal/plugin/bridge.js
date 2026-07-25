@@ -105,6 +105,12 @@ process.stdin.on('data', (chunk) => {
     const splitBodyLen = blMatch ? parseInt(blMatch[1], 10) : 0;
     const splitBodyField = bfMatch ? bfMatch[1] : null;
 
+    if (blMatch && !bfMatch) {
+      sendMessage({ id: 0, error: 'malformed frame: X-Body-Length present but X-Body-Field missing' });
+      buffer = buffer.slice(headerEnd + 4 + contentLen + splitBodyLen);
+      continue;
+    }
+
     const totalLen = contentLen + splitBodyLen;
     if (buffer.length < bodyStart + totalLen) break;
 

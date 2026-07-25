@@ -138,11 +138,35 @@ func EncodeMessage(msg *Message) ([]byte, error) {
 
 // stripField returns a shallow copy of the message with the named field
 // removed from the payload. Does not mutate the original message.
-// For struct payloads, uses JSON round-trip to derive a map so new fields
-// added to the struct are automatically included without manual maintenance.
+// Known payload types use direct map construction (avoids marshaling the
+// large field). Unknown types fall back to JSON round-trip so new payload
+// structs are automatically supported without manual maintenance.
 func stripField(msg *Message, fieldName string) *Message {
 	cp := *msg
 	switch p := msg.Payload.(type) {
+	case HookRenderedPayload:
+		cp.Payload = map[string]interface{}{
+			"frontMatter": p.FrontMatter,
+			"url":         p.URL,
+			"path":        p.Path,
+		}
+	case HookFormatRenderedPayload:
+		cp.Payload = map[string]interface{}{
+			"format":      p.Format,
+			"url":         p.URL,
+			"path":        p.Path,
+			"frontMatter": p.FrontMatter,
+		}
+	case HookTransformPayload:
+		m := map[string]interface{}{
+			"frontMatter": p.FrontMatter,
+			"url":         p.URL,
+			"path":        p.Path,
+		}
+		if len(p.TOC) > 0 {
+			m["toc"] = p.TOC
+		}
+		cp.Payload = m
 	case map[string]interface{}:
 		m := make(map[string]interface{}, len(p))
 		for k, v := range p {
@@ -154,10 +178,12 @@ func stripField(msg *Message, fieldName string) *Message {
 	default:
 		raw, err := jsonCodec.Marshal(p)
 		if err != nil {
+			log.Printf("warning: stripField: marshal failed for %T, split-body optimization skipped: %v", p, err)
 			return &cp
 		}
 		var m map[string]interface{}
 		if err := jsonCodec.Unmarshal(raw, &m); err != nil {
+			log.Printf("warning: stripField: unmarshal failed for %T, split-body optimization skipped: %v", p, err)
 			return &cp
 		}
 		delete(m, fieldName)
