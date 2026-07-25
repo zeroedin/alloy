@@ -41,6 +41,16 @@ func (p *Page) SetRenderedBody(b []byte) {
 	p.renderedStr = ""
 }
 
+// SetRenderedHTML stores both RenderedBody (as []byte) and the cached HTML
+// string simultaneously, avoiding the string→[]byte→string round-trip that
+// SetRenderedBody([]byte(html)) triggers. The pipeline uses this when applying
+// hook results back, where the source is already a Go string from QuickJS
+// GetPropertyStr().String() (issue #1185).
+func (p *Page) SetRenderedHTML(s string) {
+	p.RenderedBody = []byte(s)
+	p.renderedStr = s
+}
+
 // ReleaseRenderedBody frees all rendered output data to reduce peak memory.
 // Nils RenderedBody, clears the cached HTML string, and nils FormatBodies.
 // Safe to call multiple times and on pages with nil fields (issue #1107).
