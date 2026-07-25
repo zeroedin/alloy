@@ -48,6 +48,16 @@ func HookPriorities(r *HookRegistry, event HookName) []int {
 	return priorities
 }
 
+// HasBatchHook returns true if any hook registered for the event has a batch function.
+func HasBatchHook(r *HookRegistry, event HookName) bool {
+	for _, h := range r.hooks[event] {
+		if h.batchFn != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // nopWriteCloser wraps an io.Writer to satisfy io.WriteCloser.
 type nopWriteCloser struct{ io.Writer }
 

@@ -2,6 +2,7 @@ package plugin_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -727,6 +728,47 @@ var _ = Describe("Declarative hook payload scoping (issue #528)", func() {
 			err = plugin.ValidateScope(plugin.OnContentLoaded, *scope)
 			Expect(err).NotTo(HaveOccurred(),
 				"PagesScopeNone must be valid on page-aware hooks (issue #977)")
+		})
+	})
+
+	// ── registerRuntime batch detection (issue #1190) ────────────────
+	// registerRuntime detects BatchCallHook via type assertion and
+	// registers hooks with batch functions, routing RunBatchWithProgress
+	// through the single-goroutine batch path instead of spawning a
+	// goroutine + channel + context per page.
+
+	Describe("registerRuntime batch detection for QuickJSRuntime (issue #1190)", func() {
+		It("registerRuntime detects BatchCallHook and registers batch function", func() {
+			// QuickJSRuntime implements BatchCallHook(string, []interface{},
+			// func(int)) ([]interface{}, error). registerRuntime must detect
+			// this via type assertion and call RegisterBatchWithPriority (or
+			// RegisterBatchWithOptions for scoped hooks) instead of the
+			// single-dispatch Register path.
+			rt := plugin.NewQuickJSRuntime()
+			DeferCleanup(rt.Close)
+			Expect(rt.Init()).To(Succeed())
+
+			pluginPath := filepath.Join(GinkgoT().TempDir(), "batch-detect.js")
+			Expect(os.WriteFile(pluginPath, []byte(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return { html: page.html + '<!-- batch-registered -->' };
+  });
+}`), 0644)).To(Succeed())
+			Expect(rt.EvalFile(pluginPath)).To(Succeed())
+
+			hooks := plugin.NewHookRegistry()
+			registry := plugin.NewRegistry(GinkgoT().TempDir())
+			plugin.RegisterRuntime(registry, rt, "batch-test", hooks)
+
+			Expect(hooks.HasHooks(plugin.OnPageRendered)).To(BeTrue(),
+				"precondition: onPageRendered must be registered after registerRuntime")
+
+			Expect(plugin.HasBatchHook(hooks, plugin.OnPageRendered)).To(BeTrue(),
+				"registerRuntime must detect the BatchCallHook interface on "+
+					"QuickJSRuntime and register hooks with batch functions — "+
+					"without batch detection, RunBatchWithProgress falls back to "+
+					"per-item goroutine dispatch with unnecessary channel and "+
+					"context overhead (issue #1190)")
 		})
 	})
 })
