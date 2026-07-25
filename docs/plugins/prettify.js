@@ -3,9 +3,9 @@ export const runtime = "node";
 export default function(alloy) {
   let processor;
 
-  alloy.hook("onPageRendered", { priority: 100, pages: true, pageFields: ["html"] }, async (html) => {
-    if (typeof html !== 'string') return html;
-    if (!html.includes('<!DOCTYPE') && !html.includes('<html')) return html;
+  alloy.hook("onPageRendered", { priority: 100, pages: true, pageFields: ["html"] }, async (page) => {
+    if (typeof page.html !== 'string') return page;
+    if (!page.html.includes('<!DOCTYPE') && !page.html.includes('<html')) return page;
 
     if (!processor) {
       const { unified } = await import('unified');
@@ -20,13 +20,14 @@ export default function(alloy) {
     }
 
     try {
-      const result = await processor.process(html);
-      return String(result);
+      const result = await processor.process(page.html);
+      page.html = String(result);
+      return page;
     } catch (e) {
-      const m = html.match(/<title>([^<]*)<\/title>/);
-      const page = m ? m[1].trim() : '(unknown page)';
-      console.error(`[prettify] failed on "${page}": ${e.message}`);
-      return html;
+      const m = page.html.match(/<title>([^<]*)<\/title>/);
+      const title = m ? m[1].trim() : '(unknown page)';
+      console.error(`[prettify] failed on "${title}": ${e.message}`);
+      return page;
     }
   });
 }
