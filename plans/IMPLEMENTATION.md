@@ -726,39 +726,46 @@ The method must nil `RenderedBody`, clear `renderedStr` (so `HTML()` returns `""
     **Outbound (result extraction)**: The current `hook-call.js` code does `JSON.stringify(__r)` on object results, then Go parses the JSON string back. For the fast path, use a different eval script that returns the raw JS object (not stringified), then extract properties in Go: (1) use `result.IsObject()` to detect object returns, (2) extract `html`/`content` via `result.GetPropertyStr("html")` as a native string (zero JSON), (3) walk remaining properties via `result.GetOwnPropertyNames()` + `GetPropertyStr` to build the Go map — small auxiliary keys (`addDependencies`, `toc`, `url`, `path`, `frontMatter`) are extracted via `jsValueToGo` or JSON-serialized individually if nested, (4) construct the Go result `map[string]interface{}` directly. If `result.IsString()`, handle as before (backward compat for hooks that return raw strings). The result must preserve the existing contract: `toGoMap(result)` in `internal/pipeline/context.go` must succeed with `html` as a string key.
     **Benchmark coverage**: `internal/plugin/wasm_bench_test.go` contains benchmarks at 1KB, 100KB, and 800KB payload sizes for `HookRenderedPayload`, 800KB benchmarks for `HookFormatRenderedPayload` and `HookTransformPayload`, plus a string-baseline benchmark for comparison. The fast path target is within 2x of the string baseline.
     **Test coverage**: 15 spec tests in `internal/plugin/wasm_test.go` under "CallHook payload struct fast path (issue #1180)": field delivery for all three payload types, JSON-special character preservation (for both `html` and `content` fields), empty frontMatter, nil frontMatter, nested frontMatter objects/arrays, addDependencies extraction, identity return (pipeline-consumed fields only — `html`/`content`, NOT read-only context fields), toc outbound extraction, nil TOC, empty TOC slice, backward-compat string return from struct payload, and large HTML integrity.
-  - **Pre-compiled JS helpers (issue #1186)**: `invokeHookFastPath` calls `ctx.Eval("hook-call.js", qjs.Code("__hooks[__callHookName](__callInput)"))` per page per hook — the QuickJS `Eval` method lexes, parses, and compiles the source string on every call. For 820 pages × N hooks, that is 820×N redundant compilations of the same static expression. `setPayloadFrontMatter` eagerly JSON-parses frontMatter via `ParseJSON` even when the plugin never accesses `page.frontMatter`. The inline TOC setup in `callHookTransformPayload` eagerly parses TOC the same way. The fix has three parts:
-    1. **Add pre-compiled functions to Init()**: In the `alloy-setup.js` eval block (the `r.ctx.Eval("alloy-setup.js", ...)` call in `Init()`), add three global functions after the existing `alloy` object setup:
+  - **Pre-compiled JS helpers (issue #1186)**: `invokeHookFastPath` previously called `ctx.Eval("hook-call.js", qjs.Code("__hooks[__callHookName](__callInput)"))` per page per hook — the QuickJS `Eval` method lexes, parses, and compiles the source string on every call. For 820 pages × N hooks, that is 820×N redundant compilations of the same static expression. The fix pre-compiles three global JS functions in `Init()` and invokes them by name on hot paths:
+    1. **Add pre-compiled functions to Init()**: In a separate `r.ctx.Eval("precompile.js", ...)` call after the alloy object setup, define three global functions. The lazy getter installers (`__installLazyFM`, `__installLazyTOC`) use the #1187 Go-callback approach — they take only `target` (no `jsonStr` param) and defer serialization to `__resolveFM()`/`__resolveTOC()` Go callbacks registered via `r.ctx.SetFunc`:
        ```javascript
-       function __callHookByName(name, input) {
-         return __hooks[name](input);
-       }
-       function __installLazyFM(target, jsonStr) {
-         var _UNSET = {};
-         var _parsed = _UNSET;
+       function __callHookByName(name, input) { return __hooks[name](input); }
+       function __installLazyFM(target) {
          Object.defineProperty(target, 'frontMatter', {
-           get: function() { if (_parsed === _UNSET) _parsed = JSON.parse(jsonStr); return _parsed; },
-           set: function(v) { _parsed = v; },
+           get: function() {
+             var v = JSON.parse(__resolveFM());
+             Object.defineProperty(this, 'frontMatter', {value: v, writable: true, enumerable: true, configurable: true});
+             return v;
+           },
+           set: function(v) {
+             Object.defineProperty(this, 'frontMatter', {value: v, writable: true, enumerable: true, configurable: true});
+           },
            enumerable: true,
            configurable: true
          });
        }
-       function __installLazyTOC(target, jsonStr) {
-         var _UNSET = {};
-         var _parsed = _UNSET;
+       function __installLazyTOC(target) {
          Object.defineProperty(target, 'toc', {
-           get: function() { if (_parsed === _UNSET) _parsed = JSON.parse(jsonStr); return _parsed; },
-           set: function(v) { _parsed = v; },
+           get: function() {
+             var v = JSON.parse(__resolveTOC());
+             Object.defineProperty(this, 'toc', {value: v, writable: true, enumerable: true, configurable: true});
+             return v;
+           },
+           set: function(v) {
+             Object.defineProperty(this, 'toc', {value: v, writable: true, enumerable: true, configurable: true});
+           },
            enumerable: true,
            configurable: true
          });
        }
        ```
-    2. **Store function references on QuickJSRuntime**: After the `alloy-setup.js` eval completes, retrieve `*qjs.Value` references to the three functions via `r.ctx.Global().GetPropertyStr("__callHookByName")` (and similarly for `__installLazyFM`, `__installLazyTOC`). Store them as fields on the `QuickJSRuntime` struct (e.g., `callHookByNameFn`, `installLazyFMFn`, `installLazyTOCFn`). These references are used by `ctx.Invoke` to call the functions without re-parsing. **Lifetime**: These `*qjs.Value` references are reference-counted by the `fastschema/qjs` WASM bridge. They must be explicitly freed in `QuickJSRuntime.Close()` via `v.Free()` before the context and runtime are closed. Free in reverse order of creation (TOC, FM, hook) before the existing `r.ctx` / `r.rt` teardown.
-    3. **Replace Eval with Invoke in hot paths**:
-       - `invokeHookFastPath`: Replace `r.ctx.Eval("hook-call.js", qjs.Code("__hooks[__callHookName](__callInput)"))` with `r.ctx.Invoke(r.callHookByNameFn, r.ctx.Global(), r.ctx.NewString(name), input)`. This eliminates the global variable setup (`__callInput`, `__callHookName`) and the per-call parse/compile. The cleanup `defer` that clears these globals is no longer needed.
-       - `setPayloadFrontMatter`: For non-nil frontMatter, replace `obj.SetPropertyStr("frontMatter", r.ctx.ParseJSON(string(fmJSON)))` with `r.ctx.Invoke(r.installLazyFMFn, r.ctx.Global(), obj, r.ctx.NewString(string(fmJSON)))`. Nil frontMatter continues to use `obj.SetPropertyStr("frontMatter", r.ctx.NewObject())`.
-       - `callHookTransformPayload`: For non-empty TOC, replace the inline `obj.SetPropertyStr("toc", r.ctx.ParseJSON(string(tocJSON)))` with `r.ctx.Invoke(r.installLazyTOCFn, r.ctx.Global(), obj, r.ctx.NewString(string(tocJSON)))`. Nil/empty TOC is omitted (unchanged).
-    **Behavioral contract**: The lazy getter pattern is transparent to plugins. `page.frontMatter.title` triggers the getter on first access, parses the JSON, caches the result, and returns it. Subsequent accesses return the cached object. `page.frontMatter = {...}` triggers the setter, replacing the cached value. `Object.keys(page)` includes `frontMatter` and `toc` because the descriptors set `enumerable: true`. The existing spec tests in the #1180 section continue to pass unchanged — they exercise the functional contract (field delivery, identity return, etc.) which is preserved. The #1186 tests verify the pre-compiled helpers exist and that frontMatter/toc use lazy getters (property descriptor has `get` function).
+       The self-replacing pattern (`Object.defineProperty(this, ...)` inside the getter) converts the accessor to a data property on first read, caching the parsed result. The setter allows `page.frontMatter = {...}` without TypeError.
+    2. **Invocation mechanism**: Functions are invoked by name at call sites — no cached `*qjs.Value` references are stored on `QuickJSRuntime`. `__callHookByName` is called via `r.ctx.Global().InvokeJS("__callHookByName", nameVal, input)`. The lazy getter installers (`__installLazyFM`, `__installLazyTOC`) are retrieved per-call via `r.ctx.Global().GetPropertyStr("__installLazyFM")`, called via `r.ctx.Invoke(installFn, r.ctx.Global(), obj)`, and freed immediately via `defer installFn.Free()`. This avoids managing `*qjs.Value` lifetimes across the runtime's lifetime and requires no explicit `Free()` calls in `Close()`.
+    3. **Hot path replacements**:
+       - `invokeHookFastPath`: Uses `r.ctx.Global().InvokeJS("__callHookByName", nameVal, input)` — the input JS object is passed directly as a function argument. No globals (`__callInput`, `__callHookName`) are set or cleaned up.
+       - `setPayloadFrontMatter`: Sets `r.pendingFM = fm`, retrieves `__installLazyFM` via `GetPropertyStr`, calls `r.ctx.Invoke(installFn, r.ctx.Global(), obj)`. The Go callback `__resolveFM` (registered in `Init()`) reads `r.pendingFM` and marshals to JSON on demand. Nil frontMatter installs the same lazy getter — `__resolveFM` returns `"{}"` for nil.
+       - `callHookTransformPayload`: For non-empty TOC, sets `r.pendingTOC = v.TOC`, retrieves `__installLazyTOC` via `GetPropertyStr`, calls `r.ctx.Invoke(installFn, r.ctx.Global(), obj)`. Nil/empty TOC is omitted (unchanged).
+    **Behavioral contract**: The lazy getter pattern is transparent to plugins. `page.frontMatter.title` triggers the getter on first access, calls the `__resolveFM` Go callback to marshal the Go map, parses the JSON, self-replaces with a data property, and returns the value. Subsequent accesses return the cached data property directly. `page.frontMatter = {...}` triggers the setter, replacing the accessor with a writable data property. `Object.keys(page)` includes `frontMatter` and `toc` because the descriptors set `enumerable: true`. The existing spec tests in the #1180 section continue to pass unchanged — they exercise the functional contract (field delivery, identity return, etc.) which is preserved. The #1186 tests verify the pre-compiled helpers exist and that frontMatter/toc use lazy getters (property descriptor has `get` function).
     **Test coverage**: 14 spec tests in `internal/plugin/wasm_test.go` under "Pre-compiled JS helpers (issue #1186)": 3 helper function existence checks (`__callHookByName`, `__installLazyFM`, `__installLazyTOC` must be `typeof === 'function'` after Init()), 3 lazy getter property descriptor checks (frontMatter on `HookRenderedPayload` and `HookFormatRenderedPayload`, toc on `HookTransformPayload`), lazy frontMatter setter override, lazy frontMatter null-assignment sentinel test, lazy frontMatter enumerability, lazy frontMatter configurability, lazy TOC value correctness, lazy TOC setter override, lazy TOC enumerability, and `invokeHookFastPath` no-globals disambiguation (verifies `__callInput`/`__callHookName` are NOT set during hook execution).
   - **Targeted outbound extraction (issue #1185)**: Replace the generic `extractHookResult` (iterates all own properties via `GetOwnPropertyNames` + `JSONStringify` per non-primitive property) with three type-aware extractors. Each reads only the fields the pipeline consumes from the return value:
     - `extractRenderedResult(result *qjs.Value) (interface{}, error)` — reads `html` via `GetPropertyStr("html").String()` (native memcpy, no JSON). Checks for `addDependencies` via `GetPropertyStr`, JSONStringify only if defined (rare, small array). Skips `url`, `path`, `frontMatter` (pipeline ignores on return).
@@ -783,11 +790,10 @@ The method must nil `RenderedBody`, clear `renderedStr` (so `HTML()` returns `""
     **Test coverage**: 7 spec tests — QuickJS: chain receives html from first hook's map result, chain receives content from first hook's map result (onFormatRendered scenario — verifies `content` key guard), non-page map falls through to JSON path, onDataFetched map payload NOT caught by page-like fast path (issue #1188). Node IPC: standard single-header framing for hook map without html/content keys (issue #1188). Pipeline end-to-end: two onPageRendered hooks chain through build with both modifications in output, two hooks chain with large HTML through build without truncation or corruption (issue #1188).
   - **`BatchCallHook` on `QuickJSRuntime` (issue #1185)**: New method `func (r *QuickJSRuntime) BatchCallHook(name string, payloads []interface{}, onProgress func(int)) ([]interface{}, error)`. Loops synchronously through payloads calling `CallHook` internally, calling `onProgress(i+1)` after each item. No per-item goroutine/channel/context overhead. Registered via the existing `registerRuntime` batch detection (type assertion for `BatchCallHook` method in `registry.go`).
     **Test coverage**: 3 spec tests — results match sequential `CallHook` calls for 3 payloads, onProgress callback receives 1-based indices [1, 2, 3], empty payloads return empty (non-nil) slice and nil error.
-  - **Pre-compiled JS functions (issue #1185)**: During `Init()`, compile three JS functions using `r.ctx.Eval` and store the resulting `*qjs.Value` for reuse:
-    - `__callHookByName` — `function(name, input) { return __hooks[name](input); }`. Replaces per-call `Eval("__hooks[__callHookName](__callInput)")` which parses+compiles 820 times per hook on RHDS.
-    - `__installLazyFM` — the `Object.defineProperty` installer for frontMatter lazy getter.
-    - `__installLazyTOC` — same for toc.
-    Call via `InvokeJS` (or the qjs equivalent) instead of `Eval` on hot paths.
+  - **Pre-compiled JS functions (issue #1185)**: During `Init()`, compile three global JS functions via `r.ctx.Eval("precompile.js", ...)`. The functions are defined as globals and called by name at invocation sites — no `*qjs.Value` references are cached on the struct:
+    - `__callHookByName` — `function(name, input) { return __hooks[name](input); }`. Called via `r.ctx.Global().InvokeJS("__callHookByName", ...)`. Replaces per-call `Eval("__hooks[__callHookName](__callInput)")` which parses+compiles 820 times per hook on RHDS.
+    - `__installLazyFM` — the `Object.defineProperty` installer for frontMatter lazy getter (uses `__resolveFM()` Go callback). Retrieved per-call via `GetPropertyStr`, called via `ctx.Invoke`, freed immediately.
+    - `__installLazyTOC` — same pattern for toc (uses `__resolveTOC()` Go callback).
     **Test coverage**: 1 spec test — multiple sequential CallHook calls produce correct results with incrementing closure state.
   - **`Page.SetRenderedHTML(string)` (issue #1185)**: New method on `content.Page` in `internal/content/page.go`. Stores both `p.RenderedBody = []byte(s)` and `p.renderedStr = s` simultaneously. Avoids the round-trip: `SetRenderedBody([]byte(html))` clears `renderedStr`, then next `HTML()` call re-converts `[]byte→string`. Pipeline hook apply-back should call `SetRenderedHTML` instead of `SetRenderedBody([]byte(...))` when the source is already a string (which it always is from QuickJS `GetPropertyStr().String()`).
     **Test coverage**: 5 spec tests in `internal/content/page_set_html_test.go` — basic contract (HTML returns correct string), RenderedBody matches, overwrites previous, empty string, restores after release.
