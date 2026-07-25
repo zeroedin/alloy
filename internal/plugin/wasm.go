@@ -13,6 +13,7 @@ import (
 	"github.com/fastschema/qjs"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
+	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/ordered"
 )
 
@@ -30,7 +31,7 @@ type QuickJSRuntime struct {
 	hookScopes   map[string]*HookScope // hook name → scope
 	evalWarnings []string              // warnings from plugin eval (e.g., duplicate hooks)
 	pendingFM    map[string]interface{} // lazy frontMatter: set before hook call, read by __resolveFM callback
-	pendingTOC   interface{}            // lazy TOC: set before hook call, read by __resolveTOC callback
+	pendingTOC   []content.TOCEntry     // lazy TOC: set before hook call, read by __resolveTOC callback
 }
 
 // NewQuickJSRuntime creates a new QuickJS runtime instance.
@@ -149,6 +150,7 @@ func (r *QuickJSRuntime) Init() error {
 		}
 		b, err := jsonCodec.Marshal(fm)
 		if err != nil {
+			log.Printf("warning: lazy frontMatter marshal failed: %v", err)
 			return this.Context().NewString("{}"), nil
 		}
 		return this.Context().NewString(string(b)), nil
@@ -161,6 +163,7 @@ func (r *QuickJSRuntime) Init() error {
 		}
 		b, err := jsonCodec.Marshal(toc)
 		if err != nil {
+			log.Printf("warning: lazy TOC marshal failed: %v", err)
 			return this.Context().NewString("[]"), nil
 		}
 		return this.Context().NewString(string(b)), nil
@@ -173,12 +176,13 @@ func (r *QuickJSRuntime) Init() error {
 			Object.defineProperty(target, 'frontMatter', {
 				get: function() {
 					var v = JSON.parse(__resolveFM());
-					Object.defineProperty(this, 'frontMatter', {value: v, writable: true, configurable: true});
+					Object.defineProperty(this, 'frontMatter', {value: v, writable: true, enumerable: true, configurable: true});
 					return v;
 				},
 				set: function(v) {
-					Object.defineProperty(this, 'frontMatter', {value: v, writable: true, configurable: true});
+					Object.defineProperty(this, 'frontMatter', {value: v, writable: true, enumerable: true, configurable: true});
 				},
+				enumerable: true,
 				configurable: true
 			});
 		}
@@ -186,12 +190,13 @@ func (r *QuickJSRuntime) Init() error {
 			Object.defineProperty(target, 'toc', {
 				get: function() {
 					var v = JSON.parse(__resolveTOC());
-					Object.defineProperty(this, 'toc', {value: v, writable: true, configurable: true});
+					Object.defineProperty(this, 'toc', {value: v, writable: true, enumerable: true, configurable: true});
 					return v;
 				},
 				set: function(v) {
-					Object.defineProperty(this, 'toc', {value: v, writable: true, configurable: true});
+					Object.defineProperty(this, 'toc', {value: v, writable: true, enumerable: true, configurable: true});
 				},
+				enumerable: true,
 				configurable: true
 			});
 		}
@@ -570,6 +575,8 @@ func (r *QuickJSRuntime) invokeHookFastPath(name string, input *qjs.Value) (inte
 	defer func() {
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewUndefined())
 		r.ctx.Global().SetPropertyStr("__callHookName", r.ctx.NewUndefined())
+		r.pendingFM = nil
+		r.pendingTOC = nil
 	}()
 
 	result, err := r.ctx.Eval("hook-call.js", qjs.Code(
