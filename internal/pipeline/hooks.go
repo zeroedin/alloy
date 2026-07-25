@@ -200,7 +200,7 @@ func serializePagesForHook(pages []*content.Page, scope *plugin.HookScope) []plu
 			URL:  page.URL,
 		}
 		if scope == nil || scope.WantsField("frontMatter") {
-			p.FrontMatter = convertOrderedMaps(page.FrontMatter)
+			p.FrontMatter = convertedFrontMatter(page)
 		}
 		if scope == nil || scope.WantsField("content") {
 			p.Content = string(page.Content)
@@ -226,7 +226,7 @@ func serializePagesForCascadeHook(pages []*content.Page, scope *plugin.HookScope
 		}
 		result = append(result, plugin.HookCascadePayload{
 			Path: page.RelPath,
-			Data: convertOrderedMaps(page.FrontMatter),
+			Data: convertedFrontMatter(page),
 		})
 	}
 	return result
@@ -284,7 +284,7 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 			URL:  page.URL,
 		}
 		if scope == nil || scope.WantsField("frontMatter") {
-			payload.FrontMatter = convertOrderedMaps(page.FrontMatter)
+			payload.FrontMatter = convertedFrontMatter(page)
 		}
 		if scope == nil || scope.WantsField("html") {
 			payload.HTML = page.HTML()
@@ -490,7 +490,7 @@ func buildPagesReadyPayload(pages []*content.Page, scope *plugin.HookScope, site
 				URL:  page.URL,
 			}
 			if scope == nil || scope.WantsField("frontMatter") {
-				p.FrontMatter = convertOrderedMaps(page.FrontMatter)
+				p.FrontMatter = convertedFrontMatter(page)
 			}
 			if scope == nil || scope.WantsField("content") {
 				p.Content = string(page.Body)
@@ -520,7 +520,7 @@ func buildPagesReadyPayload(pages []*content.Page, scope *plugin.HookScope, site
 
 // buildPageRenderedPayload constructs the onPageRendered hook payload for a page.
 func buildPageRenderedPayload(page *content.Page) plugin.HookRenderedPayload {
-	fm := convertOrderedMaps(page.FrontMatter)
+	fm := convertedFrontMatter(page)
 	if fm == nil {
 		fm = map[string]interface{}{}
 	}
@@ -670,7 +670,7 @@ func dispatchPostRenderHooks(
 			if len(page.FormatBodies) == 0 {
 				continue
 			}
-			fm := convertOrderedMaps(page.FrontMatter)
+			fm := convertedFrontMatter(page)
 			if fm == nil {
 				fm = map[string]interface{}{}
 			}

@@ -16,6 +16,15 @@ import (
 	"github.com/zeroedin/alloy/internal/ordered"
 )
 
+// payloadType identifies the hook payload type for targeted outbound extraction.
+type payloadType int
+
+const (
+	payloadRendered       payloadType = iota // onPageRendered: extract html + addDependencies
+	payloadFormatRendered                    // onFormatRendered: extract content + addDependencies
+	payloadTransform                         // onContentTransformed: extract html + toc + addDependencies
+)
+
 // QuickJSRuntime wraps a QuickJS instance for Tier 2 in-process JS plugins.
 // JavaScript is executed via QuickJS compiled to WASM, running on wazero
 // (pure Go, zero CGo). See PLAN.md §5.
@@ -29,6 +38,8 @@ type QuickJSRuntime struct {
 	hooks        map[string]int        // hook name → priority
 	hookScopes   map[string]*HookScope // hook name → scope
 	evalWarnings []string              // warnings from plugin eval (e.g., duplicate hooks)
+	pendingFM    map[string]interface{} // lazy frontMatter for current hook call (issue #1185)
+	pendingTOC   interface{}            // lazy TOC for current hook call ([]content.TOCEntry, issue #1185)
 }
 
 // NewQuickJSRuntime creates a new QuickJS runtime instance.
@@ -136,6 +147,81 @@ func (r *QuickJSRuntime) Init() error {
 	if err != nil {
 		r.rt.Close()
 		return fmt.Errorf("setting up alloy global: %w", err)
+	}
+
+	// Register Go callbacks for lazy frontMatter/TOC resolution (issue #1185).
+	// The lazy getter on the JS object calls these when the plugin reads
+	// page.frontMatter or page.toc. This defers serialization until access.
+	r.ctx.SetFunc("__resolveFM", func(this *qjs.This) (*qjs.Value, error) {
+		if r.pendingFM == nil {
+			return this.Context().NewObject(), nil
+		}
+		fmJSON, err := jsonCodec.Marshal(r.pendingFM)
+		if err != nil {
+			return this.Context().NewObject(), nil
+		}
+		return this.Context().ParseJSON(string(fmJSON)), nil
+	})
+
+	r.ctx.SetFunc("__resolveTOC", func(this *qjs.This) (*qjs.Value, error) {
+		if r.pendingTOC == nil {
+			return this.Context().NewUndefined(), nil
+		}
+		tocJSON, err := jsonCodec.Marshal(r.pendingTOC)
+		if err != nil {
+			return this.Context().NewUndefined(), nil
+		}
+		return this.Context().ParseJSON(string(tocJSON)), nil
+	})
+
+	// Pre-compile JS functions called on hot paths (issue #1185).
+	// Compiled once here, invoked via InvokeJS — avoids per-call Eval
+	// which re-parses and re-compiles the same expression.
+	precompiled, err := r.ctx.Eval("precompile.js", qjs.Code(`
+		function __callHookByName(name, input) { return __hooks[name](input); }
+		function __installLazyFM(target) {
+			Object.defineProperty(target, 'frontMatter', {
+				get: function() {
+					var val = __resolveFM();
+					Object.defineProperty(target, 'frontMatter', {
+						value: val, writable: true, configurable: true, enumerable: true
+					});
+					return val;
+				},
+				set: function(v) {
+					Object.defineProperty(target, 'frontMatter', {
+						value: v, writable: true, configurable: true, enumerable: true
+					});
+				},
+				configurable: true,
+				enumerable: true
+			});
+		}
+		function __installLazyTOC(target) {
+			Object.defineProperty(target, 'toc', {
+				get: function() {
+					var val = __resolveTOC();
+					Object.defineProperty(target, 'toc', {
+						value: val, writable: true, configurable: true, enumerable: true
+					});
+					return val;
+				},
+				set: function(v) {
+					Object.defineProperty(target, 'toc', {
+						value: v, writable: true, configurable: true, enumerable: true
+					});
+				},
+				configurable: true,
+				enumerable: true
+			});
+		}
+	`))
+	if precompiled != nil {
+		precompiled.Free()
+	}
+	if err != nil {
+		r.rt.Close()
+		return fmt.Errorf("compiling pre-compiled functions: %w", err)
 	}
 
 	r.initialized = true
@@ -360,6 +446,35 @@ func (r *QuickJSRuntime) CallShortcode(name string, args []string, innerContent 
 func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.callHookLocked(name, payload)
+}
+
+// BatchCallHook loops synchronously through payloads calling callHookLocked
+// for each one (issue #1185). No per-item goroutine/channel/context overhead.
+// onProgress is called with 1-based indices after each item completes.
+func (r *QuickJSRuntime) BatchCallHook(name string, payloads []interface{}, onProgress func(int)) ([]interface{}, error) {
+	if len(payloads) == 0 {
+		return []interface{}{}, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	results := make([]interface{}, len(payloads))
+	for i, p := range payloads {
+		result, err := r.callHookLocked(name, p)
+		if err != nil {
+			return nil, err
+		}
+		results[i] = result
+		if onProgress != nil {
+			onProgress(i + 1)
+		}
+	}
+	return results, nil
+}
+
+// callHookLocked implements CallHook without acquiring the mutex.
+// Used by both CallHook (single) and BatchCallHook (batch).
+func (r *QuickJSRuntime) callHookLocked(name string, payload interface{}) (interface{}, error) {
 	if r.rt == nil {
 		return payload, nil
 	}
@@ -369,9 +484,6 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 
 	// Fast path for payload structs (issue #1180): build JS objects directly
 	// via the QuickJS API instead of JSON-serializing the entire struct.
-	// Only small fields (frontMatter, toc) use JSON. Large string fields
-	// (html, content) transfer as native strings, eliminating ~99.9% of
-	// JSON volume for 800KB pages.
 	// Returns map[string]interface{} (the slow path below returns *ordered.Map);
 	// both are handled by pipeline's toGoMap().
 	switch v := payload.(type) {
@@ -381,10 +493,21 @@ func (r *QuickJSRuntime) CallHook(name string, payload interface{}) (interface{}
 		return r.callHookFormatRenderedPayload(name, v)
 	case HookTransformPayload:
 		return r.callHookTransformPayload(name, v)
+	case map[string]interface{}:
+		// Hook chain fast path (issue #1185): when hooks chain, the second
+		// hook receives a map[string]interface{} from the first hook's result.
+		// Page-like maps (with html or content key) build JS objects directly.
+		// Non-page maps fall through to the JSON path.
+		if _, hasHTML := v["html"]; hasHTML {
+			return r.callHookMapPayload(name, v, payloadRendered)
+		}
+		if _, hasContent := v["content"]; hasContent {
+			return r.callHookMapPayload(name, v, payloadFormatRendered)
+		}
+		// Fall through to JSON path for non-page maps
 	}
 
-	// Set the payload as a global variable accessible from JS.
-	// Non-primitive types (maps, slices, structs) are JSON-serialized and parsed in the VM.
+	// Slow path: JSON-serialize the payload and parse in the VM.
 	switch v := payload.(type) {
 	case string:
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(v))
@@ -442,10 +565,8 @@ func (r *QuickJSRuntime) callHookRenderedPayload(name string, v HookRenderedPayl
 	obj.SetPropertyStr("html", r.ctx.NewString(v.HTML))
 	obj.SetPropertyStr("url", r.ctx.NewString(v.URL))
 	obj.SetPropertyStr("path", r.ctx.NewString(v.Path))
-	if err := r.setPayloadFrontMatter(obj, v.FrontMatter); err != nil {
-		return nil, fmt.Errorf("hook %q: %w", name, err)
-	}
-	return r.invokeHookFastPath(name, obj)
+	r.setPayloadFrontMatter(obj, v.FrontMatter)
+	return r.invokeHookFastPath(name, obj, payloadRendered)
 }
 
 // callHookFormatRenderedPayload is the fast path for HookFormatRenderedPayload (issue #1180).
@@ -456,78 +577,223 @@ func (r *QuickJSRuntime) callHookFormatRenderedPayload(name string, v HookFormat
 	obj.SetPropertyStr("content", r.ctx.NewString(v.Content))
 	obj.SetPropertyStr("url", r.ctx.NewString(v.URL))
 	obj.SetPropertyStr("path", r.ctx.NewString(v.Path))
-	if err := r.setPayloadFrontMatter(obj, v.FrontMatter); err != nil {
-		return nil, fmt.Errorf("hook %q: %w", name, err)
-	}
-	return r.invokeHookFastPath(name, obj)
+	r.setPayloadFrontMatter(obj, v.FrontMatter)
+	return r.invokeHookFastPath(name, obj, payloadFormatRendered)
 }
 
 // callHookTransformPayload is the fast path for HookTransformPayload (issue #1180).
 // Builds a JS object directly instead of JSON-serializing the ~800KB HTML field.
-// TOC is small and uses JSON; nil/empty TOC is omitted (matching omitempty).
+// TOC uses a lazy getter — marshal only if the plugin reads page.toc (issue #1185).
 func (r *QuickJSRuntime) callHookTransformPayload(name string, v HookTransformPayload) (interface{}, error) {
 	obj := r.ctx.NewObject()
 	obj.SetPropertyStr("html", r.ctx.NewString(v.HTML))
 	obj.SetPropertyStr("url", r.ctx.NewString(v.URL))
 	obj.SetPropertyStr("path", r.ctx.NewString(v.Path))
-	if err := r.setPayloadFrontMatter(obj, v.FrontMatter); err != nil {
-		return nil, fmt.Errorf("hook %q: %w", name, err)
-	}
-	if len(v.TOC) > 0 {
-		tocJSON, err := jsonCodec.Marshal(v.TOC)
-		if err != nil {
-			return nil, fmt.Errorf("hook %q: marshaling toc: %w", name, err)
+	r.setPayloadFrontMatter(obj, v.FrontMatter)
+	r.setPayloadTOC(obj, v.TOC)
+	return r.invokeHookFastPath(name, obj, payloadTransform)
+}
+
+// callHookMapPayload is the fast path for map[string]interface{} payloads
+// from hook chaining (issue #1185). Builds a JS object directly, using
+// native strings for the large html/content field.
+func (r *QuickJSRuntime) callHookMapPayload(name string, m map[string]interface{}, ptype payloadType) (interface{}, error) {
+	obj := r.ctx.NewObject()
+	for k, v := range m {
+		switch val := v.(type) {
+		case string:
+			obj.SetPropertyStr(k, r.ctx.NewString(val))
+		case int:
+			obj.SetPropertyStr(k, r.ctx.NewInt32(int32(val)))
+		case float64:
+			obj.SetPropertyStr(k, r.ctx.NewFloat64(val))
+		case bool:
+			obj.SetPropertyStr(k, r.ctx.NewBool(val))
+		default:
+			jsonBytes, err := jsonCodec.Marshal(val)
+			if err != nil {
+				continue
+			}
+			obj.SetPropertyStr(k, r.ctx.ParseJSON(string(jsonBytes)))
 		}
-		obj.SetPropertyStr("toc", r.ctx.ParseJSON(string(tocJSON)))
 	}
-	return r.invokeHookFastPath(name, obj)
+	return r.invokeHookFastPath(name, obj, ptype)
 }
 
-// setPayloadFrontMatter sets the frontMatter property on a JS payload object.
-// Nil frontMatter is coerced to an empty JS object, matching pipeline behavior
-// in buildPageRenderedPayload.
-func (r *QuickJSRuntime) setPayloadFrontMatter(obj *qjs.Value, fm map[string]interface{}) error {
+// setPayloadFrontMatter installs a lazy getter for frontMatter on the JS
+// payload object (issue #1185). The Go map is stored in r.pendingFM and
+// only marshaled if the plugin reads page.frontMatter. Nil frontMatter is
+// coerced to an empty map, matching pipeline behavior.
+func (r *QuickJSRuntime) setPayloadFrontMatter(obj *qjs.Value, fm map[string]interface{}) {
 	if fm == nil {
-		obj.SetPropertyStr("frontMatter", r.ctx.NewObject())
-		return nil
+		fm = make(map[string]interface{})
 	}
-	fmJSON, err := jsonCodec.Marshal(fm)
+	r.pendingFM = fm
+	result, err := r.ctx.Global().InvokeJS("__installLazyFM", obj)
+	if result != nil {
+		result.Free()
+	}
 	if err != nil {
-		return fmt.Errorf("marshaling frontMatter: %w", err)
+		// Fallback: set frontMatter eagerly
+		fmJSON, marshalErr := jsonCodec.Marshal(fm)
+		if marshalErr != nil {
+			obj.SetPropertyStr("frontMatter", r.ctx.NewObject())
+			return
+		}
+		obj.SetPropertyStr("frontMatter", r.ctx.ParseJSON(string(fmJSON)))
 	}
-	// ParseJSON returns *qjs.Value without an error channel; safe here because
-	// input is always the output of jsonCodec.Marshal (always valid JSON).
-	obj.SetPropertyStr("frontMatter", r.ctx.ParseJSON(string(fmJSON)))
-	return nil
 }
 
-// invokeHookFastPath calls a hook function with a pre-built JS object and
-// extracts the result without JSON-serializing the entire return value.
-func (r *QuickJSRuntime) invokeHookFastPath(name string, input *qjs.Value) (interface{}, error) {
+// setPayloadTOC installs a lazy getter for toc on the JS payload object
+// (issue #1185). Same pattern as setPayloadFrontMatter. Nil/empty TOC
+// resolves to undefined when the getter fires (matching omitempty behavior).
+func (r *QuickJSRuntime) setPayloadTOC(obj *qjs.Value, toc interface{}) {
+	r.pendingTOC = toc
+	result, err := r.ctx.Global().InvokeJS("__installLazyTOC", obj)
+	if result != nil {
+		result.Free()
+	}
+	if err != nil {
+		// Fallback: set toc eagerly if there's data
+		if toc != nil {
+			tocJSON, marshalErr := jsonCodec.Marshal(toc)
+			if marshalErr == nil {
+				obj.SetPropertyStr("toc", r.ctx.ParseJSON(string(tocJSON)))
+			}
+		}
+	}
+}
+
+// invokeHookFastPath calls a hook function with a pre-built JS object using
+// the pre-compiled __callHookByName function (issue #1185) and extracts the
+// result using a type-specific extractor for targeted outbound extraction.
+func (r *QuickJSRuntime) invokeHookFastPath(name string, input *qjs.Value, ptype payloadType) (interface{}, error) {
 	r.ctx.Global().SetPropertyStr("__callInput", input)
-	r.ctx.Global().SetPropertyStr("__callHookName", r.ctx.NewString(name))
 
 	defer func() {
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewUndefined())
-		r.ctx.Global().SetPropertyStr("__callHookName", r.ctx.NewUndefined())
+		r.pendingFM = nil
+		r.pendingTOC = nil
 	}()
 
-	result, err := r.ctx.Eval("hook-call.js", qjs.Code(
-		`__hooks[__callHookName](__callInput)`))
+	inputRef := r.ctx.Global().GetPropertyStr("__callInput")
+	nameVal := r.ctx.NewString(name)
+	result, err := r.ctx.Global().InvokeJS("__callHookByName", nameVal, inputRef)
+	nameVal.Free()
+	inputRef.Free()
 	if err != nil {
 		return nil, fmt.Errorf("hook %q: %w", name, err)
 	}
 	defer result.Free()
 
-	return r.extractHookResult(result)
+	switch ptype {
+	case payloadRendered:
+		return r.extractRenderedResult(result)
+	case payloadFormatRendered:
+		return r.extractFormatRenderedResult(result)
+	case payloadTransform:
+		return r.extractTransformResult(result)
+	default:
+		return r.extractHookResult(result)
+	}
+}
+
+// extractRenderedResult extracts pipeline-consumed fields from an
+// onPageRendered return: html + addDependencies (issue #1185).
+func (r *QuickJSRuntime) extractRenderedResult(result *qjs.Value) (interface{}, error) {
+	if result.IsString() {
+		return result.String(), nil
+	}
+	if result.IsNull() || result.IsUndefined() {
+		return nil, nil
+	}
+	if !result.IsObject() {
+		return jsValueToGo(result), nil
+	}
+	m := make(map[string]interface{}, 2)
+	htmlProp := result.GetPropertyStr("html")
+	if htmlProp.IsString() {
+		m["html"] = htmlProp.String()
+	}
+	htmlProp.Free()
+	r.extractStructuredProperty(result, "addDependencies", m)
+	return m, nil
+}
+
+// extractFormatRenderedResult extracts pipeline-consumed fields from an
+// onFormatRendered return: content + addDependencies (issue #1185).
+func (r *QuickJSRuntime) extractFormatRenderedResult(result *qjs.Value) (interface{}, error) {
+	if result.IsString() {
+		return result.String(), nil
+	}
+	if result.IsNull() || result.IsUndefined() {
+		return nil, nil
+	}
+	if !result.IsObject() {
+		return jsValueToGo(result), nil
+	}
+	m := make(map[string]interface{}, 2)
+	contentProp := result.GetPropertyStr("content")
+	if contentProp.IsString() {
+		m["content"] = contentProp.String()
+	}
+	contentProp.Free()
+	r.extractStructuredProperty(result, "addDependencies", m)
+	return m, nil
+}
+
+// extractTransformResult extracts pipeline-consumed fields from an
+// onContentTransformed return: html + toc + addDependencies (issue #1185).
+func (r *QuickJSRuntime) extractTransformResult(result *qjs.Value) (interface{}, error) {
+	if result.IsString() {
+		return result.String(), nil
+	}
+	if result.IsNull() || result.IsUndefined() {
+		return nil, nil
+	}
+	if !result.IsObject() {
+		return jsValueToGo(result), nil
+	}
+	m := make(map[string]interface{}, 3)
+	htmlProp := result.GetPropertyStr("html")
+	if htmlProp.IsString() {
+		m["html"] = htmlProp.String()
+	}
+	htmlProp.Free()
+	r.extractStructuredProperty(result, "toc", m)
+	r.extractStructuredProperty(result, "addDependencies", m)
+	return m, nil
+}
+
+// extractStructuredProperty reads a non-primitive property from a JS result
+// object. If defined, JSONStringify it and unmarshal into the Go map.
+// Used for small structured fields (addDependencies, toc) on the fast path.
+func (r *QuickJSRuntime) extractStructuredProperty(result *qjs.Value, key string, m map[string]interface{}) {
+	prop := result.GetPropertyStr(key)
+	defer prop.Free()
+	if prop.IsUndefined() || prop.IsNull() {
+		return
+	}
+	if prop.IsString() || prop.IsNumber() || prop.IsBool() {
+		val := jsValueToGo(prop)
+		if val != nil {
+			m[key] = val
+		}
+		return
+	}
+	s, err := prop.JSONStringify()
+	if err != nil {
+		return
+	}
+	var parsed interface{}
+	if err := jsonCodec.Unmarshal([]byte(s), &parsed); err != nil {
+		return
+	}
+	m[key] = parsed
 }
 
 // extractHookResult converts a JS hook return value to a Go value without
-// JSON-serializing the entire result. String properties (html, content) are
-// extracted as native strings. Non-string properties (arrays, nested objects)
-// use JSON only for their own small values. Uses jsonCodec.Unmarshal (not
-// ordered.UnmarshalJSONValue) so nested objects are map[string]interface{},
-// matching what pipeline consumers like deserializeTOC expect.
+// JSON-serializing the entire result. Used as fallback for non-fast-path hooks.
 func (r *QuickJSRuntime) extractHookResult(result *qjs.Value) (interface{}, error) {
 	if result.IsString() {
 		return result.String(), nil
@@ -566,8 +832,6 @@ func (r *QuickJSRuntime) extractHookResult(result *qjs.Value) (interface{}, erro
 	m := make(map[string]interface{}, len(propNames))
 	for _, pname := range propNames {
 		prop := result.GetPropertyStr(pname)
-		// Primitives (string, number, bool): delegate to jsValueToGo.
-		// Null/undefined properties are skipped (not added to the map).
 		if prop.IsString() || prop.IsNumber() || prop.IsBool() || prop.IsNull() || prop.IsUndefined() {
 			val := jsValueToGo(prop)
 			prop.Free()
@@ -576,8 +840,6 @@ func (r *QuickJSRuntime) extractHookResult(result *qjs.Value) (interface{}, erro
 			}
 			continue
 		}
-		// Structured values (arrays, objects): JSONStringify the individual
-		// (small) property, then unmarshal to map[string]interface{}.
 		s, serr := prop.JSONStringify()
 		prop.Free()
 		if serr != nil {
