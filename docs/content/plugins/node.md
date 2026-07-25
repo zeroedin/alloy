@@ -37,15 +37,17 @@ Without this marker, your plugin runs sandboxed on QuickJS with no system access
 
 ## Your First Node Plugin
 
-This plugin needs no dependencies — drop it in and build:
+This filter reads a file from disk and inlines it into the page at build time — useful for dropping an SVG into your markup without an extra HTTP request:
 
 ```javascript
-// plugins/hello.js
+// plugins/inline.js
 export const runtime = "node";
 
+import { readFileSync } from 'node:fs';
+
 export default function(alloy) {
-  alloy.filter("shout", (text) => {
-    return String(text).toUpperCase();
+  alloy.filter("inline", (path) => {
+    return readFileSync(path, 'utf8');
   });
 }
 ```
@@ -58,13 +60,15 @@ Use it in a template:
 <wa-tab slot="nav" panel="nodehello-go">Go templates</wa-tab>
 
 <wa-tab-panel name="nodehello-liquid" active>
-<alloy-code language="liquid">{{ "hello" | shout }}</alloy-code>
+<alloy-code language="liquid">{{ "static/icons/logo.svg" | inline }}</alloy-code>
 </wa-tab-panel>
 <wa-tab-panel name="nodehello-go">
-<alloy-code language="html">{{ shout "hello" }}</alloy-code>
+<alloy-code language="html">{{ inline "static/icons/logo.svg" }}</alloy-code>
 </wa-tab-panel>
 </wa-tab-group>
 {% endraw %}
+
+There is nothing to `npm install` here — `node:fs` is built into Node. But this plugin *does* require the Node runtime: drop the `runtime = "node"` marker and it stops working, because the QuickJS sandbox has no filesystem access. That is the dividing line for choosing Node. Reaching for an npm package, as the examples below do, is the other half of it.
 
 Run `alloy build`. If you add a `console.log()` inside the filter, it prints to your terminal alongside the rest of the build output.
 
