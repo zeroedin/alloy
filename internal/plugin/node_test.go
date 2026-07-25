@@ -1094,6 +1094,52 @@ var _ = Describe("NodeBridge", func() {
 				Expect(original["html"]).To(Equal("<p>original</p>"),
 					"html value in caller's map must be unchanged after EncodeMessage")
 			})
+
+			It("uses standard single-header framing for hook message with map payload lacking html/content keys", func() {
+				// Issue #1188: when hooks chain, the result of a non-page hook
+				// (e.g., onDataFetched, onBuildComplete) is a map[string]interface{}
+				// without html or content keys. EncodeMessage must NOT use
+				// split-body framing for these payloads — the key guard must
+				// reject maps that lack the page-like html/content signature.
+				msg := &plugin.Message{
+					Type: "hook",
+					Name: "onBuildComplete",
+					Payload: map[string]interface{}{
+						"pageCount": 42,
+						"duration":  "1.5s",
+						"outputDir": "_site",
+						"errors":    []interface{}{},
+					},
+				}
+
+				encoded, err := plugin.EncodeMessage(msg)
+				Expect(err).NotTo(HaveOccurred())
+
+				raw := string(encoded)
+				Expect(raw).To(HavePrefix("Content-Length: "),
+					"non-page-like map must use standard Content-Length framing")
+				Expect(raw).NotTo(ContainSubstring("X-Body-Length"),
+					"map[string]interface{} without html/content keys must NOT "+
+						"emit X-Body-Length — split-body is reserved for page-like "+
+						"payloads with large html/content fields (issue #1188)")
+				Expect(raw).NotTo(ContainSubstring("X-Body-Field"),
+					"map[string]interface{} without html/content keys must NOT "+
+						"emit X-Body-Field — the key guard must reject non-page maps")
+
+				// Verify the full payload is present in the JSON body
+				parts := strings.SplitN(raw, "\r\n\r\n", 2)
+				Expect(parts).To(HaveLen(2))
+				var parsed map[string]interface{}
+				Expect(jsonutil.JSON.Unmarshal([]byte(parts[1]), &parsed)).To(Succeed())
+				payloadMap, ok := parsed["payload"].(map[string]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(payloadMap).To(HaveKeyWithValue("pageCount", BeNumerically("==", 42)),
+					"all fields must be present in the JSON body when standard framing is used")
+				Expect(payloadMap).To(HaveKeyWithValue("duration", "1.5s"),
+					"non-page payload fields must be preserved in JSON body")
+				Expect(payloadMap).To(HaveKeyWithValue("outputDir", "_site"),
+					"non-page payload fields must be preserved in JSON body")
+			})
 		})
 
 		// ── DecodeMessage split-body parsing ─────────────────────
