@@ -1633,22 +1633,6 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 		})
 	})
 
-	// setupQuickJSWithHook creates a QuickJS runtime, inlines the given
-	// plugin JS (which must register a hook via alloy.hook), and returns
-	// the runtime. Caller must DeferCleanup(rt.Close).
-	// Shared by both #1180 and #1185 test Describes.
-	setupQuickJSWithHook := func(hookJS string) *plugin.QuickJSRuntime {
-		tmpDir := GinkgoT().TempDir()
-		pluginPath := filepath.Join(tmpDir, "test-hook.js")
-		Expect(os.WriteFile(pluginPath, []byte(hookJS), 0644)).To(Succeed())
-
-		rt := plugin.NewQuickJSRuntime()
-		Expect(rt.Init()).To(Succeed())
-		Expect(rt.EvalFile(pluginPath)).To(Succeed())
-		DeferCleanup(rt.Close)
-		return rt
-	}
-
 	// ── CallHook payload struct fast path (issue #1180) ──────────────
 	// QuickJS CallHook currently JSON-serializes the entire payload for
 	// struct types (HookRenderedPayload, HookFormatRenderedPayload,
