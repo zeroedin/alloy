@@ -487,22 +487,20 @@ func (r *QuickJSRuntime) callHookLocked(name string, payload interface{}) (inter
 	case HookTransformPayload:
 		return r.callHookTransformPayload(name, v)
 	case map[string]interface{}:
-		// Hook chain fast path (issue #1185): when hooks chain, the second
-		// hook receives a map[string]interface{} from the first hook's result.
-		// Page-like maps (with html or content key) build JS objects directly.
-		// Non-page maps fall through to the JSON path.
-		if _, hasHTML := v["html"]; hasHTML {
-			// Disambiguate transform vs rendered: onContentTransformed returns
-			// html + toc, while onPageRendered returns only html.
-			if _, hasTOC := v["toc"]; hasTOC {
-				return r.callHookMapPayload(name, v, payloadTransform)
-			}
+		// Hook chain fast path (issue #1185, #1202): when hooks chain, the
+		// second hook receives a map[string]interface{} from the first hook's
+		// result. The payload type is determined by the hook name — NOT by key
+		// presence — because plugins may return extra keys that confuse a
+		// key-based heuristic (e.g., onPageRendered returning {html, toc}).
+		switch name {
+		case "onPageRendered":
 			return r.callHookMapPayload(name, v, payloadRendered)
-		}
-		if _, hasContent := v["content"]; hasContent {
+		case "onFormatRendered":
 			return r.callHookMapPayload(name, v, payloadFormatRendered)
+		case "onContentTransformed":
+			return r.callHookMapPayload(name, v, payloadTransform)
 		}
-		// Fall through to JSON path for non-page maps
+		// Fall through to JSON path for non-page maps or unknown hooks
 	}
 
 	// Slow path: JSON-serialize the payload and parse in the VM.
