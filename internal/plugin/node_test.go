@@ -4,7 +4,6 @@ package plugin_test
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,6 +17,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/zeroedin/alloy/internal/jsonutil"
 	"github.com/zeroedin/alloy/internal/ordered"
 	"github.com/zeroedin/alloy/internal/plugin"
 )
@@ -52,7 +52,7 @@ var _ = Describe("NodeBridge", func() {
 			Expect(parts).To(HaveLen(2))
 
 			var decoded map[string]interface{}
-			Expect(json.Unmarshal([]byte(parts[1]), &decoded)).To(Succeed())
+			Expect(jsonutil.JSON.Unmarshal([]byte(parts[1]), &decoded)).To(Succeed())
 
 			// Content-Length must match actual body length
 			bodyLen := len(parts[1])
@@ -128,7 +128,7 @@ var _ = Describe("NodeBridge", func() {
 			Expect(parts).To(HaveLen(2))
 
 			var parsed map[string]interface{}
-			Expect(json.Unmarshal([]byte(parts[1]), &parsed)).To(Succeed())
+			Expect(jsonutil.JSON.Unmarshal([]byte(parts[1]), &parsed)).To(Succeed())
 
 			Expect(parsed).To(HaveKeyWithValue("type", "hook"))
 			Expect(parsed).To(HaveKeyWithValue("name", "onContentTransformed"))
@@ -153,7 +153,7 @@ var _ = Describe("NodeBridge", func() {
 			Expect(parts).To(HaveLen(2))
 
 			var parsed map[string]interface{}
-			Expect(json.Unmarshal([]byte(parts[1]), &parsed)).To(Succeed())
+			Expect(jsonutil.JSON.Unmarshal([]byte(parts[1]), &parsed)).To(Succeed())
 
 			Expect(parsed).To(HaveKeyWithValue("type", "ssr"))
 			instances, ok := parsed["instances"].([]interface{})
@@ -899,7 +899,7 @@ var _ = Describe("NodeBridge", func() {
 
 					// JSON body must be valid and must NOT contain the split field
 					var parsed map[string]interface{}
-					Expect(json.Unmarshal(jsonBody, &parsed)).To(Succeed(),
+					Expect(jsonutil.JSON.Unmarshal(jsonBody, &parsed)).To(Succeed(),
 						"JSON portion of split-body frame must be valid JSON")
 
 					payloadMap, ok := parsed["payload"].(map[string]interface{})
@@ -1005,7 +1005,7 @@ var _ = Describe("NodeBridge", func() {
 				jsonBody := encoded[sepIdx+4:]
 
 				var parsed map[string]interface{}
-				Expect(json.Unmarshal(jsonBody, &parsed)).To(Succeed())
+				Expect(jsonutil.JSON.Unmarshal(jsonBody, &parsed)).To(Succeed())
 
 				payloadMap, ok := parsed["payload"].(map[string]interface{})
 				Expect(ok).To(BeTrue())
@@ -1060,7 +1060,7 @@ var _ = Describe("NodeBridge", func() {
 				_, jsonBody, rawBody := parseSplitFrame(encoded)
 
 				var parsed map[string]interface{}
-				Expect(json.Unmarshal(jsonBody, &parsed)).To(Succeed())
+				Expect(jsonutil.JSON.Unmarshal(jsonBody, &parsed)).To(Succeed())
 				payloadMap, ok := parsed["payload"].(map[string]interface{})
 				Expect(ok).To(BeTrue())
 				Expect(payloadMap).NotTo(HaveKey("html"),
@@ -1154,6 +1154,186 @@ var _ = Describe("NodeBridge", func() {
 					"raw body bytes must be injected into Result under X-Body-Field name — "+
 						"this proves Send's multi-header parser correctly reads X-Body-Length "+
 						"bytes after the JSON body and injects them as a string value")
+			})
+		})
+
+		// ── Split-body edge cases (issue #1194) ─────────────────
+
+		Describe("EncodeMessage → DecodeMessage round-trip fidelity", func() {
+
+			It("round-trips a split-body hook message preserving the split field in payload", func() {
+				original := &plugin.Message{
+					Type: "hook",
+					Name: "onPageRendered",
+					Payload: plugin.HookRenderedPayload{
+						HTML:        "<h1>Round-trip test</h1><p>Content with \"quotes\" and <tags></p>",
+						FrontMatter: map[string]interface{}{"title": "Round-trip"},
+						URL:         "/round-trip/",
+						Path:        "round-trip.md",
+					},
+				}
+
+				encoded, err := plugin.EncodeMessage(original)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Verify the encoded frame IS split-body (not single-header)
+				Expect(string(encoded)).To(ContainSubstring("X-Body-Length:"),
+					"encoded frame must use split-body framing — if this fails, "+
+						"EncodeMessage is not detecting the hook payload type")
+
+				decoded, err := plugin.DecodeMessage(encoded)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(decoded).NotTo(BeNil())
+
+				Expect(decoded.Type).To(Equal("hook"),
+					"message type must survive the round-trip")
+				Expect(decoded.Name).To(Equal("onPageRendered"),
+					"message name must survive the round-trip")
+
+				// The split field must be injected back into the decoded message.
+				// When Result is nil (outbound message, not a response), DecodeMessage
+				// injects into Payload if it's a map.
+				payloadMap, ok := decoded.Payload.(map[string]interface{})
+				Expect(ok).To(BeTrue(),
+					"Payload must be a map[string]interface{} after JSON round-trip "+
+						"of a struct payload (EncodeMessage converts structs to maps via "+
+						"JSON marshal/unmarshal in stripField)")
+				Expect(payloadMap).To(HaveKeyWithValue("html",
+					"<h1>Round-trip test</h1><p>Content with \"quotes\" and <tags></p>"),
+					"the split html field must be injected back into the Payload map "+
+						"during DecodeMessage — this is the round-trip fidelity guarantee: "+
+						"encode strips the field from JSON and sends it as raw bytes, "+
+						"decode reads those raw bytes and injects them back")
+				Expect(payloadMap).To(HaveKeyWithValue("url", "/round-trip/"),
+					"non-split fields must be preserved through the round-trip")
+				Expect(payloadMap).To(HaveKeyWithValue("path", "round-trip.md"),
+					"non-split fields must be preserved through the round-trip")
+				Expect(payloadMap).To(HaveKey("frontMatter"),
+					"frontMatter must be preserved through the round-trip")
+			})
+		})
+
+		Describe("DecodeMessage malformed split-body frames", func() {
+
+			It("returns error when Content-Length exceeds available bytes (truncated frame)", func() {
+				jsonPart := `{"id":1,"result":{"status":"ok"}}`
+				// Claim Content-Length is much larger than the actual body
+				frame := fmt.Sprintf(
+					"Content-Length: %d\r\n\r\n%s",
+					len(jsonPart)+500, // 500 bytes more than actually present
+					jsonPart,
+				)
+
+				_, err := plugin.DecodeMessage([]byte(frame))
+				Expect(err).To(HaveOccurred(),
+					"DecodeMessage must reject frames where Content-Length exceeds available bytes")
+				Expect(err.Error()).To(SatisfyAny(
+					ContainSubstring("Content-Length"),
+					ContainSubstring("available bytes"),
+					ContainSubstring("truncated"),
+				), "error must indicate the frame is truncated or Content-Length is invalid")
+			})
+
+			It("returns error when X-Body-Length is negative", func() {
+				jsonPart := `{"id":1,"result":{"status":"ok"}}`
+				frame := fmt.Sprintf(
+					"Content-Length: %d\r\nX-Body-Length: -1\r\nX-Body-Field: html\r\n\r\n%s",
+					len(jsonPart),
+					jsonPart,
+				)
+
+				_, err := plugin.DecodeMessage([]byte(frame))
+				Expect(err).To(HaveOccurred(),
+					"DecodeMessage must reject frames with negative X-Body-Length — "+
+						"strconv.Atoi(\"-1\") succeeds, so this tests explicit bounds checking")
+				Expect(err.Error()).To(ContainSubstring("X-Body-Length"),
+					"error must identify X-Body-Length as the invalid header")
+			})
+
+			It("returns error when X-Body-Length is present but X-Body-Field is missing", func() {
+				jsonPart := `{"id":1,"result":{"status":"ok"}}`
+				frame := fmt.Sprintf(
+					"Content-Length: %d\r\nX-Body-Length: 10\r\n\r\n%s0123456789",
+					len(jsonPart),
+					jsonPart,
+				)
+
+				_, err := plugin.DecodeMessage([]byte(frame))
+				Expect(err).To(HaveOccurred(),
+					"DecodeMessage must reject frames with X-Body-Length but no X-Body-Field — "+
+						"without X-Body-Field, the raw body bytes have no target key for injection")
+				Expect(err.Error()).To(SatisfyAll(
+					ContainSubstring("X-Body-Field"),
+					SatisfyAny(
+						ContainSubstring("missing"),
+						ContainSubstring("X-Body-Length"),
+					),
+				), "error must indicate that X-Body-Field is missing when X-Body-Length is present")
+			})
+		})
+
+		Describe("Send malformed split-body responses", func() {
+
+			It("rejects stdout pollution in key: value format that mimics a header", func() {
+				// "debug: loading plugin" looks like a header to naive SplitN parsing,
+				// but must be rejected as stdout pollution because the first line
+				// must start with "Content-Length:".
+				pollution := "debug: loading plugin\r\n"
+				reader := bufio.NewReader(strings.NewReader(pollution))
+				bridge := plugin.NewBridgeWithReader(reader)
+
+				_, err := bridge.Send(&plugin.Message{Type: "hook", Name: "test"})
+				Expect(err).To(HaveOccurred(),
+					"Send must reject lines that look like headers but aren't Content-Length — "+
+						"without the first-line check, SplitN(line, \": \", 2) would parse "+
+						"\"debug: loading plugin\" as headers[\"debug\"] = \"loading plugin\"")
+				Expect(err.Error()).To(ContainSubstring("stdout"),
+					"error must name stdout pollution as the likely cause, not report a "+
+						"generic framing error — this helps plugin authors diagnose the issue")
+				Expect(err.Error()).To(ContainSubstring("debug"),
+					"error must include a snippet of the offending bytes for diagnosis")
+			})
+
+			It("returns error when X-Body-Length is negative in Send response", func() {
+				jsonPart := `{"id":1,"result":{"status":"ok"}}`
+				response := fmt.Sprintf(
+					"Content-Length: %d\r\nX-Body-Length: -1\r\nX-Body-Field: html\r\n\r\n%s",
+					len(jsonPart),
+					jsonPart,
+				)
+
+				reader := bufio.NewReader(strings.NewReader(response))
+				bridge := plugin.NewBridgeWithReader(reader)
+
+				_, err := bridge.Send(&plugin.Message{Type: "hook", Name: "test"})
+				Expect(err).To(HaveOccurred(),
+					"Send must reject responses with negative X-Body-Length")
+				Expect(err.Error()).To(ContainSubstring("X-Body-Length"),
+					"error must identify X-Body-Length as the invalid header")
+			})
+
+			It("returns error when X-Body-Field is missing from Send response", func() {
+				jsonPart := `{"id":1,"result":{"status":"ok"}}`
+				rawPart := "some raw body"
+				response := fmt.Sprintf(
+					"Content-Length: %d\r\nX-Body-Length: %d\r\n\r\n%s%s",
+					len(jsonPart), len(rawPart),
+					jsonPart, rawPart,
+				)
+
+				reader := bufio.NewReader(strings.NewReader(response))
+				bridge := plugin.NewBridgeWithReader(reader)
+
+				_, err := bridge.Send(&plugin.Message{Type: "hook", Name: "test"})
+				Expect(err).To(HaveOccurred(),
+					"Send must reject responses with X-Body-Length but no X-Body-Field")
+				Expect(err.Error()).To(SatisfyAll(
+					ContainSubstring("X-Body-Field"),
+					SatisfyAny(
+						ContainSubstring("missing"),
+						ContainSubstring("X-Body-Length"),
+					),
+				), "error must indicate that X-Body-Field is missing")
 			})
 		})
 	})
