@@ -418,10 +418,12 @@ You never interact with any of this directly — the `alloy` API object handles 
 Node plugins communicate with Alloy via length-prefixed JSON-RPC over stdin/stdout (LSP-style framing). Each message is a `Content-Length` header, a blank line, then a JSON body:
 
 ```text
-Content-Length: 82\r\n
+Content-Length: 75\r\n
 \r\n
 {"id": 1, "type": "hook", "name": "onContentTransformed", "payload": [...]}
 ```
+
+The header is the exact byte count of the JSON body that follows.
 
 Length-prefixed framing is used instead of newline-delimited JSON because HTML payloads routinely contain literal newlines, which would break line-based parsing.
 
@@ -459,7 +461,7 @@ A plugin or one of its dependencies is writing to stdout at the file descriptor 
 - A native addon writing directly to fd 1
 - `require('fs').writeSync(1, ...)` or similar fd-level writes
 
-Fix by redirecting the child's stdio as shown above.
+The remedy depends on which one you have. For a child process, redirect its stdio as shown above. Native addons and direct fd-level writes cannot be intercepted from JavaScript at all — you have to remove the offending call, configure the library to log to stderr instead, or move that work into a separate process whose stdout you control.
 
 ### How Hooks Are Dispatched
 
