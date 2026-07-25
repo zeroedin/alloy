@@ -21,7 +21,8 @@ Static site generators tend to make you choose between speed and extensibility. 
 - **i18n** — Opt-in multilingual support with per-language content trees and shared layouts
 - **Incremental rebuilds (dev mode)** — Content-hash change detection in `alloy dev` for fast rebuilds on file changes. `alloy build` always does a full clean rebuild for CI/CD reliability.
 - **Flexible plugin system** — Built-in Go filters (ns), in-process JS/WASM plugins (us), Node subprocess plugins (ms)
-- **Dev server** — File watching, WebSocket live reload, error reporting
+- **Plugin dependency tracking** — Plugins declare file dependencies; dev server rebuilds only affected pages when those files change
+- **Dev server** — File watching, WebSocket live reload, error reporting, concurrent process detection via lockfile
 
 ## Installation
 
@@ -100,7 +101,7 @@ Drop a `.js` file in `plugins/` and it runs on embedded QuickJS. Export `runtime
 
 ## Lifecycle Hooks
 
-Plugins can hook into 13 lifecycle events covering config, content rendering, asset processing, and build completion. Hooks chain in alphabetical filename order. See [Lifecycle Events](https://alloyssg.dev/hooks/) for the full list and payloads.
+Plugins can hook into 14 lifecycle events covering config, content rendering, asset processing, and build completion. Hooks chain in alphabetical filename order. See [Lifecycle Events](https://alloyssg.dev/hooks/) for the full list and payloads.
 
 ## CLI
 
@@ -125,10 +126,12 @@ See [CLI Reference](https://alloyssg.dev/cli/) for all flags and build modes.
 | [wazero](https://github.com/tetratelabs/wazero) | WASM runtime (plugins) | Apache-2.0 |
 | [gorilla/websocket](https://github.com/gorilla/websocket) | Live reload | BSD-3 |
 | [sonic](https://github.com/bytedance/sonic) | High-performance JSON | Apache-2.0 |
-| [qjs](https://github.com/nicholasgasior/goquickjs) | QuickJS binding (Tier 2 JS plugins) | MIT |
+| [qjs](https://github.com/fastschema/qjs) | QuickJS binding (Tier 2 JS plugins) | MIT |
 | [toml](https://github.com/BurntSushi/toml) | TOML config/front matter parsing | MIT |
 | [doublestar](https://github.com/bmatcuk/doublestar) | Glob pattern matching | MIT |
 | [strftime](https://github.com/lestrrat-go/strftime) | Date formatting | MIT |
+| [semver](https://github.com/Masterminds/semver) | Version comparison (update checks) | MIT |
+| [term](https://pkg.go.dev/golang.org/x/term) | Terminal detection | BSD-3 |
 
 ## Development
 
@@ -189,9 +192,10 @@ internal/
   pipeline/             Build pipeline orchestration
   plugin/               Plugin system (QuickJS, WASM, Node)
   server/               Dev server, file watcher, WebSocket
-  ssr/                  Web Component SSR (Phase 2)
+  ssr/                  Web Component SSR (experimental)
   static/               Static file and passthrough copy
   template/             Liquid + Go template engines, filters
+  update/               Update notification (GitHub release checks)
   validation/           Output path conflict detection
 test/
   fixtures/             Test site fixtures
