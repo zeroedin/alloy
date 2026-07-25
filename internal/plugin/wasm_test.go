@@ -2235,4 +2235,516 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 		})
 	})
 
+	// ── Lazy frontMatter and TOC serialization (issue #1187) ──────────
+	// setPayloadFrontMatter and callHookTransformPayload eagerly
+	// JSON-serialize frontMatter/TOC on every hook call, even though
+	// most hooks never read these properties. The fix installs lazy
+	// getters via Object.defineProperty backed by Go callbacks that
+	// only marshal on demand. The getter self-replaces with a data
+	// property on first access (caching), and a setter allows
+	// page.frontMatter = {...} without TypeError.
+
+	Describe("Lazy frontMatter and TOC serialization (issue #1187)", func() {
+
+		// setupQuickJSWithHook creates a QuickJS runtime, inlines the given
+		// plugin JS (which must register a hook via alloy.hook), and returns
+		// the runtime. Caller must DeferCleanup(rt.Close).
+		setupQuickJSWithHook := func(hookJS string) *plugin.QuickJSRuntime {
+			tmpDir := GinkgoT().TempDir()
+			pluginPath := filepath.Join(tmpDir, "test-hook.js")
+			Expect(os.WriteFile(pluginPath, []byte(hookJS), 0644)).To(Succeed())
+
+			rt := plugin.NewQuickJSRuntime()
+			Expect(rt.Init()).To(Succeed())
+			Expect(rt.EvalFile(pluginPath)).To(Succeed())
+			DeferCleanup(rt.Close)
+			return rt
+		}
+
+		// ── frontMatter lazy getter ──────────────────────────────────
+
+		It("frontMatter is installed as lazy accessor that resolves and self-caches on HookRenderedPayload", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    // Before reading: frontMatter should be an accessor (lazy getter)
+    var descBefore = Object.getOwnPropertyDescriptor(page, 'frontMatter');
+    var hasGetter = descBefore && typeof descBefore.get === 'function';
+
+    // Read to trigger the getter (JSON.parse(__resolveFM()))
+    var title = page.frontMatter.title;
+
+    // After reading: getter should have self-replaced with a data property
+    var descAfter = Object.getOwnPropertyDescriptor(page, 'frontMatter');
+    var isCached = descAfter && descAfter.hasOwnProperty('value') && !descAfter.hasOwnProperty('get');
+
+    return {
+      html: 'getter:' + hasGetter + ' title:' + title + ' cached:' + isCached
+    };
+  });
+}`)
+			payload := plugin.HookRenderedPayload{
+				HTML:        "<h1>Hello</h1>",
+				FrontMatter: map[string]interface{}{"title": "Lazy Test"},
+				URL:         "/lazy/",
+				Path:        "content/lazy.md",
+			}
+			result, err := rt.CallHook("onPageRendered", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue(), "result must contain html as string")
+			Expect(html).To(Equal("getter:true title:Lazy Test cached:true"),
+				"frontMatter must be installed as a lazy accessor property "+
+					"(getter:true) that resolves the correct value on first read "+
+					"(title:Lazy Test) and self-replaces with a data property "+
+					"(cached:true). If getter:false, frontMatter is eagerly set "+
+					"as a data property — the lazy optimization is not active")
+		})
+
+		It("writing page.frontMatter before reading does not throw TypeError", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    // Write a new value BEFORE reading — the setter must install a
+    // data property so the written value sticks and no TypeError is thrown.
+    page.frontMatter = {custom: true, source: 'plugin'};
+    var customVal = page.frontMatter.custom;
+    var sourceVal = page.frontMatter.source;
+    // Verify the original Go value is NOT returned
+    var hasOrigTitle = page.frontMatter.title !== undefined;
+    return {
+      html: 'custom:' + customVal + ' source:' + sourceVal + ' hasOrigTitle:' + hasOrigTitle
+    };
+  });
+}`)
+			payload := plugin.HookRenderedPayload{
+				HTML:        "<p>test</p>",
+				FrontMatter: map[string]interface{}{"title": "Original"},
+				URL:         "/write-before-read/",
+				Path:        "content/write-before-read.md",
+			}
+			result, err := rt.CallHook("onPageRendered", payload)
+			Expect(err).NotTo(HaveOccurred(),
+				"setting page.frontMatter before reading must not throw TypeError — "+
+					"the lazy getter's Object.defineProperty must include a setter "+
+					"that replaces the accessor with a writable data property")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(Equal("custom:true source:plugin hasOrigTitle:false"),
+				"after writing page.frontMatter = {custom: true, source: 'plugin'}, "+
+					"subsequent reads must return the written value, not the "+
+					"original Go frontMatter. The setter must replace the lazy "+
+					"accessor with a data property holding the written value")
+		})
+
+		It("plugin that never reads frontMatter produces no error", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    // Deliberately never access page.frontMatter — the lazy getter
+    // should not fire, and no error should occur.
+    return { html: page.html + '<!-- no-fm-read url:' + page.url + ' -->' };
+  });
+}`)
+			payload := plugin.HookRenderedPayload{
+				HTML:        "<p>no fm access</p>",
+				FrontMatter: map[string]interface{}{"title": "Ignored"},
+				URL:         "/no-fm-read/",
+				Path:        "content/no-fm-read.md",
+			}
+			result, err := rt.CallHook("onPageRendered", payload)
+			Expect(err).NotTo(HaveOccurred(),
+				"hook must not error when frontMatter is never read — "+
+					"the lazy getter must be inert when unused")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(Equal("<p>no fm access</p><!-- no-fm-read url:/no-fm-read/ -->"),
+				"html and url must be delivered correctly even when "+
+					"frontMatter is never accessed by the plugin")
+		})
+
+		It("reading frontMatter twice returns same cached value", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    // First read — triggers lazy getter
+    var title1 = page.frontMatter.title;
+    // Second read — should hit cached data property, not re-resolve
+    var title2 = page.frontMatter.title;
+    // Verify the full object reference is stable
+    var fm1 = page.frontMatter;
+    var fm2 = page.frontMatter;
+    var sameRef = (fm1 === fm2);
+    return {
+      html: 'title1:' + title1 + ' title2:' + title2 + ' sameRef:' + sameRef
+    };
+  });
+}`)
+			payload := plugin.HookRenderedPayload{
+				HTML:        "<p>cache test</p>",
+				FrontMatter: map[string]interface{}{"title": "Cached"},
+				URL:         "/cache-test/",
+				Path:        "content/cache-test.md",
+			}
+			result, err := rt.CallHook("onPageRendered", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(Equal("title1:Cached title2:Cached sameRef:true"),
+				"reading frontMatter twice must return the same value — "+
+					"the lazy getter must self-replace with a data property "+
+					"on first access so subsequent reads return the cached "+
+					"object (sameRef:true), not a fresh JSON.parse each time")
+		})
+
+		It("consecutive hook calls resolve correct frontMatter per call", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    return { html: 'title:' + page.frontMatter.title };
+  });
+}`)
+			// First call with one frontMatter
+			payload1 := plugin.HookRenderedPayload{
+				HTML:        "<p>first</p>",
+				FrontMatter: map[string]interface{}{"title": "First Page"},
+				URL:         "/first/",
+				Path:        "content/first.md",
+			}
+			result1, err := rt.CallHook("onPageRendered", payload1)
+			Expect(err).NotTo(HaveOccurred())
+
+			m1 := extractGoMap(result1)
+			Expect(m1).NotTo(BeNil())
+			html1, ok := m1["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html1).To(Equal("title:First Page"),
+				"first call must resolve its own frontMatter")
+
+			// Second call with different frontMatter
+			payload2 := plugin.HookRenderedPayload{
+				HTML:        "<p>second</p>",
+				FrontMatter: map[string]interface{}{"title": "Second Page"},
+				URL:         "/second/",
+				Path:        "content/second.md",
+			}
+			result2, err := rt.CallHook("onPageRendered", payload2)
+			Expect(err).NotTo(HaveOccurred())
+
+			m2 := extractGoMap(result2)
+			Expect(m2).NotTo(BeNil())
+			html2, ok := m2["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html2).To(Equal("title:Second Page"),
+				"second call must resolve its own frontMatter, not "+
+					"stale data from the first call — the Go callback "+
+					"must read fresh pendingFM on each hook invocation")
+		})
+
+		It("nil frontMatter resolves to empty object via lazy getter", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    var fmType = typeof page.frontMatter;
+    var isNull = page.frontMatter === null;
+    var isUndefined = page.frontMatter === undefined;
+    var keys = 'n/a';
+    if (fmType === 'object' && !isNull) {
+      keys = Object.keys(page.frontMatter).length;
+    }
+    return { html: 'type:' + fmType + ' null:' + isNull + ' undef:' + isUndefined + ' keys:' + keys };
+  });
+}`)
+			payload := plugin.HookRenderedPayload{
+				HTML:        "<p>nil fm</p>",
+				FrontMatter: nil,
+				URL:         "/nil-fm/",
+				Path:        "content/nil-fm.md",
+			}
+			result, err := rt.CallHook("onPageRendered", payload)
+			Expect(err).NotTo(HaveOccurred(),
+				"nil frontMatter must not cause an error — the lazy "+
+					"getter's Go callback must return '{}' for nil pendingFM")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(Equal("type:object null:false undef:false keys:0"),
+				"nil frontMatter must resolve to an empty JS object — "+
+					"not null, not undefined. Plugins must be able to call "+
+					"Object.keys(page.frontMatter) without TypeError. "+
+					"This matches the pipeline behavior in buildPageRenderedPayload "+
+					"which coerces nil to map[string]interface{}{}")
+		})
+
+		It("empty frontMatter map resolves to empty object via lazy getter", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    var fmType = typeof page.frontMatter;
+    var isNull = page.frontMatter === null;
+    var keys = 'n/a';
+    if (fmType === 'object' && !isNull) {
+      keys = Object.keys(page.frontMatter).length;
+    }
+    return { html: 'type:' + fmType + ' null:' + isNull + ' keys:' + keys };
+  });
+}`)
+			payload := plugin.HookRenderedPayload{
+				HTML:        "<p>empty fm</p>",
+				FrontMatter: map[string]interface{}{},
+				URL:         "/empty-fm/",
+				Path:        "content/empty-fm.md",
+			}
+			result, err := rt.CallHook("onPageRendered", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(Equal("type:object null:false keys:0"),
+				"empty frontMatter map must resolve to an empty JS object — "+
+					"same behavior as nil frontMatter")
+		})
+
+		It("frontMatter lazy accessor resolves correct value on HookFormatRenderedPayload", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onFormatRendered', {}, function(payload) {
+    // Verify lazy accessor is installed on this payload type too
+    var desc = Object.getOwnPropertyDescriptor(payload, 'frontMatter');
+    var hasGetter = desc && typeof desc.get === 'function';
+    var title = payload.frontMatter.title;
+    return {
+      content: 'getter:' + hasGetter + ' title:' + title + ' format:' + payload.format
+    };
+  });
+}`)
+			payload := plugin.HookFormatRenderedPayload{
+				Format:      "json",
+				Content:     `{"key":"value"}`,
+				URL:         "/api/",
+				Path:        "content/api.md",
+				FrontMatter: map[string]interface{}{"title": "API Page"},
+			}
+			result, err := rt.CallHook("onFormatRendered", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			content, ok := m["content"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(content).To(Equal("getter:true title:API Page format:json"),
+				"HookFormatRenderedPayload must also use lazy frontMatter — "+
+					"the accessor (getter:true) must resolve the correct value "+
+					"and be consistent across all three payload types")
+		})
+
+		It("frontMatter lazy accessor resolves correct value on HookTransformPayload", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    var desc = Object.getOwnPropertyDescriptor(page, 'frontMatter');
+    var hasGetter = desc && typeof desc.get === 'function';
+    var title = page.frontMatter.title;
+    return {
+      html: 'getter:' + hasGetter + ' title:' + title
+    };
+  });
+}`)
+			payload := plugin.HookTransformPayload{
+				HTML:        "<h2>Heading</h2>",
+				URL:         "/transform/",
+				Path:        "content/transform.md",
+				FrontMatter: map[string]interface{}{"title": "Transform Page"},
+				TOC: []content.TOCEntry{
+					{Text: "Heading", ID: "heading", Level: 2},
+				},
+			}
+			result, err := rt.CallHook("onContentTransformed", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(Equal("getter:true title:Transform Page"),
+				"HookTransformPayload must also use lazy frontMatter — "+
+					"the accessor (getter:true) must resolve the correct value")
+		})
+
+		// ── TOC lazy getter ─────────────────────────────────────────
+
+		It("TOC is installed as lazy accessor that resolves and self-caches on HookTransformPayload", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    // Before reading: toc should be an accessor (lazy getter)
+    var descBefore = Object.getOwnPropertyDescriptor(page, 'toc');
+    var hasGetter = descBefore && typeof descBefore.get === 'function';
+
+    // Read to trigger the getter
+    var tocText = page.toc[0].text;
+    var tocLevel = page.toc[0].level;
+
+    // After reading: getter should have self-replaced with a data property
+    var descAfter = Object.getOwnPropertyDescriptor(page, 'toc');
+    var isCached = descAfter && descAfter.hasOwnProperty('value') && !descAfter.hasOwnProperty('get');
+
+    return {
+      html: 'getter:' + hasGetter + ' text:' + tocText + ' level:' + tocLevel + ' cached:' + isCached,
+      toc: page.toc
+    };
+  });
+}`)
+			payload := plugin.HookTransformPayload{
+				HTML: "<h2>Introduction</h2><p>Body</p>",
+				TOC: []content.TOCEntry{
+					{Text: "Introduction", ID: "introduction", Level: 2},
+				},
+				URL:         "/toc-lazy/",
+				Path:        "content/toc-lazy.md",
+				FrontMatter: map[string]interface{}{"title": "TOC Test"},
+			}
+			result, err := rt.CallHook("onContentTransformed", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(Equal("getter:true text:Introduction level:2 cached:true"),
+				"TOC must be installed as a lazy accessor property "+
+					"(getter:true) that resolves the correct TOC entries "+
+					"on first read and self-replaces with a data property "+
+					"(cached:true)")
+		})
+
+		It("writing page.toc before reading does not throw TypeError", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    // Write a new TOC before reading — setter must replace accessor
+    page.toc = [{text: 'Custom Heading', id: 'custom', level: 3}];
+    var tocText = page.toc[0].text;
+    var tocLevel = page.toc[0].level;
+    return {
+      html: 'text:' + tocText + ' level:' + tocLevel,
+      toc: page.toc
+    };
+  });
+}`)
+			payload := plugin.HookTransformPayload{
+				HTML: "<h2>Original</h2>",
+				TOC: []content.TOCEntry{
+					{Text: "Original", ID: "original", Level: 2},
+				},
+				URL:         "/toc-write/",
+				Path:        "content/toc-write.md",
+				FrontMatter: map[string]interface{}{},
+			}
+			result, err := rt.CallHook("onContentTransformed", payload)
+			Expect(err).NotTo(HaveOccurred(),
+				"setting page.toc before reading must not throw TypeError — "+
+					"the lazy TOC getter must include a setter")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(Equal("text:Custom Heading level:3"),
+				"after writing page.toc, reads must return the written "+
+					"value, not the original Go TOC entries")
+		})
+
+		It("plugin that never reads toc produces no error", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    // Deliberately never access page.toc
+    return { html: page.html + '<!-- no-toc-read -->' };
+  });
+}`)
+			payload := plugin.HookTransformPayload{
+				HTML: "<h2>Heading</h2>",
+				TOC: []content.TOCEntry{
+					{Text: "Heading", ID: "heading", Level: 2},
+				},
+				URL:         "/no-toc-read/",
+				Path:        "content/no-toc-read.md",
+				FrontMatter: map[string]interface{}{},
+			}
+			result, err := rt.CallHook("onContentTransformed", payload)
+			Expect(err).NotTo(HaveOccurred(),
+				"hook must not error when toc is never read — "+
+					"the lazy TOC getter must be inert when unused")
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(Equal("<h2>Heading</h2><!-- no-toc-read -->"),
+				"html must be delivered correctly even when toc is never accessed")
+		})
+
+		It("nil TOC does not install lazy getter — property is absent", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    var hasToc = page.hasOwnProperty('toc');
+    var tocType = typeof page.toc;
+    return { html: 'hasToc:' + hasToc + ' type:' + tocType };
+  });
+}`)
+			payload := plugin.HookTransformPayload{
+				HTML:        "<p>no toc</p>",
+				TOC:         nil,
+				URL:         "/nil-toc/",
+				Path:        "content/nil-toc.md",
+				FrontMatter: map[string]interface{}{},
+			}
+			result, err := rt.CallHook("onContentTransformed", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(Equal("hasToc:false type:undefined"),
+				"nil TOC must not install a lazy getter — the toc property "+
+					"should be absent from the JS object. The lazy TOC getter "+
+					"is only installed when len(TOC) > 0, matching the current "+
+					"omitempty behavior")
+		})
+
+		It("empty TOC slice does not install lazy getter — property is absent", func() {
+			rt := setupQuickJSWithHook(`export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    var hasToc = page.hasOwnProperty('toc');
+    var tocType = typeof page.toc;
+    return { html: 'hasToc:' + hasToc + ' type:' + tocType };
+  });
+}`)
+			payload := plugin.HookTransformPayload{
+				HTML:        "<p>empty toc</p>",
+				TOC:         []content.TOCEntry{},
+				URL:         "/empty-toc/",
+				Path:        "content/empty-toc.md",
+				FrontMatter: map[string]interface{}{},
+			}
+			result, err := rt.CallHook("onContentTransformed", payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			m := extractGoMap(result)
+			Expect(m).NotTo(BeNil())
+			html, ok := m["html"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(html).To(Equal("hasToc:false type:undefined"),
+				"empty TOC slice must not install a lazy getter — "+
+					"same behavior as nil TOC. len([]TOCEntry{}) == 0, "+
+					"so no lazy getter is installed")
+		})
+	})
+
 })
