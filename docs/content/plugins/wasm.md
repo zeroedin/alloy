@@ -2,17 +2,17 @@
 layout: doc
 title: WASM Plugins
 nav_weight: 30
-description: "Compile WASM plugins from Rust, TinyGo, or AssemblyScript for filters that run 5-10x faster than QuickJS."
+description: "Compiled WASM plugins run sandboxed inside the Alloy process via wazero — fast filters, shortcodes, and hooks with no subprocess."
 ---
 
-WASM plugins are compiled binaries that run native WebAssembly instructions inside the Alloy process. They execute 5-10x faster than QuickJS plugins, making them ideal for filters and transforms called on every page.
+WASM plugins are compiled binaries that run WebAssembly instructions inside the Alloy process. They execute faster than QuickJS plugins, making them suited to filters and transforms called on every page.
 
-```
+```text
 plugins/
-  custom-slugify.wasm    # Compiled from Rust, TinyGo, or AssemblyScript
+  word-count.wasm    # any .wasm file is loaded automatically
 ```
 
-Drop a `.wasm` file in `plugins/` and Alloy loads it automatically via wazero (pure Go, zero CGo).
+Drop a `.wasm` file in `plugins/` and Alloy loads it via wazero (pure Go, zero CGo).
 
 ## When to Use WASM
 
@@ -20,323 +20,322 @@ WASM plugins are worth the compilation step when:
 
 - A filter runs on every page in a large site (thousands of calls per build)
 - You need maximum throughput for data transforms
-- You prefer Rust, Go, or AssemblyScript over JavaScript
+- You want a sandboxed plugin you can run untrusted
 
-For one-off or low-frequency operations, [QuickJS plugins](/plugins/quickjs/) are simpler (no build step).
+For one-off or low-frequency operations, [QuickJS plugins](/plugins/quickjs/) are simpler — no build step. For npm packages or filesystem access, use [Node plugins](/plugins/node/).
 
-## ABI Contract
+## Sandboxing
 
-WASM plugins run in an isolated sandbox — they can't call Alloy functions directly, and Alloy can't reach into the plugin's internals. The ABI (Application Binary Interface) is the contract both sides agree on to exchange data. It defines which functions the plugin must export, which functions the host provides, and how data is passed between them through shared memory. Think of it as the narrow doorway in the sandbox wall — everything flows through it in a predictable format.
+WASM plugins run in isolated memory via wazero. They cannot access the filesystem, network, or system resources — wazero provides no host function imports, so modules have no way to reach outside their own linear memory. This makes WASM the most isolated plugin tier, though Alloy does not currently enforce execution time or memory limits.
 
-In practice, this means Alloy and your plugin communicate through linear memory using a pointer/length convention. Your module must export specific functions that Alloy calls during the build.
+## Toolchain Support
 
-### Required Export: `alloc`
+Any language that compiles to `wasm32-unknown-unknown` and can emit a packed `i64` return works. The three tested toolchains:
 
-Your module must export an `alloc` function that returns a pointer to a block of memory. Alloy calls this to write input data into your module's linear memory before invoking any other export.
+| Toolchain | Build target | Notes |
+|---|---|---|
+| **Rust** | `wasm32-unknown-unknown` | `cargo build --target wasm32-unknown-unknown --release` |
+| **TinyGo** | `wasm-unknown` | Use `-target wasm-unknown`, not `-target wasi` (WASI imports are not provided) |
+| **AssemblyScript** | default | Build with `--runtime stub --use abort=` (Alloy does not provide `abort`) |
 
-<wa-tab-group>
-<wa-tab slot="nav" panel="alloc-wat" active>WAT</wa-tab>
-<wa-tab slot="nav" panel="alloc-rust">Rust</wa-tab>
-<wa-tab slot="nav" panel="alloc-tinygo">TinyGo</wa-tab>
-<wa-tab slot="nav" panel="alloc-as">AssemblyScript</wa-tab>
+WAT (WebAssembly Text Format) also works for small plugins. Compile with [wabt](https://github.com/WebAssembly/wabt): `wat2wasm plugin.wat -o plugins/plugin.wasm`.
 
-<wa-tab-panel name="alloc-wat" active>
-<alloy-code language="wasm">alloc(size i32) -> ptr i32</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="alloc-rust">
-<alloy-code language="rust">#[no_mangle]
-pub extern "C" fn alloc(size: i32) -> i32 {
-    let layout = std::alloc::Layout::from_size_align(size as usize, 1).unwrap();
-    unsafe { std::alloc::alloc(layout) as i32 }
-}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="alloc-tinygo">
-<alloy-code language="go">//export alloc
-func alloc(size int32) int32 {
-	buf := make([]byte, size)
-	return int32(uintptr(unsafe.Pointer(&buf[0])))
-}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="alloc-as">
-<alloy-code language="typescript">export function alloc(size: i32): i32 {
-  return heap.alloc(size) as i32;
-}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
+## Your First Plugin
 
-### Filter Export: `filter`
+Start with the smallest module that satisfies the [ABI contract](#abi-reference). Every module must export `memory` and `alloc`. Data-returning exports (`filter`, `shortcode`, `hook`, `hooks`, `last_error`) return a single packed `i64` encoding a pointer and length: `result = (ptr << 32) | len`.
 
-Receives a UTF-8 string at the given pointer/length. Returns a pointer/length pair for the result string. Input and output are raw UTF-8 — the filter transforms the value and returns the transformed value.
+Here's an echo filter — it returns its input unchanged, enough to prove the wiring works end to end before you add real logic.
 
 <wa-tab-group>
-<wa-tab slot="nav" panel="filter-wat" active>WAT</wa-tab>
-<wa-tab slot="nav" panel="filter-rust">Rust</wa-tab>
-<wa-tab slot="nav" panel="filter-tinygo">TinyGo</wa-tab>
-<wa-tab slot="nav" panel="filter-as">AssemblyScript</wa-tab>
+<wa-tab slot="nav" panel="first-rust" active>Rust</wa-tab>
+<wa-tab slot="nav" panel="first-tinygo">TinyGo</wa-tab>
+<wa-tab slot="nav" panel="first-assemblyscript">AssemblyScript</wa-tab>
+<wa-tab slot="nav" panel="first-wat">WAT</wa-tab>
 
-<wa-tab-panel name="filter-wat" active>
-<alloy-code language="wasm">filter(ptr i32, len i32) -> (ptr i32, len i32)</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="filter-rust">
-<alloy-code language="rust">#[no_mangle]
-pub extern "C" fn filter(ptr: i32, len: i32) -> u64 {
-    let input = unsafe {
-        std::str::from_utf8_unchecked(
-            std::slice::from_raw_parts(ptr as *const u8, len as usize)
-        )
-    };
-    let result = input.to_uppercase();
-    let result_ptr = alloc(result.len() as i32);
-    unsafe {
-        std::ptr::copy_nonoverlapping(result.as_ptr(), result_ptr as *mut u8, result.len());
-    }
-    ((result_ptr as u64) << 32) | (result.len() as u64)
-}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="filter-tinygo">
-<alloy-code language="go">//export filter
-func filter(ptr, length int32) uint64 {
-	input := ptrToString(ptr, length)
-	result := strings.ToUpper(input)
-	resultPtr := alloc(int32(len(result)))
-	copy(unsafe.Slice((*byte)(unsafe.Pointer(uintptr(resultPtr))), len(result)), result)
-	return uint64(resultPtr)&lt;&lt;32 | uint64(len(result))
-}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="filter-as">
-<alloy-code language="typescript">export function filter(ptr: i32, len: i32): u64 {
-  const input = String.UTF8.decodeUnsafe(ptr, len);
-  const result = input.toUpperCase();
-  const resultBuf = String.UTF8.encode(result);
-  const resultPtr = alloc(resultBuf.byteLength);
-  memory.copy(resultPtr, changetype&lt;usize&gt;(resultBuf), resultBuf.byteLength);
-  return (u64(resultPtr) &lt;&lt; 32) | u64(resultBuf.byteLength);
-}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
+<wa-tab-panel name="first-rust" active>
 
-### Optional Exports
+<alloy-code language="rust" filename="src/lib.rs">use std::alloc::{alloc as alloc_bytes, Layout};
 
-```wasm
-shortcode(ptr i32, len i32) -> (ptr i32, len i32)
-hooks() -> (ptr i32, len i32)
-hook(ptr i32, len i32) -> (ptr i32, len i32)
-last_error() -> (ptr i32, len i32)
-```
-
-- **`shortcode`**: Input is a JSON object `{ "name": "youtube", "args": ["abc123"], "content": "" }`. Output is a UTF-8 HTML string.
-- **`hooks`**: Called once at module load, no input. Returns a JSON array of hook names (strings) or registration objects (see [Hook Priority and Scope](#hook-priority-and-scope)).
-- **`hook`**: Input is a JSON payload with an `"event"` key. Output is the modified JSON payload.
-- **`last_error`**: Called when any export returns `(0, 0)`. Returns an error message string.
-
-### Calling Sequence
-
-For every call from Alloy to a WASM export:
-
-1. Alloy calls `alloc(inputLen)` to get a write offset in WASM memory
-2. Alloy writes input bytes at the returned pointer
-3. Alloy calls the target export (e.g., `filter(ptr, len)`)
-4. The module reads input, processes it, writes the result to its own memory
-5. The module returns `(resultPtr, resultLen)`
-6. Alloy reads result bytes from WASM memory
-
-### Error Handling
-
-If any export returns `(0, 0)`, Alloy treats it as an error. If the module exports `last_error()`, Alloy reads and surfaces the error message. No silent fallback to the original input.
-
-If `hooks()` returns invalid JSON (not an array of strings/objects), module loading fails. If `hook()` returns non-JSON bytes, the hook call returns an error.
-
-## Rust Example
-
-```rust
-use std::alloc::{alloc, Layout};
-use std::slice;
-use std::str;
-
-// Required: memory allocator for host writes
 #[no_mangle]
 pub extern "C" fn alloc(size: i32) -> i32 {
     let layout = Layout::from_size_align(size as usize, 1).unwrap();
-    unsafe { alloc(layout) as i32 }
+    unsafe { alloc_bytes(layout) as i32 }
 }
 
-// Filter: convert text to uppercase
 #[no_mangle]
-pub extern "C" fn filter(ptr: i32, len: i32) -> u64 {
-    let input = unsafe {
-        let slice = slice::from_raw_parts(ptr as *const u8, len as usize);
-        str::from_utf8(slice).unwrap()
-    };
-
-    let result = input.to_uppercase();
-    let result_bytes = result.as_bytes();
-    let result_ptr = alloc(result_bytes.len() as i32);
-
-    unsafe {
-        std::ptr::copy_nonoverlapping(
-            result_bytes.as_ptr(),
-            result_ptr as *mut u8,
-            result_bytes.len(),
-        );
-    }
-
-    // Pack (ptr, len) into a single i64 return value
-    ((result_ptr as u64) << 32) | (result_bytes.len() as u64)
+pub extern "C" fn echo(ptr: i32, len: i32) -> u64 {
+    // Return input unchanged: pack ptr and len into a single i64
+    ((ptr as u64) << 32) | (len as u64)
 }
-```
+</alloy-code>
 
-Build with:
+<alloy-code language="toml" filename="Cargo.toml">[lib]
+crate-type = ["cdylib"]
+</alloy-code>
 
 ```bash
 cargo build --target wasm32-unknown-unknown --release
-cp target/wasm32-unknown-unknown/release/my_filter.wasm plugins/
+cp target/wasm32-unknown-unknown/release/echo.wasm plugins/
 ```
 
-## TinyGo Example
+</wa-tab-panel>
+<wa-tab-panel name="first-tinygo">
 
-```go
-package main
+<alloy-code language="go" filename="main.go">package main
 
 import "unsafe"
 
-// Required: memory allocator
 //export alloc
 func alloc(size int32) int32 {
-    buf := make([]byte, size)
-    return int32(uintptr(unsafe.Pointer(&buf[0])))
+	if size == 0 {
+		return 0
+	}
+	buf := make([]byte, size)
+	return int32(uintptr(unsafe.Pointer(&buf[0])))
 }
 
-// Filter: count words in text
-//export filter
-func filter(ptr, length int32) (int32, int32) {
-    input := ptrToString(ptr, length)
-    words := 0
-    inWord := false
-    for _, c := range input {
-        if c == ' ' || c == '\n' || c == '\t' {
-            inWord = false
-        } else if !inWord {
-            inWord = true
-            words++
-        }
-    }
-    result := itoa(words)
-    return stringToPtr(result)
-}
-
-func ptrToString(ptr, length int32) string {
-    return unsafe.String((*byte)(unsafe.Pointer(uintptr(ptr))), length)
-}
-
-func stringToPtr(s string) (int32, int32) {
-    buf := []byte(s)
-    ptr := &buf[0]
-    return int32(uintptr(unsafe.Pointer(ptr))), int32(len(buf))
-}
-
-func itoa(n int) string {
-    if n == 0 {
-        return "0"
-    }
-    s := ""
-    for n > 0 {
-        s = string(rune('0'+n%10)) + s
-        n /= 10
-    }
-    return s
+//export echo
+func echo(ptr, length int32) uint64 {
+	return (uint64(ptr) << 32) | uint64(length)
 }
 
 func main() {}
-```
-
-Build with:
+</alloy-code>
 
 ```bash
-tinygo build -o plugins/word-count.wasm -target wasi .
+tinygo build -o plugins/echo.wasm -target wasm-unknown .
 ```
 
-## AssemblyScript Example
+</wa-tab-panel>
+<wa-tab-panel name="first-assemblyscript">
 
-```typescript
-// src/word-count.ts
-
-// Required: memory allocator
-export function alloc(size: i32): i32 {
+<alloy-code language="typescript" filename="src/echo.ts">export function alloc(size: i32): i32 {
   return heap.alloc(size) as i32;
 }
 
-// Filter: count words
-export function filter(ptr: i32, len: i32): u64 {
-  const input = String.UTF8.decodeUnsafe(ptr, len);
-  const words = input.trim().split(" ").filter(w => w.length > 0);
-  const result = words.length.toString();
-
-  const resultBuf = String.UTF8.encode(result);
-  const resultPtr = alloc(resultBuf.byteLength);
-  memory.copy(resultPtr, changetype<usize>(resultBuf), resultBuf.byteLength);
-
-  return (u64(resultPtr) << 32) | u64(resultBuf.byteLength);
+export function echo(ptr: i32, len: i32): u64 {
+  return (u64(ptr) << 32) | u64(len);
 }
-```
-
-Build with:
+</alloy-code>
 
 ```bash
-asc src/word-count.ts -o plugins/word-count.wasm
+asc src/echo.ts -o plugins/echo.wasm --runtime stub --use abort=
 ```
 
-## Hook Support
+</wa-tab-panel>
+<wa-tab-panel name="first-wat">
 
-WASM modules can register lifecycle hooks by exporting `hooks()` and `hook()`:
+<alloy-code language="wasm" filename="echo.wat">(module
+  (memory (export "memory") 1)
 
-```rust
-use serde_json::{json, Value};
+  ;; Bump allocator — starts past any data section
+  (global $bump (mut i32) (i32.const 256))
+
+  ;; alloc(size) → ptr
+  (func $alloc (export "alloc") (param $size i32) (result i32)
+    global.get $bump
+    global.get $bump
+    local.get $size
+    i32.add
+    global.set $bump
+  )
+
+  ;; echo(ptr, len) → packed i64
+  (func $echo (export "echo") (param $ptr i32) (param $len i32) (result i64)
+    local.get $ptr
+    i64.extend_i32_u
+    i64.const 32
+    i64.shl
+    local.get $len
+    i64.extend_i32_u
+    i64.or
+  )
+)
+</alloy-code>
+
+```bash
+wat2wasm echo.wat -o plugins/echo.wasm
+```
+
+</wa-tab-panel>
+</wa-tab-group>
+
+Then use it in a template:
+
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="wasmfirst-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="wasmfirst-go">Go templates</wa-tab>
+
+<wa-tab-panel name="wasmfirst-liquid" active>
+<alloy-code language="liquid">{{ "hello" | echo }}</alloy-code>
+</wa-tab-panel>
+<wa-tab-panel name="wasmfirst-go">
+<alloy-code language="html">{{ echo "hello" }}</alloy-code>
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
+
+The filter is called `echo`, not `echo.wasm` — **the template name is the exported function's name**, not the filename. See [Filters](#filters).
+
+## Filters
+
+Every exported function becomes a filter named after the export, except a reserved set used by the runtime itself:
+
+`memory`, `alloc`, `last_error`, `hook`, `hooks`, `shortcode`, `_start`, `_initialize`, `__data_end`, `__heap_base`, `__stack_pointer`, `__dso_handle`, `__global_base`
+
+A module exporting `word_count` and `reading_time` provides two filters under those names. The module filename is not used for naming — it appears only in error messages.
+
+A filter receives a UTF-8 string as `(ptr, len)` and returns a packed `i64` for the result. Input and output are raw UTF-8.
+
+<wa-tab-group>
+<wa-tab slot="nav" panel="filter-rust" active>Rust</wa-tab>
+<wa-tab slot="nav" panel="filter-tinygo">TinyGo</wa-tab>
+<wa-tab slot="nav" panel="filter-wat">WAT</wa-tab>
+
+<wa-tab-panel name="filter-rust" active>
+
+<alloy-code language="rust">#[no_mangle]
+pub extern "C" fn shout(ptr: i32, len: i32) -> u64 {
+    let input = unsafe {
+        std::slice::from_raw_parts(ptr as *const u8, len as usize)
+    };
+    let upper = std::str::from_utf8(input)
+        .unwrap_or_default()
+        .to_uppercase();
+    let bytes = upper.into_bytes();
+    let result_ptr = bytes.as_ptr() as u64;
+    let result_len = bytes.len() as u64;
+    std::mem::forget(bytes);
+    (result_ptr << 32) | result_len
+}
+</alloy-code>
+
+</wa-tab-panel>
+<wa-tab-panel name="filter-tinygo">
+
+<alloy-code language="go">import (
+	"strings"
+	"unsafe"
+)
+
+//export shout
+func shout(ptr, length int32) uint64 {
+	if length == 0 {
+		return 0
+	}
+	input := unsafe.String((*byte)(unsafe.Pointer(uintptr(ptr))), length)
+	result := strings.ToUpper(input)
+	buf := []byte(result)
+	resultPtr := uint64(uintptr(unsafe.Pointer(&buf[0])))
+	resultLen := uint64(len(buf))
+	return (resultPtr << 32) | resultLen
+}
+</alloy-code>
+
+</wa-tab-panel>
+<wa-tab-panel name="filter-wat">
+
+<alloy-code language="wasm">;; echo filter — returns input unchanged
+(func $shout (export "shout") (param $ptr i32) (param $len i32) (result i64)
+  local.get $ptr
+  i64.extend_i32_u
+  i64.const 32
+  i64.shl
+  local.get $len
+  i64.extend_i32_u
+  i64.or
+)
+</alloy-code>
+
+</wa-tab-panel>
+</wa-tab-group>
+
+A filter that fails should return `0` (packed `i64` with both ptr and len zero). See [Error Handling](#error-handling).
+
+## Shortcodes
+
+Export `shortcode` to handle shortcodes. Input is a JSON object; output is a UTF-8 HTML string.
+
+```json
+{ "name": "youtube", "args": ["abc123"], "content": "" }
+```
+
+Unlike filters, the export is always named `shortcode` — the shortcode's own name arrives in the payload's `name` field, so one export handles every shortcode your module provides.
+
+## Hooks
+
+Export `hooks` to declare which lifecycle events you handle, and `hook` to receive them.
+
+- **`hooks()`** — called once at module load, no input. Returns a packed `i64` pointing to a JSON array of hook names or registration objects.
+- **`hook(ptr, len)`** — input is an envelope wrapping the hook payload, so a single export can serve every event you registered:
+
+  ```json
+  { "event": "onContentTransformed", "payload": { "html": "…", "url": "…" } }
+  ```
+
+  Read `event` to decide what to do, and find the hook's own fields under `payload` — not at the top level. Return a packed `i64` pointing to the modified payload. Returning the whole envelope also works; Alloy unwraps it.
+
+<wa-tab-group>
+<wa-tab slot="nav" panel="hooks-rust" active>Rust</wa-tab>
+<wa-tab slot="nav" panel="hooks-wat">WAT</wa-tab>
+
+<wa-tab-panel name="hooks-rust" active>
+
+<alloy-code language="rust">static HOOKS_JSON: &[u8] = b"[\"onContentTransformed\"]";
 
 #[no_mangle]
 pub extern "C" fn hooks() -> u64 {
-    let names = json!(["onContentTransformed"]);
-    let bytes = names.to_string().into_bytes();
-    let ptr = alloc(bytes.len() as i32);
-    unsafe {
-        std::ptr::copy_nonoverlapping(
-            bytes.as_ptr(), ptr as *mut u8, bytes.len()
-        );
-    }
-    ((ptr as u64) << 32) | (bytes.len() as u64)
+    let ptr = HOOKS_JSON.as_ptr() as u64;
+    let len = HOOKS_JSON.len() as u64;
+    (ptr << 32) | len
 }
 
 #[no_mangle]
 pub extern "C" fn hook(ptr: i32, len: i32) -> u64 {
-    let input = unsafe {
-        let slice = std::slice::from_raw_parts(ptr as *const u8, len as usize);
-        std::str::from_utf8(slice).unwrap()
-    };
-
-    let mut payload: Value = serde_json::from_str(input).unwrap();
-
-    if payload["event"] == "onContentTransformed" {
-        if let Some(html) = payload["html"].as_str() {
-            let modified = html.replace("<img ", "<img loading=\"lazy\" ");
-            payload["html"] = json!(modified);
-        }
-    }
-
-    let result = payload.to_string().into_bytes();
-    let result_ptr = alloc(result.len() as i32);
-    unsafe {
-        std::ptr::copy_nonoverlapping(
-            result.as_ptr(), result_ptr as *mut u8, result.len()
-        );
-    }
-    ((result_ptr as u64) << 32) | (result.len() as u64)
+    // Echo the envelope back unchanged — Alloy unwraps it,
+    // so the page is left as-is. Parse it to modify the payload.
+    ((ptr as u64) << 32) | (len as u64)
 }
-```
+</alloy-code>
 
-## Hook Priority and Scope
+</wa-tab-panel>
+<wa-tab-panel name="hooks-wat">
+
+<alloy-code language="wasm">;; Data section holds the JSON: ["onContentTransformed"]
+(data (i32.const 0) "[\"onContentTransformed\"]")
+
+;; hooks() → packed i64 pointing to the JSON array
+(func $hooks (export "hooks") (result i64)
+  i32.const 0
+  i64.extend_i32_u
+  i64.const 32
+  i64.shl
+  i32.const 24
+  i64.extend_i32_u
+  i64.or
+)
+
+;; hook(ptr, len) → packed i64
+(func $hook (export "hook") (param $ptr i32) (param $len i32) (result i64)
+  local.get $ptr
+  i64.extend_i32_u
+  i64.const 32
+  i64.shl
+  local.get $len
+  i64.extend_i32_u
+  i64.or
+)
+</alloy-code>
+
+</wa-tab-panel>
+</wa-tab-group>
+
+If `hooks()` returns invalid JSON — anything that isn't an array of strings or objects — module loading fails. If `hook()` returns non-JSON bytes, the hook call returns an error. Declaring hook names without also exporting `hook` is an error.
+
+### Hook Priority and Scope
 
 The `hooks()` export can return a mix of strings and registration objects. Strings default to priority 50 with no scope filtering. Objects let you control execution order and limit the data payload.
-
-### Format
 
 ```json
 [
@@ -351,7 +350,7 @@ The `hooks()` export can return a mix of strings and registration objects. Strin
 ]
 ```
 
-Only `name` is required in registration objects. All other fields are optional:
+Only `name` is required. All other fields are optional:
 
 | Field | Default | Description |
 |---|---|---|
@@ -364,46 +363,60 @@ Scope filtering reduces the data serialized across the WASM memory boundary, whi
 
 Taxonomy filtering (`{"taxonomy": ["terms"]}`) is only available on hooks that fire after taxonomy indices are built. Hooks like `onPagesReady` that fire before indexing reject taxonomy scope with an error — use `"pages": "blog/**"` instead. See [Lifecycle Events](/hooks/) for hook execution order.
 
-### Rust Example
+## ABI Reference
 
-```rust
-#[no_mangle]
-pub extern "C" fn hooks() -> u64 {
-    let hooks = serde_json::json!([
-        "onBuildComplete",
-        {
-            "name": "onContentTransformed",
-            "priority": 10,
-            "pages": "blog/**",
-            "data": ["navigation"]
-        }
-    ]);
-    let bytes = hooks.to_string().into_bytes();
-    let ptr = alloc(bytes.len() as i32);
-    unsafe {
-        std::ptr::copy_nonoverlapping(
-            bytes.as_ptr(), ptr as *mut u8, bytes.len()
-        );
-    }
-    ((ptr as u64) << 32) | (bytes.len() as u64)
-}
+WASM plugins run in an isolated sandbox — they can't call Alloy functions directly, and Alloy can't reach into the plugin's internals. The ABI is the contract both sides agree on: which functions the module exports, and how data crosses the boundary through linear memory.
+
+All data-returning exports return a single packed `i64`:
+
+```text
+result = (ptr << 32) | len
 ```
+
+The upper 32 bits are the pointer into linear memory. The lower 32 bits are the byte length. Alloy reads `len` bytes starting at `ptr` to get the result.
+
+### Exports
+
+| Export | Required | Signature |
+|---|---|---|
+| `memory` | yes | exported linear memory |
+| `alloc` | yes | `alloc(size i32) -> i32` |
+| *your filters* | — | `name(ptr i32, len i32) -> i64` |
+| `shortcode` | no | `shortcode(ptr i32, len i32) -> i64` |
+| `hooks` | no | `hooks() -> i64` |
+| `hook` | no | `hook(ptr i32, len i32) -> i64` |
+| `last_error` | no | `last_error() -> i64` |
+
+Alloy validates every data-returning export's signature at load time. Modules using the old multi-value ABI (`(result i32 i32)`) or the sret form (`(param i32 i32 i32) -> ()` produced by some Rust and TinyGo configurations) are rejected with an error naming the export and its actual signature.
+
+### Calling Sequence
+
+For every call from Alloy to a WASM export:
+
+1. Alloy calls `alloc(inputLen)` to get a write offset in WASM memory
+2. Alloy writes input bytes at the returned pointer
+3. Alloy calls the target export (e.g., `filter(ptr, len)`)
+4. The module reads input, processes it, writes the result to its own memory
+5. The module returns a packed `i64`: `(resultPtr << 32) | resultLen`
+6. Alloy unpacks the `i64` and reads result bytes from WASM memory
+
+### Error Handling
+
+Return `0` (a packed `i64` where both ptr and len are zero) to signal an error. If the module exports `last_error()`, Alloy calls it and surfaces the returned message. Otherwise, Alloy reports a generic error.
+
+A filter that throws or traps fails the build with the filter name and source file in the error message.
 
 ## Compilation Cache
 
 Alloy caches compiled WASM modules in `.alloy/wasm-cache/` so subsequent builds skip the compilation step. The cache persists across builds.
 
-## Sandboxing
-
-WASM plugins run in isolated memory via wazero. They cannot access the filesystem, network, or system resources. Safe to run untrusted community plugins.
-
-## Performance Comparison
+## Performance
 
 | Runtime | Per-call | Best For |
 |---|---|---|
 | QuickJS (JS) | ~10-50 microseconds | Prototyping, low-frequency filters |
 | WASM (compiled) | ~1-10 microseconds | Hot-path filters on every page |
-| Node (Tier 3) | ~1-5 milliseconds | npm packages, system access |
+| Node (subprocess) | ~1-5 milliseconds | npm packages, system access |
 
 ## Related
 
