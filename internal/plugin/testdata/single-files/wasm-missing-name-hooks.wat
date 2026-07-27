@@ -4,7 +4,7 @@
 
   (memory (export "memory") 1)
 
-  ;; Offset 0: hooks() return value — object missing required "name" field
+  ;; Offset 0: hooks() return value — object missing required \"name\" field
   (data (i32.const 0) "[{\"priority\":10}]")
   ;; Length = 17 bytes
 
@@ -17,16 +17,26 @@
     global.set $bump
   )
 
-  ;; ── hooks() → (ptr, len) ─────────────────────────────────────
-  (func $hooks (export "hooks") (result i32 i32)
+  ;; ── hooks() → packed i64 ─────────────────────────────────────
+  (func $hooks (export "hooks") (result i64)
     i32.const 0
+    i64.extend_i32_u
+    i64.const 32
+    i64.shl
     i32.const 17
+    i64.extend_i32_u
+    i64.or
   )
 
-  ;; ── hook(ptr, len) → (ptr, len) ──────────────────────────────
+  ;; ── hook(ptr, len) → packed i64 ──────────────────────────────
   ;; Passthrough: echoes input back unchanged
-  (func $hook (export "hook") (param $ptr i32) (param $len i32) (result i32 i32)
+  (func $hook (export "hook") (param $ptr i32) (param $len i32) (result i64)
     local.get $ptr
+    i64.extend_i32_u
+    i64.const 32
+    i64.shl
     local.get $len
+    i64.extend_i32_u
+    i64.or
   )
 )
