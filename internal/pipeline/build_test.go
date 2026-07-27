@@ -1390,4 +1390,216 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
+	// ── Filter/shortcode call error propagation (issue #1224) ────────
+	// When a plugin filter or shortcode call fails at runtime (JS throw,
+	// WASM trap, Node error), the error must propagate as a build failure.
+	// The current implementation silently returns the original input
+	// (passthrough for filters, empty string for shortcodes), producing
+	// incorrect output with no warning. This is the most dangerous
+	// failure mode — code that loads fine but silently does nothing.
+	//
+	// These tests verify that runtime errors from plugin filter/shortcode
+	// calls during template rendering fail the build with clear error
+	// messages. They exercise the full pipeline (Build → DiscoverPlugins →
+	// registerPluginExtensions → renderPages → filter call → error
+	// propagation), not just the standalone CallFilter function.
+	//
+	// Tier coverage: Tests use QuickJS (Tier 2 JS) plugins as the
+	// representative tier. The error-swallowing code in
+	// registerPluginExtensions is tier-agnostic — it wraps
+	// PluginFilterRuntime.CallFilter/CallShortcode, which all tiers
+	// (QuickJS, WASM, Node) implement. WASM trap and Node IPC errors
+	// follow different internal paths within CallFilter but surface
+	// the same (interface{}, error) return that registerPluginExtensions
+	// must propagate.
+	Describe("Filter/shortcode call error propagation (issue #1224)", func() {
+
+		It("filter call error during Liquid rendering fails the build", func() {
+			cfg := &config.Config{
+				Title:   "Filter Error Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"plugins/error-filter.js": `export default function(alloy) {
+	alloy.filter("errorFilter", (input) => {
+		throw new Error("intentional filter error");
+	});
+}`,
+				"content/index.md": "---\ntitle: Home\nlayout: default\n---\n{{ \"hello world\" | errorFilter }}",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"build must fail when a plugin filter throws at runtime — "+
+					"silent passthrough to original input is not acceptable (issue #1224)")
+			Expect(result).To(BeNil(),
+				"failed build must not return a partial result")
+			Expect(err.Error()).To(ContainSubstring("errorFilter"),
+				"error message must name the failing filter so the user knows what to fix")
+		})
+
+		It("filter call error during Go template rendering fails the build", func() {
+			cfg := &config.Config{
+				Title:   "Filter Error GoTemplate Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Templates: config.TemplatesConfig{
+					Engine: "gotemplate",
+				},
+			}
+			contentMap := map[string]string{
+				"plugins/error-filter.js": `export default function(alloy) {
+	alloy.filter("errorFilter", (input) => {
+		throw new Error("intentional filter error");
+	});
+}`,
+				"content/index.md":    "---\ntitle: Home\nlayout: default\n---\n{{ errorFilter \"hello world\" }}",
+				"layouts/default.html": "<html><body>{{ .content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"build must fail when a plugin filter throws at runtime in Go template mode — "+
+					"the error propagation mechanism must work for both template engines (issue #1224)")
+			Expect(result).To(BeNil(),
+				"failed build must not return a partial result")
+			Expect(err.Error()).To(ContainSubstring("errorFilter"),
+				"error message must name the failing filter regardless of template engine")
+		})
+
+		It("error message includes the page path", func() {
+			cfg := &config.Config{
+				Title:   "Error Path Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"plugins/error-filter.js": `export default function(alloy) {
+	alloy.filter("errorFilter", (input) => {
+		throw new Error("intentional filter error");
+	});
+}`,
+				"content/blog/my-post.md": "---\ntitle: My Post\nlayout: default\n---\n{{ \"value\" | errorFilter }}",
+				"layouts/default.liquid":  "<html><body>{{ content }}</body></html>",
+			}
+			_, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"build must fail when a filter throws (precondition)")
+			Expect(err.Error()).To(ContainSubstring("blog/my-post.md"),
+				"error message must include the source file path so the user can locate the problem — "+
+					"a bare filter name without file context is not actionable for sites with hundreds of pages")
+		})
+
+		// Shortcode error tests cover both engines because Liquid dispatches
+		// shortcodes through deferredTags (liquid.go) while Go templates use
+		// funcMap — different code paths that each need error propagation.
+
+		It("shortcode call error during Go template rendering fails the build", func() {
+			cfg := &config.Config{
+				Title:   "Shortcode Error GoTemplate Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+				Templates: config.TemplatesConfig{
+					Engine: "gotemplate",
+				},
+			}
+			contentMap := map[string]string{
+				"plugins/error-shortcode.js": `export default function(alloy) {
+	alloy.shortcode("errorShortcode", (args, content) => {
+		throw new Error("intentional shortcode error");
+	});
+}`,
+				"content/index.md":    "---\ntitle: Home\nlayout: default\n---\n{{ errorShortcode \"arg1\" }}",
+				"layouts/default.html": "<html><body>{{ .content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"build must fail when a plugin shortcode throws at runtime — "+
+					"returning empty string silently produces broken output (issue #1224)")
+			Expect(result).To(BeNil(),
+				"failed build must not return a partial result")
+			Expect(err.Error()).To(ContainSubstring("errorShortcode"),
+				"error message must name the failing shortcode so the user knows what to fix")
+		})
+
+		It("shortcode call error during Liquid rendering fails the build", func() {
+			cfg := &config.Config{
+				Title:   "Shortcode Error Liquid Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"plugins/error-shortcode.js": `export default function(alloy) {
+	alloy.shortcode("errorShortcode", (args, content) => {
+		throw new Error("intentional shortcode error");
+	});
+}`,
+				"content/components/widget.md": "---\ntitle: Widget\nlayout: default\n---\n{% errorShortcode \"arg1\" %}",
+				"layouts/default.liquid":       "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"build must fail when a Liquid shortcode throws at runtime — "+
+					"Liquid dispatches shortcodes through deferredTags, a different code path "+
+					"than Go template funcMap; both must propagate errors (issue #1224)")
+			Expect(result).To(BeNil(),
+				"failed build must not return a partial result")
+			Expect(err.Error()).To(ContainSubstring("errorShortcode"),
+				"error message must name the failing shortcode regardless of template engine")
+			Expect(err.Error()).To(ContainSubstring("components/widget.md"),
+				"error message must include the page path so the user can locate the problem — "+
+					"a bare shortcode name without file context is not actionable")
+		})
+
+		It("one page with filter error fails the entire build", func() {
+			cfg := &config.Config{
+				Title:   "Partial Failure Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"plugins/error-filter.js": `export default function(alloy) {
+	alloy.filter("errorFilter", (input) => {
+		throw new Error("intentional filter error");
+	});
+}`,
+				"content/good-page.md":    "---\ntitle: Good Page\nlayout: default\n---\nThis page is fine.",
+				"content/bad-page.md":     "---\ntitle: Bad Page\nlayout: default\n---\n{{ \"value\" | errorFilter }}",
+				"layouts/default.liquid":  "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"if 1 out of N pages has a filter error, the entire build must fail — "+
+					"partial output could deploy a site with broken pages (§2 error handling)")
+			Expect(result).To(BeNil(),
+				"no partial result — consistent with 'any page failure aborts the entire build'")
+		})
+
+		It("working plugin filter still produces correct output (regression guard)", func() {
+			cfg := &config.Config{
+				Title:   "Working Filter Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"plugins/upcase-filter.js": `export default function(alloy) {
+	alloy.filter("shout", (input) => String(input).toUpperCase());
+}`,
+				"content/index.md":        "---\ntitle: Home\nlayout: default\n---\n{{ \"hello world\" | shout }}",
+				"layouts/default.liquid":   "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"a plugin filter that succeeds must not cause a build error")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("HELLO WORLD"),
+				"the filter must transform the input — if this shows 'hello world' instead of "+
+					"'HELLO WORLD', the filter was silently bypassed (the exact bug #1224 describes)")
+			Expect(html).NotTo(ContainSubstring("hello world"),
+				"the original unfiltered input must not appear — passthrough means the filter was not called")
+		})
+	})
+
 })
