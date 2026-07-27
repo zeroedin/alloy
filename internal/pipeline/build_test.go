@@ -1403,6 +1403,15 @@ var _ = Describe("Build Pipeline", func() {
 	// messages. They exercise the full pipeline (Build → DiscoverPlugins →
 	// registerPluginExtensions → renderPages → filter call → error
 	// propagation), not just the standalone CallFilter function.
+	//
+	// Tier coverage: Tests use QuickJS (Tier 2 JS) plugins as the
+	// representative tier. The error-swallowing code in
+	// registerPluginExtensions is tier-agnostic — it wraps
+	// PluginFilterRuntime.CallFilter/CallShortcode, which all tiers
+	// (QuickJS, WASM, Node) implement. WASM trap and Node IPC errors
+	// follow different internal paths within CallFilter but surface
+	// the same (interface{}, error) return that registerPluginExtensions
+	// must propagate.
 	Describe("Filter/shortcode call error propagation (issue #1224)", func() {
 
 		It("filter call error during Liquid rendering fails the build", func() {
@@ -1481,9 +1490,13 @@ var _ = Describe("Build Pipeline", func() {
 					"a bare filter name without file context is not actionable for sites with hundreds of pages")
 		})
 
-		It("shortcode call error during rendering fails the build", func() {
+		// Shortcode error tests cover both engines because Liquid dispatches
+		// shortcodes through deferredTags (liquid.go) while Go templates use
+		// funcMap — different code paths that each need error propagation.
+
+		It("shortcode call error during Go template rendering fails the build", func() {
 			cfg := &config.Config{
-				Title:   "Shortcode Error Test",
+				Title:   "Shortcode Error GoTemplate Test",
 				BaseURL: "https://example.com",
 				Build:   config.BuildConfig{Output: "_site"},
 				Templates: config.TemplatesConfig{
@@ -1505,6 +1518,37 @@ var _ = Describe("Build Pipeline", func() {
 					"returning empty string silently produces broken output (issue #1224)")
 			Expect(result).To(BeNil(),
 				"failed build must not return a partial result")
+			Expect(err.Error()).To(ContainSubstring("errorShortcode"),
+				"error message must name the failing shortcode so the user knows what to fix")
+		})
+
+		It("shortcode call error during Liquid rendering fails the build", func() {
+			cfg := &config.Config{
+				Title:   "Shortcode Error Liquid Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			contentMap := map[string]string{
+				"plugins/error-shortcode.js": `export default function(alloy) {
+	alloy.shortcode("errorShortcode", (args, content) => {
+		throw new Error("intentional shortcode error");
+	});
+}`,
+				"content/components/widget.md": "---\ntitle: Widget\nlayout: default\n---\n{% errorShortcode \"arg1\" %}",
+				"layouts/default.liquid":       "<html><body>{{ content }}</body></html>",
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).To(HaveOccurred(),
+				"build must fail when a Liquid shortcode throws at runtime — "+
+					"Liquid dispatches shortcodes through deferredTags, a different code path "+
+					"than Go template funcMap; both must propagate errors (issue #1224)")
+			Expect(result).To(BeNil(),
+				"failed build must not return a partial result")
+			Expect(err.Error()).To(ContainSubstring("errorShortcode"),
+				"error message must name the failing shortcode regardless of template engine")
+			Expect(err.Error()).To(ContainSubstring("components/widget.md"),
+				"error message must include the page path so the user can locate the problem — "+
+					"a bare shortcode name without file context is not actionable")
 		})
 
 		It("one page with filter error fails the entire build", func() {
