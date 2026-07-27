@@ -54,12 +54,12 @@ Here's an echo filter — it returns its input unchanged, enough to prove the wi
 
 <wa-tab-panel name="first-rust" active>
 
-<alloy-code language="rust" filename="src/lib.rs">use std::alloc::{alloc, Layout};
+<alloy-code language="rust" filename="src/lib.rs">use std::alloc::{alloc as alloc_bytes, Layout};
 
 #[no_mangle]
 pub extern "C" fn alloc(size: i32) -> i32 {
     let layout = Layout::from_size_align(size as usize, 1).unwrap();
-    unsafe { alloc(layout) as i32 }
+    unsafe { alloc_bytes(layout) as i32 }
 }
 
 #[no_mangle]
@@ -87,6 +87,9 @@ import "unsafe"
 
 //export alloc
 func alloc(size int32) int32 {
+	if size == 0 {
+		return 0
+	}
 	buf := make([]byte, size)
 	return int32(uintptr(unsafe.Pointer(&buf[0])))
 }
@@ -218,6 +221,9 @@ pub extern "C" fn shout(ptr: i32, len: i32) -> u64 {
 
 //export shout
 func shout(ptr, length int32) uint64 {
+	if length == 0 {
+		return 0
+	}
 	input := unsafe.String((*byte)(unsafe.Pointer(uintptr(ptr))), length)
 	result := strings.ToUpper(input)
 	buf := []byte(result)
