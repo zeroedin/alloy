@@ -268,7 +268,13 @@ Unlike filters, the export is always named `shortcode` — the shortcode's own n
 Export `hooks` to declare which lifecycle events you handle, and `hook` to receive them.
 
 - **`hooks()`** — called once at module load, no input. Returns a packed `i64` pointing to a JSON array of hook names or registration objects.
-- **`hook(ptr, len)`** — input is a JSON payload with an `"event"` key. Returns a packed `i64` pointing to the modified JSON payload.
+- **`hook(ptr, len)`** — input is an envelope wrapping the hook payload, so a single export can serve every event you registered:
+
+  ```json
+  { "event": "onContentTransformed", "payload": { "html": "…", "url": "…" } }
+  ```
+
+  Read `event` to decide what to do, and find the hook's own fields under `payload` — not at the top level. Return a packed `i64` pointing to the modified payload. Returning the whole envelope also works; Alloy unwraps it.
 
 <wa-tab-group>
 <wa-tab slot="nav" panel="hooks-rust" active>Rust</wa-tab>
@@ -287,7 +293,8 @@ pub extern "C" fn hooks() -> u64 {
 
 #[no_mangle]
 pub extern "C" fn hook(ptr: i32, len: i32) -> u64 {
-    // Echo back the payload unchanged
+    // Echo the envelope back unchanged — Alloy unwraps it,
+    // so the page is left as-is. Parse it to modify the payload.
     ((ptr as u64) << 32) | (len as u64)
 }
 </alloy-code>
