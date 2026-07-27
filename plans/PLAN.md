@@ -2467,7 +2467,7 @@ For plugins that need Node-specific capabilities:
 
 **Security: Tier 3 plugins run with the same permissions as the user.** They have full access to the filesystem, network, and environment variables. A plugin can read files, make HTTP requests, or spawn child processes — there is no sandbox. This is the same trust model used by 11ty, Jekyll, and every other plugin-based SSG: installing a plugin is an explicit statement of trust. Only install plugins you have reviewed or that come from trusted sources.
 
-Alloy scans `plugins/` for `.js` and `.ts` files that export `runtime: "node"`. If any are found, it spawns subprocess workers that load all of them. If none are found, no Node process is started — zero overhead. Communicates via stdin/stdout using length-prefixed JSON-RPC (LSP-style framing). Plugin stderr is redirected to `.alloy/plugin.log`.
+Alloy scans `plugins/` for `.js` and `.ts` files that export `runtime: "node"`. If any are found, it spawns subprocess workers that load all of them. If none are found, no Node process is started — zero overhead. Communicates via stdin/stdout using length-prefixed JSON-RPC (LSP-style framing). Plugin stderr is connected to Alloy's own stderr — plugin `console.log`, `console.warn`, and `process.stdout.write` output appears in the user's terminal alongside Alloy's build output. No log file is created.
 
 **Worker pool for per-page hooks (issue #491)**: For hooks that fire per page (`onPageRendered`, `onContentTransformed`, `onFormatRendered`), Alloy distributes pages across multiple subprocess workers. Each worker loads the same plugins and processes a contiguous chunk of pages. This parallelizes the single largest build cost — SSR and HTML transforms.
 
@@ -2485,7 +2485,7 @@ Auto-scaling: `min(runtime.NumCPU() / 2, 8)` with a floor of 2. `/2` because wor
 ┌──────────┐  Length-prefixed JSON / stdin+stdout  ┌──────────────┐
 │  Alloy   │ ◄───────────────────────────────────► │  Node Runner  │
 │  (Go)    │                                       │  (child proc) │
-└──────────┘       stderr → .alloy/plugin.log      └──────────────┘
+└──────────┘       stderr → terminal (Alloy stderr) └──────────────┘
 ```
 
 **Plugin API (Node side)**:
@@ -2512,7 +2512,7 @@ export default function(alloy) {
 
 **Message protocol** — length-prefixed JSON over stdin/stdout (LSP-style):
 
-Each message is framed with a `Content-Length` header followed by `\r\n\r\n` and the JSON body. This avoids the newline-delimited JSON problem where HTML payloads containing literal newlines would break the framing. Plugin `console.log` output goes to stderr (redirected to `.alloy/plugin.log`), keeping stdout clean for the protocol.
+Each message is framed with a `Content-Length` header followed by `\r\n\r\n` and the JSON body. This avoids the newline-delimited JSON problem where HTML payloads containing literal newlines would break the framing. Plugin `console.log` output goes to stderr (the user's terminal), keeping stdout clean for the protocol.
 
 ```
 Content-Length: 82\r\n
@@ -3876,7 +3876,7 @@ func BenchmarkBuild1000Pages(b *testing.B) {
 - [ ] Plugin directory scanning and file-extension routing (`.js` → QuickJS, `.wasm` → native WASM, `.js` with `runtime: "node"` → Node)
 - [ ] Embedded QuickJS instance via wazero for JS plugins (Tier 2)
 - [ ] WASM plugin loading via wazero for compiled plugins (Tier 2)
-- [ ] Node bridge subprocess + length-prefixed JSON-RPC protocol (Tier 3, bring-your-own-Node, stderr → `.alloy/plugin.log`)
+- [ ] Node bridge subprocess + length-prefixed JSON-RPC protocol (Tier 3, bring-your-own-Node, stderr → terminal)
 - [ ] Event hook system (all lifecycle events: `onConfig` through `onBuildComplete`)
 - [ ] Filter/shortcode registration from plugins (all tiers)
 - [ ] Plugin timeout and caching (Node tier)
