@@ -904,6 +904,12 @@ func (r *QuickJSRuntime) Close() {
 	}
 }
 
+// unpackI64 decodes a packed i64 WASM return value into (ptr, len).
+// The ABI contract is: result = (ptr << 32) | len.
+func unpackI64(packed uint64) (ptr, length uint32) {
+	return uint32(packed >> 32), uint32(packed & 0xFFFFFFFF)
+}
+
 // WASMRuntime wraps a wazero WASM module for Tier 2 compiled plugins.
 type WASMRuntime struct {
 	modulePath        string
@@ -1020,6 +1026,12 @@ func (r *WASMRuntime) LoadModule(path string) error {
 	return nil
 }
 
+// isOldMultiValueABI reports whether a result signature is the pre-#1222
+// multi-value form (result i32 i32).
+func isOldMultiValueABI(results []api.ValueType) bool {
+	return len(results) == 2 && results[0] == api.ValueTypeI32 && results[1] == api.ValueTypeI32
+}
+
 // validateExportSignatures checks that all data-returning exports use the
 // packed i64 ABI. Rejects old multi-value (result i32 i32) and sret
 // (param i32 i32 i32) forms with actionable diagnostics.
@@ -1035,21 +1047,16 @@ func (r *WASMRuntime) validateExportSignatures() error {
 		params := def.ParamTypes()
 		results := def.ResultTypes()
 
-		// Reject sret form: (param i32 i32 i32) -> ()
 		if len(params) == 3 {
 			return fmt.Errorf("export %q has %d params — this is the sret form produced by "+
 				"Rust >= 1.82 and TinyGo tuple returns. Use a packed i64 return "+
 				"(result = ptr << 32 | len) instead", name, len(params))
 		}
-
-		// Reject old multi-value: (result i32 i32)
-		if len(results) == 2 && results[0] == api.ValueTypeI32 && results[1] == api.ValueTypeI32 {
+		if isOldMultiValueABI(results) {
 			return fmt.Errorf("export %q uses the old multi-value ABI (result i32 i32) — "+
 				"use a single packed i64 return (result = ptr << 32 | len) instead",
 				name)
 		}
-
-		// Validate expected signature: params=[i32, i32], results=[i64]
 		if len(params) != 2 || params[0] != api.ValueTypeI32 || params[1] != api.ValueTypeI32 {
 			return fmt.Errorf("export %q has unexpected param types — "+
 				"expected (i32, i32), got %d params", name, len(params))
@@ -1074,14 +1081,11 @@ func (r *WASMRuntime) validateExportSignatures() error {
 		if len(params) != 0 {
 			return fmt.Errorf("export %q must take no parameters, got %d", name, len(params))
 		}
-
-		// Reject old multi-value: (result i32 i32)
-		if len(results) == 2 && results[0] == api.ValueTypeI32 && results[1] == api.ValueTypeI32 {
+		if isOldMultiValueABI(results) {
 			return fmt.Errorf("export %q uses the old multi-value ABI (result i32 i32) — "+
 				"use a single packed i64 return (result = ptr << 32 | len) instead",
 				name)
 		}
-
 		if len(results) != 1 || results[0] != api.ValueTypeI64 {
 			return fmt.Errorf("export %q must return a single packed i64 "+
 				"(result = ptr << 32 | len)", name)
@@ -1089,6 +1093,33 @@ func (r *WASMRuntime) validateExportSignatures() error {
 	}
 
 	return nil
+}
+
+// readLastError calls the last_error() export, unpacks the packed i64 result,
+// and reads the error message from WASM memory. Returns ("", false) if
+// last_error is not exported or returns no message.
+func (r *WASMRuntime) readLastError() (string, bool) {
+	lastErrFn := r.mod.ExportedFunction("last_error")
+	if lastErrFn == nil {
+		return "", false
+	}
+	errResults, err := lastErrFn.Call(context.Background())
+	if err != nil || len(errResults) < 1 {
+		return "", false
+	}
+	errPtr, errLen := unpackI64(errResults[0])
+	if errLen == 0 {
+		return "", false
+	}
+	mem := r.mod.Memory()
+	if mem == nil {
+		return "", false
+	}
+	errMsg, ok := mem.Read(errPtr, errLen)
+	if !ok {
+		return "", false
+	}
+	return string(errMsg), true
 }
 
 // CallExport calls an exported WASM function by name.
@@ -1188,20 +1219,11 @@ func (r *WASMRuntime) callStringFilter(fn api.Function, input string) (interface
 		return nil, fmt.Errorf("wasm filter ABI mismatch: expected 1 return value (packed i64), got 0")
 	}
 
-	resultPtr := uint32(results[0] >> 32)
-	resultLen := uint32(results[0] & 0xFFFFFFFF)
+	resultPtr, resultLen := unpackI64(results[0])
 
 	if resultPtr == 0 && resultLen == 0 {
-		if lastErrFn := r.mod.ExportedFunction("last_error"); lastErrFn != nil {
-			if errResults, err := lastErrFn.Call(context.Background()); err == nil && len(errResults) >= 1 {
-				errPtr := uint32(errResults[0] >> 32)
-				errLen := uint32(errResults[0] & 0xFFFFFFFF)
-				if errLen != 0 {
-					if errMsg, ok := mem.Read(errPtr, errLen); ok {
-						return nil, fmt.Errorf("wasm filter error: %s", string(errMsg))
-					}
-				}
-			}
+		if msg, ok := r.readLastError(); ok {
+			return nil, fmt.Errorf("wasm filter error: %s", msg)
 		}
 		return nil, fmt.Errorf("wasm filter returned (0, 0) — plugin execution error")
 	}
@@ -1236,23 +1258,11 @@ func (r *WASMRuntime) CallExportRaw(name string, ptr, length uint32) (string, er
 		return "", fmt.Errorf("wasm function %q ABI mismatch: expected 1 return value (packed i64), got 0", name)
 	}
 
-	resultPtr := uint32(results[0] >> 32)
-	resultLen := uint32(results[0] & 0xFFFFFFFF)
+	resultPtr, resultLen := unpackI64(results[0])
 
 	if resultPtr == 0 && resultLen == 0 {
-		if lastErrFn := r.mod.ExportedFunction("last_error"); lastErrFn != nil {
-			if errResults, err := lastErrFn.Call(context.Background()); err == nil && len(errResults) >= 1 {
-				errPtr := uint32(errResults[0] >> 32)
-				errLen := uint32(errResults[0] & 0xFFFFFFFF)
-				if errLen != 0 {
-					mem := r.mod.Memory()
-					if mem != nil {
-						if errMsg, ok := mem.Read(errPtr, errLen); ok {
-							return "", fmt.Errorf("wasm function %q error: %s", name, string(errMsg))
-						}
-					}
-				}
-			}
+		if msg, ok := r.readLastError(); ok {
+			return "", fmt.Errorf("wasm function %q error: %s", name, msg)
 		}
 		return "", fmt.Errorf("wasm function %q returned (0, 0) — plugin execution error", name)
 	}
@@ -1392,21 +1402,10 @@ func (r *WASMRuntime) discoverHooks(ctx context.Context) error {
 		return fmt.Errorf("hooks() export returned 0 values, expected 1 (packed i64)")
 	}
 
-	ptr := uint32(results[0] >> 32)
-	length := uint32(results[0] & 0xFFFFFFFF)
+	ptr, length := unpackI64(results[0])
 	if ptr == 0 && length == 0 {
-		if lastErrFn := r.mod.ExportedFunction("last_error"); lastErrFn != nil {
-			if errResults, errErr := lastErrFn.Call(ctx); errErr == nil && len(errResults) >= 1 {
-				errPtr := uint32(errResults[0] >> 32)
-				errLen := uint32(errResults[0] & 0xFFFFFFFF)
-				if errLen != 0 {
-					if mem := r.mod.Memory(); mem != nil {
-						if errMsg, ok := mem.Read(errPtr, errLen); ok {
-							return fmt.Errorf("hooks() export failed: %s", string(errMsg))
-						}
-					}
-				}
-			}
+		if msg, ok := r.readLastError(); ok {
+			return fmt.Errorf("hooks() export failed: %s", msg)
 		}
 		return nil
 	}
