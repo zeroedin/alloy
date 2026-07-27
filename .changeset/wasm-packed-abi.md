@@ -4,11 +4,32 @@ type: minor
 
 **Breaking:** WASM plugins must return a packed `i64` (`result = ptr << 32 | len`) from all data-returning exports (`filter`, `shortcode`, `hook`, `hooks`, `last_error`). Alloy rejects the previous multi-value `(result i32 i32)` form at load time.
 
+Rust:
+
 ```rust
 #[no_mangle]
 pub extern "C" fn filter(ptr: i32, len: i32) -> u64 {
     // ... transform input ...
     ((result_ptr as u64) << 32) | (result_len as u64)
+}
+```
+
+TinyGo (build with `-target wasm-unknown`, not `-target wasi`):
+
+```go
+//export filter
+func filter(ptr, length int32) uint64 {
+    // ... transform input ...
+    return (uint64(resultPtr) << 32) | uint64(resultLen)
+}
+```
+
+AssemblyScript (build with `--runtime stub --use abort=`):
+
+```typescript
+export function filter(ptr: i32, len: i32): u64 {
+  // ... transform input ...
+  return (u64(resultPtr) << 32) | u64(resultLen);
 }
 ```
 
