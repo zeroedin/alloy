@@ -2392,7 +2392,7 @@ WASM modules operate on linear memory — they cannot access Go's heap directly.
 
 **Required exports:**
 
-```
+```text
 alloc(size i32) -> ptr i32              # Allocate memory for host to write input
 filter(ptr i32, len i32) -> packed i64  # String filter: read input at ptr, return packed result
 ```
@@ -2421,7 +2421,7 @@ The `alloc` export is required to avoid writing at hardcoded memory offsets that
 
 **Optional exports:**
 
-```
+```text
 shortcode(ptr i32, len i32) -> packed i64  # Shortcode: input is JSON { name, args, content }
 hooks() -> packed i64                      # Hook discovery: returns JSON array of strings or registration objects
 hook(ptr i32, len i32) -> packed i64       # Hook execution: input is JSON payload with event name

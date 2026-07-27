@@ -635,20 +635,31 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 				"packed i64 hook() must not error for recognized events")
 			Expect(result).NotTo(BeNil(),
 				"packed i64 hook() must return a result, not nil")
+
+			// Verify the result contains the original payload data —
+			// a broken unpacking returning garbage bytes would not
+			// produce valid JSON with the html key.
+			resultMap := extractGoMap(result)
+			Expect(resultMap).NotTo(BeNil(),
+				"hook result must be a map")
+			Expect(resultMap).To(HaveKey("html"),
+				"hook result must preserve the html key from the input payload")
 		})
 
-		It("packed CallExportRaw returns error for (0, 0) input", func() {
+		It("packed last_error() returns error message", func() {
 			rt := plugin.NewWASMRuntime()
-			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "wasm-last-error.wasm"))).To(Succeed())
 
-			// CallExportRaw with ptr=0, len=0 causes the filter to return
-			// packed 0, which must be treated as an execution error.
-			// This verifies CallExportRaw unpacks the packed i64 correctly.
-			result, err := rt.CallExportRaw("filter", 0, 0)
+			// wasm-last-error.wasm: filter always returns packed 0 (error),
+			// and last_error() returns a packed i64 pointing to a static
+			// error message. The host must unpack last_error()'s packed i64
+			// to read the error string.
+			_, err := rt.CallFilter("filter", "any input")
 			Expect(err).To(HaveOccurred(),
-				"packed i64 CallExportRaw must treat packed 0 return as error")
-			Expect(result).To(BeEmpty(),
-				"error result must be empty string")
+				"filter returning packed 0 must trigger error path")
+			Expect(err.Error()).To(ContainSubstring("plugin execution failed"),
+				"error must contain the message from last_error() — "+
+					"proves the host unpacked last_error()'s packed i64 return")
 		})
 
 		It("CallExport with zero args returns error", func() {
@@ -656,8 +667,10 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
 
 			// CallExport requires at least one argument. The zero-arg
-			// fallback was dead code and has been removed.
-			_, err := rt.CallExport("filter")
+			// fallback was dead code and has been removed. Use "hooks"
+			// (a genuine zero-arg export) instead of "filter" — filter
+			// would error on arity mismatch even with the fallback present.
+			_, err := rt.CallExport("hooks")
 			Expect(err).To(HaveOccurred(),
 				"CallExport with zero arguments must return an error")
 		})
@@ -670,7 +683,9 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(err.Error()).To(SatisfyAll(
 				ContainSubstring("filter"),
 				ContainSubstring("i64"),
-			), "error must name the offending export and mention the expected packed i64 convention")
+				ContainSubstring("i32"),
+			), "error must name the export, mention the expected packed i64, "+
+				"and reference the actual i32 signature so the user knows what to fix")
 		})
 
 		It("LoadModule rejects sret (param i32 i32 i32) ABI", func() {
@@ -681,7 +696,9 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 			Expect(err.Error()).To(SatisfyAll(
 				ContainSubstring("filter"),
 				ContainSubstring("i64"),
-			), "error must name the offending export and mention the expected packed i64 convention")
+				ContainSubstring("3"),
+			), "error must name the export, mention the expected packed i64, "+
+				"and reference the 3-param sret signature so the user knows what to fix")
 		})
 
 		It("packed WASM plugin loads through Registry and CallFilter returns result (E2E)", func() {
