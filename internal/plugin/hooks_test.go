@@ -845,14 +845,13 @@ var _ = Describe("Hooks", func() {
 	})
 
 	// ── Hook chain context preservation: cross-runtime (issue #1219) ──
-	// When a WASM or Node hook chains with a QuickJS hook on the same
+	// When a WASM or Node hook chains with any other hook on the same
 	// event, the first hook returns *ordered.Map (via ordered.UnmarshalJSONValue
-	// or ordered.RewrapValue). injectChainContext currently only handles
-	// map[string]interface{} — it silently skips *ordered.Map results,
-	// causing the next hook to lose url, path, and frontMatter.
-	//
-	// Fix: injectChainContext must add an *ordered.Map branch that calls
-	// om.Set("url", ...) / om.Set("path", ...) / om.Set("frontMatter", ...).
+	// or ordered.RewrapValue). injectChainContext must handle both
+	// map[string]interface{} and *ordered.Map results — injecting url,
+	// path, and frontMatter via om.Set() for ordered maps, so the next
+	// hook in the chain receives full page context regardless of which
+	// runtime produced the result.
 
 	Describe("Hook chain context preservation: cross-runtime (issue #1219)", func() {
 
