@@ -208,6 +208,8 @@ var _ = Describe("NodeBridge", func() {
 	})
 
 	// ── Plugin output goes to terminal, not a log file (#1220) ───────
+	// Regression guards — green today, prevent reimplementation of removed
+	// .alloy/plugin.log behavior. See issue #1220 for the spec decision.
 
 	Describe("Plugin output destination (#1220)", func() {
 		It("does not create .alloy/plugin.log during bridge lifecycle", func() {
