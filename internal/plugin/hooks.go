@@ -7,6 +7,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/zeroedin/alloy/internal/ordered"
 )
 
 // HookName identifies a lifecycle event.
@@ -587,22 +589,33 @@ func extractChainContext(payload interface{}, hookCount int) chainContext {
 	return chainContext{pageURL: pageURL, pagePath: pagePath, fm: fm, has: true}
 }
 
-// injectChainContext mutates a hook result map in place, setting read-only
+// injectChainContext mutates a hook result in place, setting read-only
 // context fields (url, path, frontMatter) so the next hook in the chain can
 // access page context (issue #1216). The original payload's values always
-// win — hooks cannot mutate context fields. Non-map results are left unchanged.
+// win — hooks cannot mutate context fields.
+// Handles both map[string]interface{} (QuickJS fast path) and *ordered.Map
+// (WASM/Node runtimes) result types (issue #1219).
 func injectChainContext(result interface{}, cc *chainContext) {
-	m, ok := result.(map[string]interface{})
-	if !ok {
-		return
-	}
-	if cc.pageURL != "" {
-		m["url"] = cc.pageURL
-	}
-	if cc.pagePath != "" {
-		m["path"] = cc.pagePath
-	}
-	if cc.fm != nil {
-		m["frontMatter"] = cc.fm
+	switch m := result.(type) {
+	case map[string]interface{}:
+		if cc.pageURL != "" {
+			m["url"] = cc.pageURL
+		}
+		if cc.pagePath != "" {
+			m["path"] = cc.pagePath
+		}
+		if cc.fm != nil {
+			m["frontMatter"] = cc.fm
+		}
+	case *ordered.Map:
+		if cc.pageURL != "" {
+			m.Set("url", cc.pageURL)
+		}
+		if cc.pagePath != "" {
+			m.Set("path", cc.pagePath)
+		}
+		if cc.fm != nil {
+			m.Set("frontMatter", cc.fm)
+		}
 	}
 }
