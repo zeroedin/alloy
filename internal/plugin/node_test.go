@@ -205,10 +205,54 @@ var _ = Describe("NodeBridge", func() {
 			Expect(bridge.State()).To(Equal(plugin.BridgeStopped))
 		})
 
-		It("stderr log path defaults to .alloy/plugin.log", func() {
-			bridge := plugin.NewNodeBridge("/my-project")
-			logPath := bridge.LogPath()
-			Expect(logPath).To(Equal(filepath.Join("/my-project", ".alloy", "plugin.log")))
+	})
+
+	// ── Plugin output goes to terminal, not a log file (#1220) ───────
+	// Regression guards — green today, prevent reimplementation of removed
+	// .alloy/plugin.log behavior. See issue #1220 for the spec decision.
+
+	Describe("Plugin output destination (#1220)", func() {
+		It("does not create .alloy/plugin.log during bridge lifecycle", func() {
+			tmpDir := GinkgoT().TempDir()
+			plugin.ResetStalePIDCleanup(tmpDir)
+
+			bridge := plugin.NewNodeBridge(tmpDir)
+			err := bridge.Start()
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(bridge.Stop)
+
+			logPath := filepath.Join(tmpDir, ".alloy", "plugin.log")
+			_, err = os.Stat(logPath)
+			Expect(os.IsNotExist(err)).To(BeTrue(),
+				"expected .alloy/plugin.log to not exist — plugin output goes to terminal stderr, not a log file")
+		})
+
+		It("plugin console.log output does not create a log file", func() {
+			tmpDir := GinkgoT().TempDir()
+			plugin.ResetStalePIDCleanup(tmpDir)
+
+			rt := plugin.NewNodeRuntime()
+			rt.SetProjectRoot(tmpDir)
+			DeferCleanup(rt.Close)
+
+			// Load a plugin that calls console.log inside a hook
+			fixturePath, err := filepath.Abs("testdata/single-files/console-log-hook.js")
+			Expect(err).NotTo(HaveOccurred())
+
+			err = rt.EvalFile(fixturePath)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Fire the hook, which triggers console.log("debug message from hook")
+			payload := map[string]interface{}{"key": "value"}
+			_, err = rt.CallHook("onBuildComplete", payload)
+			Expect(err).NotTo(HaveOccurred(),
+				"hook call must succeed — console.log goes to terminal stderr")
+
+			// The spec (issue #1220) says no log file is created
+			logPath := filepath.Join(tmpDir, ".alloy", "plugin.log")
+			_, err = os.Stat(logPath)
+			Expect(os.IsNotExist(err)).To(BeTrue(),
+				"plugin console.log must go to terminal stderr, not .alloy/plugin.log")
 		})
 	})
 
