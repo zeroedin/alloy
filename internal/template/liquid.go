@@ -438,6 +438,41 @@ func (f *alloyFilterBridge) URL(input interface{}, args ...interface{}) interfac
 }
 
 // ---------------------------------------------------------------------------
+// PluginCallError wraps a plugin runtime error (filter or shortcode call
+// failure) for propagation through the template rendering pipeline via panic.
+// Implements liquid.LiquidError so liquidgo's internal recover preserves
+// the error message instead of replacing it with a generic "internal" string.
+// Go's html/template.Execute catches panics that satisfy the error interface,
+// so this type works for both engines without changing FilterFunc/TagFunc
+// signatures.
+// ---------------------------------------------------------------------------
+
+type PluginCallError struct {
+	Kind    string // "filter" or "shortcode"
+	Name    string
+	Wrapped error
+	liqErr  liquid.Error
+}
+
+func NewPluginCallError(kind, name string, err error) *PluginCallError {
+	msg := fmt.Sprintf("%s %q: %v", kind, name, err)
+	return &PluginCallError{
+		Kind:    kind,
+		Name:    name,
+		Wrapped: err,
+		liqErr:  liquid.Error{Message: msg},
+	}
+}
+
+func (e *PluginCallError) Error() string {
+	return fmt.Sprintf("%s %q: %v", e.Kind, e.Name, e.Wrapped)
+}
+
+func (e *PluginCallError) GetError() *liquid.Error {
+	return &e.liqErr
+}
+
+// ---------------------------------------------------------------------------
 // alloyInlineTag handles inline shortcodes ({% tag "args" %}).
 // Parse returns immediately — no token consumption.
 // ---------------------------------------------------------------------------

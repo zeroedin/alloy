@@ -113,7 +113,7 @@ func registerPluginExtensions(registry *plugin.Registry, engine tmpl.TemplateEng
 			if err := engine.AddFilter(name, func(input interface{}, args ...interface{}) interface{} {
 				result, err := runtime.CallFilter(name, input, args...)
 				if err != nil {
-					return input
+					panic(tmpl.NewPluginCallError("filter", name, err))
 				}
 				return result
 			}); err != nil {
@@ -126,7 +126,7 @@ func registerPluginExtensions(registry *plugin.Registry, engine tmpl.TemplateEng
 			if err := engine.AddTag(name, func(args []string, content string) string {
 				result, err := runtime.CallShortcode(name, args, content)
 				if err != nil {
-					return ""
+					panic(tmpl.NewPluginCallError("shortcode", name, err))
 				}
 				return result
 			}); err != nil {
