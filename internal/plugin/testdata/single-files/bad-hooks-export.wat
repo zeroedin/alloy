@@ -16,9 +16,15 @@
     global.set $bump
   )
 
-  ;; hooks() → (ptr, len) — returns invalid JSON
-  (func $hooks (export "hooks") (result i32 i32)
+  ;; hooks() → packed i64 — returns invalid JSON
+  ;; Packed: (0 << 32) | 14
+  (func $hooks (export "hooks") (result i64)
     i32.const 0
+    i64.extend_i32_u
+    i64.const 32
+    i64.shl
     i32.const 14
+    i64.extend_i32_u
+    i64.or
   )
 )

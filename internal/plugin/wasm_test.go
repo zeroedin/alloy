@@ -563,6 +563,169 @@ var _ = Describe("Tier 2 Plugin Runtime (WASM + QuickJS)", func() {
 		})
 	})
 
+	// ── WASM packed i64 ABI (issue #1222) ──────────────────────────
+	// All data-returning WASM exports use a packed i64 return convention:
+	// result = (ptr << 32) | len. This replaces the previous multi-value
+	// (result i32 i32) form which is not producible by modern toolchains.
+
+	Describe("WASM packed i64 ABI (issue #1222)", func() {
+		It("packed filter returns transformed string", func() {
+			rt := plugin.NewWASMRuntime()
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+			// The compiled.wasm fixture uses packed i64 returns.
+			// filter("hello") must unpack the i64 and return a string.
+			result, err := rt.CallFilter("filter", "hello")
+			Expect(err).NotTo(HaveOccurred(),
+				"packed i64 filter must not error on valid input")
+			Expect(result).To(BeAssignableToTypeOf(""),
+				"packed i64 filter must return a string, not a raw uint64")
+		})
+
+		It("packed filter result differs from input (not passthrough)", func() {
+			rt := plugin.NewWASMRuntime()
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+			// The compiled.wasm filter returns input with length+1.
+			// A passthrough implementation would return the same string.
+			input := "test input"
+			result, err := rt.CallFilter("filter", input)
+			Expect(err).NotTo(HaveOccurred())
+			resultStr, ok := result.(string)
+			Expect(ok).To(BeTrue(), "result must be a string")
+			Expect(resultStr).NotTo(Equal(input),
+				"packed i64 filter must transform the input — returning it unchanged "+
+					"proves the packed i64 was not unpacked or the WASM code did not execute")
+		})
+
+		It("packed error convention: packed 0 returns error", func() {
+			rt := plugin.NewWASMRuntime()
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+			// The compiled.wasm filter returns packed 0 for empty input,
+			// which unpacks to ptr=0, len=0. The host must treat this as
+			// an execution error, not an empty string.
+			_, err := rt.CallFilter("filter", "")
+			Expect(err).To(HaveOccurred(),
+				"packed 0 (equivalent to ptr=0, len=0) must be treated as an execution error")
+		})
+
+		It("packed hooks() discovers hook names", func() {
+			rt := plugin.NewWASMRuntime()
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+			// hooks() returns a packed i64 pointing to ["onContentTransformed"].
+			// The host must unpack the i64 and read the JSON array.
+			hooks := rt.RegisteredHooks()
+			Expect(hooks).To(ContainElement("onContentTransformed"),
+				"packed i64 hooks() must be unpacked to discover hook names")
+		})
+
+		It("packed hook() processes payload", func() {
+			rt := plugin.NewWASMRuntime()
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+			// hook() returns packed i64. The compiled.wasm hook echoes back
+			// the input when "onContentTransformed" is found in the payload.
+			payload := map[string]interface{}{
+				"html": "<p>test</p>",
+			}
+			result, err := rt.CallHook("onContentTransformed", payload)
+			Expect(err).NotTo(HaveOccurred(),
+				"packed i64 hook() must not error for recognized events")
+			Expect(result).NotTo(BeNil(),
+				"packed i64 hook() must return a result, not nil")
+		})
+
+		It("packed CallExportRaw returns error for (0, 0) input", func() {
+			rt := plugin.NewWASMRuntime()
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+			// CallExportRaw with ptr=0, len=0 causes the filter to return
+			// packed 0, which must be treated as an execution error.
+			// This verifies CallExportRaw unpacks the packed i64 correctly.
+			result, err := rt.CallExportRaw("filter", 0, 0)
+			Expect(err).To(HaveOccurred(),
+				"packed i64 CallExportRaw must treat packed 0 return as error")
+			Expect(result).To(BeEmpty(),
+				"error result must be empty string")
+		})
+
+		It("CallExport with zero args returns error", func() {
+			rt := plugin.NewWASMRuntime()
+			Expect(rt.LoadModule(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))).To(Succeed())
+
+			// CallExport requires at least one argument. The zero-arg
+			// fallback was dead code and has been removed.
+			_, err := rt.CallExport("filter")
+			Expect(err).To(HaveOccurred(),
+				"CallExport with zero arguments must return an error")
+		})
+
+		It("LoadModule rejects old multi-value (result i32 i32) ABI", func() {
+			rt := plugin.NewWASMRuntime()
+			err := rt.LoadModule(filepath.Join(testdataDir(), "single-files", "wasm-old-multivalue-abi.wasm"))
+			Expect(err).To(HaveOccurred(),
+				"LoadModule must reject modules using the old (result i32 i32) ABI")
+			Expect(err.Error()).To(SatisfyAll(
+				ContainSubstring("filter"),
+				ContainSubstring("i64"),
+			), "error must name the offending export and mention the expected packed i64 convention")
+		})
+
+		It("LoadModule rejects sret (param i32 i32 i32) ABI", func() {
+			rt := plugin.NewWASMRuntime()
+			err := rt.LoadModule(filepath.Join(testdataDir(), "single-files", "wasm-sret-abi.wasm"))
+			Expect(err).To(HaveOccurred(),
+				"LoadModule must reject modules using the sret ABI produced by Rust >= 1.82 and TinyGo")
+			Expect(err.Error()).To(SatisfyAll(
+				ContainSubstring("filter"),
+				ContainSubstring("i64"),
+			), "error must name the offending export and mention the expected packed i64 convention")
+		})
+
+		It("packed WASM plugin loads through Registry and CallFilter returns result (E2E)", func() {
+			// End-to-end: a packed-ABI WASM plugin in a plugins/ directory
+			// is loaded through the full Registry → LoadPlugins → CallFilter
+			// path. This verifies the packed i64 ABI is wired into the
+			// pipeline, not just tested at the WASMRuntime level.
+			tmpDir := GinkgoT().TempDir()
+			src, err := os.ReadFile(filepath.Join(testdataDir(), "single-files", "compiled.wasm"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(os.WriteFile(filepath.Join(tmpDir, "packed-plugin.wasm"), src, 0644)).To(Succeed())
+
+			registry := plugin.NewRegistry(tmpDir)
+			Expect(registry.DiscoverPlugins()).To(Succeed())
+
+			hookRegistry := plugin.NewHookRegistry()
+			registry.LoadPlugins(hookRegistry)
+			DeferCleanup(registry.Close)
+
+			// Find the WASM runtime and call its filter through CallFilter
+			var wasmRT *plugin.WASMRuntime
+			for _, rt := range registry.Runtimes() {
+				if wrt, ok := any(rt).(*plugin.WASMRuntime); ok {
+					wasmRT = wrt
+					break
+				}
+			}
+			Expect(wasmRT).NotTo(BeNil(),
+				"Registry must load the packed-ABI WASM plugin")
+
+			filters := wasmRT.RegisteredFilters()
+			Expect(filters).To(ContainElement("filter"),
+				"packed-ABI WASM module must register its exports as filters")
+
+			result, err := wasmRT.CallFilter("filter", "test input")
+			Expect(err).NotTo(HaveOccurred(),
+				"packed i64 filter called through the full LoadPlugins path must work")
+			resultStr, ok := result.(string)
+			Expect(ok).To(BeTrue(), "result must be a string")
+			Expect(resultStr).NotTo(Equal("test input"),
+				"filter must transform input — if unchanged, packed i64 was not unpacked")
+		})
+	})
+
 	// ── Parallel plugin startup (issue #401) ────────────────────────
 	// LoadPlugins should support concurrent runtime initialization
 	// (Phase A) followed by sequential eval + registration (Phase B).
