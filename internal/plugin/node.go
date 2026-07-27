@@ -1021,8 +1021,3 @@ func (b *NodeBridge) Stop() error {
 	b.state = BridgeStopped
 	return nil
 }
-
-// LogPath returns the path where plugin stderr output is written.
-func (b *NodeBridge) LogPath() string {
-	return filepath.Join(b.projectRoot, ".alloy", "plugin.log")
-}
