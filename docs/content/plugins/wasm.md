@@ -7,7 +7,7 @@ description: "Compiled WASM plugins run sandboxed inside the Alloy process via w
 
 WASM plugins are compiled binaries that run WebAssembly instructions inside the Alloy process. They execute faster than QuickJS plugins, making them suited to filters and transforms called on every page.
 
-```
+```text
 plugins/
   word-count.wasm    # any .wasm file is loaded automatically
 ```
@@ -26,7 +26,7 @@ For one-off or low-frequency operations, [QuickJS plugins](/plugins/quickjs/) ar
 
 ## Sandboxing
 
-WASM plugins run in isolated memory via wazero. They cannot access the filesystem, network, or system resources. This makes them the only tier that is safe to run from untrusted sources.
+WASM plugins run in isolated memory via wazero. They cannot access the filesystem, network, or system resources — wazero provides no host function imports, so modules have no way to reach outside their own linear memory. This makes WASM the most isolated plugin tier, though Alloy does not currently enforce execution time or memory limits.
 
 ## Toolchain Support
 
@@ -356,7 +356,7 @@ WASM plugins run in an isolated sandbox — they can't call Alloy functions dire
 
 All data-returning exports return a single packed `i64`:
 
-```
+```text
 result = (ptr << 32) | len
 ```
 
