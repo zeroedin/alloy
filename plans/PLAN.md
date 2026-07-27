@@ -2382,49 +2382,55 @@ For maximum performance, plugin authors can compile to native WASM instructions.
 
 | Language | Compiler | Build command |
 |---|---|---|
-| AssemblyScript | asc | `asc src/word-count.ts -o plugins/word-count.wasm` |
-| Rust | wasm-pack | `wasm-pack build --target bundler -d ../plugins/` |
-| Go | TinyGo | `tinygo build -o plugins/word-count.wasm -target wasi .` |
+| AssemblyScript | asc | `asc src/word-count.ts -o plugins/word-count.wasm --runtime stub --use abort=` |
+| Rust | rustc | `cargo build --target wasm32-unknown-unknown --release` |
+| Go | TinyGo | `tinygo build -o plugins/word-count.wasm -target wasm-unknown .` |
 
 #### WASM Calling Convention (ABI)
 
-WASM modules operate on linear memory — they cannot access Go's heap directly. All data exchange happens through the module's own memory via a pointer/length convention:
+WASM modules operate on linear memory — they cannot access Go's heap directly. All data exchange happens through the module's own memory via a packed pointer/length convention using a single `i64` return value:
 
 **Required exports:**
 
-```
+```text
 alloc(size i32) -> ptr i32              # Allocate memory for host to write input
-filter(ptr i32, len i32) -> (ptr i32, len i32)   # String filter: read input at ptr, return result ptr+len
+filter(ptr i32, len i32) -> packed i64  # String filter: read input at ptr, return packed result
 ```
+
+**Packed i64 return convention:** All data-returning exports pack the result pointer and length into a single `i64` value: `result = (ptr << 32) | len`. The host unpacks as `ptr = uint32(result >> 32)`, `len = uint32(result & 0xFFFFFFFF)`. This convention is used because the multi-value return form `(result i32 i32)` is not producible by modern toolchains — Rust ≥ 1.82 lowered aggregate returns through sret, TinyGo does the same, and AssemblyScript cannot express tuple returns at the source level. The packed `i64` form is naturally emitted by all three toolchains (`-> u64` in Rust, `uint64` in TinyGo, `u64` in AssemblyScript) without special flags.
 
 **Calling sequence (host → WASM):**
 
 1. Host calls `alloc(inputLen)` to get a safe write offset in WASM memory
 2. Host writes input bytes to WASM memory at the returned pointer
 3. Host calls `filter(ptr, len)` — WASM reads input, processes, writes result
-4. WASM returns `(resultPtr, resultLen)` — host reads result bytes from WASM memory
+4. WASM returns a packed `i64` — host unpacks `ptr = result >> 32`, `len = result & 0xFFFFFFFF`, reads result bytes from WASM memory
 
-The `alloc` export is required to avoid writing at hardcoded memory offsets that could collide with the module's data section, stack, or heap. Modules compiled with Rust (wasm-bindgen), TinyGo, or AssemblyScript can implement `alloc` as a simple bump allocator or delegate to their runtime's allocator.
+The `alloc` export is required to avoid writing at hardcoded memory offsets that could collide with the module's data section, stack, or heap. Modules compiled with Rust, TinyGo, or AssemblyScript can implement `alloc` as a simple bump allocator or delegate to their runtime's allocator.
 
 **Data format per export:**
 - **`filter`**: Input and output are raw UTF-8 strings. The filter receives the value to transform and returns the transformed value.
 - **`shortcode`**: Input is a JSON object: `{ "name": "youtube", "args": ["abc123"], "content": "" }`. Output is a UTF-8 HTML string.
 - **`hook`**: Input is a JSON payload (shape depends on the hook — see Lifecycle Events). Output is the modified JSON payload.
 
-**Error handling:** If any export returns `(0, 0)`, the host treats it as a plugin execution error and propagates the failure according to the normal pipeline error policy (build aborts in `alloy build`/`alloy serve`, error overlay in `alloy dev`). If the module exports `last_error()`, the host reads and surfaces the error details. No silent fallback to original input — consistent with the error handling policy in §2.
+**Error handling:** If any export returns a packed `0` (equivalent to `ptr=0, len=0`), the host treats it as a plugin execution error and propagates the failure according to the normal pipeline error policy (build aborts in `alloy build`/`alloy serve`, error overlay in `alloy dev`). If the module exports `last_error()`, the host reads and surfaces the error details. No silent fallback to original input — consistent with the error handling policy in §2.
+
+**Load-time signature validation:** During `LoadModule`, after module instantiation, the host inspects the signature of every data-returning export (`filter`, `shortcode`, `hook`, `hooks`, `last_error`) via `fn.Definition().ResultTypes()`. The expected signature for exports that take input is `(param i32 i32) (result i64)`, and for zero-arg exports (`hooks`, `last_error`) is `() (result i64)`. If an export has the wrong signature — e.g., the old multi-value form `(result i32 i32)`, the sret form `(param i32 i32 i32) -> ()`, or any other non-conforming shape — `LoadModule` must return an error with a diagnostic naming the export and its actual signature, and suggesting the packed `i64` convention.
+
+**`CallExport` requires arguments:** `CallExport(name, args...)` requires at least one argument. All production callers route through `CallFilter`, which always provides input. Zero-arg exports (`hooks()`, `last_error()`) are called directly on the wazero API by `discoverHooks` and the error-reading paths, not through `CallExport`.
 
 **Optional exports:**
 
-```
-shortcode(ptr i32, len i32) -> (ptr i32, len i32)   # Shortcode: input is JSON { name, args, content }
-hooks() -> (ptr i32, len i32)                        # Hook discovery: returns JSON array of strings or registration objects
-hook(ptr i32, len i32) -> (ptr i32, len i32)         # Hook execution: input is JSON payload with event name
-last_error() -> (ptr i32, len i32)                   # Error details; host calls after any export returns (0, 0)
+```text
+shortcode(ptr i32, len i32) -> packed i64  # Shortcode: input is JSON { name, args, content }
+hooks() -> packed i64                      # Hook discovery: returns JSON array of strings or registration objects
+hook(ptr i32, len i32) -> packed i64       # Hook execution: input is JSON payload with event name
+last_error() -> packed i64                 # Error details; host calls after any export returns packed 0
 ```
 
-**Hook discovery and execution:** The `hooks` export is called once during `LoadModule` (no input arguments, same pattern as `last_error`). It returns a JSON array of hook registrations — elements can be plain strings (backward compat) or objects with metadata (e.g., `["onBuildComplete", {"name": "onContentTransformed", "priority": 10, "pages": "blog/**", "data": ["navigation"]}]`). String elements default to priority 50, nil scope. Object elements require a `name` field (string); `priority` (int, default 50) and scope fields (`pages`, `data`, `pageFields`) are optional and parsed via `parseScopeMap()`. If no `hooks` export exists, the module has no hooks. The `hook` export receives a JSON object with an `"event"` key containing the hook name. **Payload wrapping:** When the hook payload is a map/object (e.g., `onContentTransformed` with `{html, toc, path, ...}` or `onPageRendered` with `{html, frontMatter, url, path}`), the `"event"` key is merged into it: `{"event": "onContentTransformed", "html": "<p>test</p>", ...}`. When the payload is a primitive (e.g., a raw string), it is wrapped: `{"event": "hookName", "payload": "..."}`. The module dispatches internally by event name and returns the (possibly modified) payload JSON. The host strips the `"event"` key before applying changes.
+**Hook discovery and execution:** The `hooks` export is called once during `LoadModule` (no input arguments, same pattern as `last_error`). It returns a packed `i64` that the host unpacks to locate a JSON array of hook registrations — elements can be plain strings (backward compat) or objects with metadata (e.g., `["onBuildComplete", {"name": "onContentTransformed", "priority": 10, "pages": "blog/**", "data": ["navigation"]}]`). String elements default to priority 50, nil scope. Object elements require a `name` field (string); `priority` (int, default 50) and scope fields (`pages`, `data`, `pageFields`) are optional and parsed via `parseScopeMap()`. If no `hooks` export exists, the module has no hooks. The `hook` export receives a JSON object with an `"event"` key containing the hook name. **Payload wrapping:** When the hook payload is a map/object (e.g., `onContentTransformed` with `{html, toc, path, ...}` or `onPageRendered` with `{html, frontMatter, url, path}`), the `"event"` key is merged into it: `{"event": "onContentTransformed", "html": "<p>test</p>", ...}`. When the payload is a primitive (e.g., a raw string), it is wrapped: `{"event": "hookName", "payload": "..."}`. The module dispatches internally by event name and returns the (possibly modified) payload JSON. The host strips the `"event"` key before applying changes.
 
-**Hook error handling:** The `(0, 0)` error convention applies to both `hooks()` and `hook()` exports — if either returns `(0, 0)`, the host checks `last_error()` and surfaces the error. Additionally: (1) If `hooks()` returns data that is not a valid JSON array (malformed JSON, a non-array JSON value), `LoadModule` must return an error — do not silently treat the module as hook-less. (2) If an object element in the array is missing the required `name` field or has a non-string `name`, `LoadModule` must return an error mentioning "name". (3) If an array element is neither a string nor an object (e.g., a number, boolean, or null), `LoadModule` must return an error — only strings and objects are valid hook registrations. (4) If `hook()` returns a valid `(ptr, len)` but the bytes are not valid JSON, `CallHook` must return an error — do not silently fall back to the original payload.
+**Hook error handling:** The packed `0` error convention applies to both `hooks()` and `hook()` exports — if either returns packed `0`, the host checks `last_error()` and surfaces the error. Additionally: (1) If `hooks()` returns data that is not a valid JSON array (malformed JSON, a non-array JSON value), `LoadModule` must return an error — do not silently treat the module as hook-less. (2) If an object element in the array is missing the required `name` field or has a non-string `name`, `LoadModule` must return an error mentioning "name". (3) If an array element is neither a string nor an object (e.g., a number, boolean, or null), `LoadModule` must return an error — only strings and objects are valid hook registrations. (4) If `hook()` returns a valid packed `i64` (non-zero) but the bytes are not valid JSON, `CallHook` must return an error — do not silently fall back to the original payload.
 
 #### Sandboxing
 

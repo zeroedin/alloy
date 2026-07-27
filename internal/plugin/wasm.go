@@ -904,6 +904,12 @@ func (r *QuickJSRuntime) Close() {
 	}
 }
 
+// unpackI64 decodes a packed i64 WASM return value into (ptr, len).
+// The ABI contract is: result = (ptr << 32) | len.
+func unpackI64(packed uint64) (ptr, length uint32) {
+	return uint32(packed >> 32), uint32(packed & 0xFFFFFFFF)
+}
+
 // WASMRuntime wraps a wazero WASM module for Tier 2 compiled plugins.
 type WASMRuntime struct {
 	modulePath        string
@@ -1007,6 +1013,11 @@ func (r *WASMRuntime) LoadModule(path string) error {
 			"alloc(size i32) -> (ptr i32) is needed for safe memory allocation", filepath.Base(path))
 	}
 
+	if err := r.validateExportSignatures(); err != nil {
+		r.Close()
+		return fmt.Errorf("wasm module %s: %w", filepath.Base(path), err)
+	}
+
 	if err := r.discoverHooks(ctx); err != nil {
 		r.Close()
 		return fmt.Errorf("wasm module %s: %w", filepath.Base(path), err)
@@ -1015,15 +1026,116 @@ func (r *WASMRuntime) LoadModule(path string) error {
 	return nil
 }
 
+// isOldMultiValueABI reports whether a result signature is the pre-#1222
+// multi-value form (result i32 i32).
+func isOldMultiValueABI(results []api.ValueType) bool {
+	return len(results) == 2 && results[0] == api.ValueTypeI32 && results[1] == api.ValueTypeI32
+}
+
+// validateExportSignatures checks that all data-returning exports use the
+// packed i64 ABI. Rejects old multi-value (result i32 i32) and sret
+// (param i32 i32 i32) forms with actionable diagnostics.
+func (r *WASMRuntime) validateExportSignatures() error {
+	// Data-returning exports with (ptr, len) input
+	twoParamExports := []string{"filter", "shortcode", "hook"}
+	for _, name := range twoParamExports {
+		fn := r.mod.ExportedFunction(name)
+		if fn == nil {
+			continue
+		}
+		def := fn.Definition()
+		params := def.ParamTypes()
+		results := def.ResultTypes()
+
+		if len(params) == 3 {
+			return fmt.Errorf("export %q has %d params — this is the sret form produced by "+
+				"Rust >= 1.82 and TinyGo tuple returns. Use a packed i64 return "+
+				"(result = ptr << 32 | len) instead", name, len(params))
+		}
+		if isOldMultiValueABI(results) {
+			return fmt.Errorf("export %q uses the old multi-value ABI (result i32 i32) — "+
+				"use a single packed i64 return (result = ptr << 32 | len) instead",
+				name)
+		}
+		if len(params) != 2 || params[0] != api.ValueTypeI32 || params[1] != api.ValueTypeI32 {
+			return fmt.Errorf("export %q has unexpected param types — "+
+				"expected (i32, i32), got %d params", name, len(params))
+		}
+		if len(results) != 1 || results[0] != api.ValueTypeI64 {
+			return fmt.Errorf("export %q must return a single packed i64 "+
+				"(result = ptr << 32 | len)", name)
+		}
+	}
+
+	// Zero-arg exports returning packed i64
+	zeroParamExports := []string{"hooks", "last_error"}
+	for _, name := range zeroParamExports {
+		fn := r.mod.ExportedFunction(name)
+		if fn == nil {
+			continue
+		}
+		def := fn.Definition()
+		params := def.ParamTypes()
+		results := def.ResultTypes()
+
+		if len(params) != 0 {
+			return fmt.Errorf("export %q must take no parameters, got %d", name, len(params))
+		}
+		if isOldMultiValueABI(results) {
+			return fmt.Errorf("export %q uses the old multi-value ABI (result i32 i32) — "+
+				"use a single packed i64 return (result = ptr << 32 | len) instead",
+				name)
+		}
+		if len(results) != 1 || results[0] != api.ValueTypeI64 {
+			return fmt.Errorf("export %q must return a single packed i64 "+
+				"(result = ptr << 32 | len)", name)
+		}
+	}
+
+	return nil
+}
+
+// readLastError calls the last_error() export, unpacks the packed i64 result,
+// and reads the error message from WASM memory. Returns ("", false) if
+// last_error is not exported or returns no message.
+func (r *WASMRuntime) readLastError() (string, bool) {
+	lastErrFn := r.mod.ExportedFunction("last_error")
+	if lastErrFn == nil {
+		return "", false
+	}
+	errResults, err := lastErrFn.Call(context.Background())
+	if err != nil || len(errResults) < 1 {
+		return "", false
+	}
+	errPtr, errLen := unpackI64(errResults[0])
+	if errLen == 0 {
+		return "", false
+	}
+	mem := r.mod.Memory()
+	if mem == nil {
+		return "", false
+	}
+	errMsg, ok := mem.Read(errPtr, errLen)
+	if !ok {
+		return "", false
+	}
+	return string(errMsg), true
+}
+
 // CallExport calls an exported WASM function by name.
-// For string arguments, the input is written to the module's memory
-// and the function is called with (ptr, len). The result is read back.
+// At least one argument is required. For string arguments, the input is
+// written to the module's memory and the function is called with (ptr, len).
+// The result is read back from a packed i64 return.
 func (r *WASMRuntime) CallExport(name string, args ...interface{}) (interface{}, error) {
 	if r.mod == nil {
 		return nil, fmt.Errorf("wasm module not loaded — call LoadModule first")
 	}
 	if !r.exports[name] {
 		return nil, fmt.Errorf("export %q not found in %s.wasm", name, r.moduleName)
+	}
+
+	if len(args) == 0 {
+		return nil, fmt.Errorf("wasm CallExport %q: at least one argument is required", name)
 	}
 
 	fn := r.mod.ExportedFunction(name)
@@ -1036,55 +1148,45 @@ func (r *WASMRuntime) CallExport(name string, args ...interface{}) (interface{},
 	// other argument types return an error. Liquid engines may pass typed
 	// wrappers instead of plain Go strings. Multiple string-like args are
 	// JSON-encoded as an array.
-	if len(args) > 0 {
-		var input string
-		switch v := args[0].(type) {
-		case string:
-			input = v
-		case []byte:
-			input = string(v)
-		case fmt.Stringer:
-			input = v.String()
-		default:
-			return nil, fmt.Errorf("wasm CallExport %q: argument 0 is %T, expected string-like type", name, args[0])
-		}
-
-		if len(args) > 1 {
-			strArgs := make([]string, len(args))
-			strArgs[0] = input
-			for i := 1; i < len(args); i++ {
-				switch v := args[i].(type) {
-				case string:
-					strArgs[i] = v
-				case []byte:
-					strArgs[i] = string(v)
-				case fmt.Stringer:
-					strArgs[i] = v.String()
-				default:
-					return nil, fmt.Errorf("wasm CallExport %q: argument %d is %T, expected string-like type", name, i, args[i])
-				}
-			}
-			jsonBytes, err := jsonCodec.Marshal(strArgs)
-			if err != nil {
-				return nil, fmt.Errorf("wasm CallExport %q: marshaling args: %w", name, err)
-			}
-			input = string(jsonBytes)
-		}
-		return r.callStringFilter(fn, input)
+	var input string
+	switch v := args[0].(type) {
+	case string:
+		input = v
+	case []byte:
+		input = string(v)
+	case fmt.Stringer:
+		input = v.String()
+	default:
+		return nil, fmt.Errorf("wasm CallExport %q: argument 0 is %T, expected string-like type", name, args[0])
 	}
 
-	results, err := fn.Call(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("wasm call %q: %w", name, err)
+	if len(args) > 1 {
+		strArgs := make([]string, len(args))
+		strArgs[0] = input
+		for i := 1; i < len(args); i++ {
+			switch v := args[i].(type) {
+			case string:
+				strArgs[i] = v
+			case []byte:
+				strArgs[i] = string(v)
+			case fmt.Stringer:
+				strArgs[i] = v.String()
+			default:
+				return nil, fmt.Errorf("wasm CallExport %q: argument %d is %T, expected string-like type", name, i, args[i])
+			}
+		}
+		jsonBytes, err := jsonCodec.Marshal(strArgs)
+		if err != nil {
+			return nil, fmt.Errorf("wasm CallExport %q: marshaling args: %w", name, err)
+		}
+		input = string(jsonBytes)
 	}
-	if len(results) > 0 {
-		return results[0], nil
-	}
-	return nil, nil
+	return r.callStringFilter(fn, input)
 }
 
 // callStringFilter writes a string to WASM memory, calls the filter function
 // with (ptr, len), and reads the result string from memory.
+// The function must return a packed i64: result = (ptr << 32) | len.
 func (r *WASMRuntime) callStringFilter(fn api.Function, input string) (interface{}, error) {
 	mem := r.mod.Memory()
 	if mem == nil {
@@ -1113,36 +1215,29 @@ func (r *WASMRuntime) callStringFilter(fn api.Function, input string) (interface
 		return nil, fmt.Errorf("wasm filter call: %w", err)
 	}
 
-	if len(results) >= 2 {
-		resultPtr := uint32(results[0])
-		resultLen := uint32(results[1])
-		// ABI error convention: (0, 0) signals a plugin execution error
-		if resultPtr == 0 && resultLen == 0 {
-			// Check for optional last_error() export for detailed message
-			if lastErrFn := r.mod.ExportedFunction("last_error"); lastErrFn != nil {
-				if errResults, err := lastErrFn.Call(context.Background()); err == nil && len(errResults) >= 2 {
-					errPtr, errLen := uint32(errResults[0]), uint32(errResults[1])
-					if errPtr != 0 && errLen != 0 {
-						if errMsg, ok := mem.Read(errPtr, errLen); ok {
-							return nil, fmt.Errorf("wasm filter error: %s", string(errMsg))
-						}
-					}
-				}
-			}
-			return nil, fmt.Errorf("wasm filter returned (0, 0) — plugin execution error")
-		}
-		resultData, ok := mem.Read(resultPtr, resultLen)
-		if !ok {
-			return nil, fmt.Errorf("wasm memory read failed: result at offset %d len %d", resultPtr, resultLen)
-		}
-		return string(resultData), nil
+	if len(results) < 1 {
+		return nil, fmt.Errorf("wasm filter ABI mismatch: expected 1 return value (packed i64), got 0")
 	}
 
-	return nil, fmt.Errorf("wasm filter ABI mismatch: expected 2 return values (ptr, len), got %d", len(results))
+	resultPtr, resultLen := unpackI64(results[0])
+
+	if resultPtr == 0 && resultLen == 0 {
+		if msg, ok := r.readLastError(); ok {
+			return nil, fmt.Errorf("wasm filter error: %s", msg)
+		}
+		return nil, fmt.Errorf("wasm filter returned (0, 0) — plugin execution error")
+	}
+
+	resultData, ok := mem.Read(resultPtr, resultLen)
+	if !ok {
+		return nil, fmt.Errorf("wasm memory read failed: result at offset %d len %d", resultPtr, resultLen)
+	}
+	return string(resultData), nil
 }
 
 // CallExportRaw invokes a WASM function with raw i32 arguments and reads
-// the result from memory. Returns error if the function returns (0, 0)
+// the result from memory. The function must return a packed i64:
+// result = (ptr << 32) | len. Returns error if the unpacked result is (0, 0)
 // per the ABI error convention.
 func (r *WASMRuntime) CallExportRaw(name string, ptr, length uint32) (string, error) {
 	if r.mod == nil {
@@ -1159,37 +1254,28 @@ func (r *WASMRuntime) CallExportRaw(name string, ptr, length uint32) (string, er
 		return "", fmt.Errorf("wasm call %q: %w", name, err)
 	}
 
-	if len(results) >= 2 {
-		resultPtr := uint32(results[0])
-		resultLen := uint32(results[1])
-		if resultPtr == 0 && resultLen == 0 {
-			if lastErrFn := r.mod.ExportedFunction("last_error"); lastErrFn != nil {
-				if errResults, err := lastErrFn.Call(context.Background()); err == nil && len(errResults) >= 2 {
-					errPtr, errLen := uint32(errResults[0]), uint32(errResults[1])
-					if errPtr != 0 && errLen != 0 {
-						mem := r.mod.Memory()
-						if mem != nil {
-							if errMsg, ok := mem.Read(errPtr, errLen); ok {
-								return "", fmt.Errorf("wasm function %q error: %s", name, string(errMsg))
-							}
-						}
-					}
-				}
-			}
-			return "", fmt.Errorf("wasm function %q returned (0, 0) — plugin execution error", name)
-		}
-		mem := r.mod.Memory()
-		if mem == nil {
-			return "", fmt.Errorf("wasm module has no exported memory")
-		}
-		resultData, ok := mem.Read(resultPtr, resultLen)
-		if !ok {
-			return "", fmt.Errorf("wasm memory read failed: result at offset %d len %d", resultPtr, resultLen)
-		}
-		return string(resultData), nil
+	if len(results) < 1 {
+		return "", fmt.Errorf("wasm function %q ABI mismatch: expected 1 return value (packed i64), got 0", name)
 	}
 
-	return "", fmt.Errorf("wasm function %q returned fewer than 2 values", name)
+	resultPtr, resultLen := unpackI64(results[0])
+
+	if resultPtr == 0 && resultLen == 0 {
+		if msg, ok := r.readLastError(); ok {
+			return "", fmt.Errorf("wasm function %q error: %s", name, msg)
+		}
+		return "", fmt.Errorf("wasm function %q returned (0, 0) — plugin execution error", name)
+	}
+
+	mem := r.mod.Memory()
+	if mem == nil {
+		return "", fmt.Errorf("wasm module has no exported memory")
+	}
+	resultData, ok := mem.Read(resultPtr, resultLen)
+	if !ok {
+		return "", fmt.Errorf("wasm memory read failed: result at offset %d len %d", resultPtr, resultLen)
+	}
+	return string(resultData), nil
 }
 
 // wasmRuntimeExports are well-known WASM exports that are not plugin filters.
@@ -1244,6 +1330,9 @@ func (r *WASMRuntime) RegisteredHookDetails() []HookRegistration {
 }
 
 // CallHook marshals a JSON envelope and dispatches to the hook(ptr, len) export.
+// The envelope is {event: name, payload: data}. When the WASM module returns
+// an envelope-shaped response (has "payload" key), the payload is extracted
+// so callers receive the hook result directly, not the transport envelope.
 func (r *WASMRuntime) CallHook(name string, payload interface{}) (interface{}, error) {
 	if r.mod == nil {
 		return nil, fmt.Errorf("wasm module not loaded — call LoadModule first")
@@ -1275,10 +1364,26 @@ func (r *WASMRuntime) CallHook(name string, payload interface{}) (interface{}, e
 	if err != nil {
 		return nil, fmt.Errorf("wasm hook %q returned invalid JSON: %w", name, err)
 	}
+
+	// Extract payload from envelope-shaped responses. The host sends
+	// {event, payload} to multiplex hooks over a single export. If the
+	// WASM module returns the envelope structure, unwrap the payload
+	// so callers get the hook result directly.
+	if m, ok := parsed.(*ordered.Map); ok {
+		if p, exists := m.GetValue("payload"); exists {
+			return p, nil
+		}
+	}
+	if m, ok := parsed.(map[string]interface{}); ok {
+		if p, exists := m["payload"]; exists {
+			return p, nil
+		}
+	}
 	return parsed, nil
 }
 
 // discoverHooks calls the hooks() export to discover registered hook names.
+// hooks() returns a packed i64: result = (ptr << 32) | len.
 // Validates that hook() exists when hooks are declared, filters empty names,
 // and deduplicates.
 func (r *WASMRuntime) discoverHooks(ctx context.Context) error {
@@ -1293,24 +1398,14 @@ func (r *WASMRuntime) discoverHooks(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("calling hooks() export: %w", err)
 	}
-	if len(results) < 2 {
-		return fmt.Errorf("hooks() export returned %d values, expected 2 (ptr, len)", len(results))
+	if len(results) < 1 {
+		return fmt.Errorf("hooks() export returned 0 values, expected 1 (packed i64)")
 	}
 
-	ptr := uint32(results[0])
-	length := uint32(results[1])
+	ptr, length := unpackI64(results[0])
 	if ptr == 0 && length == 0 {
-		if lastErrFn := r.mod.ExportedFunction("last_error"); lastErrFn != nil {
-			if errResults, errErr := lastErrFn.Call(ctx); errErr == nil && len(errResults) >= 2 {
-				errPtr, errLen := uint32(errResults[0]), uint32(errResults[1])
-				if errPtr != 0 && errLen != 0 {
-					if mem := r.mod.Memory(); mem != nil {
-						if errMsg, ok := mem.Read(errPtr, errLen); ok {
-							return fmt.Errorf("hooks() export failed: %s", string(errMsg))
-						}
-					}
-				}
-			}
+		if msg, ok := r.readLastError(); ok {
+			return fmt.Errorf("hooks() export failed: %s", msg)
 		}
 		return nil
 	}

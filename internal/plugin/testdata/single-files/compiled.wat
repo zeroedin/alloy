@@ -22,33 +22,44 @@
     global.set $bump
   )
 
-  ;; ── filter(ptr, len) → (ptr, len) ────────────────────────────
-  ;; Returns input with length+1
-  (func $filter (export "filter") (param $ptr i32) (param $len i32) (result i32 i32)
+  ;; ── filter(ptr, len) → packed i64 ────────────────────────────
+  ;; Returns input with length+1 as packed i64: (ptr << 32) | (len+1)
+  ;; Empty input returns packed 0 (error convention).
+  (func $filter (export "filter") (param $ptr i32) (param $len i32) (result i64)
     local.get $len
     i32.eqz
     if
-      i32.const 0
-      i32.const 0
+      i64.const 0
       return
     end
     local.get $ptr
+    i64.extend_i32_u
+    i64.const 32
+    i64.shl
     local.get $len
     i32.const 1
     i32.add
+    i64.extend_i32_u
+    i64.or
   )
 
-  ;; ── hooks() → (ptr, len) ─────────────────────────────────────
+  ;; ── hooks() → packed i64 ─────────────────────────────────────
   ;; Returns pointer to static JSON: ["onContentTransformed"]
-  (func $hooks (export "hooks") (result i32 i32)
+  ;; Packed: (0 << 32) | 24 = 24
+  (func $hooks (export "hooks") (result i64)
     i32.const 0
+    i64.extend_i32_u
+    i64.const 32
+    i64.shl
     i32.const 24
+    i64.extend_i32_u
+    i64.or
   )
 
-  ;; ── hook(ptr, len) → (ptr, len) ──────────────────────────────
+  ;; ── hook(ptr, len) → packed i64 ──────────────────────────────
   ;; Searches for "onContentTransformed" in the input.
-  ;; If found: echoes back input. If not found: returns (0,0) error.
-  (func $hook (export "hook") (param $ptr i32) (param $len i32) (result i32 i32)
+  ;; If found: echoes back input. If not found: returns packed 0 (error).
+  (func $hook (export "hook") (param $ptr i32) (param $len i32) (result i64)
     (local $i i32)
     (local $j i32)
     (local $match i32)
@@ -57,8 +68,7 @@
     local.get $len
     i32.eqz
     if
-      i32.const 0
-      i32.const 0
+      i64.const 0
       return
     end
 
@@ -137,14 +147,18 @@
         )
         br $not_found
       )
-      ;; Found: echo back input
+      ;; Found: echo back input as packed i64
       local.get $ptr
+      i64.extend_i32_u
+      i64.const 32
+      i64.shl
       local.get $len
+      i64.extend_i32_u
+      i64.or
       return
     )
 
-    ;; Not found: return (0,0) error
-    i32.const 0
-    i32.const 0
+    ;; Not found: return packed 0 (error)
+    i64.const 0
   )
 )
