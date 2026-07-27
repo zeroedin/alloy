@@ -1,3 +1,49 @@
+## v0.7.0 (2026-07-27)
+
+### Minor Changes
+
+- **Breaking:** WASM plugins must return a packed `i64` (`result = ptr << 32 | len`) from all data-returning exports (`filter`, `shortcode`, `hook`, `hooks`, `last_error`). Alloy rejects the previous multi-value `(result i32 i32)` form at load time.
+
+  Rust:
+
+  ```rust
+  #[no_mangle]
+  pub extern "C" fn filter(ptr: i32, len: i32) -> u64 {
+      // ... transform input ...
+      ((result_ptr as u64) << 32) | (result_len as u64)
+  }
+  ```
+
+  TinyGo (build with `-target wasm-unknown`, not `-target wasi`):
+
+  ```go
+  //export filter
+  func filter(ptr, length int32) uint64 {
+      // ... transform input ...
+      return (uint64(resultPtr) << 32) | uint64(resultLen)
+  }
+  ```
+
+  AssemblyScript (build with `--runtime stub --use abort=`):
+
+  ```typescript
+  export function filter(ptr: i32, len: i32): u64 {
+    // ... transform input ...
+    return (u64(resultPtr) << 32) | u64(resultLen);
+  }
+  ```
+
+  Load-time validation checks every data-returning export's signature. Modules using the old multi-value ABI or the sret form (`(param i32 i32 i32) -> ()` produced by Rust >= 1.82 and TinyGo tuple returns) get an error naming the export and its actual signature.
+
+  The packed form works with current Rust, TinyGo, and AssemblyScript without unstable compiler flags.
+
+### Patch Changes
+
+- Fix WASM and Node hooks losing `url`, `path`, and `frontMatter` when chained with other hooks on the same event. A QuickJS hook chaining after a WASM or Node hook received only the mutable field (`html` or `content`) — context fields were silently dropped. All three runtimes now preserve context through the full hook chain.
+- Fix plugin filter and shortcode call errors being silently swallowed during template rendering. A filter that throws now fails the build with the filter name and source file path in the error message, instead of passing through the original input unchanged. Shortcode errors fail instead of producing empty output.
+
+  Previously, `{{ "hello" | myFilter }}` where `myFilter` threw an exception would silently output `hello` — the most dangerous failure mode, producing incorrect output with no warning.
+
 ## v0.6.0 (2026-07-25)
 
 ### Minor Changes
