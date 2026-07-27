@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/zeroedin/alloy/internal/ordered"
 	"github.com/zeroedin/alloy/internal/plugin"
 )
 
@@ -840,6 +841,310 @@ var _ = Describe("Hooks", func() {
 				"per-item fallback must also fire progress callback after each item")
 			Expect(updates[0][0]).To(Equal(1))
 			Expect(updates[1][0]).To(Equal(2))
+		})
+	})
+
+	// ── Hook chain context preservation: cross-runtime (issue #1219) ──
+	// When a WASM or Node hook chains with a QuickJS hook on the same
+	// event, the first hook returns *ordered.Map (via ordered.UnmarshalJSONValue
+	// or ordered.RewrapValue). injectChainContext currently only handles
+	// map[string]interface{} — it silently skips *ordered.Map results,
+	// causing the next hook to lose url, path, and frontMatter.
+	//
+	// Fix: injectChainContext must add an *ordered.Map branch that calls
+	// om.Set("url", ...) / om.Set("path", ...) / om.Set("frontMatter", ...).
+
+	Describe("Hook chain context preservation: cross-runtime (issue #1219)", func() {
+
+		It("Run: *ordered.Map result from first hook receives context injection", func() {
+			registry := plugin.NewHookRegistry()
+
+			// Hook A (priority 10): returns *ordered.Map with only the mutable
+			// field. This simulates a WASM runtime returning *ordered.Map via
+			// ordered.UnmarshalJSONValue, or a Node runtime via ordered.RewrapValue.
+			registry.RegisterWithPriority(plugin.OnPageRendered, func(_ context.Context, _ interface{}) (interface{}, error) {
+				result := ordered.New()
+				result.Set("html", "<p>hook-a</p>")
+				return result, nil
+			}, 10)
+
+			// Hook B (priority 20): captures payload to verify context injection.
+			var receivedPayload interface{}
+			registry.RegisterWithPriority(plugin.OnPageRendered, func(_ context.Context, payload interface{}) (interface{}, error) {
+				receivedPayload = payload
+				return payload, nil
+			}, 20)
+
+			payload := plugin.HookRenderedPayload{
+				HTML:        "<p>original</p>",
+				FrontMatter: map[string]interface{}{"title": "Cross-Runtime Test"},
+				URL:         "/cross-runtime/",
+				Path:        "content/cross-runtime.md",
+			}
+
+			_, err := registry.Run(plugin.OnPageRendered, payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			om, ok := receivedPayload.(*ordered.Map)
+			Expect(ok).To(BeTrue(),
+				"second hook must receive *ordered.Map — the chaining layer "+
+					"must not convert the result type")
+
+			Expect(om.Get("url")).To(Equal("/cross-runtime/"),
+				"injectChainContext must call om.Set(\"url\", ...) for *ordered.Map — "+
+					"current code only handles map[string]interface{} (issue #1219)")
+			Expect(om.Get("path")).To(Equal("content/cross-runtime.md"),
+				"injectChainContext must call om.Set(\"path\", ...) for *ordered.Map — "+
+					"current code only handles map[string]interface{} (issue #1219)")
+
+			fm, fmOK := om.Get("frontMatter").(map[string]interface{})
+			Expect(fmOK).To(BeTrue(),
+				"injectChainContext must inject frontMatter into *ordered.Map — "+
+					"current code silently skips it (issue #1219)")
+			Expect(fm).To(HaveKeyWithValue("title", "Cross-Runtime Test"),
+				"injected frontMatter must contain original payload values — "+
+					"not an empty placeholder")
+		})
+
+		It("RunWithTimeout: *ordered.Map result from first hook receives context injection", func() {
+			registry := plugin.NewHookRegistry()
+			registry.SetTimeout(5000)
+
+			// Hook A: returns *ordered.Map simulating WASM/Node CallHook return
+			registry.RegisterWithPriority(plugin.OnContentTransformed, func(_ context.Context, _ interface{}) (interface{}, error) {
+				result := ordered.New()
+				result.Set("html", "<p>transformed-a</p>")
+				return result, nil
+			}, 10)
+
+			// Hook B: captures received payload
+			var receivedPayload interface{}
+			registry.RegisterWithPriority(plugin.OnContentTransformed, func(_ context.Context, payload interface{}) (interface{}, error) {
+				receivedPayload = payload
+				return payload, nil
+			}, 20)
+
+			payload := plugin.HookTransformPayload{
+				HTML:        "<p>original content</p>",
+				FrontMatter: map[string]interface{}{"category": "docs"},
+				URL:         "/docs/api/",
+				Path:        "content/docs/api.md",
+			}
+
+			_, err := registry.RunWithTimeout(plugin.OnContentTransformed, payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			om, ok := receivedPayload.(*ordered.Map)
+			Expect(ok).To(BeTrue(),
+				"second hook must receive *ordered.Map from first hook's result")
+
+			Expect(om.Get("url")).To(Equal("/docs/api/"),
+				"RunWithTimeout must inject url into *ordered.Map results (issue #1219)")
+			Expect(om.Get("path")).To(Equal("content/docs/api.md"),
+				"RunWithTimeout must inject path into *ordered.Map results (issue #1219)")
+
+			fm, fmOK := om.Get("frontMatter").(map[string]interface{})
+			Expect(fmOK).To(BeTrue(),
+				"RunWithTimeout must inject frontMatter into *ordered.Map results (issue #1219)")
+			Expect(fm).To(HaveKeyWithValue("category", "docs"))
+		})
+
+		It("RunBatchWithProgress batch path: *ordered.Map results receive per-item context injection", func() {
+			registry := plugin.NewHookRegistry()
+
+			// Hook A (batch): returns *ordered.Map for each item
+			singleFn := func(_ context.Context, _ interface{}) (interface{}, error) {
+				result := ordered.New()
+				result.Set("html", "<p>single-fallback</p>")
+				return result, nil
+			}
+			batchFn := func(_ context.Context, ps []interface{}, _ plugin.BatchProgressFunc) ([]interface{}, error) {
+				out := make([]interface{}, len(ps))
+				for i := range ps {
+					result := ordered.New()
+					result.Set("html", fmt.Sprintf("<p>batch-item-%d</p>", i))
+					out[i] = result
+				}
+				return out, nil
+			}
+			registry.RegisterBatchWithPriority(plugin.OnPageRendered, singleFn, batchFn, 10)
+
+			// Hook B (single-only): captures each received payload via per-item fallback
+			var receivedPayloads []interface{}
+			registry.RegisterWithPriority(plugin.OnPageRendered, func(_ context.Context, payload interface{}) (interface{}, error) {
+				receivedPayloads = append(receivedPayloads, payload)
+				return payload, nil
+			}, 20)
+
+			payloads := []interface{}{
+				plugin.HookRenderedPayload{
+					HTML:        "<p>page-1</p>",
+					FrontMatter: map[string]interface{}{"title": "Page 1"},
+					URL:         "/page-1/",
+					Path:        "content/page-1.md",
+				},
+				plugin.HookRenderedPayload{
+					HTML:        "<p>page-2</p>",
+					FrontMatter: map[string]interface{}{"title": "Page 2"},
+					URL:         "/page-2/",
+					Path:        "content/page-2.md",
+				},
+			}
+
+			_, err := registry.RunBatchWithProgress(plugin.OnPageRendered, payloads, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(receivedPayloads).To(HaveLen(2),
+				"Hook B must be called once per item in the batch")
+
+			// Verify first item
+			om1, ok := receivedPayloads[0].(*ordered.Map)
+			Expect(ok).To(BeTrue(), "batch result item must be *ordered.Map")
+			Expect(om1.Get("url")).To(Equal("/page-1/"),
+				"batch context injection must handle *ordered.Map per-item (issue #1219)")
+			Expect(om1.Get("path")).To(Equal("content/page-1.md"))
+			fm1, fmOK := om1.Get("frontMatter").(map[string]interface{})
+			Expect(fmOK).To(BeTrue(),
+				"batch context injection must include frontMatter (issue #1219)")
+			Expect(fm1).To(HaveKeyWithValue("title", "Page 1"))
+
+			// Verify second item — each item must receive its OWN context
+			om2, ok := receivedPayloads[1].(*ordered.Map)
+			Expect(ok).To(BeTrue(), "batch result item must be *ordered.Map")
+			Expect(om2.Get("url")).To(Equal("/page-2/"),
+				"each batch item must receive its own context — not item 0's (issue #1219)")
+			Expect(om2.Get("path")).To(Equal("content/page-2.md"))
+			fm2, fmOK := om2.Get("frontMatter").(map[string]interface{})
+			Expect(fmOK).To(BeTrue())
+			Expect(fm2).To(HaveKeyWithValue("title", "Page 2"))
+		})
+
+		It("RunBatchWithProgress per-item fallback: *ordered.Map result receives context injection", func() {
+			registry := plugin.NewHookRegistry()
+
+			// Hook A (single-dispatch only, no batchFn) — returns *ordered.Map
+			registry.RegisterWithPriority(plugin.OnPageRendered, func(_ context.Context, _ interface{}) (interface{}, error) {
+				result := ordered.New()
+				result.Set("html", "<p>per-item-a</p>")
+				return result, nil
+			}, 10)
+
+			// Hook B: captures received payload
+			var receivedPayload interface{}
+			registry.RegisterWithPriority(plugin.OnPageRendered, func(_ context.Context, payload interface{}) (interface{}, error) {
+				receivedPayload = payload
+				return payload, nil
+			}, 20)
+
+			payloads := []interface{}{
+				plugin.HookRenderedPayload{
+					HTML:        "<p>item</p>",
+					FrontMatter: map[string]interface{}{"slug": "test"},
+					URL:         "/fallback-test/",
+					Path:        "content/fallback.md",
+				},
+			}
+
+			_, err := registry.RunBatchWithProgress(plugin.OnPageRendered, payloads, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			om, ok := receivedPayload.(*ordered.Map)
+			Expect(ok).To(BeTrue(), "per-item fallback result must be *ordered.Map")
+			Expect(om.Get("url")).To(Equal("/fallback-test/"),
+				"per-item fallback must inject context into *ordered.Map (issue #1219)")
+			Expect(om.Get("path")).To(Equal("content/fallback.md"))
+			fm, fmOK := om.Get("frontMatter").(map[string]interface{})
+			Expect(fmOK).To(BeTrue(),
+				"per-item fallback must inject frontMatter into *ordered.Map (issue #1219)")
+			Expect(fm).To(HaveKeyWithValue("slug", "test"))
+		})
+
+		It("*ordered.Map url mutation in hook return does not propagate (read-only)", func() {
+			registry := plugin.NewHookRegistry()
+
+			// Hook A: returns *ordered.Map with a mutated url field
+			registry.RegisterWithPriority(plugin.OnPageRendered, func(_ context.Context, _ interface{}) (interface{}, error) {
+				result := ordered.New()
+				result.Set("html", "<p>hook-a</p>")
+				result.Set("url", "/mutated-by-hook/")
+				result.Set("path", "/also-mutated/")
+				return result, nil
+			}, 10)
+
+			// Hook B: captures received url and path
+			var receivedURL, receivedPath interface{}
+			registry.RegisterWithPriority(plugin.OnPageRendered, func(_ context.Context, payload interface{}) (interface{}, error) {
+				if om, ok := payload.(*ordered.Map); ok {
+					receivedURL = om.Get("url")
+					receivedPath = om.Get("path")
+				}
+				return payload, nil
+			}, 20)
+
+			payload := plugin.HookRenderedPayload{
+				HTML: "<p>original</p>",
+				URL:  "/original/",
+				Path: "content/original.md",
+			}
+
+			_, err := registry.Run(plugin.OnPageRendered, payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(receivedURL).To(Equal("/original/"),
+				"url is read-only context — injectChainContext must overwrite the "+
+					"hook's mutated url (/mutated-by-hook/) with the original (/original/) "+
+					"even when the result is *ordered.Map (issue #1219)")
+			Expect(receivedPath).To(Equal("content/original.md"),
+				"path is read-only context — injectChainContext must overwrite the "+
+					"hook's mutated path with the original even for *ordered.Map (issue #1219)")
+		})
+
+		It("mixed chain: map[string]interface{} then *ordered.Map preserves context through both types", func() {
+			registry := plugin.NewHookRegistry()
+
+			// Hook A (priority 10): returns plain map (simulates QuickJS fast path)
+			registry.RegisterWithPriority(plugin.OnPageRendered, func(_ context.Context, _ interface{}) (interface{}, error) {
+				return map[string]interface{}{"html": "<p>hook-a-map</p>"}, nil
+			}, 10)
+
+			// Hook B (priority 20): returns *ordered.Map (simulates WASM/Node)
+			registry.RegisterWithPriority(plugin.OnPageRendered, func(_ context.Context, _ interface{}) (interface{}, error) {
+				result := ordered.New()
+				result.Set("html", "<p>hook-b-ordered</p>")
+				return result, nil
+			}, 20)
+
+			// Hook C (priority 30): captures payload to verify context survived
+			var receivedPayload interface{}
+			registry.RegisterWithPriority(plugin.OnPageRendered, func(_ context.Context, payload interface{}) (interface{}, error) {
+				receivedPayload = payload
+				return payload, nil
+			}, 30)
+
+			payload := plugin.HookRenderedPayload{
+				HTML:        "<p>original</p>",
+				FrontMatter: map[string]interface{}{"mixed": true},
+				URL:         "/mixed-chain/",
+				Path:        "content/mixed.md",
+			}
+
+			_, err := registry.Run(plugin.OnPageRendered, payload)
+			Expect(err).NotTo(HaveOccurred())
+
+			// After hook B, the result is *ordered.Map. Context must be injected.
+			om, ok := receivedPayload.(*ordered.Map)
+			Expect(ok).To(BeTrue(),
+				"third hook must receive *ordered.Map from second hook")
+
+			Expect(om.Get("url")).To(Equal("/mixed-chain/"),
+				"context must survive mixed map-type chain: "+
+					"map[string]interface{} → *ordered.Map (issue #1219)")
+			Expect(om.Get("path")).To(Equal("content/mixed.md"),
+				"path must be preserved through mixed-type chain (issue #1219)")
+
+			fm, fmOK := om.Get("frontMatter").(map[string]interface{})
+			Expect(fmOK).To(BeTrue(),
+				"frontMatter must be preserved through mixed-type chain (issue #1219)")
+			Expect(fm).To(HaveKeyWithValue("mixed", true))
 		})
 	})
 })
