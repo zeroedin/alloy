@@ -7,6 +7,8 @@ description: "Install Alloy via Homebrew, Go install, or from source on macOS, L
 
 ## Homebrew (recommended)
 
+Requires [Homebrew](https://brew.sh/). If you don't have it, install it first.
+
 ```bash
 brew tap zeroedin/alloy-ssg
 brew install alloy-ssg
