@@ -24,7 +24,7 @@ See [Upgrading Alloy](/upgrade/) for upgrade instructions.
 
 ## Windows
 
-On Windows, use [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) and install via Homebrew inside your Linux environment. Alternatively, download a prebuilt binary from the [GitHub releases page](https://github.com/zeroedin/alloy/releases):
+On Windows, use [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) and install via [Homebrew](https://brew.sh/) inside your Linux environment. Alternatively, download a prebuilt binary from the [GitHub releases page](https://github.com/zeroedin/alloy/releases):
 
 1. Download `alloy-windows-amd64.zip` (or `alloy-windows-arm64.zip` for ARM)
 2. Extract the zip
