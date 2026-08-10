@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -1013,6 +1014,309 @@ taxonomies:
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(serveSource)).To(ContainSubstring("PrintBanner("),
 				"serve.go must call PrintBanner() — the alloy logo must display on startup")
+		})
+	})
+
+	// ── Missing config file error (issue #1239) ─────────────────────
+	// When no config file is found, build/dev/serve must error with an
+	// actionable message. A config file is always required — CLI flags
+	// are operational overrides, not a config replacement.
+
+	Describe("missing config file error (issue #1239)", func() {
+
+		Context("alloy build with no config file", func() {
+			It("returns an error when no config file exists", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-no-config-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				root := cmd.NewRootCommand()
+				root.SilenceErrors = true
+				root.SilenceUsage = true
+				root.SetArgs([]string{"build", "--root", tmpDir})
+				err = root.Execute()
+				Expect(err).To(HaveOccurred(),
+					"alloy build must fail when no config file is found — "+
+						"a config file is always required for build/dev/serve")
+			})
+
+			It("error message mentions the directory searched", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-no-config-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				root := cmd.NewRootCommand()
+				root.SilenceErrors = true
+				root.SilenceUsage = true
+				root.SetArgs([]string{"build", "--root", tmpDir})
+				err = root.Execute()
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring(tmpDir),
+					"error must include the directory path so the user can see "+
+						"which directory was searched — helps catch wrong-directory mistakes")
+			})
+
+			It("error message lists expected config file names", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-no-config-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				root := cmd.NewRootCommand()
+				root.SilenceErrors = true
+				root.SilenceUsage = true
+				root.SetArgs([]string{"build", "--root", tmpDir})
+				err = root.Execute()
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("alloy.config"),
+					"error must mention the expected config file name pattern "+
+						"so the user knows what file to create or find")
+			})
+
+			It("error message suggests --config flag as workaround", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-no-config-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				root := cmd.NewRootCommand()
+				root.SilenceErrors = true
+				root.SilenceUsage = true
+				root.SetArgs([]string{"build", "--root", tmpDir})
+				err = root.Execute()
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("--config"),
+					"error must suggest --config as the escape hatch for "+
+						"non-standard project layouts")
+			})
+		})
+
+		Context("alloy dev with no config file", func() {
+			It("returns an error when no config file exists", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-no-config-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				root := cmd.NewRootCommand()
+				root.SilenceErrors = true
+				root.SilenceUsage = true
+				root.SetArgs([]string{"dev", "--root", tmpDir})
+
+				errCh := make(chan error, 1)
+				go func() { errCh <- root.Execute() }()
+
+				select {
+				case err = <-errCh:
+					Expect(err).To(HaveOccurred(),
+						"alloy dev must fail when no config file is found — "+
+							"booting a dev server without a config is almost certainly "+
+							"running from the wrong directory")
+				case <-time.After(5 * time.Second):
+					Fail("alloy dev did not return within 5 seconds — " +
+						"must error and exit before starting the server when no config file is found")
+				}
+			})
+
+			It("error message mentions the directory searched", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-no-config-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				root := cmd.NewRootCommand()
+				root.SilenceErrors = true
+				root.SilenceUsage = true
+				root.SetArgs([]string{"dev", "--root", tmpDir})
+
+				errCh := make(chan error, 1)
+				go func() { errCh <- root.Execute() }()
+
+				select {
+				case err = <-errCh:
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(ContainSubstring(tmpDir),
+						"error must include the directory path for dev command")
+				case <-time.After(5 * time.Second):
+					Fail("alloy dev did not return — must error before starting the server")
+				}
+			})
+		})
+
+		Context("alloy serve with no config file", func() {
+			It("returns an error when no config file exists", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-no-config-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				root := cmd.NewRootCommand()
+				root.SilenceErrors = true
+				root.SilenceUsage = true
+				root.SetArgs([]string{"serve", "--root", tmpDir})
+
+				errCh := make(chan error, 1)
+				go func() { errCh <- root.Execute() }()
+
+				select {
+				case err = <-errCh:
+					Expect(err).To(HaveOccurred(),
+						"alloy serve must fail when no config file is found — "+
+							"same requirement as build and dev")
+				case <-time.After(5 * time.Second):
+					Fail("alloy serve did not return within 5 seconds — " +
+						"must error and exit before starting the server when no config file is found")
+				}
+			})
+
+			It("error message mentions the directory searched", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-no-config-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				root := cmd.NewRootCommand()
+				root.SilenceErrors = true
+				root.SilenceUsage = true
+				root.SetArgs([]string{"serve", "--root", tmpDir})
+
+				errCh := make(chan error, 1)
+				go func() { errCh <- root.Execute() }()
+
+				select {
+				case err = <-errCh:
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(ContainSubstring(tmpDir),
+						"error must include the directory path for serve command")
+				case <-time.After(5 * time.Second):
+					Fail("alloy serve did not return — must error before starting the server")
+				}
+			})
+		})
+
+		Context("explicit --config pointing to missing file", func() {
+			It("returns an error mentioning the specified path", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-no-config-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				missingPath := filepath.Join(tmpDir, "custom.yaml")
+				root := cmd.NewRootCommand()
+				root.SilenceErrors = true
+				root.SilenceUsage = true
+				root.SetArgs([]string{"build", "--config", missingPath})
+				err = root.Execute()
+				Expect(err).To(HaveOccurred(),
+					"explicit --config pointing to a non-existent file must be a hard error — "+
+						"the user specifically requested this file")
+				Expect(err.Error()).To(ContainSubstring(missingPath),
+					"error must include the path the user specified so they can "+
+						"see the typo or wrong path")
+			})
+
+			It("does not suggest --config when --config was already used", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-no-config-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				missingPath := filepath.Join(tmpDir, "custom.yaml")
+				root := cmd.NewRootCommand()
+				root.SilenceErrors = true
+				root.SilenceUsage = true
+				root.SetArgs([]string{"build", "--config", missingPath})
+				err = root.Execute()
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).NotTo(ContainSubstring("use --config"),
+					"when --config was already explicitly passed, the error must not "+
+						"suggest using --config — that's circular advice")
+			})
+		})
+
+		Context("alloy init does NOT require a config file", func() {
+			It("succeeds in a directory with no config file", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-init-no-config-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				root := cmd.NewRootCommand()
+				root.SilenceErrors = true
+				root.SilenceUsage = true
+				root.SetArgs([]string{"init", tmpDir})
+				err = root.Execute()
+				Expect(err).NotTo(HaveOccurred(),
+					"alloy init must succeed without a config file — "+
+						"its purpose is to create the config file and scaffold the project")
+			})
+		})
+
+		Context("config file exists — no error", func() {
+			It("build succeeds when alloy.config.yaml exists", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-has-config-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				configContent := "title: test\nbaseURL: http://example.com\n"
+				err = os.WriteFile(filepath.Join(tmpDir, "alloy.config.yaml"), []byte(configContent), 0644)
+				Expect(err).NotTo(HaveOccurred())
+
+				root := cmd.NewRootCommand()
+				root.SilenceErrors = true
+				root.SilenceUsage = true
+				root.SetArgs([]string{"build", "--root", tmpDir})
+				err = root.Execute()
+				Expect(err).NotTo(HaveOccurred(),
+					"alloy build must succeed when a valid config file exists — "+
+						"the error is only for the missing-config case")
+			})
+
+			It("build succeeds with alloy.config.toml", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-has-config-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				configContent := "title = \"test\"\nbaseURL = \"http://example.com\"\n"
+				err = os.WriteFile(filepath.Join(tmpDir, "alloy.config.toml"), []byte(configContent), 0644)
+				Expect(err).NotTo(HaveOccurred())
+
+				root := cmd.NewRootCommand()
+				root.SilenceErrors = true
+				root.SilenceUsage = true
+				root.SetArgs([]string{"build", "--root", tmpDir})
+				err = root.Execute()
+				Expect(err).NotTo(HaveOccurred(),
+					"alloy build must detect alloy.config.toml when .yaml is absent — "+
+						"DetectConfigFile checks yaml, yml, toml, json in order")
+			})
+
+			It("build succeeds with alloy.config.json", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-has-config-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				configContent := `{"title": "test", "baseURL": "http://example.com"}`
+				err = os.WriteFile(filepath.Join(tmpDir, "alloy.config.json"), []byte(configContent), 0644)
+				Expect(err).NotTo(HaveOccurred())
+
+				root := cmd.NewRootCommand()
+				root.SilenceErrors = true
+				root.SilenceUsage = true
+				root.SetArgs([]string{"build", "--root", tmpDir})
+				err = root.Execute()
+				Expect(err).NotTo(HaveOccurred(),
+					"alloy build must detect alloy.config.json — "+
+						"all four extensions are valid config file formats")
+			})
+		})
+
+		Context("--quiet does not suppress the error", func() {
+			It("still errors with --quiet when no config exists", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-no-config-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				root := cmd.NewRootCommand()
+				root.SilenceErrors = true
+				root.SilenceUsage = true
+				root.SetArgs([]string{"build", "--root", tmpDir, "--quiet"})
+				err = root.Execute()
+				Expect(err).To(HaveOccurred(),
+					"--quiet suppresses informational output, not errors — "+
+						"a missing config file is a fatal error regardless of verbosity")
+			})
 		})
 	})
 })

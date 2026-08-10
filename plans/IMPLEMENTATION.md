@@ -1175,7 +1175,7 @@ Version update checking via the GitHub Releases API. Two modes: explicit (`alloy
 #### `cmd/build.go` (issue #27)
 
 `RunE` is an empty stub. Must wire to pipeline:
-1. Read `--config` flag, call `config.DetectConfigFile` or `config.Load`. If no config file found, use `config.ApplyDefaults` on an empty `Config` (zero-page build, not an error).
+1. Read `--config` flag. Determine `searchDir` (from `--root` if set, otherwise CWD). Call `config.DetectConfigFile(searchDir)` to find the config file. **If no config file is found, return an error** (issue #1239). Two error paths: (a) when `--config` was NOT explicitly passed (`cmd.Flags().Changed("config")` is false), return an error containing the search directory path, the expected file names, and a `--config` suggestion; (b) when `--config` WAS explicitly passed and the file does not exist, return an error containing the specified path but NOT a `--config` suggestion. Call `config.LoadWithDefaults` on the detected path.
 2. Read `--output`, `--verbose`, `--quiet`, `--root` flags, call `config.MergeFlags`.
 3. If `--profile`, start profiling: `pipeline.StartProfiling(resolveDir(cfg.ProjectRoot, profileDir))`. The `--profile-dir` flag defaults to `.alloy/profiles` but must be resolved relative to `cfg.ProjectRoot` (not CWD) so `-r` works correctly.
 4. Call `pipeline.Build(cfg, pipeline.BuildOptions{Profile: profile})`. When `Profile` is true, `Build` instruments 15 pipeline stages via `StageTimer` and populates `BuildResult.StageTimings`.
@@ -1190,13 +1190,20 @@ Version update checking via the GitHub Releases API. Two modes: explicit (`alloy
 - `BuildOptions.Profile bool` — when true, `Build` creates a `StageTimer` and populates `BuildResult.StageTimings`.
 - `BuildResult.StageTimings []StageTiming` — empty when `Profile` is false (no overhead).
 
-**Test note**: The existing cmd test `"build command executes the build pipeline successfully"` runs without a project fixture. Build must handle missing content directory gracefully (return zero-page success, not error) for this test to pass.
+**Test note**: The existing cmd test `"build command executes the build pipeline successfully"` runs from `cmd/` which is not a project root. After issue #1239, this test must either create a config fixture in a temp directory or be updated to expect an error. The developer must reconcile this existing test with the new requirement.
+
+**Missing config file error (issue #1239)**: The config-missing error applies to `cmd/build.go`, `cmd/dev.go`, and `cmd/serve.go` — all three share the same config-loading preamble. `alloy init` is exempt (it creates the config). The developer must replace the existing `fs.ErrNotExist` fallthrough block (which silently applies defaults) with an error return. Implementation guidance:
+
+- When `--config` was NOT explicitly passed (`!cmd.Flags().Changed("config")`): call `config.DetectConfigFile(searchDir)` where `searchDir` is the `--root` directory (if set) or the directory containing the default config path. If `DetectConfigFile` returns an error, wrap it as: `fmt.Errorf("no config file found in %s\n\nLooked for alloy.config.{yaml,yml,toml,json}.\nRun this command from your project root, or use --config to specify a config file path.", searchDir)`
+- When `--config` WAS explicitly passed (`cmd.Flags().Changed("config")`) and the file does not exist: return `fmt.Errorf("config file not found: %s", configPath)` — no `--config` suggestion (circular).
+- The error is never suppressed by `--quiet` — `--quiet` only suppresses informational output, not errors.
+- The `configLoaded` variable and its associated `ApplyDefaults` fallback must be removed from all three commands.
 
 #### `cmd/dev.go` (issue #256, was #29; watcher fix #371; PipelineState stale data fix #717)
 
 Dev server command (`alloy dev`). Uses `ModeDev` — Phase 1 only, in-memory, drafts visible.
 
-1. Load config (same as build).
+1. Load config (same as build — error if no config file found, issue #1239).
 2. **Check server lockfile (issue #1094)**: Call `server.CheckAndWarnLockfile(cfg.ProjectRoot)`. Print any returned warnings to stderr. Proceed regardless — lockfile warnings never block startup.
 3. Set `cfg.IncludeDrafts = true` (unless `--no-drafts`).
 4. Run initial build via `pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})`. `Build()` persists cache to disk at Stage 9 (`.alloy/cache.json`).
@@ -1217,7 +1224,7 @@ Dev server command (`alloy dev`). Uses `ModeDev` — Phase 1 only, in-memory, dr
 
 Production server command (`alloy serve`). Uses `ModePreview` — same pipeline as `alloy build`, writes to `_site/`, SSR if configured, excludes drafts. **Must have a file watcher** — `alloy serve` is NOT a one-shot build (PLAN.md §8).
 
-1. Load config (same as build).
+1. Load config (same as build — error if no config file found, issue #1239).
 2. **Check server lockfile (issue #1094)**: Call `server.CheckAndWarnLockfile(cfg.ProjectRoot)`. Print any returned warnings to stderr. Proceed regardless.
 3. Set `cfg.IncludeDrafts = false`.
 4. Run initial build via `pipeline.Build(cfg)`.
