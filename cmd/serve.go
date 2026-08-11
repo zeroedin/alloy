@@ -25,18 +25,9 @@ func newServeCommand() *cobra.Command {
 		Use:   "serve",
 		Short: "Build and serve the production site",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			configPath := resolveConfigPath(cmd)
-
-			configLoaded := true
-			cfg, err := config.LoadWithDefaults(configPath)
+			cfg, err := loadRequiredConfig(cmd)
 			if err != nil {
-				if errors.Is(err, fs.ErrNotExist) {
-					cfg = &config.Config{}
-					config.ApplyDefaults(cfg)
-					configLoaded = false
-				} else {
-					return fmt.Errorf("loading config: %w", err)
-				}
+				return err
 			}
 
 			// Apply CLI flag overrides
@@ -65,10 +56,8 @@ func newServeCommand() *cobra.Command {
 				config.MergeFlags(cfg, flags)
 			}
 
-			if configLoaded {
-				if err := config.Validate(cfg); err != nil {
-					return err
-				}
+			if err := config.Validate(cfg); err != nil {
+				return err
 			}
 
 			// Check for another running alloy instance (issue #1094)
