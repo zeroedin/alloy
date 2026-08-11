@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -1118,6 +1119,8 @@ taxonomies:
 							"booting a dev server without a config is almost certainly "+
 							"running from the wrong directory")
 				case <-time.After(5 * time.Second):
+					syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+					time.Sleep(100 * time.Millisecond)
 					Fail("alloy dev did not return within 5 seconds — " +
 						"must error and exit before starting the server when no config file is found")
 				}
@@ -1146,6 +1149,8 @@ taxonomies:
 					Expect(err.Error()).To(ContainSubstring("--config"),
 						"error must suggest --config for dev command")
 				case <-time.After(5 * time.Second):
+					syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+					time.Sleep(100 * time.Millisecond)
 					Fail("alloy dev did not return — must error before starting the server")
 				}
 			})
@@ -1171,6 +1176,8 @@ taxonomies:
 						"alloy serve must fail when no config file is found — "+
 							"same requirement as build and dev")
 				case <-time.After(5 * time.Second):
+					syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+					time.Sleep(100 * time.Millisecond)
 					Fail("alloy serve did not return within 5 seconds — " +
 						"must error and exit before starting the server when no config file is found")
 				}
@@ -1199,6 +1206,8 @@ taxonomies:
 					Expect(err.Error()).To(ContainSubstring("--config"),
 						"error must suggest --config for serve command")
 				case <-time.After(5 * time.Second):
+					syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+					time.Sleep(100 * time.Millisecond)
 					Fail("alloy serve did not return — must error before starting the server")
 				}
 			})
