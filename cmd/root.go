@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -61,10 +62,17 @@ func loadRequiredConfig(cmd *cobra.Command) (*config.Config, error) {
 		}
 	}
 
+	if info, statErr := os.Stat(dir); statErr != nil {
+		return nil, fmt.Errorf("project directory not found: %s", dir)
+	} else if !info.IsDir() {
+		return nil, fmt.Errorf("project root is not a directory: %s", dir)
+	}
+
 	configPath, err := config.DetectConfigFile(dir)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"no alloy.config file found in %s; use --config to specify a config file path", dir)
+			"no alloy.config file found in %s (looked for alloy.config.{yaml,yml,toml,json}); "+
+				"use --config to specify a config file path: %w", dir, err)
 	}
 
 	cfg, loadErr := config.LoadWithDefaults(configPath)
