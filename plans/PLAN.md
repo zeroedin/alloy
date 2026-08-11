@@ -3460,7 +3460,7 @@ structure:
 
 Runs the full build pipeline and writes output to `_site/` (or the configured output directory).
 
-1. Detect and load config file (via `config.DetectConfigFile` + `config.LoadWithDefaults`). If no config file is found, fall back to built-in defaults so an empty project produces a successful zero-page build.
+1. Detect and load config file (via shared `loadRequiredConfig` helper in `root.go`). **If no config file is found, exit 1 with an actionable error** (issue #1239). The error format is: `"no alloy.config file found in <dir> (looked for alloy.config.{yaml,yml,toml,json}); use --config to specify a config file path: <underlying error>"` — wraps the detection error so permission failures and other causes are visible. When `--config` was explicitly passed and the file does not exist, the error is: `"config file not found: <path>"` — no `--config` suggestion (circular). Non-existent `--root` directories produce `"project directory not found: <path>"`. A config file is always required for `build`, `dev`, and `serve` — CLI flags are operational overrides, not a config replacement.
 2. Apply CLI flag overrides via `config.MergeFlags` (`--output`, `--verbose`, `--quiet`).
 3. If `--profile`, start pprof CPU profiling via `pipeline.StartProfiling(profileDir)`. Default `profileDir` is `.alloy/profiles`.
 4. Call `pipeline.Build(cfg, pipeline.BuildOptions{Profile: profile})`. When `Profile` is true, `Build` records per-stage wall-clock timings in `BuildResult.StageTimings`.
@@ -3472,7 +3472,7 @@ Runs the full build pipeline and writes output to `_site/` (or the configured ou
 
 Starts the development server with live reload. Phase 1 only, in-memory, drafts visible.
 
-1. Load config (same as build).
+1. Load config via `loadRequiredConfig` (same error behavior as build — issue #1239).
 2. Run initial build via `pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})` with `cfg.IncludeDrafts = true` (unless `--no-drafts`). Build persists cache to disk for subsequent incremental rebuilds.
 3. Start HTTP server on `--port` (default 3000). If the port is occupied, auto-increment up to 10 consecutive ports. If all 10 are occupied, exit 1 with an error listing the range tried.
 4. Start file watcher for live reload. On file changes, rebuild incrementally — only re-render changed/invalidated pages using the persisted build cache. Falls back to full rebuild for bulk changes (10+ files) or component changes. Always passes `SkipSSR: true`.
@@ -3483,7 +3483,7 @@ Starts the development server with live reload. Phase 1 only, in-memory, drafts 
 
 Starts the production server. Same pipeline as `alloy build` but keeps serving with file watching. Writes to `_site/`, runs SSR if configured, excludes drafts.
 
-1. Load config (same as build).
+1. Load config via `loadRequiredConfig` (same error behavior as build — issue #1239).
 2. Run initial build via `pipeline.Build(cfg)` with `cfg.IncludeDrafts = false`.
 3. Start HTTP server on `--port` (default 3000) with port auto-increment.
 4. Start file watcher for live reload. On file changes, call `pipeline.Build(cfg)` — always full rebuild (no incremental in serve mode). Dispatch by change type: content/layout/data → pipeline rebuild, asset/static → recopy, passthrough → targeted recopy, component → full rebuild with SSR.

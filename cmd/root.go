@@ -1,9 +1,14 @@
 package cmd
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"github.com/zeroedin/alloy/internal/config"
 )
 
 // NewRootCommand creates a fresh root command tree. Tests use this
@@ -29,14 +34,52 @@ func NewRootCommand() *cobra.Command {
 	return root
 }
 
-// resolveConfigPath returns the config file path, resolving it relative to
-// --root when --config was not explicitly set.
-func resolveConfigPath(cmd *cobra.Command) string {
-	configPath, _ := cmd.Flags().GetString("config")
-	if rootPath, _ := cmd.Flags().GetString("root"); rootPath != "" && !cmd.Flags().Changed("config") {
-		configPath = filepath.Join(rootPath, configPath)
+// loadRequiredConfig locates and loads the config file for build/dev/serve.
+// When --config is explicitly set, loads that exact path. Otherwise uses
+// config.DetectConfigFile to search the project directory for any recognized
+// extension (.yaml, .yml, .toml, .json). Returns an actionable error when
+// no config file is found.
+func loadRequiredConfig(cmd *cobra.Command) (*config.Config, error) {
+	if cmd.Flags().Changed("config") {
+		configPath, _ := cmd.Flags().GetString("config")
+		cfg, err := config.LoadWithDefaults(configPath)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil, fmt.Errorf("config file not found: %s", configPath)
+			}
+			return nil, fmt.Errorf("loading config: %w", err)
+		}
+		return cfg, nil
 	}
-	return configPath
+
+	dir := "."
+	if rootPath, _ := cmd.Flags().GetString("root"); rootPath != "" {
+		dir = rootPath
+	}
+	if !filepath.IsAbs(dir) {
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
+	}
+
+	if info, statErr := os.Stat(dir); statErr != nil {
+		return nil, fmt.Errorf("project directory not found: %s", dir)
+	} else if !info.IsDir() {
+		return nil, fmt.Errorf("project root is not a directory: %s", dir)
+	}
+
+	configPath, err := config.DetectConfigFile(dir)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"no alloy.config file found in %s (looked for alloy.config.{yaml,yml,toml,json}); "+
+				"use --config to specify a config file path: %w", dir, err)
+	}
+
+	cfg, loadErr := config.LoadWithDefaults(configPath)
+	if loadErr != nil {
+		return nil, fmt.Errorf("loading config: %w", loadErr)
+	}
+	return cfg, nil
 }
 
 var rootCmd = NewRootCommand()
