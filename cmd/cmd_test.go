@@ -29,11 +29,19 @@ var _ = Describe("CLI Commands", func() {
 
 	Describe("Command registration", func() {
 		It("build command executes the build pipeline successfully", func() {
+			tmpDir, err := os.MkdirTemp("", "alloy-build-smoke-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+			configContent := "title: test\nbaseURL: http://localhost:3000\n"
+			err = os.WriteFile(filepath.Join(tmpDir, "alloy.config.yaml"), []byte(configContent), 0644)
+			Expect(err).NotTo(HaveOccurred())
+
 			root := cmd.NewRootCommand()
 			root.SilenceErrors = true
 			root.SilenceUsage = true
-			root.SetArgs([]string{"build"})
-			err := root.Execute()
+			root.SetArgs([]string{"build", "--root", tmpDir})
+			err = root.Execute()
 			Expect(err).NotTo(HaveOccurred(),
 				"alloy build must complete the pipeline without error")
 		})
@@ -1115,7 +1123,7 @@ taxonomies:
 				}
 			})
 
-			It("error message mentions the directory searched", func() {
+			It("error message includes directory, file names, and --config suggestion", func() {
 				tmpDir, err := os.MkdirTemp("", "alloy-no-config-*")
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() { os.RemoveAll(tmpDir) })
@@ -1133,6 +1141,10 @@ taxonomies:
 					Expect(err).To(HaveOccurred())
 					Expect(err.Error()).To(ContainSubstring(tmpDir),
 						"error must include the directory path for dev command")
+					Expect(err.Error()).To(ContainSubstring("alloy.config"),
+						"error must mention expected config file names for dev command")
+					Expect(err.Error()).To(ContainSubstring("--config"),
+						"error must suggest --config for dev command")
 				case <-time.After(5 * time.Second):
 					Fail("alloy dev did not return — must error before starting the server")
 				}
@@ -1164,7 +1176,7 @@ taxonomies:
 				}
 			})
 
-			It("error message mentions the directory searched", func() {
+			It("error message includes directory, file names, and --config suggestion", func() {
 				tmpDir, err := os.MkdirTemp("", "alloy-no-config-*")
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() { os.RemoveAll(tmpDir) })
@@ -1182,6 +1194,10 @@ taxonomies:
 					Expect(err).To(HaveOccurred())
 					Expect(err.Error()).To(ContainSubstring(tmpDir),
 						"error must include the directory path for serve command")
+					Expect(err.Error()).To(ContainSubstring("alloy.config"),
+						"error must mention expected config file names for serve command")
+					Expect(err.Error()).To(ContainSubstring("--config"),
+						"error must suggest --config for serve command")
 				case <-time.After(5 * time.Second):
 					Fail("alloy serve did not return — must error before starting the server")
 				}
@@ -1261,6 +1277,25 @@ taxonomies:
 				Expect(err).NotTo(HaveOccurred(),
 					"alloy build must succeed when a valid config file exists — "+
 						"the error is only for the missing-config case")
+			})
+
+			It("build succeeds with alloy.config.yml", func() {
+				tmpDir, err := os.MkdirTemp("", "alloy-has-config-*")
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+				configContent := "title: test\nbaseURL: http://example.com\n"
+				err = os.WriteFile(filepath.Join(tmpDir, "alloy.config.yml"), []byte(configContent), 0644)
+				Expect(err).NotTo(HaveOccurred())
+
+				root := cmd.NewRootCommand()
+				root.SilenceErrors = true
+				root.SilenceUsage = true
+				root.SetArgs([]string{"build", "--root", tmpDir})
+				err = root.Execute()
+				Expect(err).NotTo(HaveOccurred(),
+					"alloy build must detect alloy.config.yml — "+
+						"DetectConfigFile checks yaml, yml, toml, json in order")
 			})
 
 			It("build succeeds with alloy.config.toml", func() {
