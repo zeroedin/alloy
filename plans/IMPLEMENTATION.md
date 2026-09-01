@@ -212,6 +212,38 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
   - `escapeTemplateTagsInCode()` in `build.go` (runs after markdown rendering, independent)
 
   **TOC integration**: `extractText()` in `markdown.go` only collects `ast.Text` nodes for TOC entries. With the new extension, `TemplateTagInline` inside headings (e.g., `## {{ page.section_title }}`) must also contribute to TOC text. Update `extractText` to write `node.TagText` for `TemplateTagInline` nodes.
+
+  **Raw block shortcode content** (issue #1245):
+
+  Spec: PLAN.md → "Raw block shortcode content (issue #1245)". A `>` immediately after the opening delimiter on a block tag's open tag (`{%> name %}`, `{{%> name %}}`) makes that invocation's body pass through Goldmark verbatim. Close tags are unchanged native syntax.
+
+  **`TemplateTagBlock` gains raw state**: a `Raw bool`, the tag name and delimiter family captured at open time, the open tag's 1-based source line, and the close tag text. Body lines are accumulated in the node's `Lines()` segment list — no new node kind is needed, and `IsRaw()` already returns `true`.
+
+  **`templateTagBlockParser.Open()`**: after the existing `{{%` / `{%` prefix match, check whether the next byte is `>`. If so, extract the tag name (first identifier after the `>`, skipping whitespace and any whitespace-control `-`), record `Raw`, the name, the delimiter family, depth 1, and the open line number in the parser context, and return the node **without** closing. Non-raw opens keep today's behavior exactly. `{%->` (dash before `>`) is not a raw open — the `>` must come immediately after `%`.
+
+  **`templateTagBlockParser.Continue()`**: currently `return parser.Close` unconditionally. For a raw block it becomes stateful — trim the line and compare against the same-name open and close forms for the block's delimiter family, adjusting depth per the PLAN's depth-counting rules; on depth 0, record the close tag text and return `parser.Close`; otherwise append the line segment to `node.Lines()` and return `parser.Continue | parser.NoChildren`. Non-raw blocks still return `parser.Close` on the first call.
+
+  Two findings from prototyping this state machine against goldmark v1.8.2, both verified:
+  - `CanAcceptIndentedLine()` can stay `false`. Indented body lines (4+ spaces) are still delivered to `Continue()` and preserved verbatim — that method gates block *opening*, not continuation, so it does not need to change and non-raw block behavior is unaffected.
+  - Blank lines inside the body are delivered to `Continue()` and do not terminate the block, so no blank-line special case is needed.
+
+  These mean the existing single parser struct can carry both behaviors; a separate parser type is optional, not required.
+
+  **`templateTagRenderer.renderBlock()`**: for a raw node, write the open tag with the `>` removed and exactly one space between delimiter and tag name (so `{%>helmet %}` and `{%> helmet %}` both emit `{% helmet %}`, and `{{%> helmet "a b" %}}` emits `{{% helmet "a b" %}}` — `ProcessBlockShortcodes`'s open pattern requires whitespace after `{{%`). Then write each captured body segment verbatim, then the close tag unchanged. No escaping, no `unsafe` check, no `<p>` wrapping — the body bypasses `unsafe: false` HTML stripping by construction, which is the specified behavior.
+
+  **`templateTagEscapingRenderer.renderBlock()`** (`templateTags: false`): the open tag is escaped and displayed **as typed, `>` included** — do not strip in this renderer. Body segments are still written verbatim.
+
+  **Unterminated detection**: `RenderMarkdown` owns the parser context so it can see parse-stage state — change `md.Parser().Parse(reader)` to `md.Parser().Parse(reader, parser.WithContext(pc))` with a locally created `pc := parser.NewContext()`, and after parsing check for an unterminated-raw-block record. The parser's `Close()` is the natural place to write that record, since it fires with depth still outstanding at EOF. Report the outermost open tag when nested opens remain. Message contract (PLAN has the full form):
+
+  ```
+  unterminated raw block shortcode {%> helmet %} opened at line 12: expected {% endhelmet %}
+  ```
+
+  The 1-based line number is derived by counting newlines in the source before the open tag's segment start. `renderPages()` already wraps this as `content transformation: <relpath>: ...`; no pipeline change is needed for the error to carry the page path.
+
+  **`Markdownify` is unaffected** — it calls `goldmark.Convert` directly, not `RenderMarkdown`, so it does not surface the unterminated error and keeps its current lenient behavior. This is intentional, not an oversight.
+
+  **No changes needed** in `internal/pipeline/render.go`, `internal/template/gotemplate_block_shortcode.go`, or `internal/template/liquid.go`. Because the `>` is stripped inside the Goldmark renderer, everything downstream sees native syntax: `ProcessBlockShortcodes` matches the stripped `{{% name %}}` open tag, and Liquid's `isBlock` detection scans for `{% endname %}`, which the raw modifier never touches. `.html` content files need no validation — they never reach Goldmark, so a `{%>` there reaches the engine and produces its native parse error, which is the specified safety net.
 - `RenderText`: Wrap in `<pre>` tags.
 - **Custom element block parsing (issue #784)**: Add `CustomElements bool` to `MarkdownOptions` and `CustomElements *bool` to `GoldmarkConfig` with `CustomElementsValue()` accessor (nil defaults to `true`, same pattern as `TemplateTags`). When enabled, a custom `BlockParser` (`customElementBlockParser`) detects HTML tags containing a hyphen in the tag name — custom elements per the HTML spec (`<alloy-code>`, `<wa-tab-group>`, `<my-widget>`, etc.) — and treats them as **HTML block type 1** (like `<pre>` and `<script>`). Content is preserved verbatim: no markdown processing, no smart quotes, no `<p>` wrapping. Blank lines inside the element do not terminate the block. The block ends only at the matching `</tag-name>` closing tag on any line. Nested custom elements are handled by matching only the outermost element's closing tag. The parser triggers on `<`, registers at priority 800 (before default HTML block parser at 900, after template tags at 50), and is registered via a `customElementsExtension` in `CreateGoldmark()` when `opts.CustomElements` is true. Standard HTML elements without hyphens are unaffected. Pipeline wiring: pass `CustomElements: cfg.Content.Markdown.Goldmark.CustomElementsValue()` in `MarkdownOptions` construction at `render.go`, `ssr.go`, and `state.go`.
 - **Auto heading IDs + heading attributes (issue #274, #306)**: Add `AutoHeadingID bool` to `MarkdownOptions` (default true from `cfg.Content.Markdown.Goldmark.AutoHeadingIDValue()`). When true, enable `parser.WithAutoHeadingID()` and `parser.WithAttribute()` in goldmark parser options. When false, skip both — headings render without `id` attributes. These are goldmark core options, not extensions. Heading attributes (`{#custom-id .class}`) only work when `AutoHeadingID` is true. This is a goldmark-specific parser option — it only affects Markdown files; HTML and Liquid content files are not processed for heading IDs.
