@@ -90,12 +90,16 @@ var _ = Describe("Build Pipeline", func() {
 			Expect(err).NotTo(HaveOccurred(),
 				"Phase 2 with cat must succeed — cat passes stdin to stdout")
 			Expect(result).NotTo(BeNil())
-			// Every page from Phase 1 must appear in Phase 2 output
+			// Every page from Phase 1 must appear in Phase 2 output, byte-for-byte.
+			// cat is an identity transform, so exact equality is the real
+			// contract — a non-empty check would also pass if the document
+			// skeleton were lost or the Phase 1 payload changed shape.
 			for path := range intermediate {
 				Expect(result).To(HaveKey(path),
 					"Phase 2 output must contain every page from Phase 1")
-				Expect(result[path]).NotTo(BeEmpty(),
-					"Phase 2 output for %s must not be empty", path)
+				Expect(result[path]).To(Equal(intermediate[path]),
+					"Phase 2 with cat must return %s unchanged — the body is piped "+
+						"out and re-inserted into the original document skeleton", path)
 			}
 		})
 

@@ -116,6 +116,58 @@ var _ = Describe("Markdown-only Goldmark invariant (issue #1249)", func() {
 		})
 	})
 
+	// ── .txt has its own non-Markdown contract ────────────────────────
+
+	Context("A .txt content body goes through RenderText, not Goldmark", func() {
+		// .txt is not in the default content.formats (["md", "html"]), so it
+		// has to be opted into before renderPages' .txt branch is reachable
+		// at all — without this the file is passthrough-copied and never
+		// rendered, and the guard below would pass vacuously.
+		txtCfg := func() *config.Config {
+			cfg := &config.Config{
+				Title:   "Txt Invariant Test",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}
+			cfg.Content.Formats = []string{"md", "html", "txt"}
+			return cfg
+		}
+
+		txtSite := func(body string) map[string]string {
+			return map[string]string{
+				"content/note.txt":       "---\ntitle: Note\nlayout: default\n---\n" + body,
+				"layouts/default.liquid": `<html><body>{{ content }}</body></html>`,
+			}
+		}
+
+		It("wraps the body in <pre> and escapes it, without Markdown parsing", func() {
+			result, err := pipeline.BuildWithContent(txtCfg(),
+				txtSite("# not a heading\n**not bold**\nA -- B & 1 < 2\n"))
+			Expect(err).NotTo(HaveOccurred())
+			html := result.RenderedContent["note.txt"]
+			Expect(html).NotTo(BeEmpty(),
+				"the .txt page must actually render — an empty result means the "+
+					"file was passthrough-copied and this guard proves nothing")
+
+			Expect(html).To(ContainSubstring("<pre>"),
+				"RenderText must wrap the body — this is the .txt contract")
+			Expect(html).To(ContainSubstring("# not a heading"),
+				"Markdown constructs stay literal in .txt")
+			Expect(html).To(ContainSubstring("**not bold**"))
+			Expect(html).NotTo(ContainSubstring("<h1"),
+				"Goldmark must never run on a .txt body")
+			Expect(html).NotTo(ContainSubstring("<strong>"))
+			Expect(html).NotTo(ContainSubstring("&ndash;"),
+				"typographer is a Goldmark extension and must not touch .txt")
+
+			// Escaping IS the .txt contract, unlike .html. Pinned positively so
+			// the two formats can't be collapsed into one "untouched" claim.
+			Expect(html).To(ContainSubstring("&amp;"),
+				"RenderText HTML-escapes — this is where .txt diverges from .html")
+			Expect(html).To(ContainSubstring("&lt;"))
+		})
+	})
+
 	// ── The raw block modifier is inert in .html ──────────────────────
 
 	Context("The raw block > modifier is meaningless in .html (issue #1245)", func() {
