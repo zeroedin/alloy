@@ -263,9 +263,16 @@ type unterminatedRawBlock struct {
 	CloseTag string
 }
 
-func (u *unterminatedRawBlock) Error() error {
+// ErrorAt renders the error with the block's line translated from
+// source-relative to file-relative. firstLine is the file line the parsed
+// source began on; 1 when the source is the whole file.
+func (u *unterminatedRawBlock) ErrorAt(firstLine int) error {
+	line := u.Line
+	if firstLine > 1 {
+		line += firstLine - 1
+	}
 	return fmt.Errorf("unterminated raw block shortcode %s opened at line %d: expected %s",
-		u.OpenTag, u.Line, u.CloseTag)
+		u.OpenTag, line, u.CloseTag)
 }
 
 // Classification of a body line against the raw block's own tag name.
@@ -684,12 +691,21 @@ func CreateGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) gold
 // multiple pages with the same options to avoid re-creating the instance per
 // page. The goldmark instance must have AutoHeadingID enabled for TOC IDs.
 func RenderMarkdown(source []byte, md goldmark.Markdown) ([]byte, []TOCEntry, error) {
+	return RenderMarkdownAt(source, md, 1)
+}
+
+// RenderMarkdownAt is RenderMarkdown for a source that is a slice of a larger
+// file. firstLine is the 1-based line of the original file that source starts
+// on — Page.BodyLine for a content file, whose Body excludes its front matter —
+// so parse errors name a line the author can open the file to. Callers holding
+// a whole file pass 1, which is what RenderMarkdown does.
+func RenderMarkdownAt(source []byte, md goldmark.Markdown, firstLine int) ([]byte, []TOCEntry, error) {
 	reader := text.NewReader(source)
 	pc := parser.NewContext()
 	doc := md.Parser().Parse(reader, parser.WithContext(pc))
 
 	if rec, ok := pc.Get(unterminatedRawBlockKey).(*unterminatedRawBlock); ok && rec != nil {
-		return nil, nil, rec.Error()
+		return nil, nil, rec.ErrorAt(firstLine)
 	}
 
 	var buf bytes.Buffer

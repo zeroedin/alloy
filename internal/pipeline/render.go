@@ -77,7 +77,7 @@ func renderPages(pages []*content.Page, rc *RenderContext, reporter ProgressRepo
 		switch ext {
 		case ".md":
 			var toc []content.TOCEntry
-			html, toc, err = content.RenderMarkdown(body, md)
+			html, toc, err = content.RenderMarkdownAt(body, md, page.BodyLine)
 			if err == nil && cfg.Content.Markdown.TOCValue() {
 				page.TOC = toc
 			}
