@@ -220,6 +220,9 @@ func BuildPage(relPath string, raw []byte) (*Page, error) {
 		FrontMatter: fm,
 		Body:        body,
 		Content:     raw,
+		// Body is the file minus its front matter, so errors reported against
+		// Body need this offset to name a line the author can open the file to.
+		BodyLine: bytes.Count(raw[:len(raw)-len(body)], []byte("\n")) + 1,
 	}
 
 	// Populate fields from front matter

@@ -9,6 +9,7 @@ type Page struct {
 	Content      []byte
 	FrontMatter  map[string]interface{}
 	Body         []byte
+	BodyLine     int // 1-based line in Content where Body starts (front matter offset)
 	RenderedBody []byte
 	OutputPath   string
 	URL          string

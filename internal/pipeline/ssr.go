@@ -37,7 +37,7 @@ func BuildPhase1(cfg *config.Config) (map[string]string, error) {
 	md := content.CreateGoldmark(mdOpts)
 
 	for _, page := range pages {
-		html, _, err := content.RenderMarkdown(page.Body, md)
+		html, _, err := content.RenderMarkdownAt(page.Body, md, page.BodyLine)
 		if err != nil {
 			return nil, fmt.Errorf("template rendering: %s: %w", page.RelPath, err)
 		}
