@@ -2104,7 +2104,7 @@ A balanced same-name pair inside a raw body therefore nests correctly. An *unbal
 
 **Unterminated raw block.** A raw block whose depth never returns to 0 before end of file is a build error raised at the Markdown stage, in `RenderMarkdown` — the raw body is not silently swallowed to EOF. The error names the construct, the open tag as written, the 1-based line number of the open tag, and the close tag the author needs:
 
-```
+```text
 unterminated raw block shortcode {%> helmet %} opened at line 12: expected {% endhelmet %}
 unterminated raw block shortcode {{%> helmet %}} opened at line 12: expected {{% /helmet %}}
 ```

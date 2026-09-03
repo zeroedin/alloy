@@ -235,7 +235,7 @@ Implement all 50+ filter functions and `ApplyFilter` dispatch table. **Package-l
 
   **Unterminated detection**: `RenderMarkdown` owns the parser context so it can see parse-stage state — change `md.Parser().Parse(reader)` to `md.Parser().Parse(reader, parser.WithContext(pc))` with a locally created `pc := parser.NewContext()`, and after parsing check for an unterminated-raw-block record. The parser's `Close()` is the natural place to write that record, since it fires with depth still outstanding at EOF. Report the outermost open tag when nested opens remain. Message contract (PLAN has the full form):
 
-  ```
+  ```text
   unterminated raw block shortcode {%> helmet %} opened at line 12: expected {% endhelmet %}
   ```
 
