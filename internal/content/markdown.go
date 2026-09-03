@@ -367,7 +367,11 @@ func stripRawMarker(tag []byte) []byte {
 	rest := bytes.TrimLeft(tag[len(prefix)+1:], " \t")
 	out := make([]byte, 0, len(prefix)+1+len(rest))
 	out = append(out, prefix...)
-	out = append(out, ' ')
+	// A whitespace-control dash must stay flush against the delimiter — `{%-`
+	// is Liquid's trim marker, while `{% -` is a syntax error.
+	if len(rest) == 0 || rest[0] != '-' {
+		out = append(out, ' ')
+	}
 	return append(out, rest...)
 }
 
