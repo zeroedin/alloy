@@ -1998,7 +1998,7 @@ var _ = Describe("RenderMarkdown", func() {
 				"content must render correctly")
 			Expect(toc).To(BeEmpty(),
 				"RenderMarkdown must return empty TOC when no headings "+
-					"exist — callers like BuildPhase1 discard the TOC with _ "+
+					"exist — callers that don't need it discard it with _ "+
 					"(issue #353, #700)")
 		})
 

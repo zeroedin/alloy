@@ -11,15 +11,26 @@ import (
 var _ = Describe("Build Pipeline", func() {
 	Describe("Phase 1 → Phase 2 handoff", func() {
 		It("Phase 1 produces intermediate HTML preserving raw custom element tags", func() {
+			// Phase 1 is renderPages (issue #1249) — driven here through
+			// Build with SkipSSR so the captured content is pre-Phase-2.
 			cfg := &config.Config{
-				Title: "Component Site",
-				Build: config.BuildConfig{Output: "_site"},
+				Title:   "Component Site",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
 			}
-			intermediate, err := pipeline.BuildPhase1(cfg)
+			contentMap := map[string]string{
+				"content/index.md": "---\ntitle: Home\nlayout: default\n---\n" +
+					"<ds-card title=\"Hello\">content</ds-card>\n",
+				"layouts/default.liquid": `<html><body>{{ content }}</body></html>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap, pipeline.BuildOptions{SkipSSR: true})
 			Expect(err).NotTo(HaveOccurred(),
 				"Phase 1 must complete without error")
-			Expect(intermediate).NotTo(BeEmpty(),
+			Expect(result.RenderedContent).NotTo(BeEmpty(),
 				"Phase 1 must produce at least one page of intermediate HTML")
+			Expect(result.RenderedContent["index.md"]).To(ContainSubstring("<ds-card"),
+				"custom element tags must survive Phase 1 as raw tags — they are "+
+					"not transformed until Phase 2 SSR")
 		})
 
 		It("Phase 2 invokes command per page, piping full HTML via stdin", func() {
@@ -48,7 +59,8 @@ var _ = Describe("Build Pipeline", func() {
 
 		It("Phase 2 receives Phase 1 output as its input", func() {
 			cfg := &config.Config{
-				Title: "SSR Site",
+				Title:   "SSR Site",
+				BaseURL: "https://example.com",
 				SSR: &config.SSRConfig{
 					// cat reads stdin, writes to stdout — proves the per-page
 					// stdio model works end-to-end
@@ -56,10 +68,19 @@ var _ = Describe("Build Pipeline", func() {
 				},
 				Build: config.BuildConfig{Output: "_site"},
 			}
+			contentMap := map[string]string{
+				"content/index.md": "---\ntitle: Home\nlayout: default\n---\n" +
+					"<ds-card title=\"Hello\">content</ds-card>\n",
+				"layouts/default.liquid": `<html><body>{{ content }}</body></html>`,
+			}
 
-			// Phase 1 produces intermediate HTML
-			intermediate, err := pipeline.BuildPhase1(cfg)
+			// Phase 1 produces intermediate HTML. renderPages is Phase 1
+			// (issue #1249); SkipSSR keeps Phase 2 out of this step so the
+			// handoff below is explicit. RenderedContent is keyed the same way
+			// Build() keys the map it hands to BuildPhase2.
+			buildResult, err := pipeline.BuildWithContent(cfg, contentMap, pipeline.BuildOptions{SkipSSR: true})
 			Expect(err).NotTo(HaveOccurred())
+			intermediate := buildResult.RenderedContent
 			Expect(intermediate).NotTo(BeEmpty(),
 				"Phase 1 must produce intermediate output")
 
