@@ -2,12 +2,36 @@
 type: minor
 ---
 
-Block shortcodes can opt their body out of Markdown processing with a `>` immediately after the opening delimiter: `{%> name %}` for Liquid, `{{%> name %}}` for Go templates. The body is passed to the shortcode function byte-for-byte — no entity escaping, no typographer substitution, no block or inline Markdown, indentation and blank lines preserved. Close tags keep each engine's native syntax (`{% endname %}`, `{{% /name %}}`).
+Block shortcodes can take their content raw. Add `>` after the opening delimiter and Alloy hands the body to your shortcode exactly as you wrote it, skipping Markdown entirely.
 
-The marker belongs to the call site, not the shortcode registration, so the same shortcode can take a raw body on one page and a Markdown-processed body on another. It is stripped before the template engine sees the tag, so no plugin changes are needed.
+```liquid
+{%> helmet %}
+<script type="application/ld+json">
+  { "@context": "https://schema.org", "name": "Alloy -- fast & extensible" }
+</script>
+{% endhelmet %}
+```
 
-A raw body is emitted verbatim regardless of `goldmark.unsafe`, which makes it possible to pass `<script>` and structured-data content to a shortcode on sites that otherwise strip raw HTML. This is an explicit per-invocation opt-out of HTML sanitization.
+Go templates use `{{%>`:
 
-The matching close tag is found by counting nesting depth over own-line, same-name, same-delimiter-family tags. A raw block that never closes fails the build with the open tag, its line number, and the expected close tag rather than silently consuming the rest of the file.
+```html
+{{%> helmet %}}
+<script type="application/ld+json">
+  { "@context": "https://schema.org", "name": "Alloy -- fast & extensible" }
+</script>
+{{% /helmet %}}
+```
 
-This is a Markdown-only feature — `.html` content files never reach Goldmark, so their shortcode bodies are already raw.
+Without the `>`, Markdown rewrites that content before the shortcode ever sees it — `<` and `&` become entities, `--` becomes an en dash, indented lines turn into code blocks, and `unsafe: false` strips the `<script>` altogether.
+
+Close tags are unchanged: `{% endname %}` and `{{% /name %}}` as always. Only the open tag takes the `>`, so the same shortcode can take raw content on one page and Markdown-formatted content on another with no change to how it's registered and no plugin API to learn.
+
+A raw body passes through even when `goldmark.unsafe` is `false`. That is the point — script and structured data are what the feature is for — but it does mean you are opting that one block out of HTML sanitizing, so use it with content you control.
+
+Raw blocks nest, so a matching `{% name %}` / `{% endname %}` pair inside the body will not close the block early. A block you forget to close fails the build and tells you where to look:
+
+```text
+content transformation: blog/post.md: unterminated raw block shortcode {%> helmet %} opened at line 12: expected {% endhelmet %}
+```
+
+This applies to Markdown files. Shortcode content in `.html` files already reaches your shortcode untouched, so there is nothing to opt out of there.
