@@ -7,45 +7,8 @@ import (
 	"time"
 
 	"github.com/zeroedin/alloy/internal/config"
-	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/ssr"
 )
-
-// BuildPhase1 runs Phase 1 (content rendering) and returns a map of
-// source paths to intermediate HTML. Custom element tags are preserved
-// as raw tags — they are not rendered until Phase 2 SSR.
-func BuildPhase1(cfg *config.Config) (map[string]string, error) {
-	config.ApplyDefaults(cfg)
-
-	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
-	pages, err := content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
-	if err != nil {
-		return nil, fmt.Errorf("content discovery: %w", err)
-	}
-
-	pages = content.FilterByLifecycle(pages, time.Now(), cfg.IncludeDrafts)
-
-	result := make(map[string]string, len(pages))
-
-	mdOpts := content.MarkdownOptions{
-		Unsafe:         cfg.Content.Markdown.Goldmark.UnsafeValue(),
-		Typographer:    cfg.Content.Markdown.Goldmark.Typographer,
-		TemplateTags:   cfg.Content.Markdown.Goldmark.TemplateTagsValue(),
-		AutoHeadingID:  cfg.Content.Markdown.Goldmark.AutoHeadingIDValue(),
-		CustomElements: cfg.Content.Markdown.Goldmark.CustomElementsValue(),
-	}
-	md := content.CreateGoldmark(mdOpts)
-
-	for _, page := range pages {
-		html, _, err := content.RenderMarkdownAt(page.Body, md, page.BodyLine)
-		if err != nil {
-			return nil, fmt.Errorf("template rendering: %s: %w", page.RelPath, err)
-		}
-		result[page.RelPath] = string(html)
-	}
-
-	return result, nil
-}
 
 // BuildPhase2 runs Phase 2 (SSR transform) on the intermediate HTML
 // from Phase 1. For each page with custom elements, pipes the full page
