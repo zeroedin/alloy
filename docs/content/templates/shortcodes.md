@@ -78,6 +78,88 @@ Go template block shortcodes use `{{% %}}` delimiters (double braces) and close 
 </div>
 ```
 
+### Raw block content
+
+By default a block shortcode's body is Markdown first and shortcode content second: Goldmark parses it before the shortcode callback ever runs. That is usually what you want, but it corrupts code-like content — `<` and `&` become entities, `--` becomes an en dash, indented lines become code blocks, and under `unsafe: false` a `<script>` disappears entirely.
+
+Add a `>` immediately after the opening delimiter to pass that invocation's body through **completely unparsed**:
+
+{% raw %}
+<wa-tab-group>
+<wa-tab slot="nav" panel="raw-liquid" active>Liquid</wa-tab>
+<wa-tab slot="nav" panel="raw-go">Go templates</wa-tab>
+
+<wa-tab-panel name="raw-liquid" active>
+<alloy-code language="liquid">{%> helmet %}
+&lt;script type="application/ld+json"&gt;
+  { "@context": "https://schema.org", "name": "Alloy -- fast &amp; extensible" }
+&lt;/script&gt;
+{% endhelmet %}</alloy-code>
+
+</wa-tab-panel>
+<wa-tab-panel name="raw-go">
+<alloy-code language="html">{{%> helmet %}}
+&lt;script type="application/ld+json"&gt;
+  { "@context": "https://schema.org", "name": "Alloy -- fast &amp; extensible" }
+&lt;/script&gt;
+{{% /helmet %}}</alloy-code>
+
+</wa-tab-panel>
+</wa-tab-group>
+{% endraw %}
+
+The shortcode callback receives the body byte-for-byte as written. The `>` is an Alloy-level marker — it is stripped before the template engine sees the tag, so your shortcode is registered and invoked exactly as normal.
+
+**Only the open tag carries the marker.** Close tags keep each engine's native syntax:
+
+| | Liquid | Go templates |
+|---|---|---|
+| Raw block open | `{%> tag "arg" %}` | `{{%> tag "arg" %}}` |
+| Raw block close | `{% endtag %}` | `{{% /tag %}}` |
+
+#### The marker belongs to the call site
+
+Raw is a property of *one invocation*, not of the shortcode itself. The same shortcode can take a raw body on one page and a Markdown-processed body on another — nothing changes in how you register it, and no plugin API is involved.
+
+#### Markdown-only
+
+The `>` marker applies to `.md` content files only. `.html` content files never go through Goldmark, so shortcode bodies there already reach the callback unmodified — the marker is meaningless rather than merely unsupported. Writing `{%>` in an `.html` file reaches the template engine verbatim and produces its native parse error (`unknown tag` in Liquid, `unexpected closing tag` in Go templates).
+
+#### Raw bodies bypass `unsafe: false`
+
+A raw body is emitted verbatim **regardless of the `goldmark.unsafe` setting**. A `<script>` inside a raw block passes through even on a site where raw HTML is otherwise stripped.
+
+This is deliberate — passing script and structured-data content to a shortcode is the reason the feature exists — but it is a hole in HTML sanitization that you open explicitly, per invocation. Only use `{%>` with content you control.
+
+#### Finding the close tag
+
+The block ends at the close tag matching its own open tag, tracked by nesting depth. A balanced same-name pair inside the body nests correctly:
+
+{% raw %}
+<alloy-code language="liquid">{%> callout %}
+{% callout %}
+this inner pair does not close the outer block
+{% endcallout %}
+still inside the raw body
+{% endcallout %}</alloy-code>
+{% endraw %}
+
+Only tags **alone on their own line** affect depth. A tag sharing its line with other text (`` Close it with `{% endcallout %}`. ``) is body content. Delimiter families never cross: a `{{% ... %}}` line inside a Liquid raw block is body text, and vice versa.
+
+The limitation is the same one a fenced code block has with its own fence — an *unbalanced* same-name close tag alone on its own line ends the block early. To document a close tag in isolation, keep it inline or use a non-raw block.
+
+#### Unterminated blocks are a build error
+
+A raw block that never closes fails the build rather than silently swallowing the rest of the file:
+
+```text
+content transformation: blog/post.md: unterminated raw block shortcode {%> helmet %} opened at line 12: expected {% endhelmet %}
+```
+
+#### What raw does not do
+
+The marker governs the Markdown stage only. Once the body reaches the template engine it is treated like any other block shortcode body, so engine-level delimiters inside it are still engine syntax. Raw controls how the body is *parsed as Markdown*, not what the engine does with it afterwards.
+
 ### Engine differences
 
 | | Liquid | Go templates |
@@ -85,6 +167,7 @@ Go template block shortcodes use `{{% %}}` delimiters (double braces) and close 
 | Inline | `{% tag "arg" %}` | `{{ tag "arg" }}` |
 | Block open | `{% tag "arg" %}` | `{{% tag "arg" %}}` |
 | Block close | `{% endtag %}` | `{{% /tag %}}` |
+| Raw block open | `{%> tag "arg" %}` | `{{%> tag "arg" %}}` |
 | Inner content | Rendered HTML | Rendered HTML |
 | Plugin callback | `(args, content)` | `(args, content)` |
 

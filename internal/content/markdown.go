@@ -52,6 +52,29 @@ var KindTemplateTagBlock = ast.NewNodeKind("TemplateTagBlock")
 type TemplateTagBlock struct {
 	ast.BaseBlock
 	TagText []byte
+
+	// Raw block shortcode state (issue #1245). Raw is set when the open tag
+	// carried the `>` marker (`{%> name %}` / `{{%> name %}}`), which makes the
+	// block's body pass through goldmark verbatim. TagName and GoDelims
+	// identify the close tag the block is waiting for, CloseText holds that
+	// close tag as the author wrote it, OpenLine is the 1-based source line of
+	// the open tag (reported by the unterminated-block error), and depth counts
+	// nesting of same-name tags while the block is open.
+	Raw       bool
+	TagName   string
+	GoDelims  bool
+	CloseText []byte
+	OpenLine  int
+	depth     int
+}
+
+// ExpectedCloseTag returns the close tag a raw block shortcode is waiting for,
+// in the native syntax of its delimiter family.
+func (n *TemplateTagBlock) ExpectedCloseTag() string {
+	if n.GoDelims {
+		return "{{% /" + n.TagName + " %}}"
+	}
+	return "{% end" + n.TagName + " %}"
 }
 
 func (n *TemplateTagBlock) Kind() ast.NodeKind { return KindTemplateTagBlock }
@@ -128,7 +151,7 @@ func (p *templateTagBlockParser) Trigger() []byte {
 }
 
 func (p *templateTagBlockParser) Open(parent ast.Node, reader text.Reader, pc parser.Context) (ast.Node, parser.State) {
-	line, _ := reader.PeekLine()
+	line, seg := reader.PeekLine()
 	trimmed := bytes.TrimSpace(line)
 
 	var tagStart int
@@ -161,18 +184,195 @@ func (p *templateTagBlockParser) Open(parent ast.Node, reader text.Reader, pc pa
 	copy(tagText, trimmed)
 	node := &TemplateTagBlock{TagText: tagText}
 
+	// Raw block shortcode (issue #1245): a `>` immediately after the opening
+	// delimiter makes this invocation's body pass through goldmark verbatim.
+	// The marker must follow `%` directly — `{%->` is whitespace control, not
+	// a raw open.
+	if trimmed[tagStart] == '>' {
+		name := firstTagWord(trimTagBody(trimmed[tagStart+1 : tagEnd-len(closeSeq)]))
+		if name != "" {
+			node.Raw = true
+			node.TagName = name
+			node.GoDelims = len(closeSeq) == 3
+			node.depth = 1
+			node.OpenLine = bytes.Count(reader.Source()[:seg.Start], []byte("\n")) + 1
+		}
+	}
+
 	return node, parser.NoChildren
 }
 
+// Continue drives a raw block shortcode's body capture. A non-raw block is
+// still a single line, exactly as before.
 func (p *templateTagBlockParser) Continue(node ast.Node, reader text.Reader, pc parser.Context) parser.State {
-	return parser.Close
+	n, ok := node.(*TemplateTagBlock)
+	if !ok || !n.Raw {
+		return parser.Close
+	}
+
+	line, seg := reader.PeekLine()
+	switch classifyRawTagLine(bytes.TrimSpace(line), n.TagName, n.GoDelims) {
+	case rawTagOpen:
+		n.depth++
+	case rawTagClose:
+		n.depth--
+		if n.depth == 0 {
+			trimmed := bytes.TrimSpace(line)
+			n.CloseText = make([]byte, len(trimmed))
+			copy(n.CloseText, trimmed)
+			reader.AdvanceToEOL()
+			return parser.Close
+		}
+	}
+
+	node.Lines().Append(seg)
+	reader.AdvanceToEOL()
+	return parser.Continue | parser.NoChildren
 }
 
-func (p *templateTagBlockParser) Close(node ast.Node, reader text.Reader, pc parser.Context) {}
+// Close records an unterminated raw block so RenderMarkdown can turn it into a
+// build error. It fires at EOF with the block's depth still outstanding.
+func (p *templateTagBlockParser) Close(node ast.Node, reader text.Reader, pc parser.Context) {
+	n, ok := node.(*TemplateTagBlock)
+	if !ok || !n.Raw || n.depth <= 0 {
+		return
+	}
+	if pc.Get(unterminatedRawBlockKey) != nil {
+		return
+	}
+	pc.Set(unterminatedRawBlockKey, &unterminatedRawBlock{
+		OpenTag:  string(n.TagText),
+		Line:     n.OpenLine,
+		CloseTag: n.ExpectedCloseTag(),
+	})
+}
 
 func (p *templateTagBlockParser) CanInterruptParagraph() bool { return true }
 
 func (p *templateTagBlockParser) CanAcceptIndentedLine() bool { return false }
+
+// ── Raw block shortcode helpers (issue #1245) ────────────────────────
+
+var unterminatedRawBlockKey = parser.NewContextKey()
+
+// unterminatedRawBlock records a raw block that reached EOF with its depth
+// still outstanding, so RenderMarkdown can report it as a build error.
+type unterminatedRawBlock struct {
+	OpenTag  string
+	Line     int
+	CloseTag string
+}
+
+func (u *unterminatedRawBlock) Error() error {
+	return fmt.Errorf("unterminated raw block shortcode %s opened at line %d: expected %s",
+		u.OpenTag, u.Line, u.CloseTag)
+}
+
+// Classification of a body line against the raw block's own tag name.
+const (
+	rawTagNone = iota
+	rawTagOpen
+	rawTagClose
+)
+
+// splitBlockTag decomposes a trimmed line that is exactly one block tag into
+// its delimiter family and the text between the delimiters. It reports false
+// for anything that is not a whole-line block tag.
+func splitBlockTag(trimmed []byte) (goDelims bool, body []byte, ok bool) {
+	if len(trimmed) >= 6 && bytes.HasPrefix(trimmed, []byte("{{%")) && bytes.HasSuffix(trimmed, []byte("%}}")) {
+		return true, trimmed[3 : len(trimmed)-3], true
+	}
+	if len(trimmed) >= 4 && trimmed[0] == '{' && trimmed[1] == '%' && bytes.HasSuffix(trimmed, []byte("%}")) {
+		return false, trimmed[2 : len(trimmed)-2], true
+	}
+	return false, nil, false
+}
+
+// trimTagBody strips the raw marker, whitespace-control dashes, and surrounding
+// whitespace from the text between a tag's delimiters, leaving the tag's own
+// content (`- helmet "a b" -` becomes `helmet "a b"`).
+func trimTagBody(body []byte) []byte {
+	body = bytes.TrimSpace(body)
+	body = bytes.TrimPrefix(body, []byte(">"))
+	body = bytes.TrimSpace(body)
+	if len(body) > 0 && body[0] == '-' {
+		body = bytes.TrimSpace(body[1:])
+	}
+	if len(body) > 0 && body[len(body)-1] == '-' {
+		body = bytes.TrimSpace(body[:len(body)-1])
+	}
+	return body
+}
+
+// firstTagWord returns the leading whitespace-delimited word of a tag body —
+// the tag name, ahead of any arguments.
+func firstTagWord(body []byte) string {
+	if i := bytes.IndexAny(body, " \t"); i >= 0 {
+		return string(body[:i])
+	}
+	return string(body)
+}
+
+// classifyRawTagLine reports whether a raw block's body line is an own-line
+// open or close tag for that block's own name and delimiter family, and so
+// affects nesting depth. Tags sharing a line with other text, tags of another
+// name, and tags of the other delimiter family are all body content.
+func classifyRawTagLine(trimmed []byte, name string, goDelims bool) int {
+	family, body, ok := splitBlockTag(trimmed)
+	if !ok || family != goDelims {
+		return rawTagNone
+	}
+	body = trimTagBody(body)
+
+	if goDelims {
+		if rest, found := bytes.CutPrefix(body, []byte("/")); found {
+			if firstTagWord(bytes.TrimSpace(rest)) == name {
+				return rawTagClose
+			}
+			return rawTagNone
+		}
+	} else if rest, found := bytes.CutPrefix(body, []byte("end")); found {
+		if firstTagWord(rest) == name {
+			return rawTagClose
+		}
+	}
+
+	if firstTagWord(body) == name {
+		return rawTagOpen
+	}
+	return rawTagNone
+}
+
+// stripRawMarker removes the `>` from a raw block's open tag and normalizes to
+// exactly one space between the delimiter and the tag name, so the template
+// engine — and ProcessBlockShortcodes, whose open pattern requires whitespace
+// after `{{%` — sees ordinary native syntax.
+func stripRawMarker(tag []byte) []byte {
+	var prefix string
+	switch {
+	case bytes.HasPrefix(tag, []byte("{{%>")):
+		prefix = "{{%"
+	case bytes.HasPrefix(tag, []byte("{%>")):
+		prefix = "{%"
+	default:
+		return tag
+	}
+	rest := bytes.TrimLeft(tag[len(prefix)+1:], " \t")
+	out := make([]byte, 0, len(prefix)+1+len(rest))
+	out = append(out, prefix...)
+	out = append(out, ' ')
+	return append(out, rest...)
+}
+
+// writeRawBody writes a raw block's captured body lines exactly as the author
+// wrote them — no escaping, no unsafe filtering, no paragraph wrapping.
+func writeRawBody(w util.BufWriter, source []byte, n *TemplateTagBlock) {
+	lines := n.Lines()
+	for i := 0; i < lines.Len(); i++ {
+		seg := lines.At(i)
+		_, _ = w.Write(seg.Value(source))
+	}
+}
 
 // ── Custom renderer ───────────────────────────────────────────────────
 
@@ -192,11 +392,21 @@ func (r *templateTagRenderer) renderInline(w util.BufWriter, source []byte, node
 }
 
 func (r *templateTagRenderer) renderBlock(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
-	if entering {
-		n := node.(*TemplateTagBlock)
-		_, _ = w.Write(n.TagText)
-		_ = w.WriteByte('\n')
+	if !entering {
+		return ast.WalkContinue, nil
 	}
+	n := node.(*TemplateTagBlock)
+	if n.Raw {
+		// The `>` is an Alloy-level signal and never reaches either engine.
+		_, _ = w.Write(stripRawMarker(n.TagText))
+		_ = w.WriteByte('\n')
+		writeRawBody(w, source, n)
+		_, _ = w.Write(n.CloseText)
+		_ = w.WriteByte('\n')
+		return ast.WalkContinue, nil
+	}
+	_, _ = w.Write(n.TagText)
+	_ = w.WriteByte('\n')
 	return ast.WalkContinue, nil
 }
 
@@ -227,11 +437,22 @@ func (r *templateTagEscapingRenderer) renderInline(w util.BufWriter, source []by
 }
 
 func (r *templateTagEscapingRenderer) renderBlock(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
-	if entering {
-		n := node.(*TemplateTagBlock)
+	if !entering {
+		return ast.WalkContinue, nil
+	}
+	n := node.(*TemplateTagBlock)
+	if n.Raw {
+		// Display mode shows template source as the author typed it, so the
+		// `>` is shown rather than stripped.
 		_, _ = w.Write(escapeTag(n.TagText))
 		_ = w.WriteByte('\n')
+		writeRawBody(w, source, n)
+		_, _ = w.Write(escapeTag(n.CloseText))
+		_ = w.WriteByte('\n')
+		return ast.WalkContinue, nil
 	}
+	_, _ = w.Write(escapeTag(n.TagText))
+	_ = w.WriteByte('\n')
 	return ast.WalkContinue, nil
 }
 
@@ -464,7 +685,12 @@ func CreateGoldmark(opts MarkdownOptions, extraParserOpts ...parser.Option) gold
 // page. The goldmark instance must have AutoHeadingID enabled for TOC IDs.
 func RenderMarkdown(source []byte, md goldmark.Markdown) ([]byte, []TOCEntry, error) {
 	reader := text.NewReader(source)
-	doc := md.Parser().Parse(reader)
+	pc := parser.NewContext()
+	doc := md.Parser().Parse(reader, parser.WithContext(pc))
+
+	if rec, ok := pc.Get(unterminatedRawBlockKey).(*unterminatedRawBlock); ok && rec != nil {
+		return nil, nil, rec.Error()
+	}
 
 	var buf bytes.Buffer
 	if err := md.Renderer().Render(&buf, source, doc); err != nil {
