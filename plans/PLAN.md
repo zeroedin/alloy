@@ -2034,6 +2034,91 @@ Shortcodes receive arguments as `[]string` and inner content as `string`. The ca
 
 **Passthrough**: The preprocessor only processes `{{% %}}` tags. Liquid-style `{% %}` tags and Go template `{{ }}` expressions are not touched. Delimiters inside `<pre>` and `<code>` elements (code blocks) are treated as literal text, not shortcode invocations. Content without any `{{% %}}` tags passes through unchanged.
 
+#### Raw block shortcode content (issue #1245)
+
+A block shortcode invocation may opt its body out of Markdown processing entirely by adding a `>` modifier immediately after the opening delimiter. The body is then handed to the template engine — and through it to the shortcode function — byte-for-byte as the author wrote it.
+
+```liquid
+<!-- Liquid — raw block shortcode -->
+{%> helmet %}
+<script type="application/ld+json">
+  { "@context": "https://schema.org", "name": "A -- B" }
+</script>
+{% endhelmet %}
+```
+
+```html
+<!-- Go template — raw block shortcode -->
+{{%> helmet %}}
+<script type="application/ld+json">
+  { "@context": "https://schema.org", "name": "A -- B" }
+</script>
+{{% /helmet %}}
+```
+
+Without the modifier, Goldmark rewrites that body before the shortcode ever sees it: `--` becomes an en dash, `<` and `&` become entities, indented lines become `<pre><code>`, and under `unsafe: false` the whole `<script>` becomes `<!-- raw HTML omitted -->`.
+
+**The modifier is a property of the call site, not of the shortcode.** The same shortcode is legitimately used raw in one page and Markdown-parsed in another, so the signal cannot live in the shortcode's registration — it lives on the individual invocation.
+
+**Syntax.** The `>` goes immediately after the opening delimiter, on the **open tag only**:
+
+| Engine | Open tag | Close tag |
+| --- | --- | --- |
+| Liquid | `{%> name args %}` | `{% endname %}` (unchanged) |
+| Go template | `{{%> name args %}}` | `{{% /name %}}` (unchanged) |
+
+Close tags keep each engine's existing native syntax. Only the open tag carries the raw signal.
+
+This shape is chosen because `{%>` and `{{%>` still satisfy the `{%` / `{{%` prefix checks in the Goldmark tag-line parser, so the open tag is already protected from HTML escaping before any new code runs. Neither engine assigns `>` any meaning in this position, so a `>` that reaches an engine — because the author used it somewhere the translation step does not run — produces a loud, diagnosable native parse error (`unknown tag` in Liquid, `unexpected closing tag` in Go templates) rather than silently corrupted output.
+
+**Markdown-only feature.** `.html` content files never enter the Goldmark stage (`renderPages()` runs Markdown rendering for `.md` only), so shortcode bodies in `.html` files already reach the shortcode function unmodified. The `>` modifier is therefore meaningless — not merely unsupported — in `.html` files, and needs no code-level validation or special-casing there: a `{%>` written in an `.html` file reaches the engine verbatim and produces the engine's native parse error. This must be documented as a Markdown-only concept.
+
+**Block-only.** There is no inline equivalent. The raw signal is recognized only where a block tag is recognized today: the open tag alone on its line, with no other content on that line. `{%> helmet %}body{% endhelmet %}` written inline is not a raw block; it stays an inline tag, the `>` is not stripped, and the engine reports its native error. This is the intended failure mode — the motivating case (wrapping multi-line code-like content) is inherently block-shaped.
+
+**Body capture.** From the line after the open tag to the line before the matching close tag, every line is captured verbatim and emitted verbatim:
+
+- No block-level Markdown parsing — no headings, lists, blockquotes, tables, or fenced code blocks.
+- No inline Markdown parsing — no emphasis, links, or inline code.
+- No HTML entity escaping — `<`, `>`, `&`, and quotes pass through as typed.
+- No typographer substitution — `--`, `...`, and quotes are not smartened.
+- Leading indentation is preserved; an indented line does not become a `<pre><code>` block.
+- Blank lines are preserved and do not terminate the block.
+- Headings inside a raw body are not parsed, so they never appear in the page's table of contents.
+
+**`unsafe: false` does not apply inside a raw body.** The `>` modifier is an explicit, per-invocation opt-in written by the page author, and it overrides `goldmark.unsafe` for that block's body only — a `<script>` in a raw body passes through verbatim even when `unsafe: false` strips raw HTML everywhere else on the page. This is deliberate: the motivating use case is passing script and structured-data content to a shortcode, which `unsafe: false` would otherwise make impossible. It is a documented, intentional hole in HTML sanitization and must be called out as such in the user documentation.
+
+**Matching close tag (depth counting).** The block ends at the close tag that matches its own open tag, tracked by nesting depth:
+
+- Depth starts at 1 when the raw block opens.
+- A subsequent line that is *exactly* a same-name open tag in the same delimiter family — `{% name %}` or `{%> name %}` for a Liquid raw block, `{{% name %}}` or `{{%> name %}}` for a Go template one — increments depth.
+- A subsequent line that is *exactly* a same-name close tag — `{% endname %}` / `{{% /name %}}` — decrements depth. When depth reaches 0 the block ends; that line is the block's close tag, not part of the body.
+- Only own-line tags affect depth. A tag sharing its line with other text (`Use {% endhelmet %} to close.`) is body content and is ignored for depth purposes.
+- Delimiter families do not cross: `{{% name %}}` lines inside a Liquid raw block are body text, and vice versa.
+- Whitespace-control variants (`{%- name -%}`, `{%- endname -%}`) participate in depth counting like their plain forms.
+
+A balanced same-name pair inside a raw body therefore nests correctly. An *unbalanced* same-name close tag alone on its own line inside a raw body still ends the block early — the same limitation a fenced code block has with its own fence. Authors documenting a close tag in isolation should keep it inline or use a non-raw block.
+
+**Translation (stripping the `>`).** The `>` is an Alloy-level signal and never reaches either template engine. Stripping happens in the Goldmark extension's output for the raw block node — not as a separate pass over the rendered HTML — so that by the time the pipeline hands the page to `ProcessBlockShortcodes` or to the engine, only native syntax is present. Stripping removes the `>` and normalizes to exactly one space between the delimiter and the tag name, so `{%>helmet %}` and `{%> helmet %}` both yield `{% helmet %}`. Everything else about the open tag — arguments, quoting, whitespace-control dashes — is preserved: `{{%> helmet "a b" %}}` yields `{{% helmet "a b" %}}`, which the `ProcessBlockShortcodes` open-tag pattern (which requires whitespace after `{{%`) then matches. The close tag is emitted unchanged.
+
+**Display mode (`goldmark.templateTags: false`).** With template tags disabled, tags are escaped with zero-width spaces and shown to the reader as literal text rather than executed. In this mode the open tag is displayed **as the author typed it, including the `>`** — display mode exists to show template source verbatim, so the characters shown are the characters written. The body is still captured verbatim under this setting; the raw block's parsing behavior does not depend on `templateTags`.
+
+**Unterminated raw block.** A raw block whose depth never returns to 0 before end of file is a build error raised at the Markdown stage, in `RenderMarkdown` — the raw body is not silently swallowed to EOF. The error names the construct, the open tag as written, the 1-based line number of the open tag, and the close tag the author needs:
+
+```text
+unterminated raw block shortcode {%> helmet %} opened at line 12: expected {% endhelmet %}
+unterminated raw block shortcode {{%> helmet %}} opened at line 12: expected {{% /helmet %}}
+```
+
+`renderPages()` already wraps content-transformation failures with the page path, so the build-level message reads `content transformation: blog/post.md: unterminated raw block shortcode ...`. When nested opens are outstanding, the error reports the outermost open tag. This error is raised in display mode as well, since the parser is shared.
+
+The `markdownify` filter renders through `goldmark.Convert` rather than `RenderMarkdown` and keeps its current lenient behavior — it does not surface this error. That path forces `templateTags: false` and operates on values that have already been through template rendering, so an unterminated raw block cannot reach it from normal content.
+
+**What raw does not protect against.** The modifier governs Markdown only. Once the body reaches the template engine it is treated exactly as a normal block shortcode body is treated today — Liquid re-joins the body's tokens verbatim, and the Go template preprocessor passes the inner span through unchanged — but nothing new is done to shield engine-level delimiters, and a shortcode's *output* is still processed by the engine as it is today. Similarly, `escapeTemplateTagsInCode` is unchanged and still applies: because a raw body is never Markdown-converted, Goldmark never generates `<pre>`/`<code>` from it, so only author-written literal `<pre>`/`<code>` inside a raw body is affected. Neither case is special-cased.
+
+**Applies to any block tag.** The parser cannot distinguish a shortcode from any other block-shaped tag, so `{%>` is recognized on any block tag. The feature is specified and documented for shortcodes; applying it elsewhere (`{%> if x %}`) is undefined but harmless — the body is passed raw and the engine handles the tag normally.
+
+**Documentation** (`docs/content/templates/shortcodes.md`): the raw modifier must be documented alongside block shortcodes, covering the syntax for both engines, that it is a Markdown-only feature (with the explanation that `.html` shortcode bodies are already raw), the `unsafe: false` security note, the depth-counting rule and its unbalanced-close-tag limitation, and that the signal belongs to the call site rather than the shortcode definition.
+
 **Tier 3 (Node plugin):**
 
 Tier 3 plugins are loaded via ESM `import()` — the project **must** have `"type": "module"` in its `package.json`. The bridge sends the plugin's absolute file path to the Node subprocess, which calls `await import(path)` and then `mod.default(alloy)`. Node's module cache ensures each dependency is loaded once, preventing side-effect collisions (e.g., duplicate `customElements.define` calls). CJS (`require()`) is not supported for Tier 3 plugins.
