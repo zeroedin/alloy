@@ -1053,15 +1053,25 @@ watch:
 
 Before any content rendering begins, Alloy extracts front matter, assembles the data cascade, and computes every output path to detect conflicts. Front matter extraction is fast (reads only the metadata block, not the body) and the parsed data is reused by Phase 1 — no duplicate reads. This catches path conflicts early, before spending time on Markdown rendering and template execution.
 
-**Sources scanned:**
+**Sources scanned (issue #1238).** Every source that writes a file into the output directory participates in conflict detection — rendered and copied alike. A source that can produce an output path and is not on this list is a bug, because a collision it causes resolves silently by write order.
 
-1. **Content files** — Compute output paths from content discovery + permalink rules
-2. **Static files** — Walk `static/` directory
-3. **Passthrough mappings** — Walk each `from` directory, apply `to` prefix
-4. **Auto-generated files** — sitemap.xml (if enabled via config), feed.xml templates (if present in layouts/)
-5. **Aliases** — Additional output paths from front matter `aliases`
-6. **Pagination** — Virtual page output paths from pagination rules
-7. **Taxonomy pages** — Auto-generated taxonomy index and term pages
+| # | Source | Label in the error |
+| --- | --- | --- |
+| 1 | **Content files** — output paths from content discovery + permalink rules | `content/about.md` (the page's `RelPath`) |
+| 2 | **Static files** — walk `static/` | `static/css/styles.css` |
+| 3 | **Asset files** — walk `assets/` | `assets/css/styles.css` |
+| 4 | **Passthrough mappings** — walk each resolved `from`, apply the `to` prefix | `passthrough "vendor-css" → "css"` |
+| 5 | **Content-colocated files** — non-content files discovered under `content/` and copied verbatim | `content/css/styles.css (colocated)` |
+| 6 | **Auto-generated files** — sitemap.xml (if enabled), feed.xml templates (if present in layouts/) | `sitemap.xml (generated)` |
+| 7 | **Aliases** — additional output paths from front matter `aliases` | `content/old.md (alias)` |
+| 8 | **Pagination** — virtual page output paths from pagination rules | the virtual page's `RelPath` |
+| 9 | **Taxonomy pages** — auto-generated taxonomy index and term pages | `taxonomy:tags/golang` |
+| 10 | **Per-format outputs** — non-HTML outputs from `page.Outputs` | `content/about.md (json)` |
+| 11 | **Plugin `addOutputs`** — paths registered from `onBeforeValidation` | the plugin-supplied source label |
+
+Sources 3 and 5 were absent from this list before issue #1238 and were never fed to the detector; 2 and 4 were specified but also never fed. All four are file-copy sources, which is why the gap produced silent overwrites rather than visible errors.
+
+**The scanned set must equal the set that would actually be copied.** Passthrough `exclude` patterns and glob `from` resolution are applied *before* an entry is recorded, so a file excluded by pattern is never reported as conflicting. Recording a path that would not have been written is as much a defect as missing one that would.
 
 **Conflict detection:**
 
@@ -1080,6 +1090,19 @@ If two or more sources target the same output path, the build fails immediately 
 **Priority rules (no implicit wins):**
 - Conflicts are always errors. There is no priority system where one source silently overwrites another.
 - The user must resolve conflicts explicitly — rename the file, change the passthrough `to` path, or remove one source.
+- **This holds for every output type**, not just HTML — CSS, images, JSON, anything. A collision between two copied files is the same error as a collision between two rendered pages.
+- **There is no layering between copy sources** (issue #1238). The de-facto order the implementation produced — `static/` → `assets/` → passthrough → content-colocated, last writer wins — is removed, not documented. `static/css/styles.css` does not override `assets/css/styles.css`; the two together are an error.
+- **Directory overlap is not a conflict.** Only identical output paths are. `static/css/styles.css` and a passthrough writing `css/vendor.css` share a directory and coexist correctly; this must keep working.
+
+**Error reporting.** All conflicts are reported, not just the first, and every source claiming a path is listed, not just the first two — a user fixing one collision at a time cannot see how many remain. Detection runs before any output is written, so a failed build leaves no partial output directory behind.
+
+**Migration note.** This is a behavior change users will notice: a site that builds today can start failing. That is the intent — the failures it surfaces are collisions that were already silently losing a file, including the case where a content-colocated `about/index.html` replaces the page rendered from `about.md` while the build reports success. Sites relying on the undocumented last-writer-wins order must rename a source or adjust a passthrough `to` path.
+
+**Dev mode (issue #1238).** Conflict detection is not build-only. `alloy dev` and `alloy serve` must detect a collision introduced mid-session — the case where a user adds a file that collides with an existing output while the server is running:
+- The initial dev build goes through `Build()` and is covered by the rules above.
+- A watcher recopy (static, asset, or passthrough change) must not write a file that would collide with an existing claim. The conflict surfaces in the browser error overlay, the same channel used for render errors, and the colliding write is skipped rather than performed.
+- An incremental rebuild must re-check the claims it changes. `BuildIncremental` does not copy static, asset, or passthrough files — the watcher does — so the two paths together must cover the whole claim set.
+- A conflict in dev is not fatal to the server. The overlay shows it, the offending write is skipped, and clearing the conflict clears the overlay on the next rebuild.
 
 **Lifecycle hooks:**
 
