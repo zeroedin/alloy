@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/zeroedin/alloy/internal/pipeline"
 	"github.com/zeroedin/alloy/internal/plugin"
 	"github.com/zeroedin/alloy/internal/server"
+	"github.com/zeroedin/alloy/internal/validation"
 )
 
 func newDevCommand() *cobra.Command {
@@ -87,8 +89,14 @@ func newDevCommand() *cobra.Command {
 				log.Printf("warning: initial build failed: %v", initialBuildErr)
 			}
 			var previousCache *cache.Cache
+			// Output path claims from the last full build. The watcher recopies
+			// static, asset, and passthrough files itself — BuildIncremental
+			// copies none of them — so the claim set has to outlive Build() for
+			// a mid-session collision to be caught (issue #1238).
+			var outputClaims []validation.OutputPathEntry
 			if initialResult != nil {
 				previousCache = initialResult.Cache
+				outputClaims = initialResult.OutputClaims
 			}
 
 			srv := server.NewWithMode(cfg, server.ModeDev)
@@ -183,6 +191,7 @@ func newDevCommand() *cobra.Command {
 				if !filepath.IsAbs(outputDir) {
 					outputDir = filepath.Join(cfg.ProjectRoot, outputDir)
 				}
+				var recopyConflicts []server.BuildError
 				for _, ev := range events {
 					if server.RebuildScopeForChangeType(ev.ChangeType) != server.RebuildRecopy {
 						continue
@@ -207,10 +216,39 @@ func newDevCommand() *cobra.Command {
 					if destPath == "" {
 						continue
 					}
+					// Whether this event may touch the destination depends on
+					// who else claims it (issue #1238).
+					source := filepath.ToSlash(ev.Path)
+					var existing string
+					var clash bool
+					if rel, relErr := filepath.Rel(outputDir, destPath); relErr == nil {
+						existing, clash = claimConflict(outputClaims, filepath.ToSlash(rel), source)
+					}
 					if ev.IsRemove {
+						// Deleting a file that lost a conflict must not remove
+						// the output the winning source owns — this file was
+						// never the one written there.
+						if clash {
+							continue
+						}
 						if err := os.Remove(destPath); err != nil && !os.IsNotExist(err) {
 							log.Printf("warning: recopy remove %s: %v", ev.Path, err)
 						}
+						continue
+					}
+					// A recopy must not perform a colliding write. Report it in
+					// the overlay and skip the write; the server keeps running
+					// and the next clean rebuild clears the overlay.
+					if clash {
+						rel, _ := filepath.Rel(outputDir, destPath)
+						msg := fmt.Sprintf("output path conflict: %s is claimed by %s and %s — skipping copy",
+							filepath.ToSlash(rel), existing, source)
+						log.Printf("warning: %s", msg)
+						recopyConflicts = append(recopyConflicts, server.BuildError{
+							FilePath: source,
+							Message:  msg,
+							Stage:    "output path conflict",
+						})
 						continue
 					}
 					if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
@@ -222,6 +260,9 @@ func newDevCommand() *cobra.Command {
 							log.Printf("warning: recopy %s: %v", ev.Path, err)
 						}
 					}
+				}
+				if len(recopyConflicts) > 0 {
+					srv.Overlay().SetErrors(recopyConflicts)
 				}
 
 				needsRebuild := false
@@ -283,6 +324,11 @@ func newDevCommand() *cobra.Command {
 					} else {
 						if fullResult != nil && fullResult.Cache != nil {
 							previousCache = fullResult.Cache
+						}
+						// Refresh the claim set so a conflict the author has
+						// since resolved stops being reported (issue #1238).
+						if fullResult != nil {
+							outputClaims = fullResult.OutputClaims
 						}
 						if ps != nil && fullResult != nil && fullResult.SiteData != nil {
 							ps.SiteData = fullResult.SiteData
@@ -346,4 +392,15 @@ func newDevCommand() *cobra.Command {
 	cmd.Flags().Bool("refetch", false, "Bypass fetch cache")
 
 	return cmd
+}
+
+// claimConflict reports the existing claim on an output path when a different
+// source would write it. relPath is output-relative and slash-separated.
+func claimConflict(claims []validation.OutputPathEntry, relPath, source string) (string, bool) {
+	for _, c := range claims {
+		if c.Path == relPath && c.Source != source && !strings.HasSuffix(c.Source, source) {
+			return c.Source, true
+		}
+	}
+	return "", false
 }

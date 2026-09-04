@@ -59,11 +59,11 @@ func reportSummary(r ProgressReporter, pageCount int, duration time.Duration, pa
 
 // BuildOptions controls optional pipeline behavior.
 type BuildOptions struct {
-	SkipSSR                bool               // true = skip Phase 2 entirely, regardless of cfg.SSR
-	CaptureRenderedContent bool               // true = populate BuildResult.RenderedContent (test-only; default false halves peak memory)
-	PipelineState          *PipelineState     // pre-built state to reuse (BuildIncremental only)
-	Profile                bool               // true = record per-stage timing in BuildResult.StageTimings
-	Reporter               ProgressReporter   // progress output; nil = silent
+	SkipSSR                bool             // true = skip Phase 2 entirely, regardless of cfg.SSR
+	CaptureRenderedContent bool             // true = populate BuildResult.RenderedContent (test-only; default false halves peak memory)
+	PipelineState          *PipelineState   // pre-built state to reuse (BuildIncremental only)
+	Profile                bool             // true = record per-stage timing in BuildResult.StageTimings
+	Reporter               ProgressReporter // progress output; nil = silent
 }
 
 // BuildResult holds the outcome of a build.
@@ -74,14 +74,20 @@ type BuildResult struct {
 	SSRPagesRendered    int // pages that went through Phase 2 SSR
 	Duration            time.Duration
 	Errors              []error
-	SSRSkipped          bool              // true when Phase 2 was skipped (no ssr: config or SkipSSR)
-	PagesRendered       []string          // source paths of pages that were rendered
+	SSRSkipped          bool                         // true when Phase 2 was skipped (no ssr: config or SkipSSR)
+	PagesRendered       []string                     // source paths of pages that were rendered
 	RenderedContent     map[string]string            // page key → final rendered HTML (RelPath for regular pages, URL for generated pages)
 	FormatContent       map[string]map[string]string // page key → format → rendered content (non-HTML format bodies, issue #1102)
 	ContentPassthroughs []string                     // relative paths of non-content files copied from content/ to output
-	StageTimings        []StageTiming     // per-stage durations (populated when BuildOptions.Profile is true)
-	Cache               *cache.Cache      // in-memory cache with content hashes for incremental rebuild (issue #639)
-	SiteData            map[string]interface{} // enriched site data (data files + external sources + hooks)
+	StageTimings        []StageTiming                // per-stage durations (populated when BuildOptions.Profile is true)
+	Cache               *cache.Cache                 // in-memory cache with content hashes for incremental rebuild (issue #639)
+	SiteData            map[string]interface{}       // enriched site data (data files + external sources + hooks)
+
+	// OutputClaims is every output path this build claimed, with the source
+	// that claimed it. The dev server keeps it so a watcher recopy can check a
+	// destination before writing (issue #1238) — BuildIncremental copies none
+	// of the static, asset, or passthrough sources, the watcher does.
+	OutputClaims []validation.OutputPathEntry
 }
 
 func buildCompletePayload(r *BuildResult) *plugin.HookBuildCompletePayload {
@@ -358,11 +364,11 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 
 	type langBatch struct {
-		ctx            i18n.LanguageContext
-		pages          []*content.Page
-		collections    map[string]interface{}
-		taxonomies     map[string]*collection.TaxonomyCollection
-		taxonomiesCtx  map[string]interface{}
+		ctx           i18n.LanguageContext
+		pages         []*content.Page
+		collections   map[string]interface{}
+		taxonomies    map[string]*collection.TaxonomyCollection
+		taxonomiesCtx map[string]interface{}
 	}
 	var batches []langBatch
 	var pages []*content.Page
@@ -472,13 +478,24 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		return nil, aliasErrs[0]
 	}
 	var outputEntries []validation.OutputPathEntry
+	// Page sources are labelled with the content directory prefix so a
+	// conflict names "content/about.md" rather than a bare "about.md" that
+	// reads ambiguously beside a copied file's path (issue #1238).
+	contentLabel := validation.SourceDirLabel(cfg.ProjectRoot, contentDir)
+	pageSource := func(page *content.Page, suffix string) string {
+		label := page.RelPath
+		if contentLabel != "" {
+			label = contentLabel + "/" + filepath.ToSlash(page.RelPath)
+		}
+		return label + suffix
+	}
 	for _, page := range pages {
 		if !output.ShouldWrite(page.URL) {
 			continue
 		}
 		outPath := output.ComputeOutputPath(page.URL)
 		outputEntries = append(outputEntries, validation.OutputPathEntry{
-			Path: outPath, Source: page.RelPath,
+			Path: outPath, Source: pageSource(page, ""),
 		})
 		for _, format := range page.Outputs {
 			if format == "html" {
@@ -486,14 +503,14 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			}
 			fmtPath := formatOutputPath(outPath, format)
 			outputEntries = append(outputEntries, validation.OutputPathEntry{
-				Path: fmtPath, Source: page.RelPath + " (" + format + ")",
+				Path: fmtPath, Source: pageSource(page, " ("+format+")"),
 			})
 		}
 		aliases, _ := permalink.ResolveAliases(page)
 		for _, alias := range aliases {
 			aliasPath := output.ComputeOutputPath(alias)
 			outputEntries = append(outputEntries, validation.OutputPathEntry{
-				Path: aliasPath, Source: page.RelPath + " (alias)",
+				Path: aliasPath, Source: pageSource(page, " (alias)"),
 			})
 		}
 	}
@@ -571,10 +588,27 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
+	// Copy sources claim output paths too (issue #1238). Collect them here,
+	// before anything is written, so a collision between a copied file and a
+	// rendered page — or between two copied files — is an error rather than a
+	// silent last-writer-wins overwrite.
+	copyClaims, err := validation.CollectCopyClaims(validation.CopySources{
+		ProjectRoot:         cfg.ProjectRoot,
+		StaticDir:           staticDir,
+		AssetsDir:           assetsDir,
+		ContentDir:          contentDir,
+		Passthrough:         cfg.Passthrough,
+		ManagedDirs:         managedPassthroughDirs(cfg),
+		ContentPassthroughs: contentPassthroughs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("collecting output paths: %w", err)
+	}
+	outputEntries = append(outputEntries, copyClaims...)
+	ps.OutputClaims = outputEntries
+
 	if conflicts, _ := validation.DetectConflicts(outputEntries); len(conflicts) > 0 {
-		c := conflicts[0]
-		return nil, fmt.Errorf("output path conflict: %q claimed by %s and %s",
-			c.Path, c.Sources[0], c.Sources[1])
+		return nil, formatConflicts(conflicts)
 	}
 
 	// Fire onAfterValidation — validated output manifest + mutable cascade.
@@ -689,12 +723,12 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 		timer.Stop()
 		r := &BuildResult{
-			OutputDir:      cfg.Build.Output,
-			PageCount:      0,
-			Duration:       time.Since(start),
-			SSRSkipped:     cfg.SSR == nil || options.SkipSSR,
-			StageTimings:   timer.Timings(),
-			SiteData:       siteData,
+			OutputDir:    cfg.Build.Output,
+			PageCount:    0,
+			Duration:     time.Since(start),
+			SSRSkipped:   cfg.SSR == nil || options.SkipSSR,
+			StageTimings: timer.Timings(),
+			SiteData:     siteData,
 		}
 		return r, nil
 	}
@@ -1000,16 +1034,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		return nil, fmt.Errorf("processing asset files: %w", err)
 	}
 	if len(cfg.Passthrough) > 0 {
-		managedDirs := []string{
-			cfg.Structure.Content,
-			cfg.Structure.Layouts,
-			cfg.Structure.Assets,
-			cfg.Structure.Static,
-			cfg.Structure.Data,
-			cfg.Structure.Plugins,
-			".alloy",
-		}
-		if err := static.CopyPassthroughWithValidation(cfg.Passthrough, cfg.ProjectRoot, outputDir, managedDirs); err != nil {
+		if err := static.CopyPassthroughWithValidation(cfg.Passthrough, cfg.ProjectRoot, outputDir, managedPassthroughDirs(cfg)); err != nil {
 			reportEndStage(reporter)
 			return nil, fmt.Errorf("copying passthrough files: %w", err)
 		}
@@ -1076,6 +1101,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		StageTimings:        timer.Timings(),
 		Cache:               buildCache,
 		SiteData:            siteData,
+		OutputClaims:        outputEntries,
 	}
 
 	reportSummary(reporter, result.PageCount, result.Duration, 0)
@@ -1145,6 +1171,7 @@ func BuildWithContent(cfg *config.Config, contentMap map[string]string, opts ...
 
 	return Build(&cfgCopy, opts...)
 }
+
 // batchContext holds the per-batch pipeline state produced by applyBatchContext.
 type batchContext struct {
 	Collections   map[string]interface{}
@@ -1196,6 +1223,7 @@ func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineSt
 	}
 	return pages, bc, nil
 }
+
 // resolvePagePermalink resolves the permalink for a single page using its
 // nearest cascade data from _data.yaml. Shared by Build and BuildIncremental.
 // cascadeLookupPath overrides the path used for FindCascadeData when the
@@ -1386,4 +1414,44 @@ func extractAssetContent(result interface{}) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// managedPassthroughDirs lists the directories Alloy manages itself. A
+// passthrough whose source resolves inside one of these is skipped rather than
+// copied, so both the copy stage and output path claim collection must apply
+// the same list or a skipped mapping gets reported as conflicting.
+func managedPassthroughDirs(cfg *config.Config) []string {
+	return []string{
+		cfg.Structure.Content,
+		cfg.Structure.Layouts,
+		cfg.Structure.Assets,
+		cfg.Structure.Static,
+		cfg.Structure.Data,
+		cfg.Structure.Plugins,
+		".alloy",
+	}
+}
+
+// formatConflicts renders every output path conflict with every source that
+// claims it. Reporting only the first conflict, or only its first two sources,
+// leaves the author fixing one collision per build with no idea how many
+// remain (issue #1238).
+func formatConflicts(conflicts []validation.Conflict) error {
+	var b strings.Builder
+	if len(conflicts) == 1 {
+		b.WriteString("output path conflict detected:\n")
+	} else {
+		fmt.Fprintf(&b, "output path conflicts detected (%d):\n", len(conflicts))
+	}
+	for i, c := range conflicts {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "  %s is claimed by:\n", c.Path)
+		for j, src := range c.Sources {
+			fmt.Fprintf(&b, "    %d. %s\n", j+1, src)
+		}
+	}
+	b.WriteString("\nResolve by renaming one source, adjusting a passthrough \"to\" path, or removing one source.")
+	return errors.New(b.String())
 }

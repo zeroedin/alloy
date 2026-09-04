@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/pipeline"
 	"github.com/zeroedin/alloy/internal/server"
+	"github.com/zeroedin/alloy/internal/validation"
 )
 
 func newServeCommand() *cobra.Command {
@@ -82,8 +84,15 @@ func newServeCommand() *cobra.Command {
 			}
 
 			// Run the full build pipeline (same as alloy build)
-			if _, err := pipeline.Build(cfg, pipeline.BuildOptions{Reporter: reporter}); err != nil {
+			// Its output path claims are kept so a watcher recopy can check a
+			// destination before writing it (issue #1238).
+			var outputClaims []validation.OutputPathEntry
+			buildResult, err := pipeline.Build(cfg, pipeline.BuildOptions{Reporter: reporter})
+			if err != nil {
 				return fmt.Errorf("build failed: %w", err)
+			}
+			if buildResult != nil {
+				outputClaims = buildResult.OutputClaims
 			}
 
 			srv := server.NewWithMode(cfg, server.ModePreview)
@@ -129,26 +138,32 @@ func newServeCommand() *cobra.Command {
 					case server.ContentChange, server.LayoutChange, server.DataChange, server.ComponentChange, server.PluginChange:
 						needsRebuild = true
 					case server.AssetChange, server.StaticChange:
-						copyChangedFileToOutput(ev.Path, cfg)
+						copyChangedFileToOutput(ev.Path, cfg, outputClaims, srv)
 					case server.PassthroughChange:
 						if dest, err := server.RecopyPassthroughFile(ev.Path, cfg); err == nil {
 							srcPath := ev.Path
+							destRel := dest
 							if cfg.ProjectRoot != "" {
 								srcPath = filepath.Join(cfg.ProjectRoot, ev.Path)
 								dest = filepath.Join(cfg.ProjectRoot, dest)
 							}
-							copyFileToPath(srcPath, dest, cfg)
+							if !reportRecopyConflict(destRel, ev.Path, cfg, outputClaims, srv) {
+								copyFileToPath(srcPath, dest, cfg)
+							}
 						}
 					}
 				}
 
 				if needsRebuild {
-					if _, err := pipeline.Build(cfg, pipeline.BuildOptions{Reporter: reporter}); err != nil {
+					if rebuilt, err := pipeline.Build(cfg, pipeline.BuildOptions{Reporter: reporter}); err != nil {
 						log.Printf("rebuild failed: %v", err)
 						srv.Overlay().SetErrors([]server.BuildError{
 							{Message: err.Error(), Stage: "rebuild"},
 						})
 					} else {
+						if rebuilt != nil {
+							outputClaims = rebuilt.OutputClaims
+						}
 						srv.Overlay().ClearErrors()
 						if !cfg.Quiet {
 							log.Printf("rebuild complete")
@@ -181,7 +196,7 @@ func newServeCommand() *cobra.Command {
 	return cmd
 }
 
-func copyChangedFileToOutput(relPath string, cfg *config.Config) {
+func copyChangedFileToOutput(relPath string, cfg *config.Config, claims []validation.OutputPathEntry, srv *server.Server) {
 	outputDir := cfg.Build.Output
 	if outputDir == "" {
 		outputDir = "_site"
@@ -218,7 +233,42 @@ func copyChangedFileToOutput(relPath string, cfg *config.Config) {
 	if cfg.ProjectRoot != "" {
 		destPath = filepath.Join(cfg.ProjectRoot, destPath)
 	}
+	if reportRecopyConflict(destRel, relPath, cfg, claims, srv) {
+		return
+	}
 	copyFileToPath(srcPath, destPath, cfg)
+}
+
+// reportRecopyConflict reports whether an output-relative destination is
+// already claimed by a different source. A conflicting recopy is surfaced in
+// the error overlay and the write is skipped rather than performed, so a
+// mid-session collision cannot silently replace a file (issue #1238). It never
+// terminates the server.
+func reportRecopyConflict(destRel, srcRel string, cfg *config.Config, claims []validation.OutputPathEntry, srv *server.Server) bool {
+	outputDir := cfg.Build.Output
+	if outputDir == "" {
+		outputDir = "_site"
+	}
+	claimPath := filepath.ToSlash(destRel)
+	if rel, err := filepath.Rel(outputDir, filepath.ToSlash(destRel)); err == nil && !strings.HasPrefix(rel, "..") {
+		claimPath = filepath.ToSlash(rel)
+	}
+	source := filepath.ToSlash(srcRel)
+	for _, c := range claims {
+		if c.Path != claimPath || c.Source == source || strings.HasSuffix(c.Source, source) {
+			continue
+		}
+		msg := fmt.Sprintf("output path conflict: %s is claimed by %s and %s — skipping copy",
+			claimPath, c.Source, source)
+		log.Printf("warning: %s", msg)
+		if srv != nil {
+			srv.Overlay().SetErrors([]server.BuildError{
+				{FilePath: source, Message: msg, Stage: "output path conflict"},
+			})
+		}
+		return true
+	}
+	return false
 }
 
 func copyFileToPath(src, dest string, cfg *config.Config) {

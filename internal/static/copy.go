@@ -181,37 +181,35 @@ func copyGlob(m config.PassthroughMapping, projectRoot, outputDir string) error 
 // silently ignoring any mapping where the "from" path resolves to a managed directory
 // (content, layouts, assets, static, data).
 func CopyPassthroughWithValidation(mappings []config.PassthroughMapping, projectRoot, outputDir string, managedDirs []string) error {
-	var filtered []config.PassthroughMapping
-	for _, m := range mappings {
-		fromDir := m.From
-		if ContainsGlobChars(fromDir) {
-			fromDir = GlobRoot(fromDir)
-		}
-		fromAbs := fromDir
-		if !filepath.IsAbs(fromAbs) {
-			fromAbs = filepath.Join(projectRoot, fromAbs)
-		}
-		fromAbs = filepath.Clean(fromAbs)
+	return CopyPassthrough(FilterManagedMappings(mappings, projectRoot, managedDirs), projectRoot, outputDir)
+}
 
-		skip := false
-		for _, d := range managedDirs {
-			managedAbs := d
-			if !filepath.IsAbs(managedAbs) {
-				managedAbs = filepath.Join(projectRoot, managedAbs)
-			}
-			managedAbs = filepath.Clean(managedAbs)
+// isInManagedDir reports whether a passthrough "from" resolves to, or inside,
+// one of the managed directories. Shared by the copy path and by output path
+// claim collection so a mapping skipped at copy time is skipped in both.
+func isInManagedDir(from, projectRoot string, managedDirs []string) bool {
+	fromDir := from
+	if ContainsGlobChars(fromDir) {
+		fromDir = GlobRoot(fromDir)
+	}
+	fromAbs := fromDir
+	if !filepath.IsAbs(fromAbs) {
+		fromAbs = filepath.Join(projectRoot, fromAbs)
+	}
+	fromAbs = filepath.Clean(fromAbs)
 
-			if fromAbs == managedAbs || strings.HasPrefix(fromAbs, managedAbs+string(filepath.Separator)) {
-				skip = true
-				break
-			}
+	for _, d := range managedDirs {
+		managedAbs := d
+		if !filepath.IsAbs(managedAbs) {
+			managedAbs = filepath.Join(projectRoot, managedAbs)
 		}
-		if !skip {
-			filtered = append(filtered, m)
+		managedAbs = filepath.Clean(managedAbs)
+
+		if fromAbs == managedAbs || strings.HasPrefix(fromAbs, managedAbs+string(filepath.Separator)) {
+			return true
 		}
 	}
-
-	return CopyPassthrough(filtered, projectRoot, outputDir)
+	return false
 }
 
 type copyJob struct {

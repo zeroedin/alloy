@@ -10,6 +10,7 @@ import (
 	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/plugin"
 	tmpl "github.com/zeroedin/alloy/internal/template"
+	"github.com/zeroedin/alloy/internal/validation"
 )
 
 // PipelineState holds shared state initialized once per build.
@@ -22,6 +23,28 @@ type PipelineState struct {
 	SiteData    map[string]interface{}
 	ContentDir  string
 	ContentBase string
+
+	// OutputClaims is every output path claimed by the last full build, with
+	// the source that claimed it. It outlives Build() so the dev server's
+	// recopy path can check a destination before writing it (issue #1238) —
+	// the watcher copies static, asset, and passthrough files directly, and
+	// BuildIncremental copies none of them.
+	OutputClaims []validation.OutputPathEntry
+}
+
+// ConflictFor reports the existing claim on an output path when a new source
+// would collide with it, or ok=false when the path is free or already claimed
+// by that same source. relPath is output-relative and slash-separated.
+func (ps *PipelineState) ConflictFor(relPath, source string) (existing string, ok bool) {
+	if ps == nil {
+		return "", false
+	}
+	for _, e := range ps.OutputClaims {
+		if e.Path == relPath && e.Source != source {
+			return e.Source, true
+		}
+	}
+	return "", false
 }
 
 // DiscoverPlugins creates a plugin registry and hook system, discovers
