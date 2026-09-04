@@ -1066,10 +1066,8 @@ Before any content rendering begins, Alloy extracts front matter, assembles the 
 | 7 | **Aliases** — additional output paths from front matter `aliases` | `content/old.md (alias)` |
 | 8 | **Pagination** — virtual page output paths from pagination rules | the virtual page's `RelPath` |
 | 9 | **Taxonomy pages** — auto-generated taxonomy index and term pages | `taxonomy:tags/golang` |
-| 10 | **Per-format outputs** — non-HTML outputs from `page.Outputs` | `content/about.md (json)` |
+| 10 | **Per-format outputs** — non-HTML outputs from `page.Outputs`, feeds included (`outputs: ["html", "xml"]`) | `content/about.md (json)` |
 | 11 | **Plugin `addOutputs`** — paths registered from `onBeforeValidation` | the plugin-supplied source label |
-
-Feeds are covered by row 10, not row 6. They use the standard multi-format mechanism (`outputs: ["html", "xml"]` plus a format layout); `ResolveFeedTemplates`/`RenderFeedTemplate` were removed in issue #822, so no code writes `feed.xml` from a layout template alone. Collecting a claim for a `layouts/feed.xml` template would register an output that is never written, and could reject a valid build by colliding with the real per-format output of the same name.
 
 Sources 3 and 5 were absent from this list before issue #1238 and were never fed to the detector; 2 and 4 were specified but also never fed. All four are file-copy sources, which is why the gap produced silent overwrites rather than visible errors.
 
