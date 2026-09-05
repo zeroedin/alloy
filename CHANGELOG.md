@@ -1,3 +1,66 @@
+## v0.8.0 (2026-09-05)
+
+- Running `alloy build`, `alloy dev`, or `alloy serve` from a directory without a config file produces an actionable error instead of falling back to empty defaults. The error includes the directory Alloy searched, the expected file names (`alloy.config.yaml`, `.yml`, `.toml`, `.json`), and a `--config` suggestion for non-standard layouts.
+
+  When `--config` points to a file that does not exist, the error reports the specified path without repeating the `--config` suggestion.
+- **Breaking:** Two sources writing the same output path is now a build error, whatever kind of file it is. Previously only rendered pages, taxonomy pages, and plugin-registered outputs were checked — files copied from `static/`, `assets/`, a passthrough mapping, or alongside your content were not, so a collision between them quietly resolved by copy order and the last one written won.
+
+  The worst case was silent: a stray `content/about/index.html` sitting next to `content/about.md` replaced your rendered About page, and the build still reported success.
+
+  ```text
+  Error: output path conflict detected:
+    css/styles.css is claimed by:
+      1. static/css/styles.css
+      2. assets/css/styles.css
+      3. passthrough "vendor-css" → "css"
+      4. content/css/styles.css (colocated)
+
+  Resolve by renaming one source, adjusting a passthrough "to" path, or removing one source.
+  ```
+
+  Every claimant is listed, and every conflict is reported — not just the first one, so you can fix them in one pass rather than one build at a time.
+
+  **Sharing a directory is still fine.** Only identical paths collide. `static/css/` and a passthrough writing into `css/` merge exactly as before, as long as the filenames differ.
+
+  A passthrough file that an `exclude` pattern skips is never copied, so it never conflicts with anything.
+
+  `alloy dev` and `alloy serve` check too. Adding a colliding file while the server is running shows the conflict in the browser error overlay and skips that one copy instead of overwriting; the server keeps running, and the next rebuild clears the overlay once you resolve it.
+
+  **You may need to change something.** A site that builds today can start failing — those are the collisions that were already losing a file without telling you. Rename one of the sources, or point the passthrough `to` somewhere else.
+- Block shortcodes can take their content raw. Add `>` after the opening delimiter and Alloy hands the body to your shortcode exactly as you wrote it, skipping Markdown entirely.
+
+  ```liquid
+  {%> helmet %}
+  <script type="application/ld+json">
+    { "@context": "https://schema.org", "name": "Alloy -- fast & extensible" }
+  </script>
+  {% endhelmet %}
+  ```
+
+  Go templates use `{{%>`:
+
+  ```html
+  {{%> helmet %}}
+  <script type="application/ld+json">
+    { "@context": "https://schema.org", "name": "Alloy -- fast & extensible" }
+  </script>
+  {{% /helmet %}}
+  ```
+
+  Without the `>`, Markdown rewrites that content before the shortcode ever sees it — `<` and `&` become entities, `--` becomes an en dash, indented lines turn into code blocks, and `unsafe: false` strips the `<script>` altogether.
+
+  Close tags are unchanged: `{% endname %}` and `{{% /name %}}` as always. Only the open tag takes the `>`, so the same shortcode can take raw content on one page and Markdown-formatted content on another with no change to how it's registered and no plugin API to learn.
+
+  A raw body passes through even when `goldmark.unsafe` is `false`. That is the point — script and structured data are what the feature is for — but it does mean you are opting that one block out of HTML sanitizing, so use it with content you control.
+
+  Raw blocks nest, so a matching `{% name %}` / `{% endname %}` pair inside the body will not close the block early. A block you forget to close fails the build and tells you where to look:
+
+  ```text
+  content transformation: blog/post.md: unterminated raw block shortcode {%> helmet %} opened at line 12: expected {% endhelmet %}
+  ```
+
+  This applies to Markdown files. Shortcode content in `.html` files already reaches your shortcode untouched, so there is nothing to opt out of there.
+
 ## v0.7.0 (2026-07-27)
 
 ### Minor Changes
