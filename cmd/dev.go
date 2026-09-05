@@ -19,6 +19,7 @@ import (
 	"github.com/zeroedin/alloy/internal/pipeline"
 	"github.com/zeroedin/alloy/internal/plugin"
 	"github.com/zeroedin/alloy/internal/server"
+	"github.com/zeroedin/alloy/internal/validation"
 )
 
 func newDevCommand() *cobra.Command {
@@ -87,8 +88,19 @@ func newDevCommand() *cobra.Command {
 				log.Printf("warning: initial build failed: %v", initialBuildErr)
 			}
 			var previousCache *cache.Cache
+			// Output path claims from the last full build. The watcher recopies
+			// static, asset, and passthrough files itself — BuildIncremental
+			// copies none of them — so the claim set has to outlive Build() for
+			// a mid-session collision to be caught (issue #1238).
+			var outputClaims []validation.OutputPathEntry
+			var copyOrigins map[string]string
 			if initialResult != nil {
 				previousCache = initialResult.Cache
+				outputClaims = initialResult.OutputClaims
+				copyOrigins = initialResult.CopyOrigins
+			}
+			if copyOrigins == nil {
+				copyOrigins = map[string]string{}
 			}
 
 			srv := server.NewWithMode(cfg, server.ModeDev)
@@ -183,6 +195,7 @@ func newDevCommand() *cobra.Command {
 				if !filepath.IsAbs(outputDir) {
 					outputDir = filepath.Join(cfg.ProjectRoot, outputDir)
 				}
+				var recopyConflicts []server.BuildError
 				for _, ev := range events {
 					if server.RebuildScopeForChangeType(ev.ChangeType) != server.RebuildRecopy {
 						continue
@@ -207,10 +220,43 @@ func newDevCommand() *cobra.Command {
 					if destPath == "" {
 						continue
 					}
+					// Whether this event may touch the destination depends on
+					// who else claims it (issue #1238). A path this very file
+					// already owns is not a conflict — matching is by source
+					// file, not by the claim's display label, which for a
+					// passthrough names the mapping rather than the file.
+					source := filepath.ToSlash(ev.Path)
+					claimPath := ""
+					if rel, relErr := filepath.Rel(outputDir, destPath); relErr == nil {
+						claimPath = filepath.ToSlash(rel)
+					}
+					existing, clash := recopyBlockedBy(outputClaims, copyOrigins, claimPath, source)
+
 					if ev.IsRemove {
+						// Deleting a file that lost a conflict must not remove
+						// the output the winning source owns — this file was
+						// never the one written there.
+						if clash {
+							continue
+						}
 						if err := os.Remove(destPath); err != nil && !os.IsNotExist(err) {
 							log.Printf("warning: recopy remove %s: %v", ev.Path, err)
 						}
+						outputClaims, copyOrigins = releaseClaim(outputClaims, copyOrigins, claimPath, source)
+						continue
+					}
+					// A recopy must not perform a colliding write. Report it in
+					// the overlay and skip the write; the server keeps running
+					// and the next clean rebuild clears the overlay.
+					if clash {
+						msg := fmt.Sprintf("output path conflict: %s is claimed by %s and %s — skipping copy",
+							claimPath, existing, source)
+						log.Printf("warning: %s", msg)
+						recopyConflicts = append(recopyConflicts, server.BuildError{
+							FilePath: source,
+							Message:  msg,
+							Stage:    "output path conflict",
+						})
 						continue
 					}
 					if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
@@ -221,7 +267,14 @@ func newDevCommand() *cobra.Command {
 						if !errors.Is(err, fs.ErrNotExist) {
 							log.Printf("warning: recopy %s: %v", ev.Path, err)
 						}
+						continue
 					}
+					// A file copied after the last build claims its path from
+					// now on, so a second source added later collides with it.
+					outputClaims, copyOrigins = recordClaim(outputClaims, copyOrigins, claimPath, source)
+				}
+				if len(recopyConflicts) > 0 {
+					srv.Overlay().SetErrors(recopyConflicts)
 				}
 
 				needsRebuild := false
@@ -284,6 +337,15 @@ func newDevCommand() *cobra.Command {
 						if fullResult != nil && fullResult.Cache != nil {
 							previousCache = fullResult.Cache
 						}
+						// Refresh the claim set so a conflict the author has
+						// since resolved stops being reported (issue #1238).
+						if fullResult != nil {
+							outputClaims = fullResult.OutputClaims
+							copyOrigins = fullResult.CopyOrigins
+							if copyOrigins == nil {
+								copyOrigins = map[string]string{}
+							}
+						}
 						if ps != nil && fullResult != nil && fullResult.SiteData != nil {
 							ps.SiteData = fullResult.SiteData
 							if ps.Registry != nil {
@@ -316,7 +378,33 @@ func newDevCommand() *cobra.Command {
 						if incrResult != nil && incrResult.Cache != nil {
 							previousCache = incrResult.Cache
 						}
-						srv.Overlay().ClearErrors()
+						// An incremental rebuild re-checks its output path
+						// claims and reports collisions without failing, so the
+						// server keeps serving (issue #1238).
+						var claimErrs []server.BuildError
+						if incrResult != nil {
+							if incrResult.OutputClaims != nil {
+								outputClaims = incrResult.OutputClaims
+							}
+							if incrResult.CopyOrigins != nil {
+								copyOrigins = incrResult.CopyOrigins
+							}
+							for _, e := range incrResult.Errors {
+								if e == nil {
+									continue
+								}
+								log.Printf("warning: %v", e)
+								claimErrs = append(claimErrs, server.BuildError{
+									Message: e.Error(),
+									Stage:   "output path conflict",
+								})
+							}
+						}
+						if len(claimErrs) > 0 {
+							srv.Overlay().SetErrors(claimErrs)
+						} else {
+							srv.Overlay().ClearErrors()
+						}
 						if !cfg.Quiet {
 							log.Printf("rebuild complete (incremental)")
 						}
@@ -346,4 +434,63 @@ func newDevCommand() *cobra.Command {
 	cmd.Flags().Bool("refetch", false, "Bypass fetch cache")
 
 	return cmd
+}
+
+// recopyBlockedBy reports the claim that prevents source from writing relPath,
+// or ok=false when the write is allowed. A path whose recorded origin is this
+// same source file is the file's own claim, not a collision — origins are
+// matched rather than display labels, because a passthrough claim is labelled
+// with its mapping ("passthrough \"vendor-css\" → \"css\"") while the watcher
+// reports the individual file that changed.
+func recopyBlockedBy(claims []validation.OutputPathEntry, origins map[string]string, relPath, source string) (string, bool) {
+	if relPath == "" {
+		return "", false
+	}
+	if origin, ok := origins[relPath]; ok && origin == source {
+		return "", false
+	}
+	for _, c := range claims {
+		if c.Path == relPath {
+			return c.Source, true
+		}
+	}
+	return "", false
+}
+
+// recordClaim registers a path written by a watcher recopy, so a second source
+// appearing later is detected as a collision rather than silently overwriting.
+func recordClaim(claims []validation.OutputPathEntry, origins map[string]string, relPath, source string) ([]validation.OutputPathEntry, map[string]string) {
+	if relPath == "" {
+		return claims, origins
+	}
+	if origin, ok := origins[relPath]; ok && origin == source {
+		return claims, origins
+	}
+	origins[relPath] = source
+	for _, c := range claims {
+		if c.Path == relPath {
+			return claims, origins
+		}
+	}
+	return append(claims, validation.OutputPathEntry{Path: relPath, Source: source}), origins
+}
+
+// releaseClaim drops the claim a removed source held, so a different source may
+// legitimately take that path afterwards.
+func releaseClaim(claims []validation.OutputPathEntry, origins map[string]string, relPath, source string) ([]validation.OutputPathEntry, map[string]string) {
+	if relPath == "" {
+		return claims, origins
+	}
+	if origin, ok := origins[relPath]; !ok || origin != source {
+		return claims, origins
+	}
+	delete(origins, relPath)
+	kept := claims[:0]
+	for _, c := range claims {
+		if c.Path == relPath && c.Source == source {
+			continue
+		}
+		kept = append(kept, c)
+	}
+	return kept, origins
 }
