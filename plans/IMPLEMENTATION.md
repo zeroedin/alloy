@@ -463,6 +463,25 @@ Key points:
   - **Timeout**: Each page render is subject to `config.SSRConfig.Timeout` (default 30s). Use `context.WithTimeout` on exec, or a read deadline on stream. On timeout, kill the process.
   - **Exec error isolation**: A failed page (timeout or non-zero exit) does not abort the build. Continue with remaining pages, collect all failures, report at the end.
   - **Stream recovery**: On process crash, timeout, or malformed output — restart the process, retry the failed page once. If it fails again, skip the page and continue. Report all skipped pages at the end.
+- **Output cleaning order (issue #1255)**: move the clean so it runs after validation instead of before it. Spec: PLAN.md §"Output cleaning order".
+
+  In `Build()`, the block at `build.go:~233-243` — the `cfg.Build.CleanValue()` guard around `output.CleanOutputDir`, plus the `os.MkdirAll(outputDir, 0o755)` that follows it — moves to immediately after the `DetectConflicts` check at `build.go:~629`. Leave the `outputDir := resolveDir(...)` assignment where it is; it is needed earlier. `outputDir` has no other use between the two points, so the pair relocates cleanly with no other edits.
+
+  Fix the comment while moving it. It currently reads "Output dir creation/cleaning + background static copy (issue #492, #503)" and explains the early position by that background copy — obsolete since issue #507 made the copy synchronous and moved it to `build.go:~994`. It also claims "validation failures don't leave partial copies as debris", which is what the move finally makes true.
+
+  **No `BuildOptions` change and no per-mode behavior.** Every mode keeps cleaning on a full build, dev's mid-session rebuild included — see the spec for why skipping it would produce stale mixed output. `build.clean: false` keeps working exactly as it does now.
+
+  **Verified against the built CLI before specifying** — `alloy dev` serving a site, a colliding colocated file added (handled by the incremental path, site stays up), then a plugin edit to escalate to the full build:
+
+  | | before the move | after the move |
+  | --- | --- | --- |
+  | `_site` after the failed rebuild | empty | all pages intact |
+  | `HTTP /about/` | 404 | 200 |
+  | conflict error reported | yes | yes, identical |
+  | successful plugin edit | 300/300 requests 200 | 300/300 requests 200 |
+
+  **Testing note**: the contract is "a second build that fails leaves the first build's output intact", so it needs two sequential `Build()` calls against one `ProjectRoot`. `BuildWithContent` allocates a fresh temp directory per call and cannot express it; use the `GinkgoT().TempDir()` + explicit `cfg.ProjectRoot` pattern from `internal/pipeline/rendered_content_test.go`.
+
 - **`validateOutputDir`** (issue #9): Uses path equality + parent/child overlap detection (not substring matching). Only rejects exact matches (`output == content`) and nesting (`output = content/build` or `content` inside `output`). Names like `my_content_site` are valid output directories.
 - **Render ordering** (issue #10): Markdown renders first, then template tags — per spec §6 steps 3-4. Goldmark's TemplateTags extension preserves `{{ }}`/`{% %}` through markdown rendering. After markdown rendering and before Liquid processing, `escapeTemplateTagsInCode` converts template tags inside `<code>` elements to HTML entities so Liquid ignores them (issue #46). **Only run on `.md` files (issue #352)** — `.html` and `.liquid` content may have Liquid expressions inside `<code>` that should be interpolated, not escaped. Move the `escapeTemplateTagsInCode` call inside the `.md` case, not after the switch. Markdown errors use stage name `"content transformation"`, template errors use `"template rendering"`.
 

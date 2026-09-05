@@ -1094,7 +1094,7 @@ If two or more sources target the same output path, the build fails immediately 
 - **There is no layering between copy sources** (issue #1238). The de-facto order the implementation produced — `static/` → `assets/` → passthrough → content-colocated, last writer wins — is removed, not documented. `static/css/styles.css` does not override `assets/css/styles.css`; the two together are an error.
 - **Directory overlap is not a conflict.** Only identical output paths are. `static/css/styles.css` and a passthrough writing `css/vendor.css` share a directory and coexist correctly; this must keep working.
 
-**Error reporting.** All conflicts are reported, not just the first, and every source claiming a path is listed, not just the first two — a user fixing one collision at a time cannot see how many remain. Detection runs before any output is written, so a failed build leaves no partial output directory behind.
+**Error reporting.** All conflicts are reported, not just the first, and every source claiming a path is listed, not just the first two — a user fixing one collision at a time cannot see how many remain. Detection runs before the output directory is cleaned, so a validation failure leaves the previous build's output intact (issue #1255). That promise is bounded and the boundary is stated deliberately: it covers validation failures, not failures after them. See "Output cleaning order" below.
 
 **Migration note.** This is a behavior change users will notice: a site that builds today can start failing. That is the intent — the failures it surfaces are collisions that were already silently losing a file, including the case where a content-colocated `about/index.html` replaces the page rendered from `about.md` while the build reports success. Sites relying on the undocumented last-writer-wins order must rename a source or adjust a passthrough `to` path.
 
@@ -1373,6 +1373,31 @@ Errors are treated differently depending on the mode. The core principle: **`all
 ### Incremental Builds — Dev Mode Only
 
 Incremental builds are exclusive to `alloy dev` (dev mode). `alloy build` and `alloy serve` always do a **full clean rebuild** — every page is rendered, every file is written. This ensures CI/CD and production preview produce deterministic, complete output.
+
+#### Output cleaning order (issue #1255)
+
+`build.clean` (default true) empties the output directory before a build. The clean itself is correct and stays; **where it sits in the sequence** is what changes.
+
+The order is **validate → clean → create → render → write**. Cleaning previously ran first, so a build that failed validation had already destroyed the previous output before deciding the new one was invalid — a path conflict, detected before rendering needed to touch anything, took down whatever was there in order to report itself.
+
+Nothing depends on the early position. The comment justifying it cites a background static copy (issues #492, #503); issue #507 made that copy synchronous and moved it after rendering. Only the output directory's `MkdirAll` sat between the clean and validation, and `outputDir` is not otherwise used in between.
+
+**Cleaning is not mode-dependent.** `alloy build`, `alloy serve`, and `alloy dev` all clean on a full build, including dev's mid-session full rebuild. A plugin or component edit is effectively a restart: plugins can affect any page, and Alloy cannot know which pages a given plugin touches, so every page is re-rendered. The clean is what makes that safe — without it, output belonging to pages the *previous* plugin version generated survives alongside output from the new one, and the site becomes a mix of both. Skipping the clean to keep a dev server up would trade a visible failure for silent stale output, which is the worse bargain.
+
+Cleaning mid-session costs nothing on the success path: a successful plugin edit re-renders every page with no window in which the site is unavailable.
+
+**What is guaranteed on failure, and what is not:**
+
+| Failure | Previous output |
+| --- | --- |
+| Validation — path conflict, alias, permalink | Preserved. The build returns before the clean runs. |
+| Rendering — template, filter, or plugin error | Emptied. The clean has already run. |
+
+The second row is a documented limit, not an aspiration. Preserving output across *any* failure means building into a temporary directory and swapping on success — a different design, not promised here.
+
+`build.clean: false` is unchanged: it suppresses the clean entirely, in every mode.
+
+The case this ordering protects is narrow but total. A conflicting file added during `alloy dev` is handled by the incremental path, which never cleans, so the site keeps serving and the error appears in the console. But a plugin edit while that conflict is unresolved escalates to the full build — and before this change, that emptied the output directory and left the running server answering 404 for every page, over a collision between two content files the plugin edit had nothing to do with.
 
 In dev mode, after the initial full build, the file watcher triggers incremental rebuilds on changes. Alloy tracks **actual data reads** to determine the minimum set of pages to rebuild. The pipeline function `BuildIncremental(cfg, contentMap, previousCache, changedFiles)` accepts a previous build cache and only rebuilds affected pages. **Disk output (issue #581)**: `BuildIncremental` must write rendered pages to the output directory using the same page-writing logic as `Build()`. Only changed pages are written — asset/passthrough copying is handled by existing watches. Integration test coverage in `internal/pipeline/build_test.go`.
 
