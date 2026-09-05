@@ -88,6 +88,11 @@ type BuildResult struct {
 	// destination before writing (issue #1238) — BuildIncremental copies none
 	// of the static, asset, or passthrough sources, the watcher does.
 	OutputClaims []validation.OutputPathEntry
+
+	// CopyOrigins maps each copied output path to the project-relative source
+	// file that produces it, so a watcher can tell a path it already owns from
+	// one another source claims.
+	CopyOrigins map[string]string
 }
 
 func buildCompletePayload(r *BuildResult) *plugin.HookBuildCompletePayload {
@@ -588,6 +593,15 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
+	// sitemap.xml is generated into the output directory under the same
+	// condition the generation stage uses, so a copied sitemap.xml is rejected
+	// rather than silently replaced later (PLAN.md source table, row 6).
+	if cfg.Sitemap.Enabled && len(pages) > 0 {
+		outputEntries = append(outputEntries, validation.OutputPathEntry{
+			Path: "sitemap.xml", Source: "sitemap.xml (generated)",
+		})
+	}
+
 	// Copy sources claim output paths too (issue #1238). Collect them here,
 	// before anything is written, so a collision between a copied file and a
 	// rendered page — or between two copied files — is an error rather than a
@@ -604,8 +618,13 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("collecting output paths: %w", err)
 	}
-	outputEntries = append(outputEntries, copyClaims...)
+	copyOrigins := make(map[string]string, len(copyClaims))
+	for _, c := range copyClaims {
+		outputEntries = append(outputEntries, c.Entry())
+		copyOrigins[c.Path] = c.Origin
+	}
 	ps.OutputClaims = outputEntries
+	ps.CopyOrigins = copyOrigins
 
 	if conflicts, _ := validation.DetectConflicts(outputEntries); len(conflicts) > 0 {
 		return nil, formatConflicts(conflicts)
@@ -729,6 +748,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			SSRSkipped:   cfg.SSR == nil || options.SkipSSR,
 			StageTimings: timer.Timings(),
 			SiteData:     siteData,
+			// A site with no content still copies static, asset, and
+			// passthrough files, so the watcher needs its claims (issue #1238).
+			OutputClaims: outputEntries,
+			CopyOrigins:  copyOrigins,
 		}
 		return r, nil
 	}
@@ -1102,6 +1125,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		Cache:               buildCache,
 		SiteData:            siteData,
 		OutputClaims:        outputEntries,
+		CopyOrigins:         copyOrigins,
 	}
 
 	reportSummary(reporter, result.PageCount, result.Duration, 0)

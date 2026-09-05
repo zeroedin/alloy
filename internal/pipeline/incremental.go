@@ -17,6 +17,7 @@ import (
 	"github.com/zeroedin/alloy/internal/plugin"
 	"github.com/zeroedin/alloy/internal/ssr"
 	tmpl "github.com/zeroedin/alloy/internal/template"
+	"github.com/zeroedin/alloy/internal/validation"
 )
 
 // BuildIncremental renders only pages that have changed since the previous
@@ -49,6 +50,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	}
 
 	var allPages []*content.Page
+	var incrementalPassthroughs []string
 	var fsMode bool
 
 	if contentMap == nil {
@@ -56,7 +58,11 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		fsMode = true
 		contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
 		var err error
-		allPages, err = content.DiscoverWithFormats(contentDir, cfg.Content.Formats)
+		// Colocated files are discovered here, not just pages: an incremental
+		// rebuild must re-check the claims it changes (PLAN.md §Pre-Build
+		// Validation, dev mode), and a colocated file claiming a page's output
+		// path is the case that silently loses a page (issue #1238).
+		allPages, incrementalPassthroughs, err = content.DiscoverWithPassthrough(contentDir, cfg.Content.Formats)
 		if err != nil {
 			if os.IsNotExist(err) {
 				return &BuildResult{
@@ -730,6 +736,17 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		capturedContent = renderedContent
 	}
 
+	// Re-check output path claims (issue #1238). A conflict here is reported,
+	// not fatal — the dev server surfaces it in the overlay and keeps serving,
+	// per PLAN.md's dev-mode rules.
+	claimEntries, claimOrigins, claimErr := incrementalClaims(cfg, allPages, incrementalPassthroughs)
+	var claimConflicts []error
+	if claimErr != nil {
+		claimConflicts = append(claimConflicts, claimErr)
+	} else if conflicts, _ := validation.DetectConflicts(claimEntries); len(conflicts) > 0 {
+		claimConflicts = append(claimConflicts, formatConflicts(conflicts))
+	}
+
 	result := &BuildResult{
 		OutputDir:        cfg.Build.Output,
 		PageCount:        len(pagesToRender),
@@ -742,6 +759,9 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		FormatContent:    formatContent,
 		Cache:            buildCache,
 		SiteData:         ps.SiteData,
+		OutputClaims:     claimEntries,
+		CopyOrigins:      claimOrigins,
+		Errors:           claimConflicts,
 	}
 
 	reportSummary(reporter, result.PageCount, result.Duration, result.PagesSkipped)
@@ -758,4 +778,72 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	}
 
 	return result, nil
+}
+
+// incrementalClaims recomputes the full output path claim set for an
+// incremental rebuild — pages, their alternate formats and aliases, plus every
+// copy source. BuildIncremental copies none of the copy sources itself (the dev
+// watcher does), so the claim set it hands back has to describe the whole
+// output directory for the watcher's own checks to stay accurate.
+func incrementalClaims(cfg *config.Config, pages []*content.Page, contentPassthroughs []string) ([]validation.OutputPathEntry, map[string]string, error) {
+	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
+	contentLabel := validation.SourceDirLabel(cfg.ProjectRoot, contentDir)
+	pageSource := func(page *content.Page, suffix string) string {
+		label := page.RelPath
+		if contentLabel != "" {
+			label = contentLabel + "/" + filepath.ToSlash(page.RelPath)
+		}
+		return label + suffix
+	}
+
+	var entries []validation.OutputPathEntry
+	for _, page := range pages {
+		if !output.ShouldWrite(page.URL) {
+			continue
+		}
+		outPath := output.ComputeOutputPath(page.URL)
+		entries = append(entries, validation.OutputPathEntry{
+			Path: outPath, Source: pageSource(page, ""),
+		})
+		for _, format := range page.Outputs {
+			if format == "html" {
+				continue
+			}
+			entries = append(entries, validation.OutputPathEntry{
+				Path:   formatOutputPath(outPath, format),
+				Source: pageSource(page, " ("+format+")"),
+			})
+		}
+		aliases, _ := permalink.ResolveAliases(page)
+		for _, alias := range aliases {
+			entries = append(entries, validation.OutputPathEntry{
+				Path: output.ComputeOutputPath(alias), Source: pageSource(page, " (alias)"),
+			})
+		}
+	}
+
+	if cfg.Sitemap.Enabled && len(pages) > 0 {
+		entries = append(entries, validation.OutputPathEntry{
+			Path: "sitemap.xml", Source: "sitemap.xml (generated)",
+		})
+	}
+
+	copyClaims, err := validation.CollectCopyClaims(validation.CopySources{
+		ProjectRoot:         cfg.ProjectRoot,
+		StaticDir:           resolveDir(cfg.ProjectRoot, cfg.Structure.Static),
+		AssetsDir:           resolveDir(cfg.ProjectRoot, cfg.Structure.Assets),
+		ContentDir:          contentDir,
+		Passthrough:         cfg.Passthrough,
+		ManagedDirs:         managedPassthroughDirs(cfg),
+		ContentPassthroughs: contentPassthroughs,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("collecting output paths: %w", err)
+	}
+	origins := make(map[string]string, len(copyClaims))
+	for _, c := range copyClaims {
+		entries = append(entries, c.Entry())
+		origins[c.Path] = c.Origin
+	}
+	return entries, origins, nil
 }

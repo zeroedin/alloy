@@ -30,6 +30,10 @@ type PipelineState struct {
 	// the watcher copies static, asset, and passthrough files directly, and
 	// BuildIncremental copies none of them.
 	OutputClaims []validation.OutputPathEntry
+
+	// CopyOrigins maps a copied output path to the project-relative source file
+	// that produces it.
+	CopyOrigins map[string]string
 }
 
 // ConflictFor reports the existing claim on an output path when a new source

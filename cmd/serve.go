@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -87,12 +86,16 @@ func newServeCommand() *cobra.Command {
 			// Its output path claims are kept so a watcher recopy can check a
 			// destination before writing it (issue #1238).
 			var outputClaims []validation.OutputPathEntry
+			copyOrigins := map[string]string{}
 			buildResult, err := pipeline.Build(cfg, pipeline.BuildOptions{Reporter: reporter})
 			if err != nil {
 				return fmt.Errorf("build failed: %w", err)
 			}
 			if buildResult != nil {
 				outputClaims = buildResult.OutputClaims
+				if buildResult.CopyOrigins != nil {
+					copyOrigins = buildResult.CopyOrigins
+				}
 			}
 
 			srv := server.NewWithMode(cfg, server.ModePreview)
@@ -138,7 +141,7 @@ func newServeCommand() *cobra.Command {
 					case server.ContentChange, server.LayoutChange, server.DataChange, server.ComponentChange, server.PluginChange:
 						needsRebuild = true
 					case server.AssetChange, server.StaticChange:
-						copyChangedFileToOutput(ev.Path, cfg, outputClaims, srv)
+						outputClaims = copyChangedFileToOutput(ev, cfg, outputClaims, copyOrigins, srv)
 					case server.PassthroughChange:
 						if dest, err := server.RecopyPassthroughFile(ev.Path, cfg); err == nil {
 							srcPath := ev.Path
@@ -147,9 +150,7 @@ func newServeCommand() *cobra.Command {
 								srcPath = filepath.Join(cfg.ProjectRoot, ev.Path)
 								dest = filepath.Join(cfg.ProjectRoot, dest)
 							}
-							if !reportRecopyConflict(destRel, ev.Path, cfg, outputClaims, srv) {
-								copyFileToPath(srcPath, dest, cfg)
-							}
+							outputClaims = applyRecopy(ev, srcPath, dest, destRel, cfg, outputClaims, copyOrigins, srv)
 						}
 					}
 				}
@@ -163,6 +164,10 @@ func newServeCommand() *cobra.Command {
 					} else {
 						if rebuilt != nil {
 							outputClaims = rebuilt.OutputClaims
+							copyOrigins = map[string]string{}
+							if rebuilt.CopyOrigins != nil {
+								copyOrigins = rebuilt.CopyOrigins
+							}
 						}
 						srv.Overlay().ClearErrors()
 						if !cfg.Quiet {
@@ -196,7 +201,8 @@ func newServeCommand() *cobra.Command {
 	return cmd
 }
 
-func copyChangedFileToOutput(relPath string, cfg *config.Config, claims []validation.OutputPathEntry, srv *server.Server) {
+func copyChangedFileToOutput(ev server.ChangeEvent, cfg *config.Config, claims []validation.OutputPathEntry, origins map[string]string, srv *server.Server) []validation.OutputPathEntry {
+	relPath := ev.Path
 	outputDir := cfg.Build.Output
 	if outputDir == "" {
 		outputDir = "_site"
@@ -216,13 +222,13 @@ func copyChangedFileToOutput(relPath string, cfg *config.Config, claims []valida
 			sourceDir = "assets"
 		}
 	default:
-		return
+		return claims
 	}
 
 	destRel, err := filepath.Rel(sourceDir, relPath)
 	if err != nil {
 		log.Printf("warning: computing relative path for %s: %v", relPath, err)
-		return
+		return claims
 	}
 
 	srcPath := relPath
@@ -233,42 +239,69 @@ func copyChangedFileToOutput(relPath string, cfg *config.Config, claims []valida
 	if cfg.ProjectRoot != "" {
 		destPath = filepath.Join(cfg.ProjectRoot, destPath)
 	}
-	if reportRecopyConflict(destRel, relPath, cfg, claims, srv) {
-		return
-	}
-	copyFileToPath(srcPath, destPath, cfg)
+	return applyRecopy(ev, srcPath, destPath, destRel, cfg, claims, origins, srv)
 }
 
-// reportRecopyConflict reports whether an output-relative destination is
-// already claimed by a different source. A conflicting recopy is surfaced in
-// the error overlay and the write is skipped rather than performed, so a
-// mid-session collision cannot silently replace a file (issue #1238). It never
-// terminates the server.
-func reportRecopyConflict(destRel, srcRel string, cfg *config.Config, claims []validation.OutputPathEntry, srv *server.Server) bool {
-	outputDir := cfg.Build.Output
-	if outputDir == "" {
-		outputDir = "_site"
-	}
-	claimPath := filepath.ToSlash(destRel)
-	if rel, err := filepath.Rel(outputDir, filepath.ToSlash(destRel)); err == nil && !strings.HasPrefix(rel, "..") {
-		claimPath = filepath.ToSlash(rel)
-	}
-	source := filepath.ToSlash(srcRel)
-	for _, c := range claims {
-		if c.Path != claimPath || c.Source == source || strings.HasSuffix(c.Source, source) {
-			continue
+// applyRecopy performs one watcher-driven copy or removal, subject to output
+// path claims (issue #1238). A destination another source owns is left alone
+// and reported in the error overlay; a destination this file owns is copied and
+// its claim kept current. It never terminates the server.
+func applyRecopy(ev server.ChangeEvent, srcPath, destPath, destRel string, cfg *config.Config, claims []validation.OutputPathEntry, origins map[string]string, srv *server.Server) []validation.OutputPathEntry {
+	claimPath := filepath.ToSlash(filepath.Clean(destRel))
+	source := filepath.ToSlash(ev.Path)
+
+	blocked := false
+	var existing string
+	if origin, owned := origins[claimPath]; !owned || origin != source {
+		for _, c := range claims {
+			if c.Path == claimPath {
+				existing, blocked = c.Source, true
+				break
+			}
 		}
+	}
+
+	if ev.IsRemove {
+		// A source that lost a conflict never wrote this path, so deleting it
+		// must not remove the owning source's output.
+		if blocked {
+			return claims
+		}
+		if err := os.Remove(destPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("warning: recopy remove %s: %v", ev.Path, err)
+		}
+		if origin, owned := origins[claimPath]; owned && origin == source {
+			delete(origins, claimPath)
+			kept := claims[:0]
+			for _, c := range claims {
+				if c.Path == claimPath && c.Source == source {
+					continue
+				}
+				kept = append(kept, c)
+			}
+			claims = kept
+		}
+		return claims
+	}
+
+	if blocked {
 		msg := fmt.Sprintf("output path conflict: %s is claimed by %s and %s — skipping copy",
-			claimPath, c.Source, source)
+			claimPath, existing, source)
 		log.Printf("warning: %s", msg)
 		if srv != nil {
 			srv.Overlay().SetErrors([]server.BuildError{
 				{FilePath: source, Message: msg, Stage: "output path conflict"},
 			})
 		}
-		return true
+		return claims
 	}
-	return false
+
+	copyFileToPath(srcPath, destPath, cfg)
+	if _, owned := origins[claimPath]; !owned {
+		origins[claimPath] = source
+		claims = append(claims, validation.OutputPathEntry{Path: claimPath, Source: source})
+	}
+	return claims
 }
 
 func copyFileToPath(src, dest string, cfg *config.Config) {

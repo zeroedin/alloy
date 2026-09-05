@@ -63,22 +63,29 @@ func planDir(src, dstRel string, excludes []string) (files []PlannedCopy, dirs [
 	return files, dirs, nil
 }
 
-// joinRel joins an output-relative prefix with a walk-relative path, producing
-// a slash-separated path with no "." segments.
+// joinRel joins an output-relative prefix with a walk-relative path. The result
+// is cleaned and slash-separated so it equals the destination filepath.Join
+// produces at copy time — an uncleaned "css/../js/x.css" claim would never match
+// the "js/x.css" the copy actually writes.
 func joinRel(prefix, rel string) string {
 	rel = filepath.ToSlash(rel)
 	prefix = filepath.ToSlash(prefix)
-	switch {
-	case rel == ".":
+	if rel == "." {
 		rel = ""
 	}
+	var joined string
 	switch {
 	case prefix == "" || prefix == ".":
-		return rel
+		joined = rel
 	case rel == "":
-		return prefix
+		joined = prefix
+	default:
+		joined = prefix + "/" + rel
 	}
-	return prefix + "/" + rel
+	if joined == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Clean(joined))
 }
 
 // PlanStatic reports the files CopyStatic would write. A missing directory
@@ -102,11 +109,16 @@ func PlanStatic(staticDir string) ([]PlannedCopy, error) {
 // exclude patterns. Used for the assets tree, which ProcessAssets writes
 // one-for-one at its source-relative path.
 func PlanWalk(dir string) ([]PlannedCopy, error) {
-	if _, err := os.Stat(dir); err != nil {
+	info, err := os.Stat(dir)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 		return nil, err
+	}
+	// A plain file would walk as rel "." and claim an empty output path.
+	if !info.IsDir() {
+		return nil, nil
 	}
 	files, _, err := planDir(dir, "", nil)
 	return files, err
@@ -167,7 +179,7 @@ func PlanPassthrough(mappings []config.PassthroughMapping, projectRoot string) (
 		}
 		planned = append(planned, PlannedMapping{
 			Mapping: m,
-			Files:   []PlannedCopy{{Src: fromPath, Rel: filepath.ToSlash(m.To)}},
+			Files:   []PlannedCopy{{Src: fromPath, Rel: joinRel(m.To, "")}},
 		})
 	}
 
