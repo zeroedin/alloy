@@ -136,12 +136,16 @@ func newServeCommand() *cobra.Command {
 				}
 
 				needsRebuild := false
+				// Conflicts are collected across the whole batch and published
+				// once: SetErrors replaces the overlay list, so publishing per
+				// event would show only the last conflict (issue #1238).
+				var recopyConflicts []server.BuildError
 				for _, ev := range events {
 					switch ev.ChangeType {
 					case server.ContentChange, server.LayoutChange, server.DataChange, server.ComponentChange, server.PluginChange:
 						needsRebuild = true
 					case server.AssetChange, server.StaticChange:
-						outputClaims = copyChangedFileToOutput(ev, cfg, outputClaims, copyOrigins, srv)
+						outputClaims = copyChangedFileToOutput(ev, cfg, outputClaims, copyOrigins, &recopyConflicts)
 					case server.PassthroughChange:
 						if dest, err := server.RecopyPassthroughFile(ev.Path, cfg); err == nil {
 							srcPath := ev.Path
@@ -150,9 +154,12 @@ func newServeCommand() *cobra.Command {
 								srcPath = filepath.Join(cfg.ProjectRoot, ev.Path)
 								dest = filepath.Join(cfg.ProjectRoot, dest)
 							}
-							outputClaims = applyRecopy(ev, srcPath, dest, destRel, cfg, outputClaims, copyOrigins, srv)
+							outputClaims = applyRecopy(ev, srcPath, dest, destRel, cfg, outputClaims, copyOrigins, &recopyConflicts)
 						}
 					}
+				}
+				if len(recopyConflicts) > 0 {
+					srv.Overlay().SetErrors(recopyConflicts)
 				}
 
 				if needsRebuild {
@@ -201,7 +208,7 @@ func newServeCommand() *cobra.Command {
 	return cmd
 }
 
-func copyChangedFileToOutput(ev server.ChangeEvent, cfg *config.Config, claims []validation.OutputPathEntry, origins map[string]string, srv *server.Server) []validation.OutputPathEntry {
+func copyChangedFileToOutput(ev server.ChangeEvent, cfg *config.Config, claims []validation.OutputPathEntry, origins map[string]string, conflicts *[]server.BuildError) []validation.OutputPathEntry {
 	relPath := ev.Path
 	outputDir := cfg.Build.Output
 	if outputDir == "" {
@@ -239,14 +246,14 @@ func copyChangedFileToOutput(ev server.ChangeEvent, cfg *config.Config, claims [
 	if cfg.ProjectRoot != "" {
 		destPath = filepath.Join(cfg.ProjectRoot, destPath)
 	}
-	return applyRecopy(ev, srcPath, destPath, destRel, cfg, claims, origins, srv)
+	return applyRecopy(ev, srcPath, destPath, destRel, cfg, claims, origins, conflicts)
 }
 
 // applyRecopy performs one watcher-driven copy or removal, subject to output
 // path claims (issue #1238). A destination another source owns is left alone
 // and reported in the error overlay; a destination this file owns is copied and
 // its claim kept current. It never terminates the server.
-func applyRecopy(ev server.ChangeEvent, srcPath, destPath, destRel string, cfg *config.Config, claims []validation.OutputPathEntry, origins map[string]string, srv *server.Server) []validation.OutputPathEntry {
+func applyRecopy(ev server.ChangeEvent, srcPath, destPath, destRel string, cfg *config.Config, claims []validation.OutputPathEntry, origins map[string]string, conflicts *[]server.BuildError) []validation.OutputPathEntry {
 	claimPath := filepath.ToSlash(filepath.Clean(destRel))
 	source := filepath.ToSlash(ev.Path)
 
@@ -288,9 +295,9 @@ func applyRecopy(ev server.ChangeEvent, srcPath, destPath, destRel string, cfg *
 		msg := fmt.Sprintf("output path conflict: %s is claimed by %s and %s — skipping copy",
 			claimPath, existing, source)
 		log.Printf("warning: %s", msg)
-		if srv != nil {
-			srv.Overlay().SetErrors([]server.BuildError{
-				{FilePath: source, Message: msg, Stage: "output path conflict"},
+		if conflicts != nil {
+			*conflicts = append(*conflicts, server.BuildError{
+				FilePath: source, Message: msg, Stage: "output path conflict",
 			})
 		}
 		return claims
