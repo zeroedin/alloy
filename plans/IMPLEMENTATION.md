@@ -484,6 +484,27 @@ Key points:
 
   **Testing note**: the contract is "a second build that fails leaves the first build's output intact", so it needs two sequential `Build()` calls against one `ProjectRoot`. `BuildWithContent` allocates a fresh temp directory per call and cannot express it; use the `GinkgoT().TempDir()` + explicit `cfg.ProjectRoot` pattern from `internal/pipeline/rendered_content_test.go`.
 
+- **Config-file write containment (issue #1254)**: config-file `passthrough[N].to` and `build.output` are unchecked and can place files outside the project. Spec: PLAN.md §"Write containment".
+
+  Measured on `main` (`736ceb4`) with the built CLI, all exit 0:
+
+  | Config | Where it wrote |
+  | --- | --- |
+  | `passthrough: to: "../../STOLEN"` | outside the project, two levels above the root |
+  | `build.output: "../../ESCAPED_SITE"` | outside the project |
+  | `passthrough: to: "<abs>"` | silently joined onto the output dir — `_site/tmp/.../ABS_STOLEN/…` |
+  | any of the above via a plugin's `onConfig` | already rejected by `validateOnConfigPath` |
+
+  **Where the check goes**: `config.Validate` (`internal/config/config.go:~404`), which already runs from `cmd/build.go:~65`, `cmd/dev.go:~61` and `cmd/serve.go:~60`, and already returns `validation error: …` messages. Validating there means the build fails before any directory is created or cleaned.
+
+  **How to compute containment**: resolve first, compare second. `cfg.ProjectRoot` is the config file's directory (`config.go:~267`) or `--root` (`~395`); `resolveDir(projectRoot, dir)` joins relatives onto it and returns absolutes unchanged. Join, `filepath.Clean`, then check the result is still under its bound — `passthrough[N].to` under the resolved output directory, `build.output` under `ProjectRoot`. Checking the raw string instead of the resolved path misses `css/../../..` and similar, which only collapse after the join.
+
+  **Do not reuse `validateOnConfigPath` verbatim.** Its errors are prefixed `onConfig:` and it is reached only from the plugin path; config-file errors need the `validation error:` prefix used by the rest of `config.Validate`. Share the containment logic if convenient, but keep the two message shapes distinct so a user can tell which source failed.
+
+  **`passthrough[N].from` must not be constrained** — it reads, and PLAN.md §1h deliberately supports absolute and `../relative` values there for cross-project asset sharing. Constraining it would break a documented feature; the spec's rule splits on read-vs-write for exactly this reason.
+
+  **Interaction with issue #1238**: output claims are collected for conflict detection, and a file written outside the output directory can never collide with anything Alloy tracks. Once this lands, the claim set can be treated as covering every file a build writes.
+
 - **`validateOutputDir`** (issue #9): Uses path equality + parent/child overlap detection (not substring matching). Only rejects exact matches (`output == content`) and nesting (`output = content/build` or `content` inside `output`). Names like `my_content_site` are valid output directories.
 - **Render ordering** (issue #10): Markdown renders first, then template tags — per spec §6 steps 3-4. Goldmark's TemplateTags extension preserves `{{ }}`/`{% %}` through markdown rendering. After markdown rendering and before Liquid processing, `escapeTemplateTagsInCode` converts template tags inside `<code>` elements to HTML entities so Liquid ignores them (issue #46). **Only run on `.md` files (issue #352)** — `.html` and `.liquid` content may have Liquid expressions inside `<code>` that should be interpolated, not escaped. Move the `escapeTemplateTagsInCode` call inside the `.md` case, not after the switch. Markdown errors use stage name `"content transformation"`, template errors use `"template rendering"`.
 
