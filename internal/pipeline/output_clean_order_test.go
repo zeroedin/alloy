@@ -121,6 +121,45 @@ var _ = Describe("Output cleaning order (issue #1255)", func() {
 		})
 	})
 
+	// ── The clean must clear the whole validation phase ───────────────
+
+	Context("An onAfterValidation failure also runs before the clean", func() {
+		It("leaves the previous build's output intact", func() {
+			// onAfterValidation fires after DetectConflicts and is the last
+			// thing that can fail before rendering. Cleaning immediately after
+			// conflict detection would leave a window where a plugin-authoring
+			// error destroys output without a page having been rendered — the
+			// boundary is the phase, not the conflict check.
+			cfg, outputDir := newSite()
+
+			_, err := pipeline.Build(cfg)
+			Expect(err).NotTo(HaveOccurred(), "the first build must succeed")
+			before := outputFiles(outputDir)
+			Expect(before).NotTo(BeEmpty(), "the first build must write output")
+
+			// An unrecognized return key is a documented onAfterValidation
+			// error (PLAN.md §Lifecycle hooks).
+			pluginsDir := filepath.Join(cfg.ProjectRoot, "plugins")
+			Expect(os.MkdirAll(pluginsDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(pluginsDir, "bad-hook.js"),
+				[]byte(`export default function(alloy) {
+  alloy.hook('onAfterValidation', {}, function(payload) {
+    return { notARecognizedKey: true };
+  });
+}`), 0644)).To(Succeed())
+
+			_, err = pipeline.Build(cfg)
+			Expect(err).To(HaveOccurred(),
+				"an unrecognized onAfterValidation return key must fail the build")
+			Expect(err.Error()).To(ContainSubstring("onAfterValidation"))
+
+			Expect(outputFiles(outputDir)).To(ConsistOf(before),
+				"onAfterValidation fails before any page is rendered, so it must "+
+					"not destroy the previous build — the clean belongs after the "+
+					"whole validation phase, not immediately after DetectConflicts")
+		})
+	})
+
 	// ── The documented boundary ───────────────────────────────────────
 
 	Context("A failure after validation is not covered", func() {

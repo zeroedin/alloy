@@ -1390,8 +1390,10 @@ Cleaning mid-session costs nothing on the success path: a successful plugin edit
 
 | Failure | Previous output |
 | --- | --- |
-| Validation — path conflict, alias, permalink | Preserved. The build returns before the clean runs. |
-| Rendering — template, filter, or plugin error | Emptied. The clean has already run. |
+| Anything before rendering begins — path conflict, alias, permalink, or an `onAfterValidation` plugin error | Preserved. The build returns before the clean runs. |
+| Rendering and later — template, filter, or plugin error while rendering | Emptied. The clean has already run. |
+
+The boundary is the **phase**, not a list of error types: everything in the pre-render validation phase preserves output, everything from rendering onward does not. `onAfterValidation` is the last hook that can fail before rendering, so the clean belongs after it — cleaning immediately after conflict detection would leave a window where a plugin-authoring error destroys output without a single page having been rendered.
 
 The second row is a documented limit, not an aspiration. Preserving output across *any* failure means building into a temporary directory and swapping on success — a different design, not promised here.
 

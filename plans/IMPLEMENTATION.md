@@ -465,7 +465,9 @@ Key points:
   - **Stream recovery**: On process crash, timeout, or malformed output — restart the process, retry the failed page once. If it fails again, skip the page and continue. Report all skipped pages at the end.
 - **Output cleaning order (issue #1255)**: move the clean so it runs after validation instead of before it. Spec: PLAN.md §"Output cleaning order".
 
-  In `Build()`, the block at `build.go:~233-243` — the `cfg.Build.CleanValue()` guard around `output.CleanOutputDir`, plus the `os.MkdirAll(outputDir, 0o755)` that follows it — moves to immediately after the `DetectConflicts` check at `build.go:~629`. Leave the `outputDir := resolveDir(...)` assignment where it is; it is needed earlier. `outputDir` has no other use between the two points, so the pair relocates cleanly with no other edits.
+  In `Build()`, the block at `build.go:~233-243` — the `cfg.Build.CleanValue()` guard around `output.CleanOutputDir`, plus the `os.MkdirAll(outputDir, 0o755)` that follows it — moves to after the whole pre-render validation phase succeeds — past `DetectConflicts` at `build.go:~629` **and** past the `onAfterValidation` hook that follows it, immediately before rendering begins. Leave the `outputDir := resolveDir(...)` assignment where it is; it is needed earlier. `outputDir` has no other use anywhere in between, so the pair relocates cleanly with no other edits.
+
+  **Do not stop at `DetectConflicts`.** `onAfterValidation` is the last thing that can fail before rendering — it returns `plugin hook onAfterValidation: ...` on an unrecognized return key or a non-map `cascade`. Cleaning between the two would delete the previous output on a plugin-authoring error that never reached a render, breaking the guarantee this change exists to provide.
 
   Fix the comment while moving it. It currently reads "Output dir creation/cleaning + background static copy (issue #492, #503)" and explains the early position by that background copy — obsolete since issue #507 made the copy synchronous and moved it to `build.go:~994`. It also claims "validation failures don't leave partial copies as debris", which is what the move finally makes true.
 
