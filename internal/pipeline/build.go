@@ -226,20 +226,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		return nil, err
 	}
 
-	// Output dir creation/cleaning + background static copy (issue #492, #503).
-	// Starts after all validation hooks so plugin-mutated paths are respected
-	// and validation failures don't leave partial copies as debris.
+	// Resolved here because later validation stages need the path; the
+	// directory itself is not cleaned or created until validation has passed
+	// (issue #1255).
 	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
-	if cfg.Build.CleanValue() {
-		if _, statErr := os.Stat(outputDir); statErr == nil {
-			if err := output.CleanOutputDir(outputDir); err != nil {
-				return nil, fmt.Errorf("cleaning output directory: %w", err)
-			}
-		}
-	}
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		return nil, fmt.Errorf("creating output directory: %w", err)
-	}
 
 	staticDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Static)
 	assetsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Assets)
@@ -673,6 +663,31 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("plugin hook onAfterValidation: %w", err)
 		}
+	}
+
+	// Output directory cleaning and creation (issue #1255). This runs after the
+	// entire pre-render validation phase — output path conflicts and the
+	// onAfterValidation hook, which is the last thing that can fail before a
+	// page is rendered — so a build that fails validation returns with the
+	// previous build's output still on disk.
+	//
+	// Cleaning is not mode-dependent: a full rebuild in dev cleans too, because
+	// a plugin or component change re-renders every page and the clean is what
+	// keeps output from the previous plugin version from surviving alongside
+	// the new one.
+	//
+	// The guarantee stops here. A render or template failure happens after this
+	// point and does empty the output directory; covering that would mean
+	// building into a temp directory and swapping on success.
+	if cfg.Build.CleanValue() {
+		if _, statErr := os.Stat(outputDir); statErr == nil {
+			if err := output.CleanOutputDir(outputDir); err != nil {
+				return nil, fmt.Errorf("cleaning output directory: %w", err)
+			}
+		}
+	}
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating output directory: %w", err)
 	}
 
 	// For single-language builds, don't pass langContexts to rendering helpers
