@@ -122,6 +122,32 @@ var _ = Describe("Config-file write containment (issue #1254)", func() {
 					"plugin path already rejects absolute paths")
 			Expect(err.Error()).To(ContainSubstring("build.output"))
 		})
+
+		It("rejects an output directory that is the project root", func() {
+			// The most destructive case in this spec, verified against the
+			// built CLI: build.output "." makes the project its own output
+			// directory, and because build.clean defaults to true the clean
+			// deletes the entire source project — content, layouts, and the
+			// config file itself — leaving only rendered output, exit 0.
+			cfg := baseCfg()
+			cfg.Build.Output = "."
+			err := config.Validate(cfg)
+			Expect(err).To(HaveOccurred(),
+				"build.output \".\" makes the project root the output directory, "+
+					"and the default clean then deletes the source project")
+			Expect(err.Error()).To(ContainSubstring("build.output"))
+		})
+
+		It("rejects an output directory that normalizes to the project root", func() {
+			// Same destination, written so a raw-string check would miss it.
+			cfg := baseCfg()
+			cfg.Build.Output = "subdir/.."
+			err := config.Validate(cfg)
+			Expect(err).To(HaveOccurred(),
+				"containment is evaluated on the resolved path, so any value "+
+					"that cleans to the project root is rejected however it is written")
+			Expect(err.Error()).To(ContainSubstring("build.output"))
+		})
 	})
 
 	// ── Reads keep their latitude, and legal writes keep working ──────

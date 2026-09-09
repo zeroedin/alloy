@@ -2914,14 +2914,22 @@ Validation normalizes paths via `filepath.Clean` before the traversal check and 
 | `build.output` | writes | Must resolve inside the project root |
 | `structure.*` | reads | Unchanged |
 
-This is a rule about what Alloy may do to a filesystem, so it holds regardless of whether the value came from a config file or a plugin. The plugin path already enforced it (`validateOnConfigPath`); the config-file path now enforces the same thing, and the two stop disagreeing about what is legal.
+**The write half of this rule is source-independent; the read half is not.** A path Alloy writes to is bounded whether the value came from a config file or a plugin — the plugin path already enforced that via `validateOnConfigPath`, and the config-file path now enforces the same thing, so the two stop disagreeing about which writes are legal.
+
+Reads are the opposite, and the distinction is trust, not direction alone. A config file is authored by the person running the build, so `from` pointing outside the project is a deliberate choice about their own machine. A plugin is untrusted code: PLAN.md's existing rule that plugin-sourced `from` rejects absolute paths and traversal **stays exactly as it is**, because a plugin setting `from: "/etc/shadow"` would copy that file into the published output. Nothing in this section relaxes the plugin-side `from` check.
+
+| | Config file | Plugin (`onConfig`) |
+| --- | --- | --- |
+| `from` (reads) | May leave the project (§1h) | Must stay inside — unchanged |
+| `to` (writes) | Must stay inside the output directory | Must stay inside — unchanged |
+| `build.output` (writes) | Must stay inside the project root | Must stay inside — unchanged |
 
 **The bound is computed, not assumed.** `cfg.ProjectRoot` is the directory containing the config file, or `--root` when given. `resolveDir` joins any relative value onto it and returns absolute values unchanged. A value is contained if, after `filepath.Join` and `filepath.Clean`, the result is still under its bound — resolving the path first is what catches `../..` climbing, since the escape only becomes visible after the join collapses.
 
 **Rejected shapes**, each a build error at config validation, before anything is written:
 - `..` climbing above the bound — `to: "../../STOLEN"`, `output: "../../ESCAPED"`.
 - An absolute write path. `build.output: "/var/www"` is rejected outright. An absolute `passthrough[N].to` is rejected rather than silently reinterpreted: today it is joined onto the output directory, so `to: "/srv/assets"` quietly produces `_site/srv/assets/…` — a path the author never asked for.
-- A `to` resolving to the output directory root itself is allowed (`to: "."` means "copy into `_site`"); a `build.output` resolving to the project root is not, since that would make the whole project the output directory.
+- A `to` resolving to the output directory root itself is allowed (`to: "."` means "copy into `_site`"). A `build.output` resolving to the project root is not — and this is the most destructive case in this section, not a tidiness rule. Verified against the built CLI: `build.output: "."` makes the project its own output directory, and because `build.clean` defaults to true the clean **deletes the entire source project** — content, layouts, and the config file itself — leaving only the rendered output behind, with exit 0. Any value that normalizes to the root is rejected, including `.` and `subdir/..`.
 
 **Errors name the field and the offending value**, matching the plugin path's existing shape so config-sourced and plugin-sourced failures read alike:
 
