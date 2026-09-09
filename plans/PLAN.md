@@ -2905,6 +2905,42 @@ Validation normalizes paths via `filepath.Clean` before the traversal check and 
 
 **Passthrough path validation (issues #1031, #1034)** — Passthrough `from` and `to` fields set via `onConfig` are filesystem paths and receive the same path-containment validation as `build.output` and `structure.*` fields. Config-file passthrough intentionally supports absolute `from` paths and `../relative` for cross-project asset sharing (§1h), but plugin-sourced passthrough is untrusted — a plugin could set `from: "/etc/shadow"` to exfiltrate sensitive files into the output directory, or `to: "../../evil"` to write files outside the output directory.
 
+**Write containment (issue #1254).** The rule splits on *direction*, not on where the value came from: **a path Alloy reads from may leave the project; a path Alloy writes to may not.** Config-file values were never checked, so `passthrough[N].to` and `build.output` could both place files outside the project entirely while the build reported success.
+
+| Field | Direction | Bound |
+| --- | --- | --- |
+| `passthrough[N].from` | reads | May leave the project — absolute and `../relative` stay supported for cross-project asset sharing (§1h) |
+| `passthrough[N].to` | writes | Must resolve inside the output directory |
+| `build.output` | writes | Must resolve inside the project root |
+| `structure.*` | reads | Unchanged |
+
+**The write half of this rule is source-independent; the read half is not.** A path Alloy writes to is bounded whether the value came from a config file or a plugin — the plugin path already enforced that via `validateOnConfigPath`, and the config-file path now enforces the same thing, so the two stop disagreeing about which writes are legal.
+
+Reads are the opposite, and the distinction is trust, not direction alone. A config file is authored by the person running the build, so `from` pointing outside the project is a deliberate choice about their own machine. A plugin is untrusted code: PLAN.md's existing rule that plugin-sourced `from` rejects absolute paths and traversal **stays exactly as it is**, because a plugin setting `from: "/etc/shadow"` would copy that file into the published output. Nothing in this section relaxes the plugin-side `from` check.
+
+| | Config file | Plugin (`onConfig`) |
+| --- | --- | --- |
+| `from` (reads) | May leave the project (§1h) | Must stay inside — unchanged |
+| `to` (writes) | Must stay inside the output directory | Must stay inside — unchanged |
+| `build.output` (writes) | Must stay inside the project root | Must stay inside — unchanged |
+
+**The bound is computed, not assumed.** `cfg.ProjectRoot` is the directory containing the config file, or `--root` when given. `resolveDir` joins any relative value onto it and returns absolute values unchanged. A value is contained if, after `filepath.Join` and `filepath.Clean`, the result is still under its bound — resolving the path first is what catches `../..` climbing, since the escape only becomes visible after the join collapses.
+
+**Rejected shapes**, each a build error at config validation, before anything is written:
+- `..` climbing above the bound — `to: "../../STOLEN"`, `output: "../../ESCAPED"`.
+- An absolute write path. `build.output: "/var/www"` is rejected outright. An absolute `passthrough[N].to` is rejected rather than silently reinterpreted: today it is joined onto the output directory, so `to: "/srv/assets"` quietly produces `_site/srv/assets/…` — a path the author never asked for.
+- A `to` resolving to the output directory root itself is allowed (`to: "."` means "copy into `_site`"). A `build.output` resolving to the project root is not — and this is the most destructive case in this section, not a tidiness rule. Verified against the built CLI: `build.output: "."` makes the project its own output directory, and because `build.clean` defaults to true the clean **deletes the entire source project** — content, layouts, and the config file itself — leaving only the rendered output behind, with exit 0. Any value that normalizes to the root is rejected, including `.` and `subdir/..`.
+
+**Errors name the field and the offending value**, matching the plugin path's existing shape so config-sourced and plugin-sourced failures read alike:
+
+```text
+validation error: passthrough[0].to: path "../../STOLEN" writes outside the output directory
+validation error: build.output: path "../../ESCAPED" writes outside the project root
+```
+
+**Migration.** A site whose config writes outside the project builds today and will start failing. That is intended: such a build is placing files somewhere the author is unlikely to have meant, and the files it writes there cannot participate in output path conflict detection (§Pre-Build Validation), because nothing else claims paths outside the output directory. Closing this is what lets the claim set be treated as covering every file a build writes.
+
+
 Validation rules for `passthrough[N].from`:
 - Reject absolute paths (e.g., `/etc/shadow`)
 - Reject `..` traversal above project root (e.g., `../../etc`, `..`, `a/../../etc`)

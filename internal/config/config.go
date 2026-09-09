@@ -67,12 +67,12 @@ type DataConfig struct {
 // StructureConfig holds custom directory paths for project structure.
 // All paths are relative to project root. When not specified, defaults apply.
 type StructureConfig struct {
-	Content string `yaml:"content" toml:"content" json:"content"` // default: "content"
-	Layouts string `yaml:"layouts" toml:"layouts" json:"layouts"` // default: "layouts"
-	Assets  string `yaml:"assets" toml:"assets" json:"assets"`    // default: "assets"
-	Static  string `yaml:"static" toml:"static" json:"static"`    // default: "static"
-	Data    string `yaml:"data" toml:"data" json:"data"`          // default: "data"
-	Plugins    string `yaml:"plugins" toml:"plugins" json:"plugins"`       // default: "plugins"
+	Content    string `yaml:"content" toml:"content" json:"content"`          // default: "content"
+	Layouts    string `yaml:"layouts" toml:"layouts" json:"layouts"`          // default: "layouts"
+	Assets     string `yaml:"assets" toml:"assets" json:"assets"`             // default: "assets"
+	Static     string `yaml:"static" toml:"static" json:"static"`             // default: "static"
+	Data       string `yaml:"data" toml:"data" json:"data"`                   // default: "data"
+	Plugins    string `yaml:"plugins" toml:"plugins" json:"plugins"`          // default: "plugins"
 	Components string `yaml:"components" toml:"components" json:"components"` // default: "components"
 }
 
@@ -427,11 +427,11 @@ func Validate(cfg *Config) error {
 		return fallback
 	}
 	baseDirs := map[string]bool{
-		structDir(cfg.Structure.Content, "content"): true,
-		structDir(cfg.Structure.Layouts, "layouts"): true,
-		structDir(cfg.Structure.Data, "data"):       true,
-		structDir(cfg.Structure.Assets, "assets"):   true,
-		structDir(cfg.Structure.Static, "static"):   true,
+		structDir(cfg.Structure.Content, "content"):       true,
+		structDir(cfg.Structure.Layouts, "layouts"):       true,
+		structDir(cfg.Structure.Data, "data"):             true,
+		structDir(cfg.Structure.Assets, "assets"):         true,
+		structDir(cfg.Structure.Static, "static"):         true,
 		structDir(cfg.Structure.Plugins, "plugins"):       true,
 		structDir(cfg.Structure.Components, "components"): true,
 	}
@@ -492,5 +492,84 @@ func Validate(cfg *Config) error {
 		}
 	}
 
+	if err := validateWriteContainment(cfg); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// validateWriteContainment enforces the write containment rule (issue #1254):
+// a path Alloy reads from may leave the project, a path Alloy writes to may
+// not. `build.output` must resolve inside the project root and
+// `passthrough[N].to` inside the output directory, while `passthrough[N].from`
+// is deliberately left alone — it reads, and PLAN.md §1h supports absolute and
+// `../relative` values there for cross-project asset sharing.
+//
+// The plugin path enforces the same bounds on writes via validateOnConfigPath;
+// its messages are prefixed `onConfig:` so a reader can tell which source
+// failed, which is why the two are kept separate rather than shared verbatim.
+func validateWriteContainment(cfg *Config) error {
+	// build.output must land inside the project root, and must not be the root
+	// itself: with build.clean defaulting to true, an output directory equal to
+	// the project root deletes the source project.
+	if cfg.Build.Output != "" {
+		outAbs, rootAbs, ok := resolveUnder(cfg.ProjectRoot, cfg.Build.Output)
+		switch {
+		case !ok:
+			return fmt.Errorf("validation error: build.output: path %q writes outside the project root", cfg.Build.Output)
+		case outAbs == rootAbs:
+			return fmt.Errorf("validation error: build.output: path %q resolves to the project root, which the output clean would delete", cfg.Build.Output)
+		}
+	}
+
+	// passthrough[N].to must land inside the resolved output directory. The
+	// output directory itself is a legal destination — `to: "."` means "copy
+	// into _site".
+	outputDir := resolvePath(cfg.ProjectRoot, cfg.Build.Output)
+	for i, m := range cfg.Passthrough {
+		if m.To == "" {
+			continue
+		}
+		if _, _, ok := resolveUnder(outputDir, m.To); !ok {
+			return fmt.Errorf("validation error: passthrough[%d].to: path %q writes outside the output directory", i, m.To)
+		}
+	}
+
+	return nil
+}
+
+// resolvePath joins a relative value onto base and returns absolute values
+// unchanged, mirroring the pipeline's resolveDir so validation and the build
+// agree on where a path lands.
+func resolvePath(base, dir string) string {
+	if base == "" || filepath.IsAbs(dir) {
+		return filepath.Clean(dir)
+	}
+	return filepath.Clean(filepath.Join(base, dir))
+}
+
+// resolveUnder resolves dir against base and reports whether the result is
+// still inside base. Containment is checked on the resolved path, not the raw
+// string: `css/../../..` only escapes once Join and Clean collapse it, and
+// `subdir/../dist` only proves legal after the same collapse. An absolute dir
+// is reported as outside unless it genuinely lies under base — it is never
+// silently reinterpreted as a path within it.
+func resolveUnder(base, dir string) (resolved, baseAbs string, ok bool) {
+	if base == "" {
+		return "", "", true
+	}
+	baseAbs = filepath.Clean(base)
+	resolved = resolvePath(base, dir)
+	if resolved == baseAbs {
+		return resolved, baseAbs, true
+	}
+	rel, err := filepath.Rel(baseAbs, resolved)
+	if err != nil {
+		return resolved, baseAbs, false
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return resolved, baseAbs, false
+	}
+	return resolved, baseAbs, true
 }
