@@ -598,10 +598,24 @@ var _ = Describe("Server", func() {
 			outputDir := filepath.Join(projectRoot, "_site")
 			Expect(os.MkdirAll(outputDir, 0755)).To(Succeed())
 
+			// A unix socket, not chmod 0000 (issue #1256). Root ignores
+			// permission bits, so under a root test runner — containers,
+			// devcontainers, many CI images — the read succeeds, the 500 path
+			// never executes, and this test fails for the setup rather than a
+			// regression. A socket stats cleanly (so the handler routes it as
+			// a file rather than 404ing) but cannot be opened, which is the
+			// "exists but unreadable" condition this test needs.
+			//
+			// Measured alternatives, as uid 0: chmod 0000 -> 200, directory
+			// -> 404, dangling symlink -> 404, unix socket -> 500. The socket
+			// is the only construct that reaches os.ReadFile in
+			// serveFileWithReload and fails there. Do not "simplify" this back
+			// to chmod.
 			brokenFile := filepath.Join(outputDir, "index.html")
-			Expect(os.WriteFile(brokenFile,
-				[]byte("<html><body>Will break</body></html>"), 0644)).To(Succeed())
-			Expect(os.Chmod(brokenFile, 0000)).To(Succeed())
+			listener, err := net.Listen("unix", brokenFile)
+			Expect(err).NotTo(HaveOccurred(),
+				"the test needs a file that exists but cannot be opened")
+			defer listener.Close()
 
 			cfg := &config.Config{
 				Title:       "Test Site",
@@ -612,16 +626,16 @@ var _ = Describe("Server", func() {
 			Expect(srv.Start(0)).To(Succeed())
 			defer srv.Stop()
 
-			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/", srv.Port()))
-			Expect(err).NotTo(HaveOccurred())
+			resp, getErr := httpClient.Get(fmt.Sprintf("http://localhost:%d/", srv.Port()))
+			Expect(getErr).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
 			Expect(resp.StatusCode).To(Equal(http.StatusInternalServerError),
 				"when an HTML file exists but cannot be read (permission denied, "+
-					"race with deletion), the dev mode handler must return 500 — "+
-					"serveFileWithReload reads HTML via os.ReadFile for script "+
-					"injection, and a read failure must not panic or serve empty "+
-					"content (issue #630)")
+					"a race with deletion, or any other open failure), the dev "+
+					"mode handler must return 500 — serveFileWithReload reads "+
+					"HTML via os.ReadFile for script injection, and a read "+
+					"failure must not panic or serve empty content (issue #630)")
 		})
 	})
 
