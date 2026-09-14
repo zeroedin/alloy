@@ -3891,6 +3891,28 @@ These are guidelines for profiling, not hard limits. If a build exceeds the over
 
 ### Framework: Ginkgo + Gomega + testify mocks
 
+### Tests must be falsifiable in every environment they run in (issue #1256)
+
+A test whose setup cannot produce the condition it asserts is not a test. It either fails for the setup — indistinguishable from a real regression — or passes while covering nothing.
+
+**Do not gate a failure path on filesystem permissions.** `chmod 0000` does not make a file unreadable for uid 0, and the suite runs as root in containers, devcontainers, and many CI images. A test built on it reverses its meaning depending on who runs it: green with no coverage on a normal runner, red for no reason as root.
+
+To make a file that exists but cannot be opened, bind a **unix socket** at the path. It is uid-independent, it `stat`s cleanly — so a handler that stats before reading still routes it as a file rather than 404ing — and opening it fails with `no such device or address`. Measured as uid 0, for a handler asserting 500 on a read failure:
+
+| Construct | Result |
+| --- | --- |
+| `chmod 0000` file | 200 — the read succeeds, path never runs |
+| Directory in place of the file | 404 — routed as a directory |
+| Dangling symlink | 404 — fails at `stat`, before the read |
+| **Unix socket** | **500** — reaches the read and fails there |
+
+Pick the construct that fails at the same operation the real defect would. A dangling symlink fails at `stat` and a socket fails at `open`; for a test covering an open failure, only the socket exercises the intended line.
+
+**A skip is not a substitute.** Guarding a permission-based test with `if os.Geteuid() == 0 { Skip(...) }` turns it green in exactly the environments where it silently provides no coverage. If a permission-flavoured variant is genuinely wanted, it belongs *alongside* a case that always runs, never in place of one.
+
+**A standing known-red test is a defect in its own right.** Two of these were carried for several PRs as "pre-existing, unrelated" — accurate each time, and corrosive: a permanently red pair trains everyone to skim the failure list, which is when a real regression gets waved through.
+
+
 - **Ginkgo**: BDD-style test structure (Describe/Context/It) that mirrors the spec document
 - **Gomega**: Expressive matchers (Expect/To/Equal/ContainSubstring)
 - **testify/mock**: Mock interfaces (SSREngine, TemplateEngine, Node bridge)
