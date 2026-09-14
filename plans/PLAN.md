@@ -3895,7 +3895,9 @@ These are guidelines for profiling, not hard limits. If a build exceeds the over
 
 A test whose setup cannot produce the condition it asserts is not a test. It either fails for the setup — indistinguishable from a real regression — or passes while covering nothing.
 
-**Do not gate a failure path on filesystem permissions.** `chmod 0000` does not make a file unreadable for uid 0, and the suite runs as root in containers, devcontainers, and many CI images. A test built on it reverses its meaning depending on who runs it: green with no coverage on a normal runner, red for no reason as root.
+**Do not gate a failure path on filesystem permissions.** `chmod 0000` does not make a file unreadable for uid 0. Run as a normal user, the read genuinely fails, the failure path executes, and the test passes with real coverage. Run as root — containers, devcontainers, any CI image that does not drop privileges — the read succeeds, so the test fails *and* the path it exists to cover never runs. The same test is load-bearing in one environment and worse than absent in the other, and nothing in the test says which you are getting.
+
+Know where your suite actually runs before relying on this. This repository's CI is `ubuntu-latest` with no `container:` directive, so it executes as the non-root `runner` user and permission-based tests do pass there — which is exactly why two of them sat red for local and container runs without anyone treating it as urgent.
 
 To make a file that exists but cannot be opened, bind a **unix socket** at the path. It is uid-independent, it `stat`s cleanly — so a handler that stats before reading still routes it as a file rather than 404ing — and opening it fails with `no such device or address`. Measured as uid 0, for a handler asserting 500 on a read failure:
 
