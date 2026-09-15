@@ -410,11 +410,42 @@ Key points:
   - Nesting depth: engine-scoped `atomic.Int32` (`goEngine.depth`). Increment on entry, decrement on exit (via defer). Build error at depth > 100 with message containing "too deep" or "nesting" (matches Ruby/Go Liquid's `StackLevelError`). The counter is thread-safe (atomic), but concurrent renders on the same engine instance share it — under heavy concurrent load this could produce false "nesting too deep" errors. Currently latent: the pipeline renders sequentially.
   - Missing include file: build error with clear message.
   - The `include` function is registered in the FuncMap in two stages: `NewGoEngine()` registers an error stub (Go's `html/template` requires all FuncMap entries at parse time), then `SetIncludesDir()` replaces it with the real closure that calls `renderInclude`. Templates parsed before `SetIncludesDir` retain the stub and error on use.
-- **`*ordered.Map` compatibility (issue #458)**: Go templates use reflection — `*ordered.Map` is a struct, not a map or slice, so neither `{{ index }}` nor `{{ range }}` work natively. Converting to `map[string]interface{}` enables property access but loses iteration order; converting to `[]KVPair` enables ordered iteration but breaks key-based lookup. These are mutually exclusive on the same value. Fix: keep `*ordered.Map` as the context value and register FuncMap helpers in the Go template engine:
+- **`*ordered.Map` compatibility (issue #458)** — *superseded in part by issue #1237, below.* Go templates use reflection — `*ordered.Map` is a struct, not a map or slice, so neither `{{ index }}` nor `{{ range }}` work natively. Converting to `map[string]interface{}` enables property access but loses iteration order; converting to `[]KVPair` enables ordered iteration but breaks key-based lookup. These are mutually exclusive on the same value. Fix: keep `*ordered.Map` as the context value and register FuncMap helpers in the Go template engine:
   - **`oget`** (`{{ oget .site.data.tokens "white" }}`): calls `m.Get(key)` on `*ordered.Map`, returns the value. Falls back to `index` for regular maps.
   - **`orange`** (`{{ range orange .site.data.tokens }}`): calls `m.Entries()` on `*ordered.Map`, returns `[]KVPair` for ordered iteration. Each entry has `.Key` and `.Value`.
   
   Register both in `goEngine.AddFilter` or directly in the FuncMap during engine creation. The `*ordered.Map` in `siteData` is never mutated. Liquid uses it directly via `Each` and `LiquidMethodMissing`.
+- **Ordered-map dot notation (issue #1237)**: Contract in PLAN.md → "Ordered Data in Go Templates (issue #1237)". Convert every `*ordered.Map` reaching the Go engine's render context to `map[string]interface{}` so `{{ .site.data.pkg.version }}` resolves natively. This replaces the "keep `*ordered.Map` as the context value" decision recorded for #458 above; `oget` and `orange` remain registered and must keep working.
+
+  **Where the conversion goes.** `goTemplate.Render` already deep-walks the context through `markHTMLSafe` to mark `content`/`summary` as `gohtml.HTML`, building new maps as it goes. Fold conversion into that same walk rather than adding a second pass — one traversal, one allocation set. Two gaps in the existing walk must be closed:
+
+  - `markHTMLSafe` recurses into `map[string]interface{}` but **not into `[]interface{}`**. Arrays of objects are the commonest JSON shape and their elements are `*ordered.Map`; without slice recursion `{{ range .site.data.items }}{{ .label }}{{ end }}` still fails. Verified against the built CLI: `can't evaluate field label in type interface {}`.
+  - `*ordered.Map` currently falls through `markHTMLSafe`'s `default:` branch untouched. Add a case that converts it. `ordered.Map.ToGoMap()` is the right tool and needs no change: its helper `toGoValue` already recurses through both nested `*Map` values and `[]interface{}`, so one call converts an arbitrarily deep subtree.
+
+    One ordering detail to get right: `ToGoMap` converts but does not mark `content`/`summary` as `gohtml.HTML`, so a subtree converted by `ToGoMap` alone would skip HTML marking. Convert first, then let the existing walk descend into the converted result — do not return `ToGoMap`'s output directly from the new case.
+
+  `renderInclude` calls `markHTMLSafe` again on a `map[string]interface{}` dot. That is a harmless second pass over already-converted values — do not "optimize" it away without checking the include-inside-`range` case, where dot is an element rather than the root context.
+
+  **Do not hoist the conversion earlier.** Not into `data.LoadFileAny`, not into `PipelineState`, not into `combinedSiteData`. Liquid reads `*ordered.Map` directly through `LiquidMethodMissing`/`Each` and would silently lose insertion-order iteration. A regression test guards this (`Liquid still receives *ordered.Map`).
+
+  **`orange` must sort.** Its `map[string]interface{}` branch currently does `for k, v := range gm`, which Go randomizes. Before this change that only affected YAML and TOML data; after it, every input to `orange` is a plain map, so the nondeterminism would become universal. Sort the keys before building `[]ordered.KVPair`. Measured on main — three builds of unchanged input produced three different orders (issue #1262). The `*ordered.Map` branch becomes dead for the Go engine but must stay: `orange` is reachable from tests and from any future caller holding an unconverted value.
+
+  **`oget` needs no change.** Its `map[string]interface{}` branch already covers converted values. Confirm rather than assume — a named map type would *not* satisfy that type assertion, which is one reason the conversion target is plain `map[string]interface{}` and not a named type.
+
+  **Performance.** `markHTMLSafe` already deep-copies the whole context per page, so conversion adds constant factor, not a new order of growth. If profiling shows it matters, `internal/pipeline/context.go` has the precedent to copy: `needsOrderedMapConversion` walks first and returns the input unchanged when there is nothing to convert, avoiding allocation for the common case. Do not cache converted site data on the engine without solving invalidation — `PipelineState.SiteData` is reloaded mid-session on data file changes in dev mode (PLAN.md §2, "Data file changes and PipelineState").
+
+  **Dead ends, already explored — do not retry:**
+  - *A type that supports both dot notation and insertion order does not exist.* `text/template`'s `evalField` resolves `.foo` as method → struct field → map index, with no hook; `walkRange` sorts map keys through `fmtsort`. Dot notation therefore requires a map kind, and a Go map has nowhere to store order.
+  - *A named map type with an order method* (`type OMap map[string]any` with `Pairs() iter.Seq2[string, any]`) gives ordered `range` in Go 1.24+, but the method can only compute order from the map it is declared on — which has already lost it. It also makes any data key matching the method name silently resolve to the method: verified rendering `0x583260` into the page with no error.
+  - *`reflect.StructOf` with key-named fields* panics on lowercase keys (`field "version" is unexported but missing PkgPath`), and exported fields are case-sensitive, so `{{ .v.version }}` cannot reach a `Version` field.
+  - *A slice of `KVPair`* iterates in order but has no dot notation (`can't evaluate field zebra`).
+
+  **An existing test encodes the superseded promise.** `internal/pipeline/render_test.go` → "gotemplate iterates JSON data in insertion order via orange" (issue #458) asserted file order. It has been rewritten in this spec branch to assert sorted order and is red until the sort lands; its failure message names both issues. No other test asserted the old ordering — verified by running the full suite against a local prototype of this change, where it was the only failure attributable to the change.
+
+  **Documentation to update alongside the implementation** (not changed in the spec branch):
+  - `docs/content/content/data-files.md` — the "ordered-go" tab states `orange` yields "insertion order". For Go templates it now yields sorted key order. The Liquid tab is still correct.
+  - `docs/content/templates/layouts.md` — same `orange` claim in the ordered-map examples.
+  - Both pages should gain the guidance that a sequence belongs in a list rather than a map, with the list form shown — this is the steering PLAN.md calls for, and it is what keeps authors out of the divergence in the first place.
 
 ### 4B: `internal/fileutil` — 3 tests (issue #782)
 **File**: `internal/fileutil/copy.go`
