@@ -2,6 +2,7 @@ package static_test
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 
@@ -109,16 +110,23 @@ var _ = Describe("Static file handling", func() {
 		})
 
 		It("first error cancels remaining work", func() {
-			// Remove read permission on a file mid-tree to trigger an error
-			badFile := filepath.Join(srcDir, "dir-0", "file-0.txt")
-			err := os.Chmod(badFile, 0000)
-			Expect(err).NotTo(HaveOccurred())
+			// A unix socket mid-tree, not chmod 0000 (issue #1256). Root
+			// ignores permission bits, so under a root test runner the copy
+			// succeeds, CopyStatic returns nil, and this test fails for the
+			// setup rather than a regression.
+			//
+			// A socket is the right substitute because it fails at the same
+			// point chmod did — opening the file. A dangling symlink also
+			// produces an error here, but fails earlier, at stat, so it would
+			// cover a different line than this test was written for.
+			badFile := filepath.Join(srcDir, "dir-0", "unreadable.sock")
+			listener, err := net.Listen("unix", badFile)
+			Expect(err).NotTo(HaveOccurred(),
+				"the test needs a file that exists but cannot be opened")
+			defer listener.Close()
 
 			err = static.CopyStatic(srcDir, dstDir)
 			Expect(err).To(HaveOccurred(), "copy must propagate file errors")
-
-			// Restore permission for cleanup
-			_ = os.Chmod(badFile, 0644)
 		})
 	})
 
