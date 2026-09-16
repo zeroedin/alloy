@@ -424,6 +424,8 @@ Key points:
 
     One ordering detail to get right: `ToGoMap` converts but does not mark `content`/`summary` as `gohtml.HTML`, so a subtree converted by `ToGoMap` alone would skip HTML marking. Convert first, then let the existing walk descend into the converted result — do not return `ToGoMap`'s output directly from the new case.
 
+  **Traverse exactly three container shapes — `map[string]interface{}`, `[]interface{}`, `*ordered.Map` — and no others.** Do not add reflection over arbitrary slice and map kinds: the render context does contain typed containers (`[]map[string]interface{}` for translations, TOC entries, and taxonomy terms) but none can hold an ordered map, and `markHTMLSafe` already deep-copies the whole context on every page render, so reflection there is a per-page cost for a case that cannot occur. The reasoning and its verification are in PLAN.md → "Which containers the walk must traverse"; `internal/ordered/output_shapes_test.go` pins the producers' output alphabet so the narrowing fails loudly if a future producer breaks it. If that guard ever goes red, widen the walk — do not extend the list by hand.
+
   `renderInclude` calls `markHTMLSafe` again on a `map[string]interface{}` dot. That is a harmless second pass over already-converted values — do not "optimize" it away without checking the include-inside-`range` case, where dot is an element rather than the root context.
 
   **Do not hoist the conversion earlier.** Not into `data.LoadFileAny`, not into `PipelineState`, not into `combinedSiteData`. Liquid reads `*ordered.Map` directly through `LiquidMethodMissing`/`Each` and would silently lose insertion-order iteration. A regression test guards this (`Liquid still receives *ordered.Map`).

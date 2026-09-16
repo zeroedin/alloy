@@ -320,6 +320,33 @@ objects is the commonest JSON shape, and its elements are ordered maps too:
 {{ .site.data.deep.nested.leaf }}                     <!-- any depth -->
 ```
 
+**Which containers the walk must traverse.** `map[string]interface{}`,
+`[]interface{}`, and `*ordered.Map` — and no others. This is not an arbitrary
+shortlist: it is the complete output alphabet of the two functions that produce
+ordered maps. `ordered.UnmarshalJSONValue` returns `*Map` for objects,
+`[]interface{}` for arrays, and plain scalars; `ordered.RewrapValue` recurses
+through exactly `*Map`, `map[string]interface{}`, and `[]interface{}` and returns
+everything else untouched. Neither can emit a typed container, so an
+`*ordered.Map` is never reachable through one.
+
+Typed containers do exist in the render context — `[]map[string]interface{}` for
+page translations, TOC entries, and taxonomy terms — and the walk deliberately
+does not descend into them. Verified that none can hold an ordered map:
+translations and TOC entries carry only strings and ints, and the one payload
+that could (page front matter, reachable under taxonomy terms) is flattened by
+`convertedFrontMatter` when hook results are applied. Confirmed against a real
+Node-runtime plugin mutating front matter — `{{ .page.injected.zulu }}` resolves
+today, on main, without this change, because the value reaching the renderer is
+already a plain map.
+
+**This narrowing is load-bearing and has a guard.** It holds only while the
+ordered-map producers emit nothing but those three shapes; a producer that
+returned, say, `[]map[string]interface{}` would put ordered maps somewhere the
+walk never looks, and the failure would be silent. `internal/ordered` carries a
+test pinning the output alphabet of both functions. If that test is ever changed
+rather than fixed, this section must be revisited — widen the walk (reflection
+over slice and map kinds) rather than quietly extend the list.
+
 **Conversion is engine-local.** It happens inside the Go engine at render time
 and must not be hoisted into the data loader, `PipelineState`, or the pipeline's
 context builders. Liquid consumes `*ordered.Map` directly through
@@ -334,10 +361,21 @@ as specified in §7.
 Iteration order is the cost of this decision and differs by engine. This is a
 deliberate divergence, not an oversight:
 
-| Engine | Map data | List data |
-|---|---|---|
-| Liquid | insertion order | file order |
-| Go templates | **sorted by key** | file order |
+| Engine | Ordered-map data (JSON, plugin returns) | Plain-map data (YAML, TOML) | List data |
+|---|---|---|---|
+| Liquid | insertion order | sorted by key | file order |
+| Go templates | **sorted by key** | sorted by key | file order |
+
+The split by data shape matters: only `*ordered.Map` carries insertion order, and
+only JSON and plugin returns produce one. YAML and TOML decode to ordinary Go
+maps whose order was discarded at load, so **no engine can show file order for
+them today** — Liquid sorts them just as Go templates will (measured across
+repeated builds of unchanged input: deterministic alphabetical in both). Issue
+#1262 covers that gap; if it lands, YAML and TOML move into the first column and
+this table's Liquid row becomes true of them too.
+
+After this change Go templates sort every map shape, so the engines agree
+everywhere except ordered-map data, where Liquid keeps insertion order.
 
 Go's `text/template` sorts map keys on every `range`, with no extension point
 (`exec.go` resolves `.field` as method → struct field → map index, and
