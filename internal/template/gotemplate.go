@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,9 +42,19 @@ func NewGoEngine() TemplateEngine {
 					return om.Entries()
 				}
 				if gm, ok := m.(map[string]interface{}); ok {
+					// Sorted, not ranged: Go randomizes map iteration, so
+					// ranging here produced a different order on every build.
+					// Every ordered map now reaches templates as a plain map
+					// (issue #1237), so without this the nondeterminism would
+					// apply to all data rather than just YAML and TOML.
+					keys := make([]string, 0, len(gm))
+					for k := range gm {
+						keys = append(keys, k)
+					}
+					sort.Strings(keys)
 					pairs := make([]ordered.KVPair, 0, len(gm))
-					for k, v := range gm {
-						pairs = append(pairs, ordered.KVPair{Key: k, Value: v})
+					for _, k := range keys {
+						pairs = append(pairs, ordered.KVPair{Key: k, Value: gm[k]})
 					}
 					return pairs
 				}
@@ -227,8 +238,48 @@ func markHTMLSafe(ctx map[string]interface{}) map[string]interface{} {
 			}
 		case map[string]interface{}:
 			out[k] = markHTMLSafe(val)
+		case []interface{}:
+			out[k] = markHTMLSafeSlice(val)
+		case *ordered.Map:
+			// Go templates cannot traverse an *ordered.Map: text/template's
+			// evalField resolves .foo as method → struct field → map index,
+			// with no extension point, so dot notation needs a real map kind
+			// (issue #1237). Converting costs insertion order, which a Go map
+			// has nowhere to store — iteration becomes sorted instead.
+			//
+			// ToGoMap already recurses through nested maps and slices, but it
+			// does not mark content/summary as HTML, so convert first and let
+			// this walk descend into the result.
+			out[k] = markHTMLSafe(val.ToGoMap())
 		default:
 			out[k] = v
+		}
+	}
+	return out
+}
+
+// markHTMLSafeSlice walks a slice so ordered maps nested in arrays are
+// converted too. JSON arrays of objects are the common case, and a maps-only
+// walk would leave those elements untraversable by dot notation.
+//
+// Only map[string]interface{}, []interface{} and *ordered.Map are traversed:
+// those are the complete output alphabet of ordered.UnmarshalJSONValue and
+// ordered.RewrapValue, so an *ordered.Map is never reachable through a typed
+// container. internal/ordered/output_shapes_test.go guards that. Reflection
+// over arbitrary kinds is deliberately not used — this walk deep-copies the
+// whole context on every page render, and it would buy nothing reachable.
+func markHTMLSafeSlice(in []interface{}) []interface{} {
+	out := make([]interface{}, len(in))
+	for i, v := range in {
+		switch val := v.(type) {
+		case map[string]interface{}:
+			out[i] = markHTMLSafe(val)
+		case []interface{}:
+			out[i] = markHTMLSafeSlice(val)
+		case *ordered.Map:
+			out[i] = markHTMLSafe(val.ToGoMap())
+		default:
+			out[i] = v
 		}
 	}
 	return out

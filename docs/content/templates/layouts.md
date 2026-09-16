@@ -273,14 +273,28 @@ With the Go template engine (`engine: "gotemplate"` or `"go"`), layouts are `.ht
 
 Layout chaining works identically in both engines -- a `layout:` directive in the layout's front matter names the parent (see [Layout chaining](#layout-chaining)). Cross-file includes use the `{{ include }}` function (see [Partials and includes](#partials-and-includes)). `{% render %}` and `{% inline %}` are Liquid-only tags.
 
-Two helper functions are registered for working with ordered map data (JSON data files preserve key order via an ordered map type that Go's index syntax cannot address):
+Data from any file format is reachable with ordinary dot notation and `range`, at any depth and through arrays:
 
 ```html
-{{ oget .site.data.config "title" }}          <!-- ordered-map lookup -->
-{{ range orange .site.data.nav }}              <!-- ordered-map iteration -->
-  <a href="{{ oget .Value "url" }}">{{ .Key }}</a>
+{{ .site.data.config.title }}
+{{ .site.data.tokens.color.brand }}
+{{ range $key, $value := .site.data.nav }}
+  <a href="{{ $value.url }}">{{ $key }}</a>
 {{ end }}
 ```
+
+Map keys come out **sorted alphabetically** in Go templates, on every build. If you need a particular order, model the data as a list — it iterates in file order in both engines. See [Key order](/content/data-files/#key-order).
+
+Two helper functions remain for cases dot notation cannot cover:
+
+```html
+{{ oget .site.data.config "title" }}           <!-- same as .site.data.config.title -->
+{{ range orange .site.data.nav }}              <!-- Key/Value pairs, sorted -->
+  <a href="{{ .Value.url }}">{{ .Key }}</a>
+{{ end }}
+```
+
+For a key that is not a valid template identifier — one containing a hyphen, say — use `index`: `{{ index .site.data.tokens "color-brand" }}`
 
 ## Content-relative file inlining
 
