@@ -1,6 +1,7 @@
 package data_test
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -8,6 +9,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/zeroedin/alloy/internal/data"
 	"github.com/zeroedin/alloy/internal/ordered"
@@ -80,6 +83,25 @@ var _ = Describe("Data file key order (issue #1262)", func() {
 			Expect(om.Keys()).To(Equal(fileOrder),
 				"TOML keys must reach consumers in file order, via "+
 					"MetaData.Keys() rather than the plain decode")
+		})
+
+		It("preserves TOML key order inside nested tables", func() {
+			// Ordering only the root passes the test above. MetaData.Keys()
+			// reports every level as dotted paths, so each level has to be
+			// reassembled against the paths for that level.
+			om := orderedMap(load("order-nested.toml"))
+			Expect(om.Keys()).To(Equal([]string{"zebra", "apple", "srv"}),
+				"root keys must be in file order (sorted would be apple, srv, zebra)")
+
+			srv := orderedMap(om.Get("srv"))
+			Expect(srv.Keys()).To(Equal([]string{"port", "host", "auth", "tls"}),
+				"a nested [table] must be ordered too — sorted would be "+
+					"auth, host, port, tls")
+
+			tls := orderedMap(srv.Get("tls"))
+			Expect(tls.Keys()).To(Equal([]string{"on", "ca"}),
+				"a [table.subtable] must be ordered at its own level — "+
+					"sorted would be ca, on")
 		})
 
 		It("preserves JSON key order, unchanged (issue #453)", func() {
@@ -165,9 +187,14 @@ var _ = Describe("Data file key order (issue #1262)", func() {
 						walk(kv.Value, path+"."+kv.Key)
 					}
 				case map[string]interface{}:
-					for k, item := range val {
-						walk(item, path+"."+k)
-					}
+					// Traversable by the Go engine, but it has already lost
+					// author order — Liquid and plugins would see sorted keys.
+					// After this change no loaded object should be a plain map.
+					Fail("at " + path + ": loader returned a plain " +
+						"map[string]interface{}. It is traversable, but its key " +
+						"order is gone, so Liquid and plugins still see sorted " +
+						"keys. Every object a data file produces must be an " +
+						"*ordered.Map (issue #1262)")
 				case []interface{}:
 					for _, item := range val {
 						walk(item, path+"[]")
@@ -186,7 +213,8 @@ var _ = Describe("Data file key order (issue #1262)", func() {
 			}
 			for _, f := range []string{
 				"order-yaml.yaml", "order-toml.toml", "order-nested.yaml",
-				"order-tables.toml", "order-scalars.yaml",
+				"order-nested.toml", "order-tables.toml", "order-scalars.yaml",
+				"order-merge.yaml",
 			} {
 				walk(load(f), f)
 			}
@@ -195,6 +223,57 @@ var _ = Describe("Data file key order (issue #1262)", func() {
 
 	// ── GREEN GUARDS: things this must not disturb ────────────────────
 
+	Context("YAML semantics the existing decoder provides", func() {
+		// A yaml.Node walk bypasses yaml.Unmarshal entirely, so every
+		// semantic that decoder applied has to be reapplied by hand.
+		// Both of these pass today and must keep passing.
+
+		It("still rejects duplicate mapping keys", func() {
+			// yaml.Unmarshal errors on a repeated key; decoding into a
+			// yaml.Node does not. A naive Content loop would silently accept
+			// the file and let the last value win, turning a fatal malformed
+			// file into a silent one. Verified against the built CLI on main:
+			//   Error: ... parsing YAML .../dup.yaml: yaml: unmarshal errors:
+			//     line 3: mapping key "a" already defined at line 1
+			_, err := data.LoadFileAny(filepath.Join(keyOrderDir(), "order-duplicate.yaml"))
+			Expect(err).To(HaveOccurred(),
+				"a duplicate mapping key must stay a fatal parse error — "+
+					"PLAN.md requires malformed data files to fail the build "+
+					"(issue #982), and a yaml.Node walk does not enforce this "+
+					"on its own")
+			Expect(err.Error()).To(ContainSubstring("already defined"),
+				"the error must still name the duplicate, so the author can "+
+					"find it; got: %v", err)
+		})
+
+		It("still resolves merge keys and aliases", func() {
+			// yaml.Unmarshal expands "<<: *base" into the parent mapping.
+			// A naive node walk leaves a literal "<<" key holding the merged
+			// map, and the merged-in keys never appear. Verified on main:
+			//   DERIVED: x=1 y=99
+			// Asserted through LoadFile, which returns a plain map both
+			// before and after this change, so this establishes a real
+			// baseline rather than only describing the post-change world.
+			result, err := data.LoadFile(filepath.Join(keyOrderDir(), "order-merge.yaml"))
+			Expect(err).NotTo(HaveOccurred())
+
+			derived, ok := result["derived"].(map[string]interface{})
+			Expect(ok).To(BeTrue(), "derived must be a map, got %T", result["derived"])
+
+			Expect(derived).NotTo(HaveKey("<<"),
+				"the merge key must be resolved, not carried through as a "+
+					"literal \"<<\" key — a yaml.Node walk does not expand it")
+			Expect(derived["x"]).To(Equal(1),
+				"merged-in keys must be present — x comes from the anchor and "+
+					"disappears entirely if << is left unresolved")
+			Expect(derived["y"]).To(Equal(99),
+				"a local key must override the merged value")
+
+			Expect(result["scalar_ref"]).To(Equal("hello"),
+				"a scalar alias must resolve to its anchor's value")
+		})
+	})
+
 	Context("Scalar types are unchanged", func() {
 		It("keeps every scalar type identical to the plain decode", func() {
 			// Date fidelity is load-bearing: page sorting and date filters
@@ -202,11 +281,29 @@ var _ = Describe("Data file key order (issue #1262)", func() {
 			// dates and numbers and break them silently.
 			om := orderedMap(load("order-scalars.yaml"))
 
-			Expect(om.Get("date")).To(BeAssignableToTypeOf(time.Time{}),
-				"a bare YAML date must stay time.Time, not become a string — "+
-					"sort and date filters depend on it")
-			Expect(om.Get("stamp")).To(BeAssignableToTypeOf(time.Time{}),
-				"an RFC3339 timestamp must stay time.Time")
+			// Compare against the values the existing decoder produces, not
+			// just the type: a decoder could return a zero or shifted
+			// timestamp and still be a time.Time.
+			var viaUnmarshal map[string]interface{}
+			raw, err := os.ReadFile(filepath.Join(keyOrderDir(), "order-scalars.yaml"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(yaml.Unmarshal(raw, &viaUnmarshal)).To(Succeed())
+
+			for _, key := range []string{"date", "stamp"} {
+				want, ok := viaUnmarshal[key].(time.Time)
+				Expect(ok).To(BeTrue(),
+					"fixture sanity: %s must decode to time.Time via yaml.Unmarshal", key)
+				got, ok := om.Get(key).(time.Time)
+				Expect(ok).To(BeTrue(),
+					"%s must stay time.Time, not become a string — sort and "+
+						"date filters depend on it; got %T", key, om.Get(key))
+				Expect(got.Equal(want)).To(BeTrue(),
+					"%s must equal the value the existing decoder produces: "+
+						"want %v, got %v", key, want, got)
+				Expect(got.Location().String()).To(Equal(want.Location().String()),
+					"%s must keep the same location as the existing decoder — "+
+						"a shifted zone changes rendered dates", key)
+			}
 			Expect(om.Get("int")).To(Equal(42),
 				"integers must stay int, not string or float64")
 			Expect(om.Get("float")).To(Equal(1.5))

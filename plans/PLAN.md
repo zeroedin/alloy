@@ -351,6 +351,28 @@ declared under `data.files`. It deliberately does **not** extend to:
 every mapping level rather than calling `Decode` on a mapping node (which
 produces a plain map and loses the order again at that level).
 
+**A node walk bypasses `yaml.Unmarshal`, so every semantic that decoder applied
+must be reapplied.** Two are load-bearing and neither is free:
+
+- **Duplicate mapping keys stay a fatal error.** `yaml.Unmarshal` rejects them;
+  decoding into a `yaml.Node` does not, and a plain `Content` loop silently lets
+  the last value win. Verified against the built CLI on `d9c7cfe`:
+
+  ```
+  Error: ... parsing YAML .../dup.yaml: yaml: unmarshal errors:
+    line 3: mapping key "a" already defined at line 1
+  ```
+
+  Losing that check would turn a malformed file into a silently-accepted one,
+  contradicting "Malformed data files are build errors (issue #982)". The error
+  must still name the duplicate key so the author can find it.
+
+- **Merge keys and aliases stay resolved.** `yaml.Unmarshal` expands `<<: *base`
+  into the parent mapping; a node walk leaves a literal `<<` key holding the
+  merged map, and the merged-in keys never appear at all. Verified on `d9c7cfe`,
+  where `derived` with `<<: *base` and a local override renders `x=1 y=99`.
+  Alias nodes must be followed for scalars and collections alike.
+
 Scalar types must be identical to what `yaml.Unmarshal` produces today. Verified
 across the full scalar range — `time.Time` for both `2026-04-10` and
 `2026-04-10T14:30:00Z`, `int`, `float64`, `bool`, `nil`, and quoted vs bare
