@@ -73,7 +73,8 @@ var _ = Describe("Data Loader", func() {
 
 		// ── JSON key order preservation (issue #453) ────────────────
 		// JSON data files must return *ordered.Map to preserve key
-		// insertion order. Only JSON — YAML/TOML use map[string]interface{}.
+		// insertion order. As of issue #1262 YAML and TOML do the same —
+		// order preservation is a property of data files, not of JSON.
 
 		It("JSON LoadFileAny returns *ordered.Map preserving key order (issue #453)", func() {
 			path := filepath.Join(testdataDir(), "ordered-keys.json")
@@ -175,10 +176,15 @@ var _ = Describe("Data Loader", func() {
 			// nav/main.yaml → result["nav"]["main"]
 			Expect(navMap).To(HaveKey("main"),
 				"nav/main.yaml must appear as result[\"nav\"][\"main\"]")
-			mainData, ok := navMap["main"].(map[string]interface{})
+			// YAML file contents are *ordered.Map as of issue #1262 — the
+			// enclosing namespace map stays map[string]interface{} because
+			// LoadDirectory builds it, not a decoder.
+			mainData, ok := navMap["main"].(*ordered.Map)
 			Expect(ok).To(BeTrue(),
-				"nav/main.yaml parsed content must be a map")
-			Expect(mainData).To(HaveKey("items"),
+				"nav/main.yaml parsed content must be an *ordered.Map — data "+
+					"files preserve author key order regardless of format "+
+					"(issue #1262); got %T", navMap["main"])
+			Expect(mainData.Has("items")).To(BeTrue(),
 				"nav/main.yaml content must be accessible through the nested namespace")
 
 			// nav/footer.json → result["nav"]["footer"]
@@ -225,10 +231,12 @@ var _ = Describe("Data Loader", func() {
 
 			Expect(v2Map).To(HaveKey("endpoints"),
 				"endpoints.toml must appear within the deeply nested namespace")
-			endpointsData, ok := v2Map["endpoints"].(map[string]interface{})
+			endpointsData, ok := v2Map["endpoints"].(*ordered.Map)
 			Expect(ok).To(BeTrue(),
-				"endpoints.toml parsed content must be a map (TOML)")
-			Expect(endpointsData).To(HaveKey("users"),
+				"endpoints.toml parsed content must be an *ordered.Map — TOML "+
+					"preserves author key order as of issue #1262; got %T",
+				v2Map["endpoints"])
+			Expect(endpointsData.Has("users")).To(BeTrue(),
 				"TOML content within deeply nested subdirectory must be fully parsed and accessible")
 		})
 
@@ -262,13 +270,14 @@ var _ = Describe("Data Loader", func() {
 			Expect(result).To(HaveKey("nav"),
 				"nav.yaml must produce the \"nav\" key even when an empty nav/ "+
 					"directory coexists — the empty directory is a no-op")
-			navData, ok := result["nav"].(map[string]interface{})
+			navData, ok := result["nav"].(*ordered.Map)
 			Expect(ok).To(BeTrue(),
-				"nav.yaml content must be a map, not a nested directory namespace")
-			Expect(navData).To(HaveKey("items"),
+				"nav.yaml content must be an *ordered.Map file value, not a "+
+					"nested directory namespace (issue #1262); got %T", result["nav"])
+			Expect(navData.Has("items")).To(BeTrue(),
 				"nav.yaml parsed content must be accessible — the file was loaded, "+
 					"not skipped or overwritten by the empty directory")
-			items, ok := navData["items"].([]interface{})
+			items, ok := navData.Get("items").([]interface{})
 			Expect(ok).To(BeTrue(),
 				"items field must be a slice")
 			Expect(items).To(HaveLen(3),

@@ -291,6 +291,132 @@ External data files are loaded alongside `data/` directory files during the data
 
 External file not found is a build error — not a warning, not silently skipped. The config explicitly declares the file; if it doesn't exist, the build fails.
 
+#### Data files preserve author key order (issue #1262)
+
+**A data file's keys reach templates and plugins in the order the author wrote
+them, whatever the file format.** Format is a serialization detail; it must not
+change the meaning of the data. Today only JSON preserves order, so renaming
+`nav.json` to `nav.yaml` silently reorders a nav menu — byte-identical content,
+different output.
+
+Measured on `d9c7cfe`, one file saved three ways, keys written `zebra, apple,
+middle`:
+
+| Format | Go templates | Liquid |
+|---|---|---|
+| YAML | sorted | sorted |
+| TOML | sorted | sorted |
+| JSON | sorted | **file order** |
+
+Liquid is where the split shows, because it consumes `*ordered.Map` directly.
+Go templates sort every map shape (issue #1237) and are unaffected either way.
+Plugins see the same split — `alloy.data` is JSON-serialized from Go, and
+`*ordered.Map` has a `MarshalJSON` that preserves order while `encoding/json`
+sorts plain map keys:
+
+```
+file order for both:   zebra apple middle
+plugin sees   YAML: apple middle zebra      JSON: zebra apple middle
+```
+
+**Scope: data files only.** The rule applies to every file loaded through
+`data.LoadFileAny` — the `data/` directory at any depth, and external files
+declared under `data.files`. It deliberately does **not** extend to:
+
+- **`_data.yaml` cascade files.** `cascade.DeepMerge` and
+  `cascade.PageContext.Get` type-assert `map[string]interface{}` on both sides of
+  a merge. An `*ordered.Map` fails that assertion and the merge silently degrades
+  from "deep-merge nested keys" to "overlay replaces base", dropping keys with
+  no error. Measured:
+
+  ```
+  plain  base + overlay  ->  map[cfg:map[a:1 b:99]]   ← "a" survives
+  ordered base           ->  map[cfg:map[b:99]]       ← "a" silently dropped
+  ```
+
+  The cascade is out of scope *because* of this, not by oversight. Extending
+  order preservation to `_data.yaml` requires teaching both functions about
+  `*ordered.Map` first; doing it in either order but this one loses data.
+
+- **Front matter.** `content.ParseFrontMatter` dispatches to its own per-format
+  parsers (`parseYAMLFrontMatter`, `parseTOMLFrontMatter`, `parseJSONFrontMatter`),
+  none of which share this loader — so none is touched by this change, JSON front
+  matter included. Hook results are flattened by `convertedFrontMatter` before
+  rendering, so ordered front matter would not survive to a template anyway, and
+  page metadata is addressed by name rather than iterated in authored order.
+
+#### Per-format requirements
+
+**YAML** — decode through the `yaml.Node` API, building an `*ordered.Map` at
+every mapping level rather than calling `Decode` on a mapping node (which
+produces a plain map and loses the order again at that level).
+
+Scalar types must be identical to what `yaml.Unmarshal` produces today. Verified
+across the full scalar range — `time.Time` for both `2026-04-10` and
+`2026-04-10T14:30:00Z`, `int`, `float64`, `bool`, `nil`, and quoted vs bare
+strings all decode identically through both paths. Date fidelity is load-bearing:
+page sorting and `date` filters depend on `time.Time`, and a silent demotion to
+`string` would break them.
+
+**TOML** — `MetaData.Keys()` reports document order, but as a flat list of dotted
+paths for the whole document, with **array-of-tables elements indistinguishable**:
+
+```
+items
+items.name
+items          ← second [[items]], same key, no index
+items.name
+```
+
+Order within an array-of-tables element is therefore not recoverable from
+`Keys()` alone and must come from the element's own decode.
+
+**TOML array-of-tables must be normalized to `[]interface{}`.** `toml.Decode`
+returns them as a typed `[]map[string]interface{}`, which is precisely the
+container shape the Go engine's converter does not traverse (§ "Which containers
+the walk must traverse", issue #1237). Leaving it typed while its elements become
+`*ordered.Map` would break a feature that works today — verified on `d9c7cfe`:
+
+```
+{{ range .site.data.nav.items }}{{ .name }};{{ end }}   →  first;second;
+```
+
+That output must be unchanged after this issue. Without normalization it becomes
+`can't evaluate field name in type interface {}`.
+
+**CSV** is unchanged. `LoadCSV` returns `[]map[string]string`: row order is
+already preserved, and column order is not represented at all. Preserving column
+order would mean changing the row type, which is a larger change with no
+demonstrated demand — out of scope, and stated here so the omission is a decision
+rather than an oversight.
+
+#### Output shapes
+
+The loaders must emit only `*ordered.Map`, `[]interface{}`, and scalars — the
+same alphabet already required of `ordered.UnmarshalJSONValue` and
+`ordered.RewrapValue`, for the same reason: the Go template engine's converter
+traverses exactly those three shapes, so anything else hides ordered maps from
+it. `internal/ordered/output_shapes_test.go` pins that alphabet for the JSON
+producers; `internal/data/key_order_test.go` pins it for the loaders, where the
+YAML and TOML producers live. The TOML array-of-tables case is exactly what it
+catches — the guard is red on today's code for that reason, which is harmless
+now (the elements are plain maps) and would not be after this change.
+
+#### What does not change
+
+- **Go template output.** Go templates sort every map shape, so their rendering
+  is byte-identical before and after. Only Liquid and plugins see a difference.
+- **Dot notation** in either engine — `{{ site.data.pkg.version }}` and
+  `{{ .site.data.pkg.version }}` keep working; ordered maps are traversable in
+  Go templates as of issue #1237, which is what makes this change safe to land.
+- **Error handling.** Malformed data files remain fatal, stem collisions remain
+  fatal, and a missing external file remains fatal (§ "All data directory errors
+  are fatal").
+- **`LoadFile`**, which returns `map[string]interface{}` for callers that want a
+  plain map, keeps that signature and keeps flattening via `ToGoMap`.
+
+---
+
 ### Ordered Data in Go Templates (issue #1237)
 
 Some structured data reaches templates as `*ordered.Map` — a map that remembers

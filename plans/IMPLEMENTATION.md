@@ -69,6 +69,39 @@ Used by `LoadFile` and `LoadExternalFiles` for `.json` files only. Front matter,
 - `LoadDirectory`: Recursively walk dir and subdirectories, `LoadFile` each, key by filename without extension. **Subdirectories create nested namespace maps (issue #983)**: when an entry is a directory, recurse into it; the directory name becomes a key whose value is a `map[string]interface{}` containing the subdirectory's entries. Example: `data/nav/main.yaml` → `result["nav"]["main"]`. Nesting depth is unlimited. Empty subdirectories (no data files at any depth) must not produce a key. **Stem collision detection**: Track seen stem names per directory level. If two files share a stem (e.g., `team.csv` and `team.yaml`), return an error listing both files. **Directory-file stem collision (issue #983)**: if a file and non-empty subdirectory share the same stem (e.g., `nav.yaml` and `nav/` containing data files), return an error — both claim the same key. **Exception (issue #1019)**: a file coexisting with an empty directory of the same stem is not a collision — the empty directory is skipped before collision detection runs. Collision detection applies recursively within subdirectories. No silent overwrites — consistent with output path conflict philosophy (§2).
 - `LoadCSV`: `encoding/csv`, first row = headers, subsequent rows = `[]map[string]string`
 - **External data files (issue #271)**: `loadSiteData` in `build.go` must also load files from `cfg.Data.Files` (a `map[string]string` of key → path). For each entry, resolve the path relative to `cfg.ProjectRoot`, call `data.LoadFile`, and add the result to `siteData[key]`. Check for collisions with `data/` directory keys. File not found is a build error. Add `DataConfig` struct to `config.go` with `Files map[string]string` field.
+- **Data files preserve author key order (issue #1262)**: Contract in PLAN.md → "Data files preserve author key order (issue #1262)". `LoadFileAny` must return `*ordered.Map` for YAML and TOML objects, as it already does for JSON. This supersedes the "The `LoadFile` return type stays `map[string]interface{}` for YAML/TOML" note above, for `LoadFileAny` only — `LoadFile` keeps flattening through `ToGoMap` and keeps its `map[string]interface{}` signature.
+
+  **YAML.** Decode into a `yaml.Node`, then walk it. A mapping node's `Content` is a flat key/value alternating slice in document order, so build an `ordered.Map` by stepping it two at a time. Recurse into nested mapping and sequence nodes yourself — do **not** call `node.Decode(&v)` on a mapping node, because that produces a plain `map[string]interface{}` and loses the order at that level. Call `Decode` only on scalar nodes.
+
+  Scalar fidelity is not a risk: `Decode` on a scalar node produces exactly what `yaml.Unmarshal` produces today, verified across `time.Time` (both `2026-04-10` and `2026-04-10T14:30:00Z`), `int`, `float64`, `bool`, `nil`, and quoted vs bare strings. Keep using `Decode` for scalars rather than reading `node.Value` as a string, which would demote dates and numbers to strings and silently break `sort` and date filters.
+
+  Remember the document wrapper: `yaml.Unmarshal` into a `yaml.Node` yields a document node whose `Content[0]` is the root value. An empty file yields a node with no `Content` — return the same zero value the current path returns rather than indexing into it.
+
+  **TOML.** `MetaData.Keys()` gives document order as dotted paths, but array-of-tables elements are indistinguishable — `items`, `items.name`, `items`, `items.name`, with no index — so ordering *within* an element cannot come from `Keys()`. Reassemble by walking the decoded tree and ordering each level against the key paths for that level.
+
+  **Normalize TOML array-of-tables to `[]interface{}`.** `toml.Decode` returns them as a typed `[]map[string]interface{}`, which the Go template engine's converter does not traverse (PLAN.md → "Which containers the walk must traverse"). If the elements become `*ordered.Map` inside a typed slice, they are never converted and dot notation fails at render. This works on `d9c7cfe` and must still work afterwards:
+
+  ```
+  {{ range .site.data.nav.items }}{{ .name }};{{ end }}   →  first;second;
+  ```
+
+  **Do not extend this to the `_data.yaml` cascade**, however tempting the symmetry. `cascade.DeepMerge` and `cascade.PageContext.Get` both type-assert `map[string]interface{}`; an `*ordered.Map` fails the assertion and the merge silently degrades from deep-merge to replace, dropping sibling keys with no error. Measured against the real function:
+
+  ```
+  plain  base + overlay  ->  map[cfg:map[a:1 b:99]]   ← "a" survives
+  ordered base           ->  map[cfg:map[b:99]]       ← "a" silently dropped
+  ```
+
+  The cascade has its own `yaml.Unmarshal` in `cascade/merge.go`, so it is unaffected by a change confined to `internal/data/loader.go`. Keep it that way. Ordering the cascade is a separate change that must fix both functions first.
+
+  **The output-shape guard already covers the new producers.** `internal/ordered/output_shapes_test.go` pins the traversable alphabet (`*ordered.Map`, `[]interface{}`, scalars) for the JSON producers; `internal/data/key_order_test.go` does the same for the loaders. It is what catches the typed-slice mistake above rather than leaving it to a render-time failure in someone's site, and it is red on today's code for exactly the TOML array-of-tables reason.
+
+  **Three existing loader tests encode the superseded behavior** and are rewritten in this spec branch to assert `*ordered.Map` for YAML and TOML file contents: "loads files from subdirectories into nested namespace", "deeply nested files create deeply nested maps", and "file + empty directory with same stem does not collision-error (issue #1019)". The enclosing namespace maps stay `map[string]interface{}` — `LoadDirectory` builds those, not a decoder — so only the file-content assertions change. The stale "Only JSON — YAML/TOML use `map[string]interface{}`" comment on the issue #453 test is corrected too.
+
+  **New fixtures live in `internal/data/testdata-keyorder/`**, not `testdata/`, because `testdata/` is walked by the `LoadDirectory` tests and same-stem files across formats are a deliberate build error there. Mirrors the existing `testdata-errors/` split.
+
+  **Expect Go template output to be byte-identical.** Go templates sort every map shape (issue #1237), so no gotemplate rendering changes. Only Liquid iteration and plugin-facing key order move. If a gotemplate test changes output, something is wrong with the change, not with the test.
+
 - **Data directory errors are fatal (issue #982)**: `loadSiteData` in `context.go` propagates errors from `data.LoadDirectory` as build failures. When `data.LoadDirectory` returns an error that is not `fs.ErrNotExist`, `loadSiteData` returns `(nil, fmt.Errorf("data directory %s: %w", dataDir, err))`. `InitPipelineState` propagates this to `Build()`, aborting the build. `fs.ErrNotExist` (data directory does not exist) is silently ignored — not every project uses data files. The incremental path in `BuildIncremental` handles `loadSiteData` errors as warnings (preserving stale data in dev mode) — that behavior is correct and must not change.
 
 ### 1C: `internal/cascade` — 37 tests
