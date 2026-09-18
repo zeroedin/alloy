@@ -79,6 +79,7 @@ A file and a non-empty directory sharing the same stem (e.g., `nav.yaml` alongsi
 **If order matters, use a list.** A list iterates in file order in both engines, with no special handling:
 
 ```json
+// data/nav.json
 {
   "sections": [
     { "id": "intro", "title": "Introduction" },
@@ -102,11 +103,12 @@ Map key order depends on both the file format and the engine:
 
 | Data | Liquid | Go templates |
 | --- | --- | --- |
-| JSON objects, plugin return values | file order | sorted by key |
+| JSON objects | file order | sorted by key |
+| Plugin return values | the order the plugin built them | sorted by key |
 | YAML, TOML | sorted by key | sorted by key |
 | Lists (any format) | file order | file order |
 
-JSON is loaded into an ordered map, which keeps the order you wrote. Liquid reads that map directly, so it can show file order. Go templates cannot: dot access like `{{ .site.data.sections.intro.title }}` requires a plain Go map, and a Go map has nowhere to store order — so keys come out sorted alphabetically, consistently on every build.
+JSON is loaded into an ordered map, which keeps the order you wrote; values returned from a plugin are ordered maps too, keeping the order the plugin inserted them. Liquid reads those directly, so it can show that order. Go templates cannot: dot access like `{{ .site.data.sections.intro.title }}` requires a plain Go map, and a Go map has nowhere to store order — so keys come out sorted alphabetically, consistently on every build.
 
 YAML and TOML discard key order as they load, so **neither engine can show file order for them**. Both sort instead.
 
