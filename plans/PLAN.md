@@ -291,6 +291,142 @@ External data files are loaded alongside `data/` directory files during the data
 
 External file not found is a build error — not a warning, not silently skipped. The config explicitly declares the file; if it doesn't exist, the build fails.
 
+### Ordered Data in Go Templates (issue #1237)
+
+Some structured data reaches templates as `*ordered.Map` — a map that remembers
+the order its keys were written. Go's `html/template` cannot traverse that type
+with dot notation, so every access to such data required nested `oget` calls:
+
+```
+Liquid:   {{ site.data.pkg.version }}
+Go:       {{ oget (oget .site.data "pkg") "version" }}
+```
+
+**The rule: every `*ordered.Map` reaching the Go template engine's render
+context is converted to `map[string]interface{}` before rendering.** The
+boundary is the Go engine, not any particular producer of ordered data — what
+matters is that a value arrives at a Go template, never where it came from.
+Today's producers (JSON data files via `ordered.UnmarshalJSONValue`, plugin hook
+returns via `ordered.RewrapValue`, `onConfig` results) are illustrations of the
+rule, not its definition; a producer added later is covered without amending
+this section.
+
+Conversion is recursive through nested maps **and through slices** — an array of
+objects is the commonest JSON shape, and its elements are ordered maps too:
+
+```
+{{ .site.data.pkgjson.zebra }}                        <!-- object -->
+{{ range .site.data.items }}{{ .label }}{{ end }}     <!-- array elements -->
+{{ .site.data.deep.nested.leaf }}                     <!-- any depth -->
+```
+
+**Which containers the walk must traverse.** `map[string]interface{}`,
+`[]interface{}`, and `*ordered.Map` — and no others. This is not an arbitrary
+shortlist: it is the complete output alphabet of the two functions that produce
+ordered maps. `ordered.UnmarshalJSONValue` returns `*Map` for objects,
+`[]interface{}` for arrays, and plain scalars; `ordered.RewrapValue` recurses
+through exactly `*Map`, `map[string]interface{}`, and `[]interface{}` and returns
+everything else untouched. Neither can emit a typed container, so an
+`*ordered.Map` is never reachable through one.
+
+Typed containers do exist in the render context — `[]map[string]interface{}` for
+page translations, TOC entries, and taxonomy terms — and the walk deliberately
+does not descend into them. Verified that none can hold an ordered map:
+translations and TOC entries carry only strings and ints, and the one payload
+that could (page front matter, reachable under taxonomy terms) is flattened by
+`convertedFrontMatter` when hook results are applied. Confirmed against a real
+Node-runtime plugin mutating front matter — `{{ .page.injected.zulu }}` resolves
+today, on main, without this change, because the value reaching the renderer is
+already a plain map.
+
+**This narrowing is load-bearing and has a guard.** It holds only while the
+ordered-map producers emit nothing but those three shapes; a producer that
+returned, say, `[]map[string]interface{}` would put ordered maps somewhere the
+walk never looks, and the failure would be silent. `internal/ordered` carries a
+test pinning the output alphabet of both functions. If that test is ever changed
+rather than fixed, this section must be revisited — widen the walk (reflection
+over slice and map kinds) rather than quietly extend the list.
+
+**Conversion is engine-local.** It happens inside the Go engine at render time
+and must not be hoisted into the data loader, `PipelineState`, or the pipeline's
+context builders. Liquid consumes `*ordered.Map` directly through
+`LiquidMethodMissing` and `Each` and depends on it for insertion-order
+iteration; converting earlier would silently flatten Liquid's ordering. Plugin
+hook payloads are built from the pipeline context, not the engine's render copy,
+and are likewise unaffected — `*ordered.Map` still crosses the plugin boundary
+as specified in §7.
+
+#### Iteration order
+
+Iteration order is the cost of this decision and differs by engine. This is a
+deliberate divergence, not an oversight:
+
+| Engine | Ordered-map data (JSON, plugin returns) | Plain-map data (YAML, TOML) | List data |
+|---|---|---|---|
+| Liquid | insertion order | sorted by key | file order |
+| Go templates | **sorted by key** | sorted by key | file order |
+
+The split by data shape matters: only `*ordered.Map` carries insertion order, and
+only JSON and plugin returns produce one. YAML and TOML decode to ordinary Go
+maps whose order was discarded at load, so **no engine can show file order for
+them today** — Liquid sorts them just as Go templates will (measured across
+repeated builds of unchanged input: deterministic alphabetical in both). Issue
+#1262 covers that gap; if it lands, YAML and TOML move into the first column and
+this table's Liquid row becomes true of them too.
+
+After this change Go templates sort every map shape, so the engines agree
+everywhere except ordered-map data, where Liquid keeps insertion order.
+
+Go's `text/template` sorts map keys on every `range`, with no extension point
+(`exec.go` resolves `.field` as method → struct field → map index, and
+`walkRange` sorts map keys through `fmtsort`). A value that supports dot
+notation must be a map, and a Go map cannot carry order. **Dot notation and
+insertion-order iteration are mutually exclusive on the same value** — this
+confirms the constraint recorded for issue #458 and is the reason `oget` and
+`orange` exist at all. What changed is the choice of which side to take, not
+the constraint.
+
+Consequences, all of which must be documented rather than worked around:
+
+- `orange` **must sort its keys**. It currently ranges the underlying map
+  directly, which for a plain Go map is randomized per run — verified as
+  nondeterministic build output across repeated builds of unchanged input
+  (issue #1262). After conversion every input to `orange` is a plain map, so
+  without an explicit sort the nondeterminism would spread from YAML and TOML
+  data to all data. Sorted output is the contract; random output is a defect.
+- `oget` keeps working unchanged — it already accepts `map[string]interface{}`.
+- Bare `{{ range }}` over map data now succeeds where it previously errored
+  with `range can't iterate over …`, and yields sorted key order.
+- `PLAN.md` §1i's claim that "Both Liquid and Go templates access the same data"
+  remains true of *access*; it is not a claim about iteration order.
+
+**When order matters, the data should be a list.** Lists are ordered by nature
+and iterate in file order in both engines with no special handling, and they
+carry an explicit label field rather than overloading the key as a display
+string. A sequence stored in a map — a nav menu, a set of steps — is a
+modelling choice that asks the engine to remember an order the data shape never
+recorded. Documentation must steer authors to lists for sequences.
+
+#### What this does not change
+
+- **Keys that are not valid Go template identifiers stay unreachable by dot
+  notation.** `{{ .site.data.nav.my-key }}` is a *parse* error (`bad character
+  U+002D`), not a render error, and `index` is the answer:
+  `{{ index .site.data.nav "my-key" }}`. This is Go template syntax and applies
+  equally to plain maps today — it is out of scope here and must not be
+  "fixed" by rewriting template source.
+- **Missing keys render empty**, matching plain-map behavior:
+  `{{ .site.data.pkg.nope }}` produces the empty string, not an error.
+- **The original `*ordered.Map` must not be mutated.** Conversion produces new
+  values; the source tree is shared with `PipelineState`, incremental rebuild
+  state, and plugin payloads.
+- **Value filters are unaffected.** `where`, `sort`, `group_by`, and `map`
+  resolve fields through `getMapValue`, which already handles both
+  `map[string]interface{}` and `*ordered.Map` (issue #477). They keep working on
+  converted data through its existing map branch.
+
+---
+
 ---
 
 ## 1b. Permalinks and URL Customization

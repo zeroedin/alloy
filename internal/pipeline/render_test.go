@@ -489,7 +489,13 @@ var _ = Describe("Build Pipeline", func() {
 					"{{ oget .site.data.colors \"white\" }} must resolve to #fff")
 		})
 
-		It("gotemplate iterates JSON data in insertion order via orange", func() {
+		It("gotemplate iterates JSON data in sorted key order via orange (issue #1237)", func() {
+			// Supersedes the insertion-order assertion this test carried for
+			// issue #458. Go templates now receive ordered data converted to
+			// map[string]interface{} so dot notation resolves; a Go map cannot
+			// carry insertion order, so orange sorts instead. Liquid is
+			// unchanged and still iterates in insertion order.
+			// Spec: PLAN.md -> "Ordered Data in Go Templates (issue #1237)".
 			cfg := &config.Config{
 				Title:     "GoTemplate JSON Order Test",
 				BaseURL:   "https://example.com",
@@ -510,18 +516,66 @@ var _ = Describe("Build Pipeline", func() {
 
 			html := result.RenderedContent["index.md"]
 
-			whiteIdx := strings.Index(html, "<span>white</span>")
-			blackIdx := strings.Index(html, "<span>black</span>")
-			accentIdx := strings.Index(html, "<span>accent</span>")
+			// The file order is white, black, accent, brand, surface.
+			// Sorted order is accent, black, brand, surface, white — so an
+			// implementation that preserved file order, or that ranged the
+			// converted map without sorting, fails here.
+			sorted := []string{"accent", "black", "brand", "surface", "white"}
+			for _, key := range sorted {
+				Expect(strings.Index(html, "<span>"+key+"</span>")).To(BeNumerically(">=", 0),
+					key+" must appear in output — orange must still emit every key")
+			}
+			for i := 1; i < len(sorted); i++ {
+				prev := strings.Index(html, "<span>"+sorted[i-1]+"</span>")
+				cur := strings.Index(html, "<span>"+sorted[i]+"</span>")
+				Expect(cur).To(BeNumerically(">", prev),
+					sorted[i]+" must appear after "+sorted[i-1]+" — "+
+						"{{ range orange .site.data.colors }} must iterate in "+
+						"sorted key order (issue #1237). Ranging the converted "+
+						"map without sorting is randomized per run and makes "+
+						"build output nonreproducible (issue #1262).")
+			}
+		})
 
-			Expect(whiteIdx).To(BeNumerically(">=", 0),
-				"white must appear in output")
-			Expect(blackIdx).To(BeNumerically(">", whiteIdx),
-				"black must appear after white — JSON insertion order")
-			Expect(accentIdx).To(BeNumerically(">", blackIdx),
-				"accent must appear after black — "+
-					"{{ range orange .site.data.colors }} must iterate in JSON "+
-					"insertion order (issue #458)")
+		// ── Dot notation through a full build (issue #1237) ───────────
+		// The engine-level contract is covered in
+		// internal/template/gotemplate_ordered_map_test.go. This asserts the
+		// conversion actually reaches the render path a real build takes —
+		// an engine fix wired in at the wrong layer passes there and fails
+		// here.
+		It("gotemplate resolves JSON data with dot notation (issue #1237)", func() {
+			cfg := &config.Config{
+				Title:     "GoTemplate Dot Notation Test",
+				BaseURL:   "https://example.com",
+				Build:     config.BuildConfig{Output: "_site"},
+				Templates: config.TemplatesConfig{Engine: "gotemplate"},
+			}
+			contentMap := map[string]string{
+				"data/pkg.json":    `{"version":"1.2.3","nested":{"deep":{"leaf":"bottom"}}}`,
+				"data/items.json":  `[{"label":"first"},{"label":"second"}]`,
+				"content/index.md": "---\ntitle: Pkg\nlayout: default\n---\n# Pkg",
+				"layouts/default.html": `<html><body>` +
+					`<i>{{ .site.data.pkg.version }}</i>` +
+					`<b>{{ .site.data.pkg.nested.deep.leaf }}</b>` +
+					`<u>{{ range .site.data.items }}{{ .label }};{{ end }}</u>` +
+					`{{ .content }}</body></html>`,
+			}
+			result, err := pipeline.BuildWithContent(cfg, contentMap)
+			Expect(err).NotTo(HaveOccurred(),
+				"a gotemplate build must resolve JSON data with dot notation — "+
+					"on main this fails with \"can't evaluate field version in "+
+					"type interface {}\" (issue #1237)")
+			Expect(result).NotTo(BeNil())
+
+			html := result.RenderedContent["index.md"]
+			Expect(html).To(ContainSubstring("<i>1.2.3</i>"),
+				"a top-level key must resolve through dot notation")
+			Expect(html).To(ContainSubstring("<b>bottom</b>"),
+				"nested ordered maps must resolve at depth — a single-level "+
+					"conversion passes the first assertion and fails this one")
+			Expect(html).To(ContainSubstring("<u>first;second;</u>"),
+				"ordered maps inside a JSON array must resolve too — a "+
+					"maps-only conversion that skips []interface{} fails here")
 		})
 	})
 

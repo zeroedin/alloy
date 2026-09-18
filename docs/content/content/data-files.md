@@ -33,7 +33,7 @@ main:
 | Extension | Parser | Result type |
 |---|---|---|
 | `.yaml`, `.yml` | YAML | `map[string]any` |
-| `.json` | JSON | Ordered map (preserves key insertion order) |
+| `.json` | JSON | Map (key order preserved; see [Key order](#key-order)) |
 | `.toml` | TOML | `map[string]any` |
 | `.csv` | CSV | Array of maps (header row = keys) |
 
@@ -74,21 +74,47 @@ A file and a non-empty directory sharing the same stem (e.g., `nav.yaml` alongsi
 ```
 {% endraw %}
 
-## JSON key order preservation
+## Key order
 
-JSON files preserve key insertion order using an ordered map. This matters when you need deterministic iteration order:
+**If order matters, use a list.** A list iterates in file order in both engines, with no special handling:
 
 ```json
+// data/nav.json
 {
-  "intro": { "title": "Introduction", "weight": 1 },
-  "setup": { "title": "Setup", "weight": 2 },
-  "usage": { "title": "Usage", "weight": 3 }
+  "sections": [
+    { "id": "intro", "title": "Introduction" },
+    { "id": "setup", "title": "Setup" },
+    { "id": "usage", "title": "Usage" }
+  ]
 }
 ```
 
-Iterating `site.data.sections` in a template produces keys in the order `intro`, `setup`, `usage` — matching the file. YAML and TOML files use standard Go maps, which do not guarantee key order. Use JSON when order matters, or add an explicit `weight` field and sort in the template.
+```liquid
+{% raw %}{% for section in site.data.nav.sections %}
+  <h2>{{ section.title }}</h2>
+{% endfor %}{% endraw %}
+```
 
-### Iterating ordered maps
+This is the recommendation for navigation menus and anything else where the order you wrote is the order you want. It works the same in Liquid and Go templates, and it is unaffected by everything below.
+
+### What each engine does with map keys
+
+Map key order depends on both the file format and the engine:
+
+| Data | Liquid | Go templates |
+| --- | --- | --- |
+| JSON objects | file order | sorted by key |
+| Plugin return values | the order the plugin built them | sorted by key |
+| YAML, TOML | sorted by key | sorted by key |
+| Lists (any format) | file order | file order |
+
+JSON is loaded into an ordered map, which keeps the order you wrote; values returned from a plugin are ordered maps too, keeping the order the plugin inserted them. Liquid reads those directly, so it can show that order. Go templates cannot: dot access like `{{ .site.data.sections.intro.title }}` requires a plain Go map, and a Go map has nowhere to store order — so keys come out sorted alphabetically, consistently on every build.
+
+YAML and TOML discard key order as they load, so **neither engine can show file order for them**. Both sort instead.
+
+If you need a specific order that is not alphabetical and not the file order, add a `weight` field and sort in the template — or, better, use a list.
+
+### Iterating maps
 
 The iteration syntax differs between template engines:
 
@@ -99,26 +125,39 @@ The iteration syntax differs between template engines:
 
 <wa-tab-panel name="ordered-liquid" active>
 
-In Liquid, `{% for %}` over an ordered map yields `[key, value]` pairs. Access them by index:
+In Liquid, `{% for %}` over a map yields `[key, value]` pairs. Access them by index:
 
 <alloy-code language="liquid">{% for pair in site.data.sections %}
   &lt;h2&gt;{{ pair[0] }}&lt;/h2&gt;  &lt;!-- key: "intro", "setup", "usage" --&gt;
   &lt;p&gt;{{ pair[1].title }}&lt;/p&gt;
 {% endfor %}</alloy-code>
 
-Dot access works for individual keys: `{{ site.data.sections.intro.title }}`
+For JSON data these come out in file order. Dot access works for individual keys: `{{ site.data.sections.intro.title }}`
 
 </wa-tab-panel>
 <wa-tab-panel name="ordered-go">
 
-Go's `{{ range }}` cannot iterate an ordered map directly. Use the `orange` helper to get `Key`/`Value` pairs in insertion order:
+Dot access works directly, at any depth, including through arrays:
+
+<alloy-code language="html">{{ .site.data.sections.intro.title }}
+{{ .site.data.tokens.color.brand }}
+{{ (index .site.data.sections.items 0).name }}</alloy-code>
+
+`{{ range }}` works directly too, yielding keys in sorted order:
+
+<alloy-code language="html">{{ range $key, $value := .site.data.sections }}
+  &lt;h2&gt;{{ $key }}&lt;/h2&gt;
+  &lt;p&gt;{{ $value.title }}&lt;/p&gt;
+{{ end }}</alloy-code>
+
+The `orange` helper still works and gives the same sorted order as `Key`/`Value` pairs:
 
 <alloy-code language="html">{{ range orange .site.data.sections }}
   &lt;h2&gt;{{ .Key }}&lt;/h2&gt;
   &lt;p&gt;{{ .Value.title }}&lt;/p&gt;
 {{ end }}</alloy-code>
 
-Use `oget` for single-key access: `{{ oget .site.data.sections "intro" }}`
+`oget` also still works, but you rarely need it now: `{{ oget .site.data.sections "intro" }}` is the same as `{{ .site.data.sections.intro }}`. Reach for `index` when a key is not a valid template identifier — one containing a hyphen, say: `{{ index .site.data.tokens "color-brand" }}`
 
 </wa-tab-panel>
 </wa-tab-group>
