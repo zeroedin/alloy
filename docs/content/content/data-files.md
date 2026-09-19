@@ -115,6 +115,10 @@ One exception: the `_data.yaml` directory cascade still sorts its keys. It has i
 
 If you need a specific order that is not alphabetical and not the file order, add a `weight` field and sort in the template — or, better, use a list.
 
+### Inspecting a data file
+
+To see what a data file actually loaded as, pipe it through [`json`](/templates/filters/#data-filters) rather than printing it directly — `{{ site.data.nav | json }}` renders `{"home":"/","products":"/products/"}`, in file order. Printing the value on its own gives an internal representation that is not meant to be read.
+
 ### Iterating maps
 
 The iteration syntax differs between template engines:
