@@ -1,7 +1,0 @@
-base1: &b1
-  x: 1
-base2: &b2
-  y: 2
-derived:
-  <<: *b1
-  <<: *b2

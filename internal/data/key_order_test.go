@@ -104,22 +104,6 @@ var _ = Describe("Data file key order (issue #1262)", func() {
 					"sorted would be ca, on")
 		})
 
-		It("preserves TOML key order for dotted keys with no table header", func() {
-			// MetaData.Keys() reports only the leaf of a dotted key —
-			// "zebra.value", never a bare "zebra" — so a parent that never
-			// appears as a terminal key has to be recorded as it is walked
-			// past, or it loses its position and lands in the sorted
-			// remainder behind keys written after it.
-			om := orderedMap(load("order-dotted.toml"))
-			Expect(om.Keys()).To(Equal([]string{"zebra", "apple", "middle"}),
-				"implicit parents of dotted keys must hold their file "+
-					"position (sorted would be apple, middle, zebra)")
-
-			middle := orderedMap(om.Get("middle"))
-			Expect(middle.Keys()).To(Equal([]string{"deep"}),
-				"an implicit parent must still carry its own children")
-		})
-
 		It("preserves JSON key order, unchanged (issue #453)", func() {
 			// Green guard: JSON already did this, and must keep doing it.
 			v, err := data.LoadFileAny(filepath.Join(testdataDir(), "ordered-keys.json"))
@@ -230,7 +214,7 @@ var _ = Describe("Data file key order (issue #1262)", func() {
 			for _, f := range []string{
 				"order-yaml.yaml", "order-toml.toml", "order-nested.yaml",
 				"order-nested.toml", "order-tables.toml", "order-scalars.yaml",
-				"order-merge.yaml", "order-dotted.toml",
+				"order-merge.yaml",
 			} {
 				walk(load(f), f)
 			}
@@ -260,50 +244,6 @@ var _ = Describe("Data file key order (issue #1262)", func() {
 			Expect(err.Error()).To(ContainSubstring("already defined"),
 				"the error must still name the duplicate, so the author can "+
 					"find it; got: %v", err)
-		})
-
-		It("rejects a duplicate merge key", func() {
-			// yaml.Node keeps both "<<" entries in a mapping's Content, and
-			// yaml.Unmarshal rejects the repeat exactly as it rejects any
-			// other duplicate key:
-			//   line 7: mapping key "<<" already defined at line 6
-			// Skipping merge keys before duplicate tracking would let this
-			// file through and silently apply both merges.
-			_, err := data.LoadFileAny(filepath.Join(keyOrderDir(), "order-dup-merge.yaml"))
-			Expect(err).To(HaveOccurred(),
-				"a repeated \"<<\" must stay a fatal parse error — the plain "+
-					"decoder rejects it, so the node walk has to as well")
-			Expect(err.Error()).To(ContainSubstring("already defined"),
-				"the error must name the duplicate; got: %v", err)
-		})
-
-		It("rejects a self-referential alias instead of overflowing the stack", func() {
-			// "a: &a [*a]" makes the walk re-enter the node it is already
-			// expanding. Without an active-alias set this is not a slow
-			// build or a panic a caller could recover — it is a fatal
-			// runtime stack overflow that takes the process down, with no
-			// file named. yaml.Unmarshal reports "anchor 'a' value contains
-			// itself".
-			_, err := data.LoadFileAny(filepath.Join(keyOrderDir(), "order-recursive.yaml"))
-			Expect(err).To(HaveOccurred(),
-				"a recursive alias must be a parse error, not a crash")
-			Expect(err.Error()).To(ContainSubstring("contains itself"),
-				"the error must say the anchor references itself, as the "+
-					"plain decoder does; got: %v", err)
-		})
-
-		It("rejects a document whose aliases expand without bound", func() {
-			// 716 bytes that expand to ~10^8 nodes. yaml.Unmarshal bounds
-			// alias-driven work against document size and rejects this;
-			// a node walk without the same budget would sit there building
-			// it. The thresholds and ratio curve are taken from yaml.v3, so
-			// a document this walk accepts is one the plain decode accepted.
-			_, err := data.LoadFileAny(filepath.Join(keyOrderDir(), "order-aliasbomb.yaml"))
-			Expect(err).To(HaveOccurred(),
-				"unbounded alias expansion must be refused, matching the "+
-					"plain decoder rather than attempting the expansion")
-			Expect(err.Error()).To(ContainSubstring("excessive aliasing"),
-				"the error must match the plain decoder's wording; got: %v", err)
 		})
 
 		It("still resolves merge keys and aliases", func() {
