@@ -509,18 +509,21 @@ as specified in §7.
 Iteration order is the cost of this decision and differs by engine. This is a
 deliberate divergence, not an oversight:
 
-| Engine | Ordered-map data (JSON, plugin returns) | Plain-map data (YAML, TOML) | List data |
+| Engine | Ordered-map data (data files, plugin returns) | Plain-map data (front matter, collections, directory namespaces) | List data |
 |---|---|---|---|
 | Liquid | insertion order | sorted by key | file order |
 | Go templates | **sorted by key** | sorted by key | file order |
 
-The split by data shape matters: only `*ordered.Map` carries insertion order, and
-only JSON and plugin returns produce one. YAML and TOML decode to ordinary Go
-maps whose order was discarded at load, so **no engine can show file order for
-them today** — Liquid sorts them just as Go templates will (measured across
-repeated builds of unchanged input: deterministic alphabetical in both). Issue
-#1262 covers that gap; if it lands, YAML and TOML move into the first column and
-this table's Liquid row becomes true of them too.
+**The split is by data shape, not by file format.** Only `*ordered.Map` carries
+insertion order. Every data file produces one — YAML, TOML and JSON alike, per
+§ "Data files preserve author key order (issue #1262)" — as do plugin hook
+returns.
+
+The plain-map column is what Alloy builds itself or deliberately leaves flat:
+the directory namespace maps `LoadDirectory` assembles, collection and taxonomy
+entries, and page front matter. Front matter is the one with authored order that
+is discarded, and that is a scope decision recorded in the §1262 section, not an
+accident — both engines sort it.
 
 After this change Go templates sort every map shape, so the engines agree
 everywhere except ordered-map data, where Liquid keeps insertion order.
