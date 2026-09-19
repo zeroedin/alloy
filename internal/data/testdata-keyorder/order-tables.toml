@@ -1,0 +1,7 @@
+[[items]]
+name = "first"
+url = "/a/"
+
+[[items]]
+name = "second"
+url = "/b/"

@@ -1,0 +1,8 @@
+base: &base
+  x: 1
+  y: 2
+derived:
+  <<: *base
+  y: 99
+scalar_anchor: &s hello
+scalar_ref: *s

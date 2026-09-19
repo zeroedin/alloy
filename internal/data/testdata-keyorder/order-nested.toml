@@ -1,0 +1,11 @@
+zebra = "z"
+apple = "a"
+
+[srv]
+port = 8080
+host = "h"
+auth = true
+
+[srv.tls]
+on = true
+ca = "x"

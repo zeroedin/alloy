@@ -1,0 +1,11 @@
+zebra: z
+nested:
+  second: 2
+  first: 1
+  deeper:
+    y: 25
+    x: 24
+apple: a
+list:
+  - beta: b
+    alpha: a
