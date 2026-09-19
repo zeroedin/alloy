@@ -23,11 +23,15 @@ import (
 
 // yamlWalker carries the per-document state a yaml.Node walk needs.
 //
-// Decoding into a yaml.Node bypasses yaml.Unmarshal entirely, so every
-// safeguard that decoder applied is ours to reapply. These counters
-// mirror gopkg.in/yaml.v3's own: an active-alias set to reject a
-// self-referential anchor, and an expansion budget so a compact document
-// cannot expand without bound through repeated aliases.
+// Unmarshalling into a yaml.Node short-circuits yaml.v3's decoder before
+// it builds any value: it sees the destination is a Node, copies it, and
+// returns, so none of the safeguards in its value path ever run. Measured
+// on the same bytes — a duplicate key and a self-referential alias both
+// error into interface{} and both return nil into a yaml.Node. Every one
+// of those safeguards is therefore ours to reapply. These counters mirror
+// gopkg.in/yaml.v3's own: an active-alias set to reject a self-referential
+// anchor, and an expansion budget so a compact document cannot expand
+// without bound through repeated aliases.
 type yamlWalker struct {
 	// active holds the alias nodes currently being expanded. A node
 	// reached while already expanding it is a cycle.
@@ -76,10 +80,10 @@ func (w *yamlWalker) budget() error {
 // decodeYAMLOrdered parses YAML preserving mapping key order.
 //
 // yaml.Unmarshal into an interface{} builds Go maps, so order is gone
-// before we can read it. Decoding into a yaml.Node keeps the document's
-// own key/value sequence, but it also bypasses everything yaml.Unmarshal
-// did for us — duplicate-key rejection, merge-key expansion, and the
-// alias guards on yamlWalker are all reapplied below.
+// before we can read it. Unmarshalling into a yaml.Node keeps the
+// document's own key/value sequence, but it returns before the decoder's
+// value path runs (see yamlWalker), so duplicate-key rejection, merge-key
+// expansion and the alias guards are all reapplied below.
 func decodeYAMLOrdered(b []byte) (interface{}, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(b, &doc); err != nil {
@@ -339,10 +343,12 @@ func buildTOMLOrder(md toml.MetaData) *tomlOrder {
 		// Walk to the parent level, following the current element of any
 		// array on the way.
 		for _, part := range path[:len(path)-1] {
-			// A dotted key with no table header of its own — "zebra.value
-			// = 1" — reports only the leaf path, so the parent is never a
-			// terminal key and would otherwise miss its position entirely
-			// and fall into the sorted remainder.
+			// Keys() reports a dotted key as its full path —
+			// "zebra.value = 1" yields []string{"zebra", "value"} — but
+			// emits no separate entry for the implicit parent. "zebra" is
+			// therefore never a terminal key, and without recording it
+			// here it would miss its position entirely and fall into the
+			// sorted remainder.
 			if !contains(cur.keys, part) {
 				cur.keys = append(cur.keys, part)
 			}
