@@ -21,13 +21,65 @@ import (
 
 // ── YAML ──────────────────────────────────────────────────────────────
 
+// yamlWalker carries the per-document state a yaml.Node walk needs.
+//
+// Decoding into a yaml.Node bypasses yaml.Unmarshal entirely, so every
+// safeguard that decoder applied is ours to reapply. These counters
+// mirror gopkg.in/yaml.v3's own: an active-alias set to reject a
+// self-referential anchor, and an expansion budget so a compact document
+// cannot expand without bound through repeated aliases.
+type yamlWalker struct {
+	// active holds the alias nodes currently being expanded. A node
+	// reached while already expanding it is a cycle.
+	active map[*yaml.Node]bool
+	// decodeCount counts every node visited; aliasCount counts those
+	// visited underneath an alias expansion. aliasDepth tracks whether
+	// we are inside one.
+	decodeCount int
+	aliasCount  int
+	aliasDepth  int
+}
+
+// Thresholds and the ratio curve are taken from yaml.v3's decoder, so a
+// document this walk accepts is one the plain decode accepted too.
+const (
+	yamlAliasRatioRangeLow  = 400000
+	yamlAliasRatioRangeHigh = 4000000
+)
+
+func yamlAllowedAliasRatio(decodeCount int) float64 {
+	switch {
+	case decodeCount <= yamlAliasRatioRangeLow:
+		return 0.99
+	case decodeCount >= yamlAliasRatioRangeHigh:
+		return 0.10
+	default:
+		span := float64(yamlAliasRatioRangeHigh - yamlAliasRatioRangeLow)
+		return 0.99 - 0.89*(float64(decodeCount-yamlAliasRatioRangeLow)/span)
+	}
+}
+
+// budget reports an error once alias expansion accounts for more of the
+// work than a document of this size should need.
+func (w *yamlWalker) budget() error {
+	w.decodeCount++
+	if w.aliasDepth > 0 {
+		w.aliasCount++
+	}
+	if w.aliasCount > 100 && w.decodeCount > 1000 &&
+		float64(w.aliasCount)/float64(w.decodeCount) > yamlAllowedAliasRatio(w.decodeCount) {
+		return fmt.Errorf("yaml: document contains excessive aliasing")
+	}
+	return nil
+}
+
 // decodeYAMLOrdered parses YAML preserving mapping key order.
 //
 // yaml.Unmarshal into an interface{} builds Go maps, so order is gone
 // before we can read it. Decoding into a yaml.Node keeps the document's
 // own key/value sequence, but it also bypasses everything yaml.Unmarshal
-// did for us — duplicate-key rejection and merge-key expansion are
-// reapplied below.
+// did for us — duplicate-key rejection, merge-key expansion, and the
+// alias guards on yamlWalker are all reapplied below.
 func decodeYAMLOrdered(b []byte) (interface{}, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(b, &doc); err != nil {
@@ -38,30 +90,33 @@ func decodeYAMLOrdered(b []byte) (interface{}, error) {
 	if doc.Kind == 0 || len(doc.Content) == 0 {
 		return nil, nil
 	}
-	return yamlNodeValue(doc.Content[0])
+	w := &yamlWalker{active: map[*yaml.Node]bool{}}
+	return w.value(doc.Content[0])
 }
 
-func yamlNodeValue(n *yaml.Node) (interface{}, error) {
+func (w *yamlWalker) value(n *yaml.Node) (interface{}, error) {
+	if err := w.budget(); err != nil {
+		return nil, err
+	}
 	switch n.Kind {
 	case yaml.DocumentNode:
 		if len(n.Content) == 0 {
 			return nil, nil
 		}
-		return yamlNodeValue(n.Content[0])
+		return w.value(n.Content[0])
 
 	case yaml.AliasNode:
-		if n.Alias == nil {
-			return nil, fmt.Errorf("yaml: line %d: unresolved alias %q", n.Line, n.Value)
-		}
-		return yamlNodeValue(n.Alias)
+		return w.alias(n, func(target *yaml.Node) (interface{}, error) {
+			return w.value(target)
+		})
 
 	case yaml.MappingNode:
-		return yamlMappingValue(n)
+		return w.mapping(n)
 
 	case yaml.SequenceNode:
 		out := make([]interface{}, len(n.Content))
 		for i, item := range n.Content {
-			v, err := yamlNodeValue(item)
+			v, err := w.value(item)
 			if err != nil {
 				return nil, err
 			}
@@ -82,31 +137,56 @@ func yamlNodeValue(n *yaml.Node) (interface{}, error) {
 	}
 }
 
-// yamlMappingValue builds an ordered map from a mapping node's flat
-// key/value content, reapplying the two semantics the node walk bypasses.
-func yamlMappingValue(n *yaml.Node) (*ordered.Map, error) {
-	// Explicit keys are collected first so a merge key can never overwrite
-	// one, wherever the two appear relative to each other. The value is
-	// the line the key was first seen on, for the duplicate-key error.
-	explicit := make(map[string]int, len(n.Content)/2)
+// alias resolves an alias node and runs fn against its target, refusing a
+// node already being expanded. Without this the walk recurses forever on
+// "a: &a [*a]" and the process dies with a stack overflow rather than a
+// build error naming the file.
+func (w *yamlWalker) alias(n *yaml.Node, fn func(*yaml.Node) (interface{}, error)) (interface{}, error) {
+	if n.Alias == nil {
+		return nil, fmt.Errorf("yaml: line %d: unresolved alias %q", n.Line, n.Value)
+	}
+	if w.active[n] {
+		// Same wording as the plain decoder, so the author sees the
+		// message they saw before.
+		return nil, fmt.Errorf("yaml: anchor %q value contains itself", n.Value)
+	}
+	w.active[n] = true
+	w.aliasDepth++
+	v, err := fn(n.Alias)
+	w.aliasDepth--
+	delete(w.active, n)
+	return v, err
+}
+
+// mapping builds an ordered map from a mapping node's flat key/value
+// content, reapplying the semantics the node walk bypasses.
+func (w *yamlWalker) mapping(n *yaml.Node) (*ordered.Map, error) {
+	// Two passes. The first rejects duplicates and records which keys the
+	// author wrote here, so a merge key can never overwrite one wherever
+	// the two appear relative to each other.
+	//
+	// seen covers every key including "<<", because yaml.Unmarshal rejects
+	// a repeated merge key too; explicit covers only non-merge keys,
+	// because those are what win over merged values.
+	seen := make(map[string]int, len(n.Content)/2)
+	explicit := make(map[string]bool, len(n.Content)/2)
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		k := n.Content[i]
-		if isYAMLMergeKey(k) {
-			continue
-		}
-		name, err := yamlKeyName(k)
+		name, err := w.keyName(k)
 		if err != nil {
 			return nil, err
 		}
-		// yaml.Unmarshal rejects a repeated key; a Content loop would
-		// accept the file and let the last value win, turning a fatal
-		// malformed file into a silent one. Name both lines, as the
-		// plain decoder did — the second one alone does not tell the
-		// author where to look.
-		if first, dup := explicit[name]; dup {
+		// A repeated key is a parse error in the plain decoder. A Content
+		// loop would accept the file and let the last value win, turning
+		// a fatal malformed file into a silent one. Name both lines — the
+		// second alone does not tell the author where to look.
+		if first, dup := seen[name]; dup {
 			return nil, fmt.Errorf("yaml: line %d: mapping key %q already defined at line %d", k.Line, name, first)
 		}
-		explicit[name] = k.Line
+		seen[name] = k.Line
+		if !isYAMLMergeKey(k) {
+			explicit[name] = true
+		}
 	}
 
 	om := ordered.New()
@@ -117,7 +197,7 @@ func yamlMappingValue(n *yaml.Node) (*ordered.Map, error) {
 			// "<<: *base" expands into this mapping at the position the
 			// merge key appeared. A plain Content loop would leave a
 			// literal "<<" key and drop the merged-in keys entirely.
-			merged, err := yamlMergeSources(valNode)
+			merged, err := w.mergeSources(valNode)
 			if err != nil {
 				return nil, err
 			}
@@ -125,7 +205,7 @@ func yamlMappingValue(n *yaml.Node) (*ordered.Map, error) {
 				for _, kv := range src.Entries() {
 					// Local keys win, and among several merge sources the
 					// earlier one wins — both are plain "already have it".
-					if _, local := explicit[kv.Key]; local || om.Has(kv.Key) {
+					if explicit[kv.Key] || om.Has(kv.Key) {
 						continue
 					}
 					om.Set(kv.Key, kv.Value)
@@ -134,11 +214,11 @@ func yamlMappingValue(n *yaml.Node) (*ordered.Map, error) {
 			continue
 		}
 
-		name, err := yamlKeyName(keyNode)
+		name, err := w.keyName(keyNode)
 		if err != nil {
 			return nil, err
 		}
-		v, err := yamlNodeValue(valNode)
+		v, err := w.value(valNode)
 		if err != nil {
 			return nil, err
 		}
@@ -147,19 +227,28 @@ func yamlMappingValue(n *yaml.Node) (*ordered.Map, error) {
 	return om, nil
 }
 
-// yamlMergeSources resolves a merge key's value to the mappings it pulls
-// in. It is either one mapping (usually via an alias) or a sequence of
-// them, earliest first.
-func yamlMergeSources(n *yaml.Node) ([]*ordered.Map, error) {
+// mergeSources resolves a merge key's value to the mappings it pulls in.
+// It is either one mapping (usually via an alias) or a sequence of them,
+// earliest first. Alias resolution goes through w.alias so a merge key
+// pointing at its own mapping is rejected rather than recursed into.
+func (w *yamlWalker) mergeSources(n *yaml.Node) ([]*ordered.Map, error) {
+	if err := w.budget(); err != nil {
+		return nil, err
+	}
 	if n.Kind == yaml.AliasNode {
-		if n.Alias == nil {
-			return nil, fmt.Errorf("yaml: line %d: unresolved alias %q", n.Line, n.Value)
+		v, err := w.alias(n, func(target *yaml.Node) (interface{}, error) {
+			srcs, err := w.mergeSources(target)
+			return srcs, err
+		})
+		if err != nil {
+			return nil, err
 		}
-		n = n.Alias
+		srcs, _ := v.([]*ordered.Map)
+		return srcs, nil
 	}
 	switch n.Kind {
 	case yaml.MappingNode:
-		m, err := yamlMappingValue(n)
+		m, err := w.mapping(n)
 		if err != nil {
 			return nil, err
 		}
@@ -167,7 +256,7 @@ func yamlMergeSources(n *yaml.Node) ([]*ordered.Map, error) {
 	case yaml.SequenceNode:
 		out := make([]*ordered.Map, 0, len(n.Content))
 		for _, item := range n.Content {
-			sub, err := yamlMergeSources(item)
+			sub, err := w.mergeSources(item)
 			if err != nil {
 				return nil, err
 			}
@@ -183,11 +272,14 @@ func isYAMLMergeKey(n *yaml.Node) bool {
 	return n.Kind == yaml.ScalarNode && n.Tag == "!!merge" && n.Value == "<<"
 }
 
-// yamlKeyName renders a mapping key as the string an ordered map needs.
+// keyName renders a mapping key as the string an ordered map needs.
 // Decoding rather than reading n.Value keeps a quoted "1" distinct from a
 // bare 1, matching how the plain decode stringifies non-string keys.
-func yamlKeyName(n *yaml.Node) (string, error) {
-	if n.Kind == yaml.AliasNode && n.Alias != nil {
+func (w *yamlWalker) keyName(n *yaml.Node) (string, error) {
+	if n.Kind == yaml.AliasNode {
+		if n.Alias == nil {
+			return "", fmt.Errorf("yaml: line %d: unresolved alias %q", n.Line, n.Value)
+		}
 		n = n.Alias
 	}
 	if n.Kind != yaml.ScalarNode {
@@ -247,6 +339,13 @@ func buildTOMLOrder(md toml.MetaData) *tomlOrder {
 		// Walk to the parent level, following the current element of any
 		// array on the way.
 		for _, part := range path[:len(path)-1] {
+			// A dotted key with no table header of its own — "zebra.value
+			// = 1" — reports only the leaf path, so the parent is never a
+			// terminal key and would otherwise miss its position entirely
+			// and fall into the sorted remainder.
+			if !contains(cur.keys, part) {
+				cur.keys = append(cur.keys, part)
+			}
 			kids := cur.children[part]
 			if len(kids) == 0 {
 				kids = append(kids, newTOMLOrder())

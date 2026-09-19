@@ -109,7 +109,7 @@ Map key order depends on both the file format and the engine:
 
 Every data file is loaded into an ordered map, which keeps the order you wrote, whatever the format — renaming `nav.json` to `nav.yaml` no longer changes the order your keys come out in. Values returned from a plugin are ordered maps too, keeping the order the plugin inserted them.
 
-Liquid reads those directly, so it shows that order. Go templates cannot: dot access like `{{ .site.data.sections.intro.title }}` requires a plain Go map, and a Go map has nowhere to store order — so keys come out sorted alphabetically, consistently on every build.
+Liquid reads those maps directly, so it shows that order. Go templates reach all the same data — `{{ .site.data.sections.intro.title }}` works at any depth, including through arrays — but they do not show that order. Looking a value up by name needs a plain Go map, so the ordered map is converted before rendering, and a Go map has nowhere to store order. Keys iterate sorted alphabetically instead, consistently on every build.
 
 One exception: the `_data.yaml` directory cascade still sorts its keys. It has its own loader, and it merges each file into the one above it, which is not a thing key order survives.
 
