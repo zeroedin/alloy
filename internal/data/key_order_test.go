@@ -104,6 +104,35 @@ var _ = Describe("Data file key order (issue #1262)", func() {
 					"sorted would be ca, on")
 		})
 
+		It("preserves TOML key order for dotted keys with no table header", func() {
+			// MetaData.Keys() reports only the LEAF of a dotted key:
+			//   []string{"zebra", "value"}   for  zebra.value = 1
+			//   []string{"apple"}            for  apple = 2
+			// There is no bare "zebra" entry anywhere, so the parent is
+			// never a terminal key. Without recording it while walking
+			// past it, "zebra" has no position and falls into the sorted
+			// remainder — the file reads zebra, apple and renders apple,
+			// zebra, which is the exact defect issue #1262 exists to
+			// remove, reached by a route the original fixtures missed.
+			// They used [table] headers, which ARE reported as terminal
+			// keys, which is why the suite was green (issue #1271).
+			om := orderedMap(load("dotted-keys.toml"))
+			Expect(om.Keys()).To(Equal([]string{"zebra", "apple", "middle"}),
+				"a dotted key's parent must hold the position it was "+
+					"written at — sorted order here is [apple middle zebra]")
+
+			// Recording the position without descending would pass the
+			// assertion above and still lose everything underneath.
+			middle := orderedMap(om.Get("middle"))
+			Expect(middle.Keys()).To(Equal([]string{"deep"}),
+				"an implicit parent must still carry its own children")
+			deep := orderedMap(middle.Get("deep"))
+			Expect(deep.Keys()).To(Equal([]string{"leaf"}),
+				"implicit parents nest — middle.deep.leaf needs a level for each")
+			Expect(deep.Get("leaf")).To(Equal(int64(3)),
+				"the leaf value must survive the reordering intact")
+		})
+
 		It("preserves JSON key order, unchanged (issue #453)", func() {
 			// Green guard: JSON already did this, and must keep doing it.
 			v, err := data.LoadFileAny(filepath.Join(testdataDir(), "ordered-keys.json"))
@@ -214,7 +243,7 @@ var _ = Describe("Data file key order (issue #1262)", func() {
 			for _, f := range []string{
 				"order-yaml.yaml", "order-toml.toml", "order-nested.yaml",
 				"order-nested.toml", "order-tables.toml", "order-scalars.yaml",
-				"order-merge.yaml",
+				"order-merge.yaml", "dotted-keys.toml",
 			} {
 				walk(load(f), f)
 			}
@@ -271,6 +300,80 @@ var _ = Describe("Data file key order (issue #1262)", func() {
 
 			Expect(result["scalar_ref"]).To(Equal("hello"),
 				"a scalar alias must resolve to its anchor's value")
+		})
+	})
+
+	Context("YAML guards the node walk must provide (issue #1271)", func() {
+		// yaml.Unmarshal bounded alias work and rejected cycles. Decoding
+		// into a yaml.Node inherits none of that. These two are not
+		// stylistic: without them the loader crashes or hangs the process
+		// on a file a user could commit. Both mirror yaml.v3's own wording
+		// so the author sees the message they saw before.
+
+		It("rejects a self-referential alias instead of overflowing the stack", func() {
+			// "a: &a [*a]" makes the walk re-enter the node it is already
+			// expanding. Pre-fix this was not a slow build or a catchable
+			// panic — it was a fatal runtime error that killed the process
+			// with no file named:
+			//   runtime: goroutine stack exceeds 1000000000-byte limit
+			//   fatal error: stack overflow
+			_, err := data.LoadFileAny(filepath.Join(keyOrderDir(), "alias-cycle.yaml"))
+			Expect(err).To(HaveOccurred(),
+				"a self-referential anchor must be a build error, not a "+
+					"stack overflow — a fatal runtime error names no file "+
+					"and no caller can recover from it")
+			Expect(err.Error()).To(ContainSubstring("contains itself"),
+				"the message must match the plain decoder's wording "+
+					"(yaml: anchor 'a' value contains itself); got: %v", err)
+		})
+
+		It("rejects a document whose aliases expand without bound", func() {
+			// Repeated aliases expand a compact document non-linearly.
+			// yaml.v3 bounds that work against document size; the node
+			// walk inherits nothing. Pre-fix this did not fail — it hung,
+			// which in CI reads as infrastructure trouble rather than a
+			// test result.
+			//
+			// The fixture has to be big enough to trip aliasCount > 100
+			// AND decodeCount > 1000; a smaller document is accepted by
+			// both decoders and this passes vacuously. Verified that the
+			// plain decoder rejects these same bytes, so the walk is not
+			// inventing a limit of its own.
+			path := filepath.Join(keyOrderDir(), "alias-bomb.yaml")
+
+			raw, readErr := os.ReadFile(path)
+			Expect(readErr).NotTo(HaveOccurred())
+			var viaUnmarshal interface{}
+			Expect(yaml.Unmarshal(raw, &viaUnmarshal)).To(MatchError(
+				ContainSubstring("excessive aliasing")),
+				"fixture sanity: the plain decoder must reject this too, "+
+					"otherwise the walk is enforcing a stricter limit than "+
+					"yaml.v3 and would reject documents that used to load")
+
+			_, err := data.LoadFileAny(path)
+			Expect(err).To(HaveOccurred(),
+				"an alias bomb must be rejected rather than expanded")
+			Expect(err.Error()).To(ContainSubstring("excessive aliasing"),
+				"the message must match the plain decoder's wording; got: %v", err)
+		})
+
+		It("rejects a duplicate merge key", func() {
+			// yaml.Node keeps two "<<" entries as separate Content pairs,
+			// and yaml.Unmarshal rejects the repeat like any other
+			// duplicate. Skipping merge keys BEFORE duplicate tracking
+			// accepted the file and silently applied both merges.
+			_, err := data.LoadFileAny(filepath.Join(keyOrderDir(), "merge-duplicate.yaml"))
+			Expect(err).To(HaveOccurred(),
+				"a repeated merge key must be rejected — the plain decoder "+
+					"treats \"<<\" as a key like any other, so duplicate "+
+					"tracking has to see it before the merge branch skips it")
+			Expect(err.Error()).To(ContainSubstring("already defined"),
+				"the message must match the duplicate-key wording; got: %v", err)
+			Expect(err.Error()).To(ContainSubstring("line 7"),
+				"the error must name the offending line")
+			Expect(err.Error()).To(ContainSubstring("line 6"),
+				"and the first definition — the second line alone does not "+
+					"tell the author where to look")
 		})
 	})
 
