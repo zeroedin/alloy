@@ -8,9 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/BurntSushi/toml"
 	"github.com/zeroedin/alloy/internal/ordered"
-	"gopkg.in/yaml.v3"
 )
 
 // LoadFile loads a single data file (YAML, TOML, JSON) and returns its contents as a map.
@@ -40,14 +38,14 @@ func LoadFileAny(path string) (interface{}, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
 	case ".yaml", ".yml":
-		var result interface{}
-		if err := yaml.Unmarshal(b, &result); err != nil {
+		result, err := decodeYAMLOrdered(b)
+		if err != nil {
 			return nil, fmt.Errorf("parsing YAML %s: %w", path, err)
 		}
 		return result, nil
 	case ".toml":
-		var result map[string]interface{}
-		if err := toml.Unmarshal(b, &result); err != nil {
+		result, err := decodeTOMLOrdered(b)
+		if err != nil {
 			return nil, fmt.Errorf("parsing TOML %s: %w", path, err)
 		}
 		return result, nil

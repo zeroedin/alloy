@@ -1,0 +1,7 @@
+base: &base
+  x: 1
+other: &other
+  y: 2
+d:
+  <<: *base
+  <<: *other
