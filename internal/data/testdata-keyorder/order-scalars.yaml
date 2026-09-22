@@ -1,0 +1,8 @@
+date: 2026-04-10
+stamp: 2026-04-10T14:30:00Z
+int: 42
+float: 1.5
+bool: true
+nul: ~
+quoted: "text"
+bare: text

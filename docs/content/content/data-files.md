@@ -32,9 +32,9 @@ main:
 
 | Extension | Parser | Result type |
 |---|---|---|
-| `.yaml`, `.yml` | YAML | `map[string]any` |
+| `.yaml`, `.yml` | YAML | Map (key order preserved; see [Key order](#key-order)) |
 | `.json` | JSON | Map (key order preserved; see [Key order](#key-order)) |
-| `.toml` | TOML | `map[string]any` |
+| `.toml` | TOML | Map (key order preserved; see [Key order](#key-order)) |
 | `.csv` | CSV | Array of maps (header row = keys) |
 
 Each file is keyed by its filename without the extension. `data/team.yaml` becomes `site.data.team`, `data/products.json` becomes `site.data.products`.
@@ -103,16 +103,21 @@ Map key order depends on both the file format and the engine:
 
 | Data | Liquid | Go templates |
 | --- | --- | --- |
-| JSON objects | file order | sorted by key |
+| YAML, TOML, JSON objects | file order | sorted by key |
 | Plugin return values | the order the plugin built them | sorted by key |
-| YAML, TOML | sorted by key | sorted by key |
 | Lists (any format) | file order | file order |
 
-JSON is loaded into an ordered map, which keeps the order you wrote; values returned from a plugin are ordered maps too, keeping the order the plugin inserted them. Liquid reads those directly, so it can show that order. Go templates cannot: dot access like `{{ .site.data.sections.intro.title }}` requires a plain Go map, and a Go map has nowhere to store order — so keys come out sorted alphabetically, consistently on every build.
+Every object in a YAML, TOML or JSON data file — at the top level or nested inside lists — is loaded into an ordered map that keeps the order you wrote, so renaming `nav.json` to `nav.yaml` no longer changes the order your keys come out in. Lists stay lists, and CSV files load as a list of rows, as the table above shows. Values returned from a plugin are ordered maps too, keeping the order the plugin inserted them.
 
-YAML and TOML discard key order as they load, so **neither engine can show file order for them**. Both sort instead.
+Liquid reads those maps directly, so it shows that order. Go templates reach all the same data — `{{ .site.data.sections.intro.title }}` works at any depth, including through arrays — but they do not show that order. Looking a value up by name needs a plain Go map, so the ordered map is converted before rendering, and a Go map has nowhere to store order. Keys iterate sorted alphabetically instead, consistently on every build.
+
+One exception: the `_data.yaml` directory cascade still sorts its keys. It has its own loader, and it merges each file into the one above it, which is not a thing key order survives.
 
 If you need a specific order that is not alphabetical and not the file order, add a `weight` field and sort in the template — or, better, use a list.
+
+### Inspecting a data file
+
+To see what a data file actually loaded as, pipe it through [`json`](/templates/filters/#data-filters) rather than printing it directly — `{{ site.data.nav | json }}` renders `{"home":"/","products":"/products/"}`, in file order. Printing the value on its own gives an internal representation that is not meant to be read.
 
 ### Iterating maps
 
@@ -132,7 +137,7 @@ In Liquid, `{% for %}` over a map yields `[key, value]` pairs. Access them by in
   &lt;p&gt;{{ pair[1].title }}&lt;/p&gt;
 {% endfor %}</alloy-code>
 
-For JSON data these come out in file order. Dot access works for individual keys: `{{ site.data.sections.intro.title }}`
+These come out in file order, for YAML, TOML and JSON alike. Dot access works for individual keys: `{{ site.data.sections.intro.title }}`
 
 </wa-tab-panel>
 <wa-tab-panel name="ordered-go">
