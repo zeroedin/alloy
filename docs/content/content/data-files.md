@@ -107,7 +107,7 @@ Map key order depends on both the file format and the engine:
 | Plugin return values | the order the plugin built them | sorted by key |
 | Lists (any format) | file order | file order |
 
-Every data file is loaded into an ordered map, which keeps the order you wrote, whatever the format — renaming `nav.json` to `nav.yaml` no longer changes the order your keys come out in. Values returned from a plugin are ordered maps too, keeping the order the plugin inserted them.
+Every object in a YAML, TOML or JSON data file — at the top level or nested inside lists — is loaded into an ordered map that keeps the order you wrote, so renaming `nav.json` to `nav.yaml` no longer changes the order your keys come out in. Lists stay lists, and CSV files load as a list of rows, as the table above shows. Values returned from a plugin are ordered maps too, keeping the order the plugin inserted them.
 
 Liquid reads those maps directly, so it shows that order. Go templates reach all the same data — `{{ .site.data.sections.intro.title }}` works at any depth, including through arrays — but they do not show that order. Looking a value up by name needs a plain Go map, so the ordered map is converted before rendering, and a Go map has nowhere to store order. Keys iterate sorted alphabetically instead, consistently on every build.
 
