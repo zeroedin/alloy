@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -27,6 +28,7 @@ import (
 // See PLAN.md → "A hook's return must carry the field it exists to
 // produce (issue #1179)".
 
+// hookContractConfig returns a minimal site config for BuildWithContent.
 func hookContractConfig(title string) *config.Config {
 	return &config.Config{
 		Title:   title,
@@ -52,23 +54,38 @@ func victimPlugin(event, scope string) string {
 }
 
 // expectContractError asserts the build error carries the four elements
-// the contract requires: event, offending plugin, page, and field.
+// the contract requires: event, offending plugin, page, and field. The
+// page is /about/ unless a test says otherwise.
 func expectContractError(err error, event, plugin string) {
 	GinkgoHelper()
+	expectContractErrorOn(err, event, plugin, "about")
+}
+
+// expectContractErrorOn is expectContractError for the page whose URL is
+// /<slug>/ and whose path is <slug>.md.
+func expectContractErrorOn(err error, event, plugin, slug string) {
+	GinkgoHelper()
+	expectNonObjectError(err, event, plugin, slug)
+	Expect(err.Error()).To(ContainSubstring("html"),
+		"the error must name the missing or malformed field, `html` (issue #1179)")
+}
+
+// expectNonObjectError asserts the error for a return that is not an
+// object at all. It must name the event, plugin and page; it names no
+// field, because there is no object to be missing one.
+func expectNonObjectError(err error, event, plugin, slug string) {
+	GinkgoHelper()
 	Expect(err).To(HaveOccurred(),
-		"a hook return without a string `html` on "+event+" must fail the "+
-			"build — it must not be silently ignored or passed on to the next "+
-			"hook (issue #1179)")
+		"a malformed hook return on "+event+" must fail the build — it must "+
+			"not be silently ignored or passed on to the next hook (issue #1179)")
 	msg := err.Error()
 	Expect(msg).To(ContainSubstring(event),
 		"the error must name the event (issue #1179)")
 	Expect(msg).To(ContainSubstring(plugin),
 		"the error must name the plugin that returned the malformed value, "+
 			"%q (issue #1179)", plugin)
-	Expect(msg).To(ContainSubstring("html"),
-		"the error must name the missing or malformed field, `html` (issue #1179)")
-	Expect(msg).To(Or(ContainSubstring("/about/"), ContainSubstring("about.md")),
-		"the error must identify the page by URL or path (issue #1179)")
+	Expect(msg).To(Or(ContainSubstring("/"+slug+"/"), ContainSubstring(slug+".md")),
+		"the error must identify the page by URL or path — /%s/ (issue #1179)", slug)
 	Expect(msg).NotTo(ContainSubstring("VICTIM-HANDED-MALFORMED-PAYLOAD"),
 		"the malformed return must be caught before it reaches the next hook "+
 			"(issue #1179)")
@@ -142,6 +159,27 @@ var _ = Describe("Hook return contract (issue #1179)", func() {
 }`,
 			}))
 			expectContractError(err, "onPageRendered", "01-second")
+		})
+
+		It("checks every page in the batch, not only the first", func() {
+			// Pages are dispatched in sorted order, so /zeta/ is item 1
+			// behind /about/. Only /zeta/ is malformed: a check that looks
+			// at item 0 alone would miss it.
+			m := withPlugins(map[string]string{
+				"plugins/00-first.js": `export default function(alloy) {
+  alloy.hook('onPageRendered', {}, function(page) {
+    if (page.url === '/zeta/') return { url: page.url };
+    return page;
+  });
+}`,
+				"plugins/01-second.js": victimPlugin("onPageRendered", "{}"),
+			})
+			m["content/zeta.md"] = "---\ntitle: Zeta\nlayout: default\n---\n# Zeta Body"
+			_, err := pipeline.BuildWithContent(hookContractConfig("Batch Every Item"), m)
+			expectContractErrorOn(err, "onPageRendered", "00-first", "zeta")
+			Expect(err.Error()).NotTo(Or(ContainSubstring("/about/"), ContainSubstring("about.md")),
+				"the error must name the page whose return was malformed, not "+
+					"another page in the same batch (issue #1179)")
 		})
 
 		It("rejects a bare string return", func() {
@@ -272,6 +310,19 @@ var _ = Describe("Hook return contract (issue #1179)", func() {
 			expectContractError(err, "onContentTransformed", "00-toc")
 		})
 
+		It("rejects a bare string from a toc-only hook even when html is not required", func() {
+			// html is optional here, but the return must still be an object.
+			// Today the string is applied back as the page html.
+			_, err := pipeline.BuildWithContent(hookContractConfig("CT TOC String"), withPlugins(map[string]string{
+				"plugins/00-toc.js": `export default function(alloy) {
+  alloy.hook('onContentTransformed', { pages: true, pageFields: ["toc"] }, function(page) {
+    return '<p>replaced by a string</p>';
+  });
+}`,
+			}))
+			expectNonObjectError(err, "onContentTransformed", "00-toc", "about")
+		})
+
 		It("accepts a toc-only return when no hook on the event wants html (guard)", func() {
 			// html is sent regardless of scope but is not applied back when
 			// no hook asks for it, so it is not required. "Required if sent"
@@ -327,6 +378,26 @@ export default function(alloy) {
 			expectContractError(err, "onPageRendered", "00-first")
 			Expect(err.Error()).NotTo(ContainSubstring("01-second"),
 				"the error must not name the next hook in the chain (issue #1179)")
+		})
+
+		It("checks every page in a Node batch, not only the first", func() {
+			// Node splits a batch across workers and returns results in
+			// input order. Only /zeta/ (item 1) is malformed.
+			m := withPlugins(map[string]string{
+				"plugins/00-first.js": `export const runtime = "node";
+export default function(alloy) {
+  alloy.hook('onPageRendered', { priority: 10 }, function(page) {
+    if (page.url === '/zeta/') return { url: page.url };
+    return page;
+  });
+}`,
+				"plugins/01-second.js": victimPlugin("onPageRendered", "{}"),
+			})
+			m["content/zeta.md"] = "---\ntitle: Zeta\nlayout: default\n---\n# Zeta Body"
+			_, err := pipeline.BuildWithContent(hookContractConfig("Node Batch Every Item"), m)
+			expectContractErrorOn(err, "onPageRendered", "00-first", "zeta")
+			Expect(err.Error()).NotTo(Or(ContainSubstring("/about/"), ContainSubstring("about.md")),
+				"the error must name the page whose return was malformed (issue #1179)")
 		})
 
 		It("accepts the page object from a Node plugin (guard)", func() {
@@ -418,10 +489,12 @@ export default function(alloy) {
 					"#1179 does not change that")
 
 			logged := logBuf.String()
-			Expect(logged).To(ContainSubstring("00-first"),
-				"the dev-rebuild warning must name the plugin that returned "+
-					"no html (issue #1179)")
-			Expect(logged).To(ContainSubstring("html"))
+			Expect(strings.Split(logged, "\n")).To(ContainElement(SatisfyAll(
+				ContainSubstring("00-first"),
+				ContainSubstring("onPageRendered"),
+				ContainSubstring("html"),
+			)), "one dev-rebuild warning line must name the event, the plugin "+
+				"that returned no html, and the field (issue #1179)")
 			Expect(logged).NotTo(ContainSubstring("VICTIM-HANDED-MALFORMED-PAYLOAD"),
 				"the malformed return must be caught before it reaches the next "+
 					"hook on incremental rebuilds too (issue #1179)")

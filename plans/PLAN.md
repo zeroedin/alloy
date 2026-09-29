@@ -2647,7 +2647,9 @@ This does not touch filters or shortcodes, which return strings by design, nor a
 plugin hook onPageRendered: plugin "00-first" returned no "html" for /about/ — return the page object (return page;)
 ```
 
-Wording may vary. Those four elements may not.
+Wording may vary. Those four elements may not. When the return is not an object at all — a string, array, `null` — there is no field to name; the error names the event, plugin and page and says the hook must return the page object.
+
+**The object requirement does not depend on scope.** Only the `html` requirement is conditional. A `toc`-scoped hook on an `onContentTransformed` event where no hook wants `html` may omit `html`, but it must still return an object; a bare string from it is an error. Today that string is applied back as the page's html, silently replacing it.
 
 **In-scope events are the raw-chained ones**, derived from the rule rather than listed as its definition:
 
