@@ -79,11 +79,23 @@ type HookRegistration struct {
 
 type priorityHook struct {
 	fn       HookFunc
-	batchFn  BatchHookFunc  // optional batch-capable variant
+	batchFn  BatchHookFunc // optional batch-capable variant
 	priority int
-	index    int            // registration order for stable sort
-	scope    *HookScope     // nil = unscoped (full payload)
+	index    int        // registration order for stable sort
+	scope    *HookScope // nil = unscoped (full payload)
+	source   string     // plugin that registered it, for error messages
 }
+
+// BuiltinHookSource names hooks registered directly from Go rather than by a
+// plugin, so an error about one never reads `plugin ""` (issue #1179).
+const BuiltinHookSource = "built-in"
+
+// HookResultValidator checks one hook's return before it is handed to the
+// next hook in a chain (issue #1179). source is the plugin that registered
+// the hook, index is the position of the payload in the dispatched batch (0
+// for a single payload), and result is what the hook returned. A non-nil
+// error stops the chain and is returned as the hook's own error.
+type HookResultValidator func(source string, index int, result interface{}) error
 
 // HookRegistry manages lifecycle hook registrations and execution.
 type HookRegistry struct {
@@ -154,23 +166,30 @@ func (r *HookRegistry) insertHook(event HookName, h priorityHook) {
 // RegisterBatchWithPriority adds a hook with both single and batch dispatch functions.
 // The batch function is used by RunBatchWithTimeout to distribute work across workers.
 func (r *HookRegistry) RegisterBatchWithPriority(event HookName, fn HookFunc, batchFn BatchHookFunc, priority int) {
-	r.insertHook(event, priorityHook{fn: fn, batchFn: batchFn, priority: priority})
+	r.RegisterSourced(event, BuiltinHookSource, fn, batchFn, nil, priority)
 }
 
 // RegisterWithPriority adds a hook function for the given event with explicit priority.
 // Lower priority runs first. Hooks with the same priority preserve registration order.
 func (r *HookRegistry) RegisterWithPriority(event HookName, fn HookFunc, priority int) {
-	r.insertHook(event, priorityHook{fn: fn, priority: priority})
+	r.RegisterSourced(event, BuiltinHookSource, fn, nil, nil, priority)
 }
 
 // RegisterWithOptions adds a hook with scope and explicit priority.
 func (r *HookRegistry) RegisterWithOptions(event HookName, fn HookFunc, scope HookScope, priority int) {
-	r.insertHook(event, priorityHook{fn: fn, priority: priority, scope: &scope})
+	r.RegisterSourced(event, BuiltinHookSource, fn, nil, &scope, priority)
 }
 
 // RegisterBatchWithOptions adds a batch-capable hook with scope and explicit priority.
 func (r *HookRegistry) RegisterBatchWithOptions(event HookName, singleFn HookFunc, batchFn BatchHookFunc, scope HookScope, priority int) {
-	r.insertHook(event, priorityHook{fn: singleFn, batchFn: batchFn, priority: priority, scope: &scope})
+	r.RegisterSourced(event, BuiltinHookSource, singleFn, batchFn, &scope, priority)
+}
+
+// RegisterSourced adds a hook and records which plugin registered it, so a
+// malformed return can be blamed on the right plugin (issue #1179). batchFn
+// and scope may be nil.
+func (r *HookRegistry) RegisterSourced(event HookName, source string, fn HookFunc, batchFn BatchHookFunc, scope *HookScope, priority int) {
+	r.insertHook(event, priorityHook{fn: fn, batchFn: batchFn, priority: priority, scope: scope, source: source})
 }
 
 // ScopeFor returns the scope for each hook registered on the event, in priority order.
@@ -358,6 +377,13 @@ func (r *HookRegistry) Run(event HookName, payload interface{}) (interface{}, er
 // Context fields (url, path, frontMatter) from the original payload are merged
 // into hook results for chain carry-forward (issue #1216).
 func (r *HookRegistry) RunWithTimeout(event HookName, payload interface{}) (interface{}, error) {
+	return r.RunWithTimeoutValidated(event, payload, nil)
+}
+
+// RunWithTimeoutValidated is RunWithTimeout with validate run on each hook's
+// return before it reaches the next hook (issue #1179). A nil validate
+// behaves exactly as RunWithTimeout.
+func (r *HookRegistry) RunWithTimeoutValidated(event HookName, payload interface{}, validate HookResultValidator) (interface{}, error) {
 	hooks := r.hooks[event]
 	current := payload
 	cc := extractChainContext(payload, len(hooks))
@@ -382,6 +408,11 @@ func (r *HookRegistry) RunWithTimeout(event HookName, payload interface{}) (inte
 			cancel()
 			if res.err != nil {
 				return nil, res.err
+			}
+			if validate != nil {
+				if err := validate(h.source, 0, res.val); err != nil {
+					return nil, err
+				}
 			}
 			if cc.has {
 				injectChainContext(res.val, &cc)
@@ -451,6 +482,13 @@ func (r *HookRegistry) RunBatchWithTimeout(event HookName, payloads []interface{
 // Context fields (url, path, frontMatter) from the original payloads are
 // merged into hook results for chain carry-forward (issue #1216).
 func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface{}, onProgress BatchProgressFunc) ([]interface{}, error) {
+	return r.RunBatchWithProgressValidated(event, payloads, onProgress, nil)
+}
+
+// RunBatchWithProgressValidated is RunBatchWithProgress with validate run on
+// every item of each hook's return before it reaches the next hook (issue
+// #1179). A nil validate behaves exactly as RunBatchWithProgress.
+func (r *HookRegistry) RunBatchWithProgressValidated(event HookName, payloads []interface{}, onProgress BatchProgressFunc, validate HookResultValidator) ([]interface{}, error) {
 	hooks := r.hooks[event]
 	current := make([]interface{}, len(payloads))
 	copy(current, payloads)
@@ -499,6 +537,15 @@ func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface
 					return nil, fmt.Errorf("batch hook %s returned %d results for %d inputs",
 						string(event), len(res.val), itemCount)
 				}
+				// Every item, not a sample: the malformed return may be any
+				// page in the batch, and the error must name that page.
+				if validate != nil {
+					for i, v := range res.val {
+						if err := validate(h.source, i, v); err != nil {
+							return nil, err
+						}
+					}
+				}
 				for i := range contexts {
 					if contexts[i].has && i < len(res.val) {
 						injectChainContext(res.val[i], &contexts[i])
@@ -532,6 +579,11 @@ func (r *HookRegistry) RunBatchWithProgress(event HookName, payloads []interface
 					cancel()
 					if res.err != nil {
 						return nil, fmt.Errorf("%s item %d: %w", string(event), j, res.err)
+					}
+					if validate != nil {
+						if err := validate(h.source, j, res.val); err != nil {
+							return nil, err
+						}
 					}
 					if contexts[j].has {
 						injectChainContext(res.val, &contexts[j])

@@ -5,11 +5,13 @@ import (
 	"log"
 	"path"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 
 	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/content"
+	"github.com/zeroedin/alloy/internal/ordered"
 	"github.com/zeroedin/alloy/internal/plugin"
 )
 
@@ -273,6 +275,7 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 	if scope != nil && scope.Pages.Mode == plugin.PagesScopeNone && scope.Pages.Explicit {
 		return nil
 	}
+	wantsHTML := scope == nil || scope.WantsField("html")
 	for _, page := range pages {
 		if scope != nil && scope.Pages.Mode == plugin.PagesScopeGlob {
 			if !matchPageGlob(scope.Pages.Glob, page.URL) {
@@ -286,20 +289,23 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 		if scope == nil || scope.WantsField("frontMatter") {
 			payload.FrontMatter = convertedFrontMatter(page)
 		}
-		if scope == nil || scope.WantsField("html") {
+		if wantsHTML {
 			payload.HTML = page.HTML()
 		}
 		if scope == nil || scope.WantsField("toc") {
 			payload.TOC = page.TOC
 		}
 
-		result, err := hooks.RunWithTimeout(plugin.OnContentTransformed, payload)
+		// html is required from every hook exactly when it is applied back
+		// below — the same predicate, so the two cannot drift (issue #1179).
+		validate := hookReturnValidator(wantsHTML, func(int) *content.Page { return page })
+		result, err := hooks.RunWithTimeoutValidated(plugin.OnContentTransformed, payload, validate)
 		if err != nil {
 			return fmt.Errorf("plugin hook onContentTransformed (%s): %w", page.RelPath, err)
 		}
 
 		if modified, ok := toGoMap(result); ok {
-			if scope == nil || scope.WantsField("html") {
+			if wantsHTML {
 				if html, ok := modified["html"].(string); ok {
 					page.SetRenderedHTML(html)
 				}
@@ -316,13 +322,95 @@ func fireContentTransformedHooks(pages []*content.Page, hooks *plugin.HookRegist
 			if len(buildCache) > 0 && buildCache[0] != nil {
 				extractAddDependencies(modified, page.RelPath, buildCache[0])
 			}
-		} else if s, ok := result.(string); ok {
-			page.SetRenderedHTML(s)
-		} else if b, ok := result.([]byte); ok {
-			page.SetRenderedBody(b)
 		}
 	}
 	return nil
+}
+
+// hookReturnValidator enforces the return contract on a raw-chained event
+// (issue #1179): each hook's return must be an object — a
+// map[string]interface{} from QuickJS or an *ordered.Map from Node and WASM
+// — and must carry html as a string when requireHTML. It runs on every
+// hook's return before the next hook sees it, so the error names the plugin
+// that returned the value rather than the one that would have crashed on
+// it. pageAt maps the runner's payload index to its page.
+func hookReturnValidator(requireHTML bool, pageAt func(int) *content.Page) plugin.HookResultValidator {
+	return func(source string, index int, result interface{}) error {
+		page := hookPageLabel(pageAt(index))
+		html, isObject, present := hookReturnField(result, "html")
+		if !isObject {
+			remedy := "return the page object (return page;)"
+			if requireHTML {
+				remedy = `return the page object with its "html" (page.html = ...; return page;)`
+			}
+			return fmt.Errorf("plugin %q returned %s for %s, not the page object — %s",
+				source, describeHookValue(result), page, remedy)
+		}
+		if !requireHTML {
+			return nil
+		}
+		if !present {
+			return fmt.Errorf(`plugin %q returned no "html" for %s — return the page object (return page;)`,
+				source, page)
+		}
+		if _, ok := html.(string); !ok {
+			return fmt.Errorf(`plugin %q returned "html" as %s for %s — page.html must be a string`,
+				source, describeHookValue(html), page)
+		}
+		return nil
+	}
+}
+
+// hookReturnField reads key from a hook's return without converting it.
+// Validation runs on every hook and every page, so an *ordered.Map is read
+// in place rather than copied through ToGoMap.
+func hookReturnField(result interface{}, key string) (value interface{}, isObject, present bool) {
+	switch m := result.(type) {
+	case map[string]interface{}:
+		value, present = m[key]
+		return value, true, present
+	case *ordered.Map:
+		value, present = m.GetValue(key)
+		return value, true, present
+	default:
+		return nil, false, false
+	}
+}
+
+// hookPageLabel identifies a page in a hook error: its URL, or its source
+// path when it has none.
+func hookPageLabel(page *content.Page) string {
+	if page == nil {
+		return "unknown page"
+	}
+	if page.URL != "" {
+		return page.URL
+	}
+	return page.RelPath
+}
+
+// describeHookValue names a returned value in the plugin author's terms —
+// JavaScript ones, since that is what they wrote — rather than Go types.
+func describeHookValue(v interface{}) string {
+	if v == nil {
+		return "nothing"
+	}
+	switch reflect.ValueOf(v).Kind() {
+	case reflect.String:
+		return "a string"
+	case reflect.Bool:
+		return "a boolean"
+	case reflect.Slice, reflect.Array:
+		return "an array"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return "a number"
+	case reflect.Map, reflect.Struct, reflect.Ptr:
+		return "an object"
+	default:
+		return fmt.Sprintf("a %T", v)
+	}
 }
 
 func deserializeTOC(items []interface{}) []content.TOCEntry {
@@ -643,20 +731,24 @@ func dispatchPostRenderHooks(
 					mu.Unlock()
 				}
 			}
-			results, err := hooks.RunBatchWithProgress(plugin.OnPageRendered, payloads, progressFn)
+			// html is always applied back on onPageRendered, so always
+			// required (issue #1179).
+			validate := hookReturnValidator(true, func(i int) *content.Page { return htmlPages[i] })
+			results, err := hooks.RunBatchWithProgressValidated(plugin.OnPageRendered, payloads, progressFn, validate)
 			if err != nil {
 				if err := handleErr(fmt.Errorf("plugin hook onPageRendered: %w", err)); err != nil {
 					return err
 				}
 			} else {
 				for i, result := range results {
+					// Every hook's return was validated in the chain. A result
+					// that is not a map here is the original payload, kept
+					// because every hook timed out — nothing to apply back.
 					if m, ok := toGoMap(result); ok {
 						if html, ok := m["html"].(string); ok {
 							htmlPages[i].SetRenderedHTML(html)
 						}
 						extractAddDependencies(m, htmlPages[i].RelPath, buildCache)
-					} else if result != nil {
-						log.Printf("warning: onPageRendered result for %s: expected page object with html key, got %T — plugin may need migration to the object API", htmlPages[i].RelPath, result)
 					}
 				}
 			}
