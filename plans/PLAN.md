@@ -2718,10 +2718,47 @@ Built-in filters covering common SSG needs. Compiled Go functions registered wit
 - **URL**: `url` (resolves path relative to baseURL path prefix), `absolute_url` (prepends full baseURL), `url_encode`, `url_decode`
 - **Math**: `plus`, `minus`, `times`, `divided_by`, `modulo`, `ceil`, `floor`, `round`, `abs`
 - **Content**: `markdownify` — renders a markdown string to HTML using the same goldmark configuration as the main content renderer, driven by the site's `content.markdown` config. Uses a shared goldmark instance, not per-call allocation. Does not run template tag protection (processes already-rendered values). Useful for rendering markdown in front matter fields (`{{ page.description | markdownify }}`), data file values, or any template string containing markdown syntax.
-- **Output safety**: `safeHTML` (bypass auto-escaping for trusted content — relevant for Go templates)
+- **Output safety**: `safeHTML`, `safeCSS`, `safeJS`, `safeURL`, `safeHTMLAttr` — mark trusted content so Go templates do not escape it, one filter per escaping context. See "Output safety (issue #1266)" below.
 - **Regex**: `findRE`, `replaceRE` (regex match and replace)
 - **Data**: `json` (serialize value to JSON), `default` (fallback value if nil/empty)
 - **Assets**: `cachebust` (content-hash cache busting via query string), `get_hash` (file content digest for SRI)
+
+**Output safety (issue #1266).** The two engines escape data in opposite directions, and Alloy keeps it that way.
+
+| | Liquid | Go templates |
+|---|---|---|
+| Data printed with `{{ }}` | **raw** — printed exactly as written | **escaped** — by `html/template`, according to where it appears |
+| Turn escaping on | `\| escape` | n/a — on by default |
+| Turn escaping off | n/a — off by default | the `safe*` filters below |
+
+Same data, same line: `<b>hi</b>` prints as `<b>hi</b>` in Liquid and as `&lt;b&gt;hi&lt;/b&gt;` in Go templates. Liquid's raw default matches Jekyll and Shopify. Making Liquid escape by default was considered and rejected: every Liquid site that prints HTML from data would start showing `&lt;b&gt;` with no change to its templates. The divergence is documented instead (see "Documentation" below). The risk it documents is a site moving from Go templates to Liquid: values that were escaped start printing raw, with no error and no change in the template source.
+
+**Go templates escape by context, so there is one filter per context.** `html/template` applies a different rule depending on where a value lands, and a plain string never bypasses any of them. Only a value of the matching `html/template` type does:
+
+| Filter | Marks the value as | Unlocks | Without the filter, `html/template`… |
+|---|---|---|---|
+| `safeHTML` | `template.HTML` | HTML body | escapes it: `<b>` → `&lt;b&gt;` |
+| `safeCSS` | `template.CSS` | inside `<style>` and `style="…"` | replaces anything it cannot prove harmless (e.g. `url(…)`) with `ZgotmplZ`; plain declarations like `color: red` pass |
+| `safeJS` | `template.JS` | inside `<script>` | prints it as a quoted string literal |
+| `safeURL` | `template.URL` | URL attributes (`href`, `src`, …) | replaces a non-`http(s)`/`mailto` URL with `#ZgotmplZ` |
+| `safeHTMLAttr` | `template.HTMLAttr` | a whole attribute in attribute position | replaces it with `ZgotmplZ` |
+
+Each name, and the type it returns, matches Hugo's function of the same name. `html/template` has two further types, `JSStr` (inside a JS string literal) and `Srcset` (a `srcset` attribute), and Hugo has a `safeJSStr`; neither is included. They are not needed for the common cases — `safeJS` covers script, `safeURL` covers each URL — and can be added the same way if asked for. Both calling forms work: `{{ safeHTML .page.embed }}` and `{{ .page.embed | safeHTML }}`.
+
+**Trust is narrow, in two ways.**
+
+- *Each filter unlocks only its own context.* `safeHTML` in an `href` is still checked as a URL, so `<a href="{{ safeHTML .link }}">` with a `javascript:` link still prints `#ZgotmplZ`. Use `safeURL` there.
+- *Trust ends at the next filter.* Every other filter returns an ordinary string, so `{{ safeHTML .v | upcase }}` is escaped again. A `safe*` filter must be the last step in the expression.
+
+`html/template` may still normalize a trusted value to make it well-formed in its position — `safeURL` on `javascript:alert(1)` prints `javascript:alert%281%29`. The scheme and meaning survive; byte-for-byte equality is not promised.
+
+**In Liquid, all five filters are registered and return their input unchanged, as a plain string.** Liquid has no escaping to bypass, so they do nothing — they exist so a template that uses them is portable between engines. They must hand Liquid a plain string, not an `html/template` type: Liquid's own filters treat those named types as non-strings, and `{{ v | safeHTML | size }}` drops from the real length to `0` (measured on a prototype of the naive one-line fix).
+
+**What the `safe*` filters do not protect against.** They are an author's assertion that a value is already safe for that context; Alloy does not check it. Applying one to data an author does not control — a third-party feed, user submissions, a remote data source — re-opens exactly the hole `html/template` closes: `safeJS` and `safeURL` on untrusted data are script injection. Use them on values the site author wrote.
+
+**Out of scope here.** The Go engine already marks two context keys, `content` and `summary`, as `template.HTML` by name (`markHTMLSafe`). Whether a data value that happens to use one of those keys should be trusted is issue #1267 and is not changed by this section.
+
+**Documentation.** The docs must say all of the above in user terms: the per-engine table, the five Go filters with one example each in its own context, the narrow-trust rules, the Go→Liquid switching warning, and the security note. The existing `safeHTML` entry in `docs/content/templates/filters.md` describes the Go behavior but shows only a Liquid example, where the filter does nothing; it must show Go usage.
 
 **Filter pipes inside `{% for %}` expressions are not supported.** Standard Liquid's `for` tag parses `limit:` and `offset:` as built-in tag parameters from the raw markup — they are not pipe filters. Writing `{% for x in arr | limit: 5 %}` is silently broken: the template pre-processor rewrites `| limit:` to a `plugin_filter` bridge call, which the `for` tag does not recognize as a `limit:` parameter. The two correct forms are the `for`-tag clause (`{% for x in arr limit: 5 %}`) and the assign-then-loop pattern (`{% assign capped = arr | limit: 5 %}{% for x in capped %}`).
 
