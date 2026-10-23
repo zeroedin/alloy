@@ -3138,18 +3138,13 @@ alloy.hook("onFormatRendered", {}, (payload) => {
 
 **`onPageRendered` HTML-only restriction (issue #1102):** `onPageRendered` fires only for pages whose `Outputs` includes `"html"`. Determination: if `page.Outputs` is nil or empty, the page defaults to `["html"]` and `onPageRendered` fires. If `page.Outputs` contains `"html"` (e.g., `["html", "json"]`), `onPageRendered` fires for the HTML body. If `page.Outputs` does not contain `"html"` (e.g., `["json"]`), `onPageRendered` does not fire — the page's rendered body routes through `onFormatRendered` instead. This matches the hook's name and every existing plugin's assumption that the payload is HTML.
 
-**`onFormatRendered` payload contract (issue #1102):** The payload is a typed struct with five fields: `format` (output format string, e.g., `"json"`, `"xml"`), `content` (rendered format body as string), `url` (page URL), `path` (page relative path), `frontMatter` (page front matter as plain object). Only `content` in the return is applied back to the format body — `format`, `url`, `path`, and `frontMatter` are read-only context for conditional processing. Edge cases mirror `onPageRendered`:
+**`onFormatRendered` payload contract (issue #1102):** The payload is a typed struct with five fields: `format` (output format string, e.g., `"json"`, `"xml"`), `content` (rendered format body as string), `url` (page URL), `path` (page relative path), `frontMatter` (page front matter as plain object). Only `content` in the return is applied back to the format body — `format`, `url`, `path`, and `frontMatter` are read-only context for conditional processing. Malformed returns are ignored and the previous content is kept. This event is outside the hook-return rule of issue #1179, because its payload is rebuilt before every hook (see "A hook's return must carry the field it exists to produce"):
 
 - **`nil`/`undefined` return** — no-op, original content preserved.
 - **Map without `content` key** — original content preserved.
 - **Non-string `content` value** — original content preserved.
 
-**`onPageRendered` return value edge cases (issue #1120):** The apply-back block handles malformed or legacy return values gracefully:
-
-- **`nil`/`undefined` return** — no-op, original HTML preserved, no warning logged.
-- **Map without `html` key** (e.g., `{ transformed: true }`) — original HTML preserved, migration warning logged.
-- **Non-string `html` value** (e.g., `{ html: 42 }`) — original HTML preserved, migration warning logged.
-- **Old string format return** (e.g., `return page.html + "..."`) — original HTML preserved, migration warning logged. Plugins must migrate from `(html) => html.replace(...)` to `(page) => { page.html = page.html.replace(...); return page; }`.
+**`onPageRendered` return value edge cases (issue #1120) — superseded by issue #1179.** #1120 handled four malformed returns gracefully: `nil`/`undefined`, a map without `html`, a non-string `html`, and a bare-string return. That only ever covered the last hook in a chain. All four are now errors raised at the hook that returned them — see "A hook's return must carry the field it exists to produce (issue #1179)".
 
 **`*ordered.Map` front matter conversion:** `buildPageRenderedPayload` calls `convertOrderedMaps()` on `page.FrontMatter` before serialization. Deeply nested YAML maps stored as `*ordered.Map` in Go are recursively flattened to `map[string]interface{}` so plugins receive plain JavaScript objects at all nesting levels.
 
