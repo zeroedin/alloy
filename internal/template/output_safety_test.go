@@ -227,5 +227,35 @@ var _ = Describe("Output safety filters (issue #1266)", func() {
 			Expect(render(`{{ v | escape }}`, "<b>hi</b>")).To(Equal("&lt;b&gt;hi&lt;/b&gt;"),
 				"| escape is Liquid's opt-in to escaping (issue #1266)")
 		})
+
+		// RenderTemplate renders Liquid without the engine: no AddFilter, no
+		// plugin_filter rewrite. Filters resolve only as alloyFilterBridge
+		// methods. Server.RenderPage and permalink rendering use this path
+		// (#1274 review).
+		Context("through RenderTemplate", func() {
+			renderStandalone := func(src string, v string) string {
+				GinkgoHelper()
+				out, err := tmpl.RenderTemplate(src, "safety", map[string]interface{}{"v": v})
+				Expect(err).NotTo(HaveOccurred(),
+					"every safe* filter must resolve in RenderTemplate too — it has "+
+						"no filter rewrite, so each needs an alloyFilterBridge method "+
+						"(issue #1266)")
+				return out
+			}
+
+			for _, name := range []string{"safeHTML", "safeCSS", "safeJS", "safeURL", "safeHTMLAttr"} {
+				name := name
+
+				It(name+" returns its input unchanged", func() {
+					Expect(renderStandalone(`{{ v | `+name+` }}`, raw)).To(Equal(raw),
+						"%s must pass the value through untouched (issue #1266)", name)
+				})
+
+				It(name+" returns a plain string other filters can use", func() {
+					Expect(renderStandalone(`{{ v | `+name+` | size }}`, raw)).To(Equal("11"),
+						"%s must hand Liquid a plain string (issue #1266)", name)
+				})
+			}
+		})
 	})
 })
