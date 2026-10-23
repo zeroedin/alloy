@@ -36,13 +36,18 @@ var _ = Describe("Output safety filters (issue #1266)", func() {
 			Expect(tmpl.RegisterBuiltinFilters(engine)).To(Succeed())
 		})
 
-		render := func(src string, v string) string {
+		renderCtx := func(src string, ctx map[string]interface{}) string {
 			GinkgoHelper()
 			tpl, err := engine.Parse("safety", []byte(src))
 			Expect(err).NotTo(HaveOccurred())
-			out, err := tpl.Render(map[string]interface{}{"v": v})
+			out, err := tpl.Render(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			return string(out)
+		}
+
+		render := func(src string, v string) string {
+			GinkgoHelper()
+			return renderCtx(src, map[string]interface{}{"v": v})
 		}
 
 		Context("each filter unlocks its own context", func() {
@@ -131,13 +136,46 @@ var _ = Describe("Output safety filters (issue #1266)", func() {
 							"html/template's scheme check — use safeURL (issue #1266)")
 			})
 
-			It("trust ends at the next filter", func() {
+			It("a filter that changes the value drops the trust", func() {
 				// upcase returns a plain string, which html/template escapes.
 				Expect(render(`<p>{{ safeHTML .v | upcase }}</p>`, "<b>hi</b>")).
 					To(Equal("<p>&lt;B&gt;HI&lt;/B&gt;</p>"),
-						"a filter applied after safeHTML returns an ordinary string, "+
-							"so the result is escaped again — safe* must be the last "+
-							"step (issue #1266)")
+						"a filter that builds a new value returns an ordinary string, "+
+							"so the result is escaped again (issue #1266)")
+			})
+		})
+
+		Context("a filter that hands back the same value keeps the trust", func() {
+			// Decided in the #1274 review: trust survives only when a filter
+			// returns the exact value it was given. Wiping it after every
+			// filter would break {{ default .page.content "" }} on existing
+			// Go sites.
+
+			It("default with a present trusted value returns it still trusted", func() {
+				Expect(render(`<p>{{ default (safeHTML .v) "x" }}</p>`, "<b>hi</b>")).
+					To(Equal("<p><b>hi</b></p>"),
+						"default returns its input unchanged when it is present, so "+
+							"the trusted value is printed raw (issue #1266)")
+			})
+
+			It("default with an empty trusted value falls back, and the fallback is escaped (guard)", func() {
+				out := renderCtx(`<p>{{ default (safeHTML .v) .fallback }}</p>`, map[string]interface{}{
+					"v": "", "fallback": "<i>x</i>",
+				})
+				Expect(out).To(Equal("<p>&lt;i&gt;x&lt;/i&gt;</p>"),
+					"an empty trusted value is still empty — default must compare "+
+						"the text, not the interface, or it never falls back; and the "+
+						"fallback was never marked trusted, so it is escaped (issue #1266)")
+			})
+
+			It("default passes page.content through as HTML (guard)", func() {
+				// content is marked template.HTML by markHTMLSafe today.
+				out := renderCtx(`{{ default .page.content "" }}`, map[string]interface{}{
+					"page": map[string]interface{}{"content": "<p>body</p>"},
+				})
+				Expect(out).To(Equal("<p>body</p>"),
+					"existing Go templates rely on default keeping page.content's "+
+						"HTML — #1266 must not wipe trust after every filter")
 			})
 		})
 	})

@@ -2725,7 +2725,7 @@ Built-in filters covering common SSG needs. Compiled Go functions registered wit
 
 **Output safety (issue #1266).** The two engines escape data in opposite directions, and Alloy keeps it that way.
 
-| | Liquid | Go templates |
+| Behavior | Liquid | Go templates |
 |---|---|---|
 | Data printed with `{{ }}` | **raw** — printed exactly as written | **escaped** — by `html/template`, according to where it appears |
 | Turn escaping on | `\| escape` | n/a — on by default |
@@ -2748,7 +2748,9 @@ Each name, and the type it returns, matches Hugo's function of the same name. `h
 **Trust is narrow, in two ways.**
 
 - *Each filter unlocks only its own context.* `safeHTML` in an `href` is still checked as a URL, so `<a href="{{ safeHTML .link }}">` with a `javascript:` link still prints `#ZgotmplZ`. Use `safeURL` there.
-- *Trust ends at the next filter.* Every other filter returns an ordinary string, so `{{ safeHTML .v | upcase }}` is escaped again. A `safe*` filter must be the last step in the expression.
+- *Trust survives a filter only if the filter hands back the exact same value.* A filter that changes the value returns an ordinary string, which is escaped again: `{{ safeHTML .v | upcase }}` prints `&lt;B&gt;HI&lt;/B&gt;`. A filter that returns the value it was given untouched — `default` when its input is present, for example — returns the trusted value itself, so it stays trusted: `{{ default (safeHTML .v) "x" }}` prints `.v` raw. Nothing new becomes trusted this way. Only the exact text the author marked survives; a fallback or any other value a filter returns instead is escaped as normal. An empty trusted value counts as empty: `{{ default (safeHTML .v) .fallback }}` with an empty `.v` returns `.fallback`, escaped.
+
+  Wiping trust after every filter was considered and rejected (#1274 review): Go sites already write `{{ default .page.content "" }}`, where `content` is trusted HTML (`markHTMLSafe`), and that would start printing `&lt;p&gt;`. To be sure a value ends up trusted, put the `safe*` filter last.
 
 `html/template` may still normalize a trusted value to make it well-formed in its position — `safeURL` on `javascript:alert(1)` prints `javascript:alert%281%29`. The scheme and meaning survive; byte-for-byte equality is not promised.
 
