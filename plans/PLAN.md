@@ -2592,6 +2592,77 @@ Alloy uses a tiered plugin runtime. Plugin authors write in their preferred lang
 
 **Hook execution order**: Hooks execute by priority (lower runs first), then by alphabetical filename order within the same priority. Default priority is 50. Each hook receives the output of the previous one — they chain, not race. **Hook chain context preservation (issue #1216)**: When hooks chain, the next hook must receive the full payload context (`url`, `path`, `frontMatter`) from the original input — not just the mutable field (`html`/`content`) from the previous hook's return. Context fields are read-only: if a hook returns `{ url: "/mutated/" }`, the chaining layer carries forward the original `url`, not the hook's returned value. **Cross-runtime chains (issue #1219)**: Context injection must handle both `map[string]interface{}` results (from QuickJS) and `*ordered.Map` results (from WASM via `ordered.UnmarshalJSONValue` and Node via `ordered.RewrapValue`). When a WASM or Node hook chains with any other hook, `injectChainContext` must call `om.Set("url", ...)`, `om.Set("path", ...)`, `om.Set("frontMatter", ...)` on the `*ordered.Map` result. The same read-only semantics apply: original context fields overwrite any values the hook returned.
 
+**A hook's return must carry the field it exists to produce (issue #1179).** #1216 carries the *context* fields forward through a chain. Nothing guaranteed the *output* field. On events dispatched through the raw hook chain, where each hook's return becomes the next hook's input, a return that lacked it left the next hook holding `undefined`. Measured on `72b73dd`:
+
+```
+earlier hook returns page        → next hook: typeof html = string     keys=frontMatter,html,path,url
+earlier hook returns {url}       → next hook: typeof html = undefined  keys=frontMatter,path,url
+earlier hook returns nothing     → next hook: TypeError: cannot read property 'html' of null
+earlier hook returns a string    → next hook: typeof page = string, typeof html = undefined
+```
+
+The failure surfaced in the wrong plugin. The report blamed `01-transforms.js:7`, the *victim*; the cause was an earlier hook. Traced from any single hook's code path the defect looks impossible, which is what an earlier investigation of this issue concluded. Whether it failed at all also depended on position:
+
+```
+lone hook returns {url}          → "Built 61 pages": no error, no warning, original html kept
+same hook, another hook after it → the *other* plugin crashes
+```
+
+A plugin's validity depended on whether an unrelated plugin happened to follow it.
+
+**The rule.** On an in-scope event, each hook's return must be an object, and whenever the pipeline would apply the output field back from that return, the field must be present and a string. Anything else is an error, raised at the hook that returned it, and handled exactly like an error the hook threw: it fails `alloy build`, and on incremental dev rebuilds — where every hook error is already logged as a warning so the dev server stays up — it is logged as a warning and that event's hook results are discarded, the same as today for a throw.
+
+| Return | Result |
+|---|---|
+| page object with `html` a string, empty `""` included | accepted |
+| page object without `html` | build error |
+| page object with `html` present but not a string | build error |
+| `null`, `undefined`, or no `return` | build error |
+| a bare string, number or array | build error |
+
+**When the field is required is decided by the pipeline's own apply-back condition, not by whether the field was sent.** The `html` key is in every in-scope payload regardless of scoping: a hook registered with `pageFields: ["toc"]` still receives it — holding the page's html when another hook on the event asks for `html`, and an empty string when none does (`HookTransformPayload.HTML` has no `omitempty`). So "required if sent" would reject hooks that legitimately do not produce `html`. The field is required exactly when the pipeline would apply it back from the hook's return — the condition it already evaluates:
+
+- `onPageRendered` — `html` is always applied back, so always required.
+- `onContentTransformed` — `html` is applied back when the union of the event's `pageFields` scopes wants it (`computeUnionScope`). When any hook on the event asks for `html`, every hook on it must return `html`, including a `toc`-scoped hook, because the chain passes each return to the next hook and the final one is applied back. When no hook asks for `html`, it is not required.
+
+`toc` on `onContentTransformed` is also applied back, but only when present and a list. It stays optional: a return without it leaves the page's TOC unchanged.
+
+**A bare-string return is retired on both events.** It predates the object API and is undocumented. On `onPageRendered` it was already discarded with a warning (*"plugin may need migration to the object API"*), so making it an error changes nothing that worked. On `onContentTransformed` it worked for a lone hook and broke any hook after it — the same position-dependence this rule removes. The migration is one line:
+
+```javascript
+// before
+return "<p>html</p>";
+// after
+page.html = "<p>html</p>";
+return page;
+```
+
+This does not touch filters or shortcodes, which return strings by design, nor any other hook event.
+
+**It applies to every hook, the first, the last and a lone hook alike.** Validating only mid-chain would keep the defect in another form: the same plugin would be valid or invalid depending on what else is installed.
+
+**The error names the plugin that returned the value** — the event, the plugin, the page, and the missing or malformed field. It must not name the next hook in the chain; that misattribution is the defect. For example:
+
+```
+plugin hook onPageRendered: plugin "00-first" returned no "html" for /about/ — return the page object (return page;)
+```
+
+Wording may vary. Those four elements may not. When the return is not an object at all — a string, array, `null` — there is no field to name; the error names the event, plugin and page and says the hook must return the page object.
+
+**The object requirement does not depend on scope.** Only the `html` requirement is conditional. A `toc`-scoped hook on an `onContentTransformed` event where no hook wants `html` may omit `html`, but it must still return an object; a bare string from it is an error. Today that string is applied back as the page's html, silently replacing it.
+
+**In-scope events are the raw-chained ones**, derived from the rule rather than listed as its definition:
+
+| Event | Dispatch | Output field | In scope | Verified on `72b73dd` |
+|---|---|---|---|---|
+| `onPageRendered` | `RunBatchWithProgress` — raw chain | `html` | yes | next hook gets `typeof html = undefined` |
+| `onContentTransformed` | `RunWithTimeout` — raw chain | `html` (+ optional `toc`) | yes | next hook gets `typeof html = undefined` |
+| `onFormatRendered` | `RunEachWithTimeout` — payload rebuilt per hook | `content` | **no** | next hook still receives `content` |
+
+`onFormatRendered` is out of scope because its hooks are not chained on each other's returns. `dispatchPostRenderHooks` rebuilds the full payload from Go-side state before every hook, and `extractFormatRenderedContent` keeps the previous `content` when a return lacks it. A malformed return there cannot crash a later hook; it is silently ignored instead. That is a separate inconsistency, noted here rather than changed.
+
+**What this does not change.** Context fields stay read-only and are still restored after every hook (#1216). Errors thrown *inside* a plugin keep their existing handling; this rule governs what a hook returns, not what it throws. The fatal-in-build, warning-in-dev split is unchanged and applies to the new error as it does to a throw.
+
 ```javascript
 // alloy.hook(event, options, fn)
 // options is required — declares what data the hook needs
