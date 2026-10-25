@@ -406,7 +406,7 @@ func describeHookValue(v interface{}) string {
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
 		reflect.Float32, reflect.Float64:
 		return "a number"
-	case reflect.Map, reflect.Struct, reflect.Ptr:
+	case reflect.Map, reflect.Struct, reflect.Pointer:
 		return "an object"
 	default:
 		return fmt.Sprintf("a %T", v)
