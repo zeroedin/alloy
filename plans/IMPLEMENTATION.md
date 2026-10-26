@@ -461,7 +461,7 @@ Key points:
   Register both in `goEngine.AddFilter` or directly in the FuncMap during engine creation. The `*ordered.Map` in `siteData` is never mutated. Liquid uses it directly via `Each` and `LiquidMethodMissing`.
 - **Ordered-map dot notation (issue #1237)**: Contract in PLAN.md → "Ordered Data in Go Templates (issue #1237)". Convert every `*ordered.Map` reaching the Go engine's render context to `map[string]interface{}` so `{{ .site.data.pkg.version }}` resolves natively. This replaces the "keep `*ordered.Map` as the context value" decision recorded for #458 above; `oget` and `orange` remain registered and must keep working.
 
-  **Where the conversion goes.** `goTemplate.Render` already deep-walks the context through `markHTMLSafe` to mark `content`/`summary` as `gohtml.HTML`, building new maps as it goes. Fold conversion into that same walk rather than adding a second pass — one traversal, one allocation set. Two gaps in the existing walk must be closed:
+  **Where the conversion goes.** `goTemplate.Render` already deep-walks the context through `markHTMLSafe` — which marked `content`/`summary` as `gohtml.HTML` by key name until issue #1267 replaced that with a trust marker set at the value's origin — building new maps as it goes. Fold conversion into that same walk rather than adding a second pass — one traversal, one allocation set. Two gaps in the existing walk must be closed:
 
   - `markHTMLSafe` recurses into `map[string]interface{}` but **not into `[]interface{}`**. Arrays of objects are the commonest JSON shape and their elements are `*ordered.Map`; without slice recursion `{{ range .site.data.items }}{{ .label }}{{ end }}` still fails. Verified against the built CLI: `can't evaluate field label in type interface {}`.
   - `*ordered.Map` currently falls through `markHTMLSafe`'s `default:` branch untouched. Add a case that converts it. `ordered.Map.ToGoMap()` is the right tool and needs no change: its helper `toGoValue` already recurses through both nested `*Map` values and `[]interface{}`, so one call converts an arbitrarily deep subtree.
@@ -492,6 +492,39 @@ Key points:
   - `docs/content/content/data-files.md` — the "ordered-go" tab states `orange` yields "insertion order". For Go templates it now yields sorted key order. The Liquid tab is still correct.
   - `docs/content/templates/layouts.md` — same `orange` claim in the ordered-map examples.
   - Both pages should gain the guidance that a sequence belongs in a list rather than a map, with the list form shown — this is the steering PLAN.md calls for, and it is what keeps authors out of the divergence in the first place.
+
+- **Trust HTML by origin, not key name (issue #1267)**: Contract in PLAN.md → "Go templates trust HTML by origin, not by key name (issue #1267)".
+
+  **Mark at the origin, convert in the Go engine.** Add a named string type for trusted HTML in `internal/content` (e.g. `content.TrustedHTML`; `content` is the lowest package every origin can import) and wrap the value where Alloy creates it:
+  - `internal/pipeline/render.go` — `ctx["content"] = page.HTML()` in `renderPageThroughLayouts` and `fmtCtx["content"]` in `renderPageFormats`.
+  - `internal/template/context.go` `ToMap` — `pageCtx["content"] = tc.Content` (the rendered body; only set when non-empty, which is why a front-matter `content` on an empty page stays an ordinary string and is escaped). Also overlay `pageCtx["summary"]` with the marked front-matter summary, since `pageCtx` copies front matter first.
+  - `internal/content/page.go` `ToTemplateMap` — `m["summary"]`, which feeds `site.pages`, collections, taxonomy term pages and paginated page items.
+
+  In `markHTMLSafe` and `markHTMLSafeSlice`, convert the marker type to `gohtml.HTML` and **drop the `k == "content" || k == "summary"` name match** — plain strings pass through and are escaped by `html/template`.
+
+  **The marker must reach Liquid as a plain string.** Give the type `ToLiquid() interface{} { return string(t) }`; liquidgo calls `ToLiquid` on lookup (`liquid/extensions.go`). Without it, Liquid's own `size` returns `0` on the value. Verified on a prototype: Liquid output is byte-identical to `main` for `size`, `upcase`, `strip_html`, `truncate`, `json`, `==` and `contains` on `content` and `summary`.
+
+  **Do not put `gohtml.HTML` in the shared context.** The context is engine-agnostic; `gohtml.HTML` has no `ToLiquid` and breaks Liquid filters (#1266).
+
+  **Callers that compare types.** `ToTemplateMap`'s `summary` is now the marker type, not `string`. No production code type-asserts it (checked: every `["summary"]` read in `internal/` and `cmd/`). Two existing tests compared it with `Equal("…")`; they now compare the text with `BeEquivalentTo`. JSON encoding is unaffected — a named string type marshals as a string.
+
+  **Ordering.** The implementation must not merge to `main` before #1266's implementation (`safeHTML` returning `template.HTML`). The opt-in test in `html_trust_test.go` enforces this: it stays red until both are in.
+
+  **Verified on a prototype** of exactly this design (uncommitted): with #1266's prototype also applied, every test passes and `go test -race ./...` passes (25/25 packages). Without #1266, the only failure is the opt-in test.
+
+  **Test coverage**:
+  - `internal/pipeline/html_trust_test.go` (`BuildWithContent`): 12 tests.
+    - **5 red:** a data file's `content`, a data file's `summary`, `content` and `summary` nested in data, and a front-matter `content` on an empty page all escape (4). Plus the `safeHTML` opt-in, which also needs #1266 (1).
+    - **6 guards for Go templates:** the layout's `{{ .content }}`, `{{ .page.content }}`, the page summary, list summaries and the page body through an include all stay raw (5), and ordinary data fields still escape (1). The first five fail under a mutation where the Go engine ignores the marker; all the escaping tests fail under one where it trusts every string.
+    - **1 guard for Liquid:** plain strings in filters and comparisons. It fails when the marker has no `ToLiquid`.
+  - `internal/template/gotemplate_test.go`:
+    - **1 red:** a plain string under `content` or a nested `summary` is escaped by the engine.
+    - **2 updated:** existing layout tests now pass the body as `gohtml.HTML`, because the engine no longer trusts by name.
+  - `internal/content/frontmatter_test.go` and `internal/template/context_test.go`: 2 updated to compare `summary`'s text, not its type.
+
+  **Documentation and changeset to update alongside the implementation** (not changed in the spec branch):
+  - Mark the changeset **breaking for Go-template sites**: `content` and `summary` fields in data files now escape. Point at `safeHTML`.
+  - Add the trust table to the Go template docs, next to the output-safety page #1266 adds.
 
 ### 4B: `internal/fileutil` — 3 tests (issue #782)
 **File**: `internal/fileutil/copy.go`
