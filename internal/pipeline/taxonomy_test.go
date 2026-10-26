@@ -23,8 +23,8 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 			contentMap := map[string]string{
-				"content/about.md":   "---\ntitle: About\ntags: [\"about\"]\n---\n# About",
-				"content/roadmap.md": "---\ntitle: Roadmap\ntags: [\"about\"]\n---\n# Roadmap",
+				"content/about.md":       "---\ntitle: About\ntags: [\"about\"]\n---\n# About",
+				"content/roadmap.md":     "---\ntitle: Roadmap\ntags: [\"about\"]\n---\n# Roadmap",
 				"layouts/default.liquid": `<html><body>{{ content }}{% for p in taxonomies.tags.about %}<span class="item">{{ p.title }}|{{ p.url }}</span>{% endfor %}</body></html>`,
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -66,9 +66,9 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 			contentMap := map[string]string{
-				"content/post-a.md": "---\ntitle: Post A\ntags: [\"go\", \"web\"]\nlayout: default\n---\n# Post A",
-				"content/post-b.md": "---\ntitle: Post B\ntags: [\"go\"]\nlayout: default\n---\n# Post B",
-				"content/index.md":  "---\ntitle: Index\nlayout: default\n---\n{% for post in taxonomies.tags.go %}<span class=\"tagged\">{{ post.title }}</span>{% endfor %}",
+				"content/post-a.md":      "---\ntitle: Post A\ntags: [\"go\", \"web\"]\nlayout: default\n---\n# Post A",
+				"content/post-b.md":      "---\ntitle: Post B\ntags: [\"go\"]\nlayout: default\n---\n# Post B",
+				"content/index.md":       "---\ntitle: Index\nlayout: default\n---\n{% for post in taxonomies.tags.go %}<span class=\"tagged\">{{ post.title }}</span>{% endfor %}",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -98,8 +98,8 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 			contentMap := map[string]string{
-				"content/post-a.md": "---\ntitle: Post A\ntags: [\"go\"]\nlayout: default\n---\n# Post A",
-				"content/post-b.md": "---\ntitle: Post B\ntags: [\"go\"]\nlayout: default\n---\n# Post B",
+				"content/post-a.md":      "---\ntitle: Post A\ntags: [\"go\"]\nlayout: default\n---\n# Post A",
+				"content/post-b.md":      "---\ntitle: Post B\ntags: [\"go\"]\nlayout: default\n---\n# Post B",
 				"layouts/default.liquid": "<html><body>{{ content }}<nav>{% for post in taxonomies.tags.go %}<a href=\"{{ post.url }}\">{{ post.title }}</a>{% endfor %}</nav></body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -128,13 +128,13 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 			contentMap := map[string]string{
-				"content/blog/_data.yaml":  "layout: post",
-				"content/blog/post-a.md":   "---\ntitle: Post A\ndate: 2026-04-01\ntags: [\"go\", \"web\"]\ncategories: [\"tutorials\"]\nlayout: default\n---\n# Post A",
-				"content/blog/post-b.md":   "---\ntitle: Post B\ndate: 2026-04-02\ntags: [\"go\", \"testing\"]\ncategories: [\"tutorials\"]\nlayout: default\n---\n# Post B",
-				"content/blog/post-c.md":   "---\ntitle: Post C\ndate: 2026-04-03\ntags: [\"css\", \"web\"]\ncategories: [\"design\"]\nlayout: default\n---\n# Post C",
-				"content/series-test.md":   "---\ntitle: Series Test\nlayout: default\n---\n{% for post in taxonomies.tags.go %}<span class=\"go-tag\">{{ post.title }}</span>{% endfor %}",
-				"layouts/default.liquid":   "<html><body>{{ content }}</body></html>",
-				"layouts/post.liquid":      "<html><body>{{ content }}</body></html>",
+				"content/blog/_data.yaml": "layout: post",
+				"content/blog/post-a.md":  "---\ntitle: Post A\ndate: 2026-04-01\ntags: [\"go\", \"web\"]\ncategories: [\"tutorials\"]\nlayout: default\n---\n# Post A",
+				"content/blog/post-b.md":  "---\ntitle: Post B\ndate: 2026-04-02\ntags: [\"go\", \"testing\"]\ncategories: [\"tutorials\"]\nlayout: default\n---\n# Post B",
+				"content/blog/post-c.md":  "---\ntitle: Post C\ndate: 2026-04-03\ntags: [\"css\", \"web\"]\ncategories: [\"design\"]\nlayout: default\n---\n# Post C",
+				"content/series-test.md":  "---\ntitle: Series Test\nlayout: default\n---\n{% for post in taxonomies.tags.go %}<span class=\"go-tag\">{{ post.title }}</span>{% endfor %}",
+				"layouts/default.liquid":  "<html><body>{{ content }}</body></html>",
+				"layouts/post.liquid":     "<html><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred())
@@ -166,8 +166,8 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 			contentMap := map[string]string{
-				"content/post-a.md": "---\ntitle: Post A\ntags: [\"go\"]\nlayout: default\n---\n# Post A",
-				"content/index.md":  "---\ntitle: Index\nlayout: default\n---\n{% for post in taxonomies.categories.news %}{{ post.title }}{% endfor %}\n\nDONE_MARKER",
+				"content/post-a.md":      "---\ntitle: Post A\ntags: [\"go\"]\nlayout: default\n---\n# Post A",
+				"content/index.md":       "---\ntitle: Index\nlayout: default\n---\n{% for post in taxonomies.categories.news %}{{ post.title }}{% endfor %}\n\nDONE_MARKER",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -201,10 +201,10 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 			contentMap := map[string]string{
-				"content/post-a.md": "---\ntitle: Post A\ntags: [\"go\"]\nlayout: default\n---\n# Post A",
+				"content/post-a.md":      "---\ntitle: Post A\ntags: [\"go\"]\nlayout: default\n---\n# Post A",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
-				"layouts/tags.liquid": "---\nlayout: base\n---\n<div class=\"taxonomy\">{{ taxonomy.term }}</div>",
-				"layouts/base.liquid": "<html><body>{{ content }}</body></html>",
+				"layouts/tags.liquid":    "---\nlayout: base\n---\n<div class=\"taxonomy\">{{ taxonomy.term }}</div>",
+				"layouts/base.liquid":    "<html><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred(),
@@ -247,10 +247,10 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 			files := map[string]string{
-				"layouts/default.liquid":          "<html><body>{{ content }}</body></html>",
-				"layouts/taxonomies/tags.liquid":   "<html><body>taxonomy index</body></html>",
-				"content/page-a.md":               "---\ntitle: Page A\nlayout: default\ntags: [\"go\"]\n---\n# Page A",
-				"content/tags.md":                 "---\ntitle: Tags Override\nlayout: default\npermalink: /tags/\n---\n# My Tags",
+				"layouts/default.liquid":         "<html><body>{{ content }}</body></html>",
+				"layouts/taxonomies/tags.liquid": "<html><body>taxonomy index</body></html>",
+				"content/page-a.md":              "---\ntitle: Page A\nlayout: default\ntags: [\"go\"]\n---\n# Page A",
+				"content/tags.md":                "---\ntitle: Tags Override\nlayout: default\npermalink: /tags/\n---\n# My Tags",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).To(HaveOccurred(),
@@ -274,10 +274,10 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 			files := map[string]string{
-				"layouts/default.liquid":          "<html><body>{{ content }}</body></html>",
-				"layouts/taxonomies/tags.liquid":   "<html><body>taxonomy term</body></html>",
-				"content/page-a.md":               "---\ntitle: Page A\nlayout: default\ntags: [\"golang\"]\n---\n# Page A",
-				"content/golang-guide.md":         "---\ntitle: Golang Guide\nlayout: default\npermalink: /tags/golang/\n---\n# Golang Guide",
+				"layouts/default.liquid":         "<html><body>{{ content }}</body></html>",
+				"layouts/taxonomies/tags.liquid": "<html><body>taxonomy term</body></html>",
+				"content/page-a.md":              "---\ntitle: Page A\nlayout: default\ntags: [\"golang\"]\n---\n# Page A",
+				"content/golang-guide.md":        "---\ntitle: Golang Guide\nlayout: default\npermalink: /tags/golang/\n---\n# Golang Guide",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).To(HaveOccurred(),
@@ -302,10 +302,10 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 			files := map[string]string{
-				"layouts/default.liquid":          "<html><body>{{ content }}</body></html>",
-				"layouts/taxonomies/tags.liquid":   "<html><body>{{ content }}</body></html>",
-				"content/page-a.md":               "---\ntitle: Page A\nlayout: default\ntags: [\"go\", \"web\"]\n---\n# Page A",
-				"content/page-b.md":               "---\ntitle: Page B\nlayout: default\ntags: [\"go\"]\npermalink: /guides/\n---\n# Page B",
+				"layouts/default.liquid":         "<html><body>{{ content }}</body></html>",
+				"layouts/taxonomies/tags.liquid": "<html><body>{{ content }}</body></html>",
+				"content/page-a.md":              "---\ntitle: Page A\nlayout: default\ntags: [\"go\", \"web\"]\n---\n# Page A",
+				"content/page-b.md":              "---\ntitle: Page B\nlayout: default\ntags: [\"go\"]\npermalink: /guides/\n---\n# Page B",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).NotTo(HaveOccurred(),
@@ -350,10 +350,10 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 			files := map[string]string{
-				"layouts/default.liquid":          "<html><body>{{ content }}</body></html>",
-				"layouts/taxonomies/tags.liquid":   "<html><body>taxonomy</body></html>",
-				"content/page-a.md":               "---\ntitle: Page A\nlayout: default\ntags: [\"golang\"]\n---\n# Page A",
-				"content/topics-golang.md":        "---\ntitle: Topics Golang\nlayout: default\npermalink: /topics/golang/\n---\n# Topics",
+				"layouts/default.liquid":         "<html><body>{{ content }}</body></html>",
+				"layouts/taxonomies/tags.liquid": "<html><body>taxonomy</body></html>",
+				"content/page-a.md":              "---\ntitle: Page A\nlayout: default\ntags: [\"golang\"]\n---\n# Page A",
+				"content/topics-golang.md":       "---\ntitle: Topics Golang\nlayout: default\npermalink: /topics/golang/\n---\n# Topics",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).To(HaveOccurred(),
@@ -375,10 +375,10 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 			files := map[string]string{
-				"layouts/default.liquid":          "<html><body>{{ content }}</body></html>",
-				"layouts/taxonomies/tags.liquid":   "<html><body>taxonomy</body></html>",
-				"content/page-a.md":               "---\ntitle: Page A\nlayout: default\ntags: [\"go\"]\n---\n# Page A",
-				"content/about.md":                "---\ntitle: About\nlayout: default\npermalink: /about/\naliases:\n  - /tags/\n---\n# About",
+				"layouts/default.liquid":         "<html><body>{{ content }}</body></html>",
+				"layouts/taxonomies/tags.liquid": "<html><body>taxonomy</body></html>",
+				"content/page-a.md":              "---\ntitle: Page A\nlayout: default\ntags: [\"go\"]\n---\n# Page A",
+				"content/about.md":               "---\ntitle: About\nlayout: default\npermalink: /about/\naliases:\n  - /tags/\n---\n# About",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).To(HaveOccurred(),
@@ -412,7 +412,7 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			files := map[string]string{
 				"layouts/default.liquid":         "<html><body>{{ content }}</body></html>",
-				"layouts/taxonomies/tags.liquid":  "<html><body>taxonomy</body></html>",
+				"layouts/taxonomies/tags.liquid": "<html><body>taxonomy</body></html>",
 				"content/en/page-a.md":           "---\ntitle: Page A\nlayout: default\ntags: [\"go\"]\n---\n# Page A",
 				"content/fr/page-a.md":           "---\ntitle: Page A FR\nlayout: default\ntags: [\"go\"]\n---\n# Page A FR",
 				"content/fr/tags-override.md":    "---\ntitle: Tags Override FR\nlayout: default\npermalink: /tags/\n---\n# Tags FR",
@@ -443,7 +443,7 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			files := map[string]string{
 				"layouts/default.liquid":         "<html><body>{{ content }}</body></html>",
-				"layouts/taxonomies/tags.liquid":  "<html><body>taxonomy</body></html>",
+				"layouts/taxonomies/tags.liquid": "<html><body>taxonomy</body></html>",
 				"content/en/page-a.md":           "---\ntitle: Page A\nlayout: default\ntags: [\"golang\"]\n---\n# Page A",
 				"content/fr/page-a.md":           "---\ntitle: Page A FR\nlayout: default\ntags: [\"golang\"]\n---\n# Page A FR",
 				"content/fr/golang-guide.md":     "---\ntitle: Golang Guide FR\nlayout: default\npermalink: /tags/golang/\n---\n# Golang FR",
@@ -475,7 +475,7 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			files := map[string]string{
 				"layouts/default.liquid":         "<html><body>{{ content }}</body></html>",
-				"layouts/taxonomies/tags.liquid":  "<html><body>taxonomy</body></html>",
+				"layouts/taxonomies/tags.liquid": "<html><body>taxonomy</body></html>",
 				"content/en/page-a.md":           "---\ntitle: Page A\nlayout: default\ntags: [\"go\"]\n---\n# Page A",
 				"content/fr/page-a.md":           "---\ntitle: Page A FR\nlayout: default\ntags: [\"go\"]\n---\n# Page A FR",
 				"content/en/tags-override.md":    "---\ntitle: Tags Override\nlayout: default\npermalink: /tags/\n---\n# Tags EN",
@@ -505,7 +505,7 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			files := map[string]string{
 				"layouts/default.liquid":         "<html><body>{{ content }}</body></html>",
-				"layouts/taxonomies/tags.liquid":  "<html><body>taxonomy</body></html>",
+				"layouts/taxonomies/tags.liquid": "<html><body>taxonomy</body></html>",
 				"content/en/page-a.md":           "---\ntitle: Page A\nlayout: default\ntags: [\"go\", \"web\"]\n---\n# Page A",
 				"content/fr/page-a.md":           "---\ntitle: Page A FR\nlayout: default\ntags: [\"go\", \"web\"]\n---\n# Page A FR",
 			}

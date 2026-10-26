@@ -49,8 +49,8 @@ var _ = Describe("Unterminated raw block line numbers (issue #1245)", func() {
 
 	It("counts a longer front matter block correctly", func() {
 		// Front matter runs lines 1-7, so the tag lands on line 8 again.
-		err := buildWithBody("---\ntitle: Post\nlayout: default\ndraft: false\n"+
-			"tags:\n  - go\n---\n"+
+		err := buildWithBody("---\ntitle: Post\nlayout: default\ndraft: false\n" +
+			"tags:\n  - go\n---\n" +
 			"{%> helmet %}\nbody\n")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("opened at line 8"))

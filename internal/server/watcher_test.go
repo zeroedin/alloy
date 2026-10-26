@@ -226,7 +226,7 @@ var _ = Describe("File Watcher", func() {
 
 		It("ClassifyChange prefers watch over passthrough for same directory", func() {
 			cfg := &config.Config{
-				Title: "Overlap Site",
+				Title:       "Overlap Site",
 				Watch:       []config.WatchMapping{{From: "elements", Type: "content"}},
 				Passthrough: []config.PassthroughMapping{{From: "elements", To: "assets/elements"}},
 			}

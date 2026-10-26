@@ -12,9 +12,9 @@ import (
 var _ = Describe("GenerateSitemap", func() {
 
 	var (
-		pages   []*content.Page
+		pages      []*content.Page
 		sitemapCfg config.SitemapConfig
-		baseURL string
+		baseURL    string
 	)
 
 	BeforeEach(func() {

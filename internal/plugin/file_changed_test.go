@@ -148,7 +148,7 @@ var _ = Describe("ParseFileChangedResult (issue #1100)", func() {
 			// bool type assertion.
 			result := map[string]interface{}{
 				"invalidateByDependency": []interface{}{"a.js"},
-				"restart":               1,
+				"restart":                1,
 			}
 
 			parsed := plugin.ParseFileChangedResult(result)
@@ -171,7 +171,7 @@ var _ = Describe("ParseFileChangedResult (issue #1100)", func() {
 		It("defaults restart to false for string value", func() {
 			result := map[string]interface{}{
 				"invalidateByDependency": []interface{}{"a.js"},
-				"restart":               "yes",
+				"restart":                "yes",
 			}
 
 			parsed := plugin.ParseFileChangedResult(result)
@@ -190,7 +190,7 @@ var _ = Describe("ParseFileChangedResult (issue #1100)", func() {
 		It("defaults restart to false for nil value", func() {
 			result := map[string]interface{}{
 				"invalidateByDependency": []interface{}{"a.js"},
-				"restart":               nil,
+				"restart":                nil,
 			}
 
 			parsed := plugin.ParseFileChangedResult(result)
@@ -350,8 +350,8 @@ var _ = Describe("ParseFileChangedResult (issue #1100)", func() {
 		It("ignores unknown keys alongside recognized keys", func() {
 			result := map[string]interface{}{
 				"invalidateByDependency": []interface{}{"a.js"},
-				"restart":               true,
-				"futureField":           "value",
+				"restart":                true,
+				"futureField":            "value",
 			}
 
 			parsed := plugin.ParseFileChangedResult(result)
@@ -389,7 +389,7 @@ var _ = Describe("ParseFileChangedResult (issue #1100)", func() {
 		It("treats numeric invalidateByDependency as no-op with warning", func() {
 			result := map[string]interface{}{
 				"invalidateByDependency": 42,
-				"restart":               true,
+				"restart":                true,
 			}
 
 			parsed := plugin.ParseFileChangedResult(result)

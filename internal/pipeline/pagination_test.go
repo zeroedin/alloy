@@ -19,8 +19,8 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"data/categories.json": `[{"slug":"color","title":"Color"},{"slug":"space","title":"Space"}]`,
-				"content/tokens.md": "---\ntitle: Tokens\nlayout: default\npagination:\n  data: site.data.categories\n  perPage: 1\n  as: category\npermalink: \"/tokens/{{ category.slug }}/\"\n---\n## {{ category.title }}\n\nSlug: {{ category.slug }}",
+				"data/categories.json":   `[{"slug":"color","title":"Color"},{"slug":"space","title":"Space"}]`,
+				"content/tokens.md":      "---\ntitle: Tokens\nlayout: default\npagination:\n  data: site.data.categories\n  perPage: 1\n  as: category\npermalink: \"/tokens/{{ category.slug }}/\"\n---\n## {{ category.title }}\n\nSlug: {{ category.slug }}",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -57,8 +57,8 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"data/team.json": `[{"name":"Alice","slug":"alice"},{"name":"Bob","slug":"bob"}]`,
-				"content/team.md": "---\ntitle: \"{{ member.name }}\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ member.slug }}/\"\n---\n<p>{{ member.name }}</p>",
+				"data/team.json":         `[{"name":"Alice","slug":"alice"},{"name":"Bob","slug":"bob"}]`,
+				"content/team.md":        "---\ntitle: \"{{ member.name }}\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ member.slug }}/\"\n---\n<p>{{ member.name }}</p>",
 				"layouts/default.liquid": "<html><head><title>{{ page.title }}</title></head><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -86,8 +86,8 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"data/team.json": `[{"name":"alice","slug":"alice"}]`,
-				"content/team.md": "---\ntitle: \"{{ member.name | upcase }}\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ member.slug }}/\"\n---\n<p>{{ member.name }}</p>",
+				"data/team.json":         `[{"name":"alice","slug":"alice"}]`,
+				"content/team.md":        "---\ntitle: \"{{ member.name | upcase }}\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ member.slug }}/\"\n---\n<p>{{ member.name }}</p>",
 				"layouts/default.liquid": "<html><head><title>{{ page.title }}</title></head><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -115,8 +115,8 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"data/team.json": `[{"name":"Alice","slug":"alice","role":"Engineer"}]`,
-				"content/team.md": "---\ntitle: \"{{ member.name }}\"\ndescription: \"{{ member.role }} at Acme\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ member.slug }}/\"\n---\n<p>{{ member.name }}</p>",
+				"data/team.json":         `[{"name":"Alice","slug":"alice","role":"Engineer"}]`,
+				"content/team.md":        "---\ntitle: \"{{ member.name }}\"\ndescription: \"{{ member.role }} at Acme\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ member.slug }}/\"\n---\n<p>{{ member.name }}</p>",
 				"layouts/default.liquid": "<html><head><title>{{ page.title }}</title><meta name=\"description\" content=\"{{ page.description }}\"></head><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -146,8 +146,8 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"data/team.json": `[{"name":"Alice","slug":"alice"}]`,
-				"content/team.md": "---\ntitle: \"Static Title\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ member.slug }}/\"\n---\n<p>{{ member.name }}</p>",
+				"data/team.json":         `[{"name":"Alice","slug":"alice"}]`,
+				"content/team.md":        "---\ntitle: \"Static Title\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ member.slug }}/\"\n---\n<p>{{ member.name }}</p>",
 				"layouts/default.liquid": "<html><head><title>{{ page.title }}</title></head><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -174,8 +174,8 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"data/team.json": `[{"name":"Alice","slug":"alice"},{"name":"Bob","slug":"bob"}]`,
-				"content/team.md": "---\ntitle: \"Team Members\"\nheading: \"{{ member.name }}\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 10\n  as: member\npermalink: \"/team/\"\n---\n{% for m in member %}<p>{{ m.name }}</p>{% endfor %}",
+				"data/team.json":         `[{"name":"Alice","slug":"alice"},{"name":"Bob","slug":"bob"}]`,
+				"content/team.md":        "---\ntitle: \"Team Members\"\nheading: \"{{ member.name }}\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 10\n  as: member\npermalink: \"/team/\"\n---\n{% for m in member %}<p>{{ m.name }}</p>{% endfor %}",
 				"layouts/default.liquid": "<html><head><title>{{ page.title }}</title></head><body><h1>{{ page.heading }}</h1>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -213,8 +213,8 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"data/colors.json": `{"white":"#fff","black":"#000","accent":"#e00","brand":"#ee0","surface":"#f0f"}`,
-				"content/index.md": "---\ntitle: Colors\nlayout: default\n---\n# Colors",
+				"data/colors.json":       `{"white":"#fff","black":"#000","accent":"#e00","brand":"#ee0","surface":"#f0f"}`,
+				"content/index.md":       "---\ntitle: Colors\nlayout: default\n---\n# Colors",
 				"layouts/default.liquid": "<html><body>{% for color in site.data.colors %}<span>{{ color[0] }}</span>{% endfor %}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)

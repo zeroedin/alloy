@@ -223,8 +223,8 @@ var _ = Describe("BuildResult.RenderedContent memory optimization (issue #1098)"
 					Build:   config.BuildConfig{Output: "_site"},
 				}
 				contentMap := map[string]string{
-					"content/index.md":          "---\ntitle: Home\nlayout: default\n---\n# Home Page",
-					"layouts/default.liquid":    "<html><body>{{ content }}</body></html>",
+					"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home Page",
+					"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				}
 
 				// BuildWithContent is the primary test utility. It must always
@@ -247,8 +247,8 @@ var _ = Describe("BuildResult.RenderedContent memory optimization (issue #1098)"
 					Build:   config.BuildConfig{Output: "_site"},
 				}
 				contentMap := map[string]string{
-					"content/page.md":           "---\ntitle: Page\nlayout: default\n---\n# Test Page",
-					"layouts/default.liquid":    "<html><body>{{ content }}</body></html>",
+					"content/page.md":        "---\ntitle: Page\nlayout: default\n---\n# Test Page",
+					"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				}
 
 				// When a test passes BuildOptions (e.g., SkipSSR: true) without
