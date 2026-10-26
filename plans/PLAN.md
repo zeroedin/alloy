@@ -2649,6 +2649,16 @@ plugin hook onPageRendered: plugin "00-first" returned no "html" for /about/ —
 
 Wording may vary. Those four elements may not. When the return is not an object at all — a string, array, `null` — there is no field to name; the error names the event, plugin and page and says the hook must return the page object.
 
+**The error must also say which mistake it was (issue #1276).** The rows of the table above are different mistakes with different fixes, so the error reports which one occurred:
+
+| Return | The error says |
+|---|---|
+| object without `html` | `html` is missing |
+| object with `html` that is not a string | `html` is not a string, naming what it is (e.g. a number) |
+| not an object | what was returned instead — nothing, a string, a number, an array |
+
+Only a missing `html` may be reported as missing. A runtime that reads an array or a non-string `html` as "no `html`" gives the author the wrong fix; QuickJS did exactly this until #1275, and for a `toc`-only hook an array was not rejected at all.
+
 **The object requirement does not depend on scope.** Only the `html` requirement is conditional. A `toc`-scoped hook on an `onContentTransformed` event where no hook wants `html` may omit `html`, but it must still return an object; a bare string from it is an error. Today that string is applied back as the page's html, silently replacing it.
 
 **In-scope events are the raw-chained ones**, derived from the rule rather than listed as its definition:
