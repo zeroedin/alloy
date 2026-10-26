@@ -33,6 +33,32 @@ Liquid's behavior matches Jekyll and Shopify. Go's comes from its `html/template
 
 In Liquid the `safe*` filters do nothing and return the value unchanged, so a template that uses them works in either engine.
 
+### One exception: `content` and `summary`
+
+Go templates print any value under a key named `content` or `summary` as HTML, without escaping it. That's how `.page.content`, your rendered Markdown, prints as HTML. It isn't limited to pages, though: the same key names in a data file print as written too.
+
+```yaml
+# data/review.yaml
+author: "<b>Sam</b>"
+content: "<b>Great</b>"
+```
+
+{% raw %}
+```go-html-template
+<p>{{ .site.data.review.author }}</p>
+<p>{{ .site.data.review.content }}</p>
+<p>{{ printf "%s" .site.data.review.content }}</p>
+```
+{% endraw %}
+
+```html
+<p>&lt;b&gt;Sam&lt;/b&gt;</p>
+<p><b>Great</b></p>
+<p>&lt;b&gt;Great&lt;/b&gt;</p>
+```
+
+To escape one of these values in Go, turn it back into plain text with `printf "%s"`, as in the last line. Don't use `escape` for this: Go escapes its result a second time, and the page shows `&lt;b&gt;` instead of `<b>`.
+
 ## Switching from Go templates to Liquid
 
 **Values that Go escaped will start printing as written, with no error and no change to your templates.** If a Go site relied on escaping to show text like `<b>` literally, or to keep markup in data from rendering, that stops when you switch.
@@ -45,7 +71,7 @@ Before switching, look for values that aren't meant to be HTML — names, titles
 ```
 {% endraw %}
 
-Going the other way, from Liquid to Go, is the safe direction: values that printed as HTML start printing escaped. Anything that needs to stay HTML gets the matching `safe*` filter.
+Going the other way, from Liquid to Go, is mostly the safe direction: values that printed as HTML start printing escaped, and anything that needs to stay HTML gets the matching `safe*` filter. The exception is values under a `content` or `summary` key, which keep printing as HTML in Go — see [One exception](#one-exception-content-and-summary). Check those before you switch.
 
 ## Trusted means you checked it
 
