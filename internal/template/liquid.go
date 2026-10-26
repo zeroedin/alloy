@@ -16,9 +16,9 @@ import (
 type liquidEngine struct {
 	env            *liquid.Environment
 	filters        *alloyFilterBridge
-	includesDir    string                       // layouts directory for resolving {% include %} / {% render %}
-	filterPatterns map[string]*regexp.Regexp    // compiled regexes for dynamic filters, keyed by filter name
-	deferredTags   []deferredTagEntry           // tags registered via AddTag, applied per-Parse
+	includesDir    string                    // layouts directory for resolving {% include %} / {% render %}
+	filterPatterns map[string]*regexp.Regexp // compiled regexes for dynamic filters, keyed by filter name
+	deferredTags   []deferredTagEntry        // tags registered via AddTag, applied per-Parse
 }
 
 // deferredTagEntry stores a tag registration for deferred liquidgo registration.
