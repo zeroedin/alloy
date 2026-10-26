@@ -697,15 +697,14 @@ func (r *QuickJSRuntime) extractRenderedResult(result *qjs.Value) (interface{}, 
 	if result.IsNull() || result.IsUndefined() {
 		return nil, nil
 	}
+	if result.IsArray() {
+		return r.extractArrayResult(result), nil
+	}
 	if !result.IsObject() {
 		return jsValueToGo(result), nil
 	}
 	m := make(map[string]interface{}, 2)
-	htmlProp := result.GetPropertyStr("html")
-	if htmlProp.IsString() {
-		m["html"] = htmlProp.String()
-	}
-	htmlProp.Free()
+	r.extractHTMLProperty(result, m)
 	r.extractStructuredProperty(result, "addDependencies", m)
 	return m, nil
 }
@@ -741,18 +740,51 @@ func (r *QuickJSRuntime) extractTransformResult(result *qjs.Value) (interface{},
 	if result.IsNull() || result.IsUndefined() {
 		return nil, nil
 	}
+	if result.IsArray() {
+		return r.extractArrayResult(result), nil
+	}
 	if !result.IsObject() {
 		return jsValueToGo(result), nil
 	}
 	m := make(map[string]interface{}, 3)
-	htmlProp := result.GetPropertyStr("html")
-	if htmlProp.IsString() {
-		m["html"] = htmlProp.String()
-	}
-	htmlProp.Free()
+	r.extractHTMLProperty(result, m)
 	r.extractStructuredProperty(result, "toc", m)
 	r.extractStructuredProperty(result, "addDependencies", m)
 	return m, nil
+}
+
+// extractHTMLProperty copies a result's html into m. A string — the normal
+// case — is read directly. Anything else is kept as what it is rather than
+// dropped, so the onPageRendered / onContentTransformed return check (issue
+// #1179) reports `"html" as a number`, say, instead of "no html": the
+// fast path otherwise erases the shape that check reads.
+func (r *QuickJSRuntime) extractHTMLProperty(result *qjs.Value, m map[string]interface{}) {
+	htmlProp := result.GetPropertyStr("html")
+	isString := htmlProp.IsString()
+	if isString {
+		m["html"] = htmlProp.String()
+	}
+	htmlProp.Free()
+	if !isString {
+		r.extractStructuredProperty(result, "html", m)
+	}
+}
+
+// extractArrayResult converts an array returned from a page hook to a Go
+// slice. Arrays are JS objects, so without this the fast-path extractors
+// read them as a page object with no fields, and the issue #1179 check sees
+// an object rather than an array. Only reached on a malformed return, so
+// the JSON round trip costs nothing on the normal path.
+func (r *QuickJSRuntime) extractArrayResult(result *qjs.Value) interface{} {
+	s, err := result.JSONStringify()
+	if err == nil {
+		var parsed []interface{}
+		if err := jsonCodec.Unmarshal([]byte(s), &parsed); err == nil {
+			return parsed
+		}
+	}
+	// Still an array, even if its elements could not be read.
+	return []interface{}{}
 }
 
 // extractStructuredProperty reads a non-primitive property from a JS result
