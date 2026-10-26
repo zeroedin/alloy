@@ -233,8 +233,8 @@ var _ = Describe("Hook return contract (issue #1179)", func() {
 			}))
 			expectContractError(err, "onPageRendered", "00-first")
 			// html was present, so "no html" would be wrong; the error must
-			// say it is not a string.
-			expectErrorSays(err, "string")
+			// say it is not a string, naming what it is — a number.
+			expectErrorSays(err, "number")
 		})
 
 		It("accepts the page object through a chain (guard)", func() {
@@ -379,7 +379,7 @@ var _ = Describe("Hook return contract (issue #1179)", func() {
 }`,
 			}))
 			expectContractError(err, "onContentTransformed", "00-first")
-			expectErrorSays(err, "string")
+			expectErrorSays(err, "number")
 		})
 
 		It("accepts a toc-only return when no hook on the event wants html (guard)", func() {
