@@ -341,7 +341,7 @@ The redirect exists because stdout is reserved for the Alloy-to-plugin protocol 
 | `Cannot find package '...'` | Dependencies not installed | Run `npm install` in your project root |
 | `expected Content-Length header, got ...` | Something wrote to stdout at the file-descriptor level | See [stdout isolation](#stdout-isolation) |
 | `alloy.hook() requires options object as second argument` | Handler passed as second argument | Use `alloy.hook(name, {}, fn)` |
-| `expected page object with html key, got string` | Plugin returns a bare string from a page hook | Return the page object: `page.html = ...; return page` |
+| `plugin "…" returned no "html" for …` or `returned a string for …, not the page object` | A page hook returned something other than the page object | Return the page object: `page.html = ...; return page` — see [Return the page object](/hooks/#return-the-page-object) |
 | Hook produces partial results | Module state split across workers | See [module state](#avoid-module-state-across-per-page-hooks) |
 
 ## Plugin Timeout

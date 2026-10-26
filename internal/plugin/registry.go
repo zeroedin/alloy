@@ -328,7 +328,10 @@ func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, ho
 					return caller.CallHook(name, payload)
 				}
 				if reg.Scope != nil {
-					if err := ValidateScope(HookName(name), *reg.Scope); err != nil {
+					// Own copy, as RegisterWithOptions took the scope by value:
+					// the hook must not alias the runtime's registration.
+					scope := *reg.Scope
+					if err := ValidateScope(HookName(name), scope); err != nil {
 						hooks.addWarning(fmt.Sprintf("plugin %s: hook %s: %v", pluginName, name, err))
 					}
 					if hasBatch {
@@ -339,9 +342,9 @@ func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, ho
 							}
 							return batcher.BatchCallHook(name, payloads, itemCb)
 						}
-						hooks.RegisterBatchWithOptions(HookName(name), singleFn, batchFn, *reg.Scope, reg.Priority)
+						hooks.RegisterSourced(HookName(name), pluginName, singleFn, batchFn, &scope, reg.Priority)
 					} else {
-						hooks.RegisterWithOptions(HookName(name), singleFn, *reg.Scope, reg.Priority)
+						hooks.RegisterSourced(HookName(name), pluginName, singleFn, nil, &scope, reg.Priority)
 					}
 				} else {
 					if hasBatch {
@@ -352,9 +355,9 @@ func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, ho
 							}
 							return batcher.BatchCallHook(name, payloads, itemCb)
 						}
-						hooks.RegisterBatchWithPriority(HookName(name), singleFn, batchFn, reg.Priority)
+						hooks.RegisterSourced(HookName(name), pluginName, singleFn, batchFn, nil, reg.Priority)
 					} else {
-						hooks.RegisterWithPriority(HookName(name), singleFn, reg.Priority)
+						hooks.RegisterSourced(HookName(name), pluginName, singleFn, nil, nil, reg.Priority)
 					}
 				}
 			}
@@ -372,9 +375,9 @@ func (r *Registry) registerRuntime(rt PluginFilterRuntime, pluginName string, ho
 						}
 						return batcher.BatchCallHook(name, payloads, itemCb)
 					}
-					hooks.RegisterBatchWithPriority(HookName(name), singleFn, batchFn, 50)
+					hooks.RegisterSourced(HookName(name), pluginName, singleFn, batchFn, nil, 50)
 				} else {
-					hooks.Register(HookName(name), singleFn)
+					hooks.RegisterSourced(HookName(name), pluginName, singleFn, nil, nil, 50)
 				}
 			}
 		}

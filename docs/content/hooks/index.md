@@ -111,6 +111,35 @@ Some hooks run each plugin **independently** against the original payload — pl
 
 `onPageRendered` is dispatched one page at a time and spread across worker processes for speed. See [Node Plugins](/plugins/node/) for what that means for plugin state.
 
+### Return the page object
+
+`onPageRendered` and `onContentTransformed` hooks must return the page object with `html` as a string. Change what you need and return the page:
+
+```javascript
+alloy.hook("onPageRendered", {}, (page) => {
+  page.html = page.html.replace("<body>", '<body data-ready="true">');
+  return page;
+});
+```
+
+Anything else fails the build at the hook that returned it — returning nothing, returning a string instead of the page, or returning an object without `html`:
+
+```text
+Error: plugin hook onPageRendered: plugin "00-seo" returned no "html" for /about/ — return the page object (return page;)
+```
+
+The error names your plugin, the page, and what is missing, whether your hook runs alone or in a chain. An empty string (`page.html = ""`) is a valid result. In `alloy dev` the same error is logged as a warning and the server keeps running.
+
+Returning the HTML as a bare string is no longer supported on either hook. The fix is one line:
+
+```javascript
+// before
+return page.html.replace(...);
+// after
+page.html = page.html.replace(...);
+return page;
+```
+
 ### Timeouts
 
 Each hook call is subject to the configured timeout (default 5000 milliseconds). A timed-out hook produces a warning, its modifications are discarded, and the build continues with the pre-hook payload.
@@ -363,11 +392,13 @@ if (!page.toc || page.toc.length === 0) {
 }
 ```
 
-Return values can include `html`, `toc`, `frontMatter`, and `addDependencies`.
+Return the page object. `html` and `toc` are applied back; `frontMatter`, `path` and `url` are read-only context. You can also return `addDependencies`.
+
+The return must include `html` as a string, as described in [Return the page object](#return-the-page-object). The one exception: when every `onContentTransformed` hook on the site is scoped to fields that leave out `html` — `pageFields: ["toc"]`, say — `html` isn't applied back, so a hook may return `{ toc }` on its own. It must still return an object.
 
 ### onPageRendered
 
-Fires per page, after template rendering produces the final HTML. Only `html` in the return is applied back.
+Fires per page, after template rendering produces the final HTML. Only `html` in the return is applied back, and it is required — see [Return the page object](#return-the-page-object).
 
 ```javascript
 alloy.hook("onPageRendered", {}, (page) => {
