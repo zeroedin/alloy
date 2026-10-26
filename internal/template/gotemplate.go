@@ -194,7 +194,29 @@ func (e *goEngine) Parse(name string, content []byte) (Template, error) {
 // For known built-in filter names (upcase, downcase, etc.), the real
 // implementation is used via ApplyFilter, mirroring how Liquid's
 // StandardFilters take precedence over user-registered stubs.
+// trustedTypes maps each output-safety filter to the html/template type
+// that unlocks its escaping context (issue #1266). Each type unlocks only
+// its own context: template.HTML in an href is still checked as a URL.
+var trustedTypes = map[string]func(string) interface{}{
+	"safeHTML":     func(s string) interface{} { return gohtml.HTML(s) },
+	"safeCSS":      func(s string) interface{} { return gohtml.CSS(s) },
+	"safeJS":       func(s string) interface{} { return gohtml.JS(s) },
+	"safeURL":      func(s string) interface{} { return gohtml.URL(s) },
+	"safeHTMLAttr": func(s string) interface{} { return gohtml.HTMLAttr(s) },
+}
+
 func (e *goEngine) AddFilter(name string, fn FilterFunc) error {
+	// The safe* filters are the one place the Go engine departs from the
+	// shared built-ins: the shared versions return plain strings for
+	// Liquid's sake, which html/template would escape. Checked before the
+	// built-in branch so a plugin filter of the same name cannot shadow it,
+	// the same precedence every other built-in has (issue #1266).
+	if wrap, ok := trustedTypes[name]; ok {
+		e.funcMap[name] = func(input interface{}) interface{} {
+			return wrap(toString(input))
+		}
+		return nil
+	}
 	if IsBuiltinFilter(name) {
 		filterName := name // capture for closure
 		e.funcMap[name] = func(input interface{}, args ...interface{}) interface{} {

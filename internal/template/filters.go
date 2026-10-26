@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -743,18 +744,53 @@ func JSONFilter(input interface{}, args ...interface{}) interface{} {
 }
 
 func Default(input interface{}, args ...interface{}) interface{} {
-	if input == nil || input == "" {
+	if input == nil || isEmptyString(input) {
 		if len(args) > 0 {
 			return args[0]
 		}
 		return nil
 	}
+	// The input itself, not a copy: a trusted Go-template value such as
+	// template.HTML stays trusted through default (issue #1266).
 	return input
+}
+
+// isEmptyString reports whether v is a string-kinded value with no text.
+// It compares the text rather than the interface, because Go's trusted
+// template types (template.HTML and the rest) are string-kinded but are
+// never == "" — an empty trusted value would otherwise never fall back
+// (issue #1266).
+func isEmptyString(v interface{}) bool {
+	rv := reflect.ValueOf(v)
+	return rv.Kind() == reflect.String && rv.Len() == 0
 }
 
 // --- Output safety filters ---
 
+// The safe* filters mark trusted content so Go's html/template does not
+// escape it, one filter per escaping context (issue #1266). These shared
+// versions return a plain string on purpose: Liquid calls them too, and
+// Liquid's own filters treat html/template's named types as non-strings
+// ({{ v | safeHTML | size }} would become 0). The Go engine wraps them in
+// the matching html/template type — see goEngine.AddFilter.
+
 func SafeHTML(input interface{}, args ...interface{}) interface{} {
+	return toString(input)
+}
+
+func SafeCSS(input interface{}, args ...interface{}) interface{} {
+	return toString(input)
+}
+
+func SafeJS(input interface{}, args ...interface{}) interface{} {
+	return toString(input)
+}
+
+func SafeURL(input interface{}, args ...interface{}) interface{} {
+	return toString(input)
+}
+
+func SafeHTMLAttr(input interface{}, args ...interface{}) interface{} {
 	return toString(input)
 }
 
@@ -861,6 +897,10 @@ var builtinFilters = map[string]FilterFunc{
 	"json":          JSONFilter,
 	"default":       Default,
 	"safeHTML":      SafeHTML,
+	"safeCSS":       SafeCSS,
+	"safeJS":        SafeJS,
+	"safeURL":       SafeURL,
+	"safeHTMLAttr":  SafeHTMLAttr,
 	"cachebust":     CacheBust,
 	"get_hash":      GetHash,
 }
