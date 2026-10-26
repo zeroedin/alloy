@@ -91,6 +91,22 @@ func expectNonObjectError(err error, event, plugin, slug string) {
 			"(issue #1179)")
 }
 
+// expectErrorSays asserts the error reports which kind of malformed return
+// occurred. The three kinds — no html, html not a string, not an object —
+// get different fixes, and an error that names the wrong one sends the
+// author after the wrong problem (issue #1276). Wording may vary; the kind
+// may not. Every malformed return other than a missing html must not
+// read as `no "html"`.
+func expectErrorSays(err error, kind string) {
+	GinkgoHelper()
+	Expect(err).To(HaveOccurred())
+	Expect(err.Error()).To(ContainSubstring(kind),
+		"the error must say what was wrong with the return — %q (issue #1276)", kind)
+	Expect(err.Error()).NotTo(ContainSubstring(`no "html"`),
+		"the error must not report html as missing when the return was "+
+			"something else — that is the misreport issue #1276 fixed")
+}
+
 var _ = Describe("Hook return contract (issue #1179)", func() {
 
 	Describe("onPageRendered", func() {
@@ -202,6 +218,7 @@ var _ = Describe("Hook return contract (issue #1179)", func() {
 }`,
 			}))
 			expectContractError(err, "onPageRendered", "00-first")
+			expectErrorSays(err, "array")
 		})
 
 		It("rejects html present but not a string", func() {
@@ -215,6 +232,9 @@ var _ = Describe("Hook return contract (issue #1179)", func() {
 				"plugins/01-second.js": victimPlugin("onPageRendered", "{}"),
 			}))
 			expectContractError(err, "onPageRendered", "00-first")
+			// html was present, so "no html" would be wrong; the error must
+			// say it is not a string.
+			expectErrorSays(err, "string")
 		})
 
 		It("accepts the page object through a chain (guard)", func() {
@@ -321,6 +341,45 @@ var _ = Describe("Hook return contract (issue #1179)", func() {
 }`,
 			}))
 			expectNonObjectError(err, "onContentTransformed", "00-toc", "about")
+		})
+
+		It("rejects an array from a toc-only hook even when html is not required", func() {
+			// A JS array is an object, so the QuickJS fast path once read it
+			// as an empty page object and the build succeeded (issue #1276).
+			_, err := pipeline.BuildWithContent(hookContractConfig("CT TOC Array"), withPlugins(map[string]string{
+				"plugins/00-toc.js": `export default function(alloy) {
+  alloy.hook('onContentTransformed', { pages: true, pageFields: ["toc"] }, function(page) {
+    return [];
+  });
+}`,
+			}))
+			expectNonObjectError(err, "onContentTransformed", "00-toc", "about")
+			expectErrorSays(err, "array")
+		})
+
+		It("reports an array return as an array, not as missing html", func() {
+			_, err := pipeline.BuildWithContent(hookContractConfig("CT Array"), withPlugins(map[string]string{
+				"plugins/00-first.js": `export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    return [page.html];
+  });
+}`,
+			}))
+			expectContractError(err, "onContentTransformed", "00-first")
+			expectErrorSays(err, "array")
+		})
+
+		It("reports html present but not a string as not a string, not as missing", func() {
+			_, err := pipeline.BuildWithContent(hookContractConfig("CT Non-String HTML"), withPlugins(map[string]string{
+				"plugins/00-first.js": `export default function(alloy) {
+  alloy.hook('onContentTransformed', {}, function(page) {
+    page.html = 42;
+    return page;
+  });
+}`,
+			}))
+			expectContractError(err, "onContentTransformed", "00-first")
+			expectErrorSays(err, "string")
 		})
 
 		It("accepts a toc-only return when no hook on the event wants html (guard)", func() {
