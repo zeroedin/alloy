@@ -434,4 +434,3 @@ func isIndexPage(relPath string) bool {
 	base := filepath.Base(relPath)
 	return base == "index.md" || base == "index.html"
 }
-

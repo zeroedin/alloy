@@ -12,4 +12,3 @@ func ResolveOutputFormat(page *content.Page) string {
 	}
 	return "html"
 }
-

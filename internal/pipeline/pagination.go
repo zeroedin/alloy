@@ -125,4 +125,3 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 	}
 	return result
 }
-
