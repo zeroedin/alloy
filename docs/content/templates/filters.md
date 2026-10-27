@@ -55,7 +55,7 @@ The examples in the reference tables below use Liquid syntax.
 | `truncate` | Truncate to character count | `{{ page.summary | truncate: 100 }}` |
 | `truncatewords` | Truncate to word count | `{{ page.summary | truncatewords: 20 }}` |
 | `strip_html` | Remove all HTML tags | `{{ page.summary | strip_html }}` |
-| `escape` | HTML-escape special characters. Liquid only: Go templates already escape, so in Go it escapes a second time. See [Output safety](/templates/output-safety/) | `{{ page.title | escape }}` |
+| `escape` | HTML-escape special characters. Liquid only: Go templates already escape, so in Go it escapes a second time. See [Output safety](/templates/output-safety/) | `{{ page.title \| escape }}` |
 | `replace` | Replace all occurrences | `{{ page.title | replace: " ", "-" }}` |
 | `replace_first` | Replace first occurrence | `{{ "aabbcc" | replace_first: "a", "x" }}` --> `xabbcc` |
 | `split` | Split string into array | `{{ "a,b,c" | split: "," }}` |
