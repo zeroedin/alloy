@@ -39,7 +39,7 @@ All built-in filters are registered in both engines, but the calling syntax diff
 </wa-tab-group>
 {% endraw %}
 
-Go's pipe syntax works for filters that take no extra arguments (`{% raw %}{{ .page.title | upcase }}{% endraw %}`), because Go pipelines pass the piped value as the *last* argument. For filters that take arguments, use function-call syntax so the input stays in the first position.
+Go's pipe syntax works for filters that take no extra arguments (`{{ .page.title | upcase }}`), because Go pipelines pass the piped value as the *last* argument. For filters that take arguments, use function-call syntax so the input stays in the first position.
 
 The examples in the reference tables below use Liquid syntax.
 
