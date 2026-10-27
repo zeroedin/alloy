@@ -1,6 +1,9 @@
 package pipeline_test
 
 import (
+	"os"
+	"path/filepath"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -308,6 +311,55 @@ var _ = Describe("Go templates trust HTML by origin (issue #1267)", func() {
 			Expect(out).To(ContainSubstring("PC[9]"), "page.content.size — <p>A</p> plus newline")
 			Expect(out).To(ContainSubstring("LOOP[2,1,1,]"), "p.summary.size in a loop")
 			Expect(out).To(ContainSubstring("SUM[28]"), "sum: \"summary\" — 10 + 9 + 9")
+		})
+	})
+
+	Context("incremental rebuilds", func() {
+		It("set trust marking from the reused state's engine", func() {
+			// Trust marking is a process-wide switch that createEngine sets.
+			// BuildIncremental with a reused PipelineState skips createEngine,
+			// so it must set the switch itself from ps.Engine. Otherwise a
+			// Liquid build in between leaves it off and the Go rebuild escapes
+			// the page body (#1282 review).
+			tmpDir := GinkgoT().TempDir()
+			Expect(os.MkdirAll(filepath.Join(tmpDir, "content"), 0755)).To(Succeed())
+			Expect(os.MkdirAll(filepath.Join(tmpDir, "layouts"), 0755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(tmpDir, "content", "index.md"),
+				[]byte("---\ntitle: Home\nlayout: default\nsummary: \"<em>own</em>\"\n---\nBody with **bold**"),
+				0644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(tmpDir, "layouts", "default.html"),
+				[]byte("B[{{ .content }}] S[{{ .page.summary }}]"),
+				0644)).To(Succeed())
+
+			cfg := goTrustConfig("Trust Incremental")
+			cfg.ProjectRoot = tmpDir
+			cfg.Build.Output = filepath.Join(tmpDir, "_site")
+			config.ApplyDefaults(cfg)
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			defer registry.Close()
+			ps, err := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(err).NotTo(HaveOccurred())
+
+			// A Liquid build turns trust marking off for the process.
+			_, err = pipeline.BuildWithContent(&config.Config{
+				Title:   "Trust Incremental Liquid",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}, map[string]string{
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\nBody",
+				"layouts/default.liquid": "{{ content }}",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := pipeline.BuildIncremental(cfg, nil, nil, nil,
+				pipeline.BuildOptions{PipelineState: ps, CaptureRenderedContent: true})
+			Expect(err).NotTo(HaveOccurred())
+			out := result.RenderedContent["index.md"]
+			Expect(out).To(ContainSubstring("B[<p>Body with <strong>bold</strong></p>"),
+				"the rendered body stays raw on an incremental rebuild with a "+
+					"reused Go-template state (#1282 review)")
+			Expect(out).To(ContainSubstring("S[<em>own</em>]"),
+				"the page's own summary stays raw on an incremental rebuild (#1282 review)")
 		})
 	})
 
