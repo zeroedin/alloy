@@ -96,7 +96,13 @@ func (p *Page) ToTemplateMap() map[string]interface{} {
 		m["date"] = p.Date
 	}
 	if p.Summary != "" {
-		m["summary"] = TrustedHTML(p.Summary)
+		m["summary"] = p.Summary
+	}
+	// Mark the page's summary whichever way it arrived — parsed into Summary,
+	// or only in FrontMatter on pagination and plugin pages — so page lists
+	// trust the same value the page's own context does (issue #1267).
+	if s, ok := m["summary"].(string); ok {
+		m["summary"] = TrustedHTML(s)
 	}
 	if p.Section != "" {
 		m["collection"] = p.Section
