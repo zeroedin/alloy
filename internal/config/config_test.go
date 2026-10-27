@@ -1046,8 +1046,8 @@ components = "elements"
 	Describe("Templates.Engine validation (issue #818)", func() {
 		It("rejects unknown engine value", func() {
 			cfg := &config.Config{
-				Title:   "Test",
-				BaseURL: "https://example.com",
+				Title:     "Test",
+				BaseURL:   "https://example.com",
 				Templates: config.TemplatesConfig{Engine: "jinja"},
 			}
 			err := config.Validate(cfg)
@@ -1063,8 +1063,8 @@ components = "elements"
 		It("accepts known engine values", func() {
 			for _, engine := range []string{"liquid", "gotemplate"} {
 				cfg := &config.Config{
-					Title:   "Test",
-					BaseURL: "https://example.com",
+					Title:     "Test",
+					BaseURL:   "https://example.com",
 					Templates: config.TemplatesConfig{Engine: engine},
 				}
 				err := config.Validate(cfg)

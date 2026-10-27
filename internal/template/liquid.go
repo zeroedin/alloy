@@ -16,9 +16,9 @@ import (
 type liquidEngine struct {
 	env            *liquid.Environment
 	filters        *alloyFilterBridge
-	includesDir    string                       // layouts directory for resolving {% include %} / {% render %}
-	filterPatterns map[string]*regexp.Regexp    // compiled regexes for dynamic filters, keyed by filter name
-	deferredTags   []deferredTagEntry           // tags registered via AddTag, applied per-Parse
+	includesDir    string                    // layouts directory for resolving {% include %} / {% render %}
+	filterPatterns map[string]*regexp.Regexp // compiled regexes for dynamic filters, keyed by filter name
+	deferredTags   []deferredTagEntry        // tags registered via AddTag, applied per-Parse
 }
 
 // deferredTagEntry stores a tag registration for deferred liquidgo registration.
@@ -169,6 +169,7 @@ var knownLiquidFilters = map[string]bool{
 	"intersect": true, "union": true, "complement": true,
 	"absolute_url": true, "markdownify": true,
 	"json": true, "safeHTML": true, "url": true,
+	"safeCSS": true, "safeJS": true, "safeURL": true, "safeHTMLAttr": true,
 	"cachebust": true, "get_hash": true,
 }
 
@@ -417,6 +418,26 @@ func (f *alloyFilterBridge) JSON(input interface{}, args ...interface{}) interfa
 
 func (f *alloyFilterBridge) SafeHTML(input interface{}, args ...interface{}) interface{} {
 	return f.call("safeHTML", input, args...)
+}
+
+// SafeCSS, SafeJS, SafeURL and SafeHTMLAttr must exist as methods, not only
+// as registered funcs: RenderTemplate has no plugin_filter rewrite, so a
+// filter with no bridge method is "undefined" there (issue #1266).
+
+func (f *alloyFilterBridge) SafeCSS(input interface{}, args ...interface{}) interface{} {
+	return f.call("safeCSS", input, args...)
+}
+
+func (f *alloyFilterBridge) SafeJS(input interface{}, args ...interface{}) interface{} {
+	return f.call("safeJS", input, args...)
+}
+
+func (f *alloyFilterBridge) SafeURL(input interface{}, args ...interface{}) interface{} {
+	return f.call("safeURL", input, args...)
+}
+
+func (f *alloyFilterBridge) SafeHTMLAttr(input interface{}, args ...interface{}) interface{} {
+	return f.call("safeHTMLAttr", input, args...)
 }
 
 func (f *alloyFilterBridge) Cachebust(input interface{}, args ...interface{}) interface{} {

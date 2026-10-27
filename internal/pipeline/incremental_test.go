@@ -675,8 +675,8 @@ var _ = Describe("Build Pipeline", func() {
 				SSR:     &config.SSRConfig{Command: "cat"},
 			}
 			contentMap := map[string]string{
-				"data/team.json": `[{"name":"Alice","slug":"alice"},{"name":"Bob","slug":"bob"},{"name":"Charlie","slug":"charlie"}]`,
-				"content/team.md": "---\ntitle: \"{{ member.name }}\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ member.slug }}/\"\n---\n<ds-card>{{ member.name }}</ds-card>",
+				"data/team.json":         `[{"name":"Alice","slug":"alice"},{"name":"Bob","slug":"bob"},{"name":"Charlie","slug":"charlie"}]`,
+				"content/team.md":        "---\ntitle: \"{{ member.name }}\"\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ member.slug }}/\"\n---\n<ds-card>{{ member.name }}</ds-card>",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -714,9 +714,9 @@ var _ = Describe("Build Pipeline", func() {
 				SSR:     &config.SSRConfig{Command: "cat"},
 			}
 			contentMap := map[string]string{
-				"data/items.json": `[{"name":"One","slug":"one"},{"name":"Two","slug":"two"}]`,
-				"content/index.md": "---\ntitle: Home\nlayout: default\n---\n<ds-hero>Welcome</ds-hero>",
-				"content/items.md": "---\ntitle: \"{{ item.name }}\"\nlayout: default\npagination:\n  data: site.data.items\n  perPage: 1\n  as: item\npermalink: \"/items/{{ item.slug }}/\"\n---\n<ds-card>{{ item.name }}</ds-card>",
+				"data/items.json":        `[{"name":"One","slug":"one"},{"name":"Two","slug":"two"}]`,
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n<ds-hero>Welcome</ds-hero>",
+				"content/items.md":       "---\ntitle: \"{{ item.name }}\"\nlayout: default\npagination:\n  data: site.data.items\n  perPage: 1\n  as: item\npermalink: \"/items/{{ item.slug }}/\"\n---\n<ds-card>{{ item.name }}</ds-card>",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -1524,9 +1524,9 @@ var _ = Describe("Build Pipeline", func() {
 				ProjectRoot: tmpDir,
 				Build:       config.BuildConfig{Output: outputDir},
 				Structure: config.StructureConfig{
-					Content:  "content",
-					Layouts:  "layouts",
-					Data:     "custom_data",
+					Content: "content",
+					Layouts: "layouts",
+					Data:    "custom_data",
 				},
 			}
 

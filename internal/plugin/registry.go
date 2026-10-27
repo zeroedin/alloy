@@ -78,17 +78,17 @@ type initializedPlugin struct {
 
 // Registry manages plugin discovery and loading.
 type Registry struct {
-	pluginsDir      string
-	pluginsDirRel   string // config-relative path for source attribution
-	projectRoot     string
-	plugins         []PluginInfo
-	filterRegistry  map[string]string       // filter name → source
-	conflictWarns   []string
-	runtimes        []PluginFilterRuntime   // loaded runtimes for filter/shortcode bridging
-	preInitialized  []initializedPlugin     // Phase A results, consumed by LoadPlugins
-	phaseADone      bool                    // true after InitRuntimes completes
-	wasmCacheDir    string                  // persistent compilation cache for WASM modules
-	wasmCache       wazero.CompilationCache // shared cache, closed in Close()
+	pluginsDir     string
+	pluginsDirRel  string // config-relative path for source attribution
+	projectRoot    string
+	plugins        []PluginInfo
+	filterRegistry map[string]string // filter name → source
+	conflictWarns  []string
+	runtimes       []PluginFilterRuntime   // loaded runtimes for filter/shortcode bridging
+	preInitialized []initializedPlugin     // Phase A results, consumed by LoadPlugins
+	phaseADone     bool                    // true after InitRuntimes completes
+	wasmCacheDir   string                  // persistent compilation cache for WASM modules
+	wasmCache      wazero.CompilationCache // shared cache, closed in Close()
 }
 
 // NewRegistry creates a plugin registry for the given plugins directory.

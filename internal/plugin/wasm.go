@@ -36,9 +36,9 @@ type QuickJSRuntime struct {
 	ctx          *qjs.Context
 	filters      map[string]bool
 	shortcodes   map[string]bool
-	hooks        map[string]int        // hook name → priority
-	hookScopes   map[string]*HookScope // hook name → scope
-	evalWarnings []string              // warnings from plugin eval (e.g., duplicate hooks)
+	hooks        map[string]int         // hook name → priority
+	hookScopes   map[string]*HookScope  // hook name → scope
+	evalWarnings []string               // warnings from plugin eval (e.g., duplicate hooks)
 	pendingFM    map[string]interface{} // lazy frontMatter: set before hook call, read by __resolveFM callback
 	pendingTOC   []content.TOCEntry     // lazy TOC: set before hook call, read by __resolveTOC callback
 }

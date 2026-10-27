@@ -52,8 +52,8 @@ func (p *attributeBlockParser) Continue(node ast.Node, reader text.Reader, pc pa
 }
 
 func (p *attributeBlockParser) Close(node ast.Node, reader text.Reader, pc parser.Context) {}
-func (p *attributeBlockParser) CanInterruptParagraph() bool                                 { return true }
-func (p *attributeBlockParser) CanAcceptIndentedLine() bool                                 { return false }
+func (p *attributeBlockParser) CanInterruptParagraph() bool                                { return true }
+func (p *attributeBlockParser) CanAcceptIndentedLine() bool                                { return false }
 
 // ── AST transformer ──────────────────────────────────────────────────
 // Phase 1: Move attributes from attributesBlock nodes to their preceding

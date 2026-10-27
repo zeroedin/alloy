@@ -193,7 +193,7 @@ var _ = Describe("Markdown-only Goldmark invariant (issue #1249)", func() {
 			contentMap := map[string]string{
 				"content/page.html": "---\ntitle: Page\nlayout: default\n---\n" +
 					"{{%> helmet %}}\n<script>var a = 1;</script>\n{{% /helmet %}}\n",
-				"layouts/default.html": `<html><body>{{ .content }}</body></html>`,
+				"layouts/default.html":  `<html><body>{{ .content }}</body></html>`,
 				"plugins/shortcodes.js": helmetPlugin,
 			}
 			_, err := pipeline.BuildWithContent(cfg, contentMap)

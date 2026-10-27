@@ -91,7 +91,7 @@ var _ = Describe("Scanner", func() {
 			ssrBody := `<h1>Hello</h1><ds-card><template shadowrootmode="open"><style>:host{display:block}</style><slot></slot></template>content</ds-card>`
 			after := `</body></html>`
 			result := ssr.ReassembleDocument(before, ssrBody, after)
-			Expect(result).To(Equal(before + ssrBody + after),
+			Expect(result).To(Equal(before+ssrBody+after),
 				"reassembled document must be before + SSR'd body + after")
 			Expect(result).To(ContainSubstring("<head>"),
 				"document must preserve head section")
