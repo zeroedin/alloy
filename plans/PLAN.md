@@ -2290,6 +2290,8 @@ Two fields of the same object behaved differently, so nothing looked broken.
 
 `summary` stays trusted as a stated decision, not as a side effect of its name: it is the page's own summary wherever the page appears. A field called `summary` that is not a page's summary — in a data file, for example — is escaped.
 
+**Filters that compare values compare the text.** A trusted value still equals the plain string it holds, so `site.pages | where: "summary", "<b>sum</b>"` matches that page in both engines. In Go templates this was already broken before #1267 — `summary` was typed as HTML and `where` compared with `==`, so it matched nothing — and it is fixed by the same rule.
+
 **Liquid is unchanged.** Liquid does not escape data at all (see "Output safety (issue #1266)"), so this rule has nothing to change there. Whatever marks a value as trusted for Go templates must reach Liquid as a plain string: Liquid's own filters treat a named string type as a non-string, and `{{ page.summary | size }}` would drop to `0` (measured in #1266).
 
 **Opting back in.** A data file whose HTML used to print raw because its key was `content` now escapes. The supported way to print it raw is `{{ safeHTML .site.data.x.content }}`. That requires `safeHTML` to work, which is #1266. **#1267 must not ship before #1266's implementation**: narrowing the rule first would leave authors with no working way back. The opt-in test stays red until both land.

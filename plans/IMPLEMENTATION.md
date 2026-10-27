@@ -508,15 +508,17 @@ Key points:
 
   **Callers that compare types.** `ToTemplateMap`'s `summary` is now the marker type, not `string`. No production code type-asserts it (checked: every `["summary"]` read in `internal/` and `cmd/`). Two existing tests compared it with `Equal("…")`; they now compare the text with `BeEquivalentTo`. JSON encoding is unaffected — a named string type marshals as a string.
 
+  **Filters must compare text, not Go types.** `Where` in `internal/template/filters.go` compares with `v == val`, and an interface holding the marker (or `gohtml.HTML`) never equals a plain `string`. Liquid's `where` is Alloy's `Where` — reached through `alloyFilterBridge.Where`, not liquidgo's own — and liquidgo does not call `ToLiquid` before the filter compares, so marking `summary` would make `{{ site.pages | where: "summary", "<b>sum</b>" }}` match nothing (measured: 2 on `main`, 0 on the prototype; #1279 review, Copilot and CodeRabbit). Compare string-kinded values by their text: a small helper that returns `reflect.Value.String()` for any `reflect.String` kind, applied to both sides in `Where`. Verified on the prototype: Liquid back to 2, and Go templates — where `where` on `summary` already returned 0 on `main` because `summary` reached the filter as `gohtml.HTML` — now 2 as well. The set filters have the same flaw in another form: `uniq`, `intersect`, `union` and `complement` key a `map[interface{}]bool` by the raw value, so a marked summary and an equal plain string are different keys (e.g. `site.pages | map: "summary" | intersect: list_of_strings`). Normalize their keys with the same helper. No test pins those four; `where` is the case reviewers and authors hit.
+
   **Ordering.** The implementation must not merge to `main` before #1266's implementation (`safeHTML` returning `template.HTML`). The opt-in test in `html_trust_test.go` enforces this: it stays red until both are in.
 
   **Verified on a prototype** of exactly this design (uncommitted): with #1266's prototype also applied, every test passes and `go test -race ./...` passes (25/25 packages). Without #1266, the only failure is the opt-in test.
 
   **Test coverage**:
-  - `internal/pipeline/html_trust_test.go` (`BuildWithContent`): 12 tests.
-    - **5 red:** a data file's `content`, a data file's `summary`, `content` and `summary` nested in data, and a front-matter `content` on an empty page all escape (4). Plus the `safeHTML` opt-in, which also needs #1266 (1).
+  - `internal/pipeline/html_trust_test.go` (`BuildWithContent`): 13 tests.
+    - **6 red:** a data file's `content`, a data file's `summary`, `content` and `summary` nested in data, and a front-matter `content` on an empty page all escape (4). `where` matches a page's summary in Go templates (1; already broken on `main`). Plus the `safeHTML` opt-in, which also needs #1266 (1).
     - **6 guards for Go templates:** the layout's `{{ .content }}`, `{{ .page.content }}`, the page summary, list summaries and the page body through an include all stay raw (5), and ordinary data fields still escape (1). The first five fail under a mutation where the Go engine ignores the marker; all the escaping tests fail under one where it trusts every string.
-    - **1 guard for Liquid:** plain strings in filters and comparisons. It fails when the marker has no `ToLiquid`.
+    - **1 guard for Liquid:** plain strings in filters and comparisons, including `site.pages | where: "summary", …`. It fails when the marker has no `ToLiquid`, and when `Where` compares Go types instead of text.
   - `internal/template/gotemplate_test.go`:
     - **1 red:** a plain string under `content` or a nested `summary` is escaped by the engine.
     - **2 updated:** existing layout tests now pass the body as `gohtml.HTML`, because the engine no longer trusts by name.

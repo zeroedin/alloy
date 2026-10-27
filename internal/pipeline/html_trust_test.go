@@ -21,6 +21,7 @@ import (
 //
 // See PLAN.md → "Go templates trust HTML by origin (issue #1267)".
 
+// goTrustConfig returns a minimal Go-template site config for BuildWithContent.
 func goTrustConfig(title string) *config.Config {
 	return &config.Config{
 		Title:     title,
@@ -130,6 +131,23 @@ var _ = Describe("Go templates trust HTML by origin (issue #1267)", func() {
 		})
 	})
 
+	Context("filters compare trusted values as text", func() {
+		It("matches a page's summary with where in Go templates", func() {
+			// A trusted summary must still equal the plain string it holds
+			// (#1279 review). Already broken in Go templates before #1267:
+			// summary was template.HTML and Where compared with ==.
+			result, err := pipeline.BuildWithContent(goTrustConfig("Trust Where"), map[string]string{
+				"content/index.md":     "---\ntitle: Home\nlayout: default\nsummary: \"<b>sum</b>\"\n---\nBody",
+				"content/post.md":      "---\ntitle: Post\nlayout: default\nsummary: \"other\"\n---\nPost",
+				"layouts/default.html": "WHERE[{{ len (where .site.pages \"summary\" \"<b>sum</b>\") }}]",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RenderedContent["index.md"]).To(ContainSubstring("WHERE[1]"),
+				"where must match a trusted value against a plain string argument "+
+					"(issue #1267)")
+		})
+	})
+
 	Context("Liquid is unchanged (guard)", func() {
 		It("sees content and summary as plain strings in filters and comparisons", func() {
 			// Whatever marks a value as trusted for Go templates must reach
@@ -144,7 +162,8 @@ var _ = Describe("Go templates trust HTML by origin (issue #1267)", func() {
 				"content/index.md": "---\ntitle: Home\nlayout: default\nsummary: \"<b>sum</b>\"\n---\nBody with **bold**",
 				"layouts/default.liquid": "SIZE[{{ page.summary | size }}] EQ[{% if page.summary == \"<b>sum</b>\" %}yes{% endif %}] " +
 					"STRIP[{{ content | strip_html | strip }}] CONT[{% if content contains \"bold\" %}yes{% endif %}] " +
-					"LIST[{% for p in site.pages %}{{ p.summary | size }}{% endfor %}] RAW[{{ page.summary }}]",
+					"LIST[{% for p in site.pages %}{{ p.summary | size }}{% endfor %}] RAW[{{ page.summary }}] " +
+					"WHERE[{{ site.pages | where: \"summary\", \"<b>sum</b>\" | size }}]",
 			})
 			Expect(err).NotTo(HaveOccurred())
 			out := result.RenderedContent["index.md"]
@@ -153,6 +172,10 @@ var _ = Describe("Go templates trust HTML by origin (issue #1267)", func() {
 			Expect(out).To(ContainSubstring("STRIP[Body with bold]"))
 			Expect(out).To(ContainSubstring("CONT[yes]"))
 			Expect(out).To(ContainSubstring("LIST[10]"))
+			Expect(out).To(ContainSubstring("WHERE[1]"),
+				"where compares a page's summary as text — a marker that does not "+
+					"compare equal to a plain string would make it match nothing "+
+					"(#1279 review)")
 			Expect(out).To(ContainSubstring("RAW[<b>sum</b>]"))
 		})
 	})
