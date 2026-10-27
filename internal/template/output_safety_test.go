@@ -4,6 +4,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/zeroedin/alloy/internal/content"
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
@@ -169,9 +170,10 @@ var _ = Describe("Output safety filters (issue #1266)", func() {
 			})
 
 			It("default passes page.content through as HTML (guard)", func() {
-				// content is marked template.HTML by markHTMLSafe today.
+				// The pipeline marks the rendered body as content.TrustedHTML;
+				// the Go engine turns that into template.HTML (issue #1267).
 				out := renderCtx(`{{ default .page.content "" }}`, map[string]interface{}{
-					"page": map[string]interface{}{"content": "<p>body</p>"},
+					"page": map[string]interface{}{"content": content.TrustedHTML("<p>body</p>")},
 				})
 				Expect(out).To(Equal("<p>body</p>"),
 					"existing Go templates rely on default keeping page.content's "+

@@ -148,12 +148,119 @@ var _ = Describe("Go templates trust HTML by origin (issue #1267)", func() {
 		})
 	})
 
+	Context("sort and set filters compare trusted summaries as text (#1281)", func() {
+		// Page summaries reach Go-template filters as template.HTML. Filters
+		// must read their text: sort compares number-like text as numbers,
+		// and the set filters must treat a trusted "9" and a plain "9" as the
+		// same value.
+		var out string
+		BeforeEach(func() {
+			result, err := pipeline.BuildWithContent(goTrustConfig("Trust Filters"), map[string]string{
+				"content/blog/a.md": "---\ntitle: A\nlayout: default\nsummary: \"10\"\n---\nA",
+				"content/blog/b.md": "---\ntitle: B\nlayout: default\nsummary: \"9\"\n---\nB",
+				"content/blog/c.md": "---\ntitle: C\nlayout: default\nsummary: \"9\"\n---\nC",
+				"data/plain.json":   `["9","x"]`,
+				"layouts/default.html": "SORT[{{ range sort .site.pages \"summary\" }}{{ .title }}{{ end }}] " +
+					"UNIQ[{{ len (uniq (concat (map .site.pages \"summary\") .site.data.plain)) }}] " +
+					"INT[{{ intersect (map .site.pages \"summary\") .site.data.plain }}] " +
+					"UNION[{{ union (map .site.pages \"summary\") .site.data.plain }}] " +
+					"COMP[{{ complement (map .site.pages \"summary\") .site.data.plain }}]",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			out = result.RenderedContent["blog/a.md"]
+		})
+
+		It("sorts number-like summaries numerically", func() {
+			Expect(out).To(ContainSubstring("SORT[BCA]"),
+				"9, 9, 10 in numeric order — compared as text-by-type, a trusted "+
+					"summary skips the numeric branch and sorts as 10, 9, 9")
+		})
+
+		It("uniq treats a trusted value and an equal plain string as one", func() {
+			Expect(out).To(ContainSubstring("UNIQ[3]"),
+				"{10, 9, x} — keyed by the raw value, trusted \"9\" and plain \"9\" "+
+					"would count twice")
+		})
+
+		It("intersect, union and complement match trusted values against plain strings", func() {
+			Expect(out).To(ContainSubstring("INT[[9 9]]"))
+			Expect(out).To(ContainSubstring("UNION[[10 9 x]]"))
+			Expect(out).To(ContainSubstring("COMP[[10]]"))
+		})
+	})
+
+	Context("a page's own summary stays raw in page lists however the page was made (#1281)", func() {
+		var out string
+		BeforeEach(func() {
+			result, err := pipeline.BuildWithContent(goTrustConfig("Trust Lists"), map[string]string{
+				"data/team.json":       `[{"name":"Ann","slug":"ann"},{"name":"Bo","slug":"bo"}]`,
+				"content/index.md":     "---\ntitle: Home\nlayout: default\n---\nHome",
+				"content/team.md":      "---\ntitle: Team\nlayout: default\nsummary: \"<em>static</em>\"\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ .member.slug }}/\"\n---\nT",
+				"content/people.md":    "---\ntitle: People\nlayout: default\nsummary: \"<i>{{ .member.name }}</i>\"\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/people/{{ .member.slug }}/\"\n---\nP",
+				"layouts/default.html": "LIST[{{ range .site.pages }}{{ .summary }};{{ end }}]",
+				"plugins/add.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function(payload) {
+    return { addPages: [{ path: 'extra.md', url: '/extra/', frontMatter: { title: 'Extra', layout: 'default', summary: '<em>plugin</em>' }, content: 'x' }] };
+  });
+}`,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			out = result.RenderedContent["index.md"]
+		})
+
+		It("keeps a paginated page's static summary raw", func() {
+			Expect(out).To(ContainSubstring("<em>static</em>;<em>static</em>;"),
+				"pagination virtual pages carry their summary only in front matter; "+
+					"it is still the page's own summary (issue #1267)")
+		})
+
+		It("keeps a paginated page's interpolated summary raw", func() {
+			Expect(out).To(ContainSubstring("<i>Ann</i>;<i>Bo</i>;"),
+				"the per-item summary pagination renders from the page's own summary is trusted")
+		})
+
+		It("keeps a plugin addPages page's summary raw", func() {
+			Expect(out).To(ContainSubstring("<em>plugin</em>;"),
+				"the frontMatter.summary of a page added with addPages is that page's own summary")
+		})
+	})
+
+	Context("a summary the page inherits is escaped (#1283)", func() {
+		// Only a summary in the page's own front matter is trusted. The data
+		// cascade merges directory _data.yaml and global data into every
+		// page's front matter as defaults — including a data file named
+		// summary — and that is data, not the page's own summary.
+		It("escapes a summary inherited from a directory _data.yaml", func() {
+			result, err := pipeline.BuildWithContent(goTrustConfig("Trust Inherited Dir"), map[string]string{
+				"content/blog/post.md":    "---\ntitle: Post\nlayout: default\n---\nPost",
+				"content/blog/_data.yaml": "summary: \"<script>dir()</script>\"\n",
+				"layouts/default.html":    "P[{{ .page.summary }}] LIST[{{ range .site.pages }}{{ .summary }};{{ end }}]",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			out := result.RenderedContent["blog/post.md"]
+			Expect(out).To(ContainSubstring("P[&lt;script&gt;dir()&lt;/script&gt;]"),
+				"an inherited summary on the page must be escaped (maintainer decision, #1282 review)")
+			Expect(out).To(ContainSubstring("LIST[&lt;script&gt;dir()&lt;/script&gt;;]"),
+				"an inherited summary in page lists must be escaped")
+		})
+
+		It("escapes a summary inherited from a data file named summary", func() {
+			result, err := pipeline.BuildWithContent(goTrustConfig("Trust Inherited Global"), map[string]string{
+				"data/summary.yaml":    "\"<script>global()</script>\"\n",
+				"content/index.md":     "---\ntitle: Home\nlayout: default\n---\nHome",
+				"layouts/default.html": "P[{{ .page.summary }}] LIST[{{ range .site.pages }}{{ .summary }};{{ end }}]",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			out := result.RenderedContent["index.md"]
+			Expect(out).To(ContainSubstring("P[&lt;script&gt;global()&lt;/script&gt;]"))
+			Expect(out).To(ContainSubstring("LIST[&lt;script&gt;global()&lt;/script&gt;;]"))
+		})
+	})
+
 	Context("Liquid is unchanged (guard)", func() {
 		It("sees content and summary as plain strings in filters and comparisons", func() {
-			// Whatever marks a value as trusted for Go templates must reach
-			// Liquid as a plain string: a named string type makes Liquid's
-			// own filters treat it as a non-string (size returns 0) — measured
-			// in #1266.
+			// Trust markers exist only in Go-template builds; Liquid gets the
+			// plain strings it always had (#1283).
 			result, err := pipeline.BuildWithContent(&config.Config{
 				Title:   "Trust Liquid",
 				BaseURL: "https://example.com",
@@ -177,6 +284,30 @@ var _ = Describe("Go templates trust HTML by origin (issue #1267)", func() {
 					"compare equal to a plain string would make it match nothing "+
 					"(#1279 review)")
 			Expect(out).To(ContainSubstring("RAW[<b>sum</b>]"))
+		})
+
+		It("sees plain strings in property lookups and sum (#1283)", func() {
+			// liquidgo calls ToLiquid only at the end of a lookup; .size
+			// part-way through, and filters like sum that read properties,
+			// test for string directly. A marker in a Liquid build would empty
+			// these. Values match a Liquid build with plain strings.
+			result, err := pipeline.BuildWithContent(&config.Config{
+				Title:   "Trust Liquid Lookups",
+				BaseURL: "https://example.com",
+				Build:   config.BuildConfig{Output: "_site"},
+			}, map[string]string{
+				"content/blog/a.md": "---\ntitle: A\nlayout: default\nsummary: \"10\"\n---\nA",
+				"content/blog/b.md": "---\ntitle: B\nlayout: default\nsummary: \"9\"\n---\nB",
+				"content/blog/c.md": "---\ntitle: C\nlayout: default\nsummary: \"9\"\n---\nC",
+				"layouts/default.liquid": "PS[{{ page.summary.size }}] PC[{{ page.content.size }}] " +
+					"LOOP[{% for p in site.pages %}{{ p.summary.size }},{% endfor %}] SUM[{{ site.pages | sum: \"summary\" }}]",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			out := result.RenderedContent["blog/a.md"]
+			Expect(out).To(ContainSubstring("PS[2]"), "page.summary.size")
+			Expect(out).To(ContainSubstring("PC[9]"), "page.content.size — <p>A</p> plus newline")
+			Expect(out).To(ContainSubstring("LOOP[2,1,1,]"), "p.summary.size in a loop")
+			Expect(out).To(ContainSubstring("SUM[28]"), "sum: \"summary\" — 10 + 9 + 9")
 		})
 	})
 
