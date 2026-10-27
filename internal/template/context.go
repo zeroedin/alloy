@@ -136,8 +136,14 @@ func (tc *TemplateContext) ToMap() map[string]interface{} {
 	if tc.Page.Collection != "" {
 		pageCtx["collection"] = tc.Page.Collection
 	}
+	// The rendered body and the page's own summary are the HTML Alloy vouches
+	// for (issue #1267). A front-matter content field on an empty page stays a
+	// plain string, so the Go engine escapes it.
+	if summary, ok := pageCtx["summary"].(string); ok {
+		pageCtx["summary"] = content.TrustedHTML(summary)
+	}
 	if tc.Content != "" {
-		pageCtx["content"] = tc.Content
+		pageCtx["content"] = content.TrustedHTML(tc.Content)
 	}
 	if tc.Page.Translations != nil {
 		pageCtx["translations"] = tc.Page.Translations

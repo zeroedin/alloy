@@ -70,6 +70,17 @@ func (p *Page) HTML() string {
 	return p.renderedStr
 }
 
+// TrustedHTML is HTML Alloy produced or vouches for: a page's rendered body
+// and its front-matter summary. It is marked where the value is created, and
+// the Go template engine prints only this type unescaped — a string is never
+// trusted because of the key it sits under (issue #1267).
+type TrustedHTML string
+
+// ToLiquid hands Liquid a plain string. liquidgo calls it on lookup; without
+// it Liquid's own filters treat the named type as a non-string and
+// {{ page.summary | size }} returns 0.
+func (t TrustedHTML) ToLiquid() interface{} { return string(t) }
+
 // ToTemplateMap converts a Page to a map with lowercase keys for reliable
 // Liquid template access. Struct fields (URL, Date, etc.) are merged on top
 // of FrontMatter so templates can use {{ page.title }}, {{ page.url }}, etc.
@@ -85,7 +96,7 @@ func (p *Page) ToTemplateMap() map[string]interface{} {
 		m["date"] = p.Date
 	}
 	if p.Summary != "" {
-		m["summary"] = p.Summary
+		m["summary"] = TrustedHTML(p.Summary)
 	}
 	if p.Section != "" {
 		m["collection"] = p.Section
