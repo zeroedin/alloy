@@ -355,7 +355,7 @@ func Where(input interface{}, args ...interface{}) interface{} {
 	var result []interface{}
 	for _, item := range arr {
 		v := getMapValue(item, key)
-		if v == val {
+		if plainValue(v) == plainValue(val) {
 			result = append(result, item)
 		}
 	}
@@ -421,8 +421,8 @@ func Uniq(input interface{}, args ...interface{}) interface{} {
 	seen := make(map[interface{}]bool)
 	var result []interface{}
 	for _, v := range arr {
-		if !seen[v] {
-			seen[v] = true
+		if k := plainValue(v); !seen[k] {
+			seen[k] = true
 			result = append(result, v)
 		}
 	}
@@ -462,11 +462,11 @@ func Intersect(input interface{}, args ...interface{}) interface{} {
 	b := toSlice(args[0])
 	bSet := make(map[interface{}]bool)
 	for _, v := range b {
-		bSet[v] = true
+		bSet[plainValue(v)] = true
 	}
 	var result []interface{}
 	for _, v := range a {
-		if bSet[v] {
+		if bSet[plainValue(v)] {
 			result = append(result, v)
 		}
 	}
@@ -482,14 +482,14 @@ func Union(input interface{}, args ...interface{}) interface{} {
 	seen := make(map[interface{}]bool)
 	var result []interface{}
 	for _, v := range a {
-		if !seen[v] {
-			seen[v] = true
+		if k := plainValue(v); !seen[k] {
+			seen[k] = true
 			result = append(result, v)
 		}
 	}
 	for _, v := range b {
-		if !seen[v] {
-			seen[v] = true
+		if k := plainValue(v); !seen[k] {
+			seen[k] = true
 			result = append(result, v)
 		}
 	}
@@ -504,11 +504,11 @@ func Complement(input interface{}, args ...interface{}) interface{} {
 	b := toSlice(args[0])
 	bSet := make(map[interface{}]bool)
 	for _, v := range b {
-		bSet[v] = true
+		bSet[plainValue(v)] = true
 	}
 	var result []interface{}
 	for _, v := range a {
-		if !bSet[v] {
+		if !bSet[plainValue(v)] {
 			result = append(result, v)
 		}
 	}
@@ -765,6 +765,21 @@ func isEmptyString(v interface{}) bool {
 	return rv.Kind() == reflect.String && rv.Len() == 0
 }
 
+// plainValue returns the text of a string-kinded value and anything else
+// unchanged, for filters that compare or key by value. A trusted value
+// (content.TrustedHTML in Liquid, template.HTML in Go templates) must still
+// equal the plain string it holds, so where: "summary", "<b>x</b>" matches
+// (issue #1267).
+func plainValue(v interface{}) interface{} {
+	if v == nil {
+		return nil
+	}
+	if rv := reflect.ValueOf(v); rv.Kind() == reflect.String {
+		return rv.String()
+	}
+	return v
+}
+
 // --- Output safety filters ---
 
 // The safe* filters mark trusted content so Go's html/template does not
@@ -923,6 +938,9 @@ func IsBuiltinFilter(name string) bool {
 // --- Helper functions ---
 
 func compareValues(a, b interface{}) bool {
+	// Compare trusted values by their text, so "9" sorts before "10" whether
+	// or not it is a page's summary (issue #1267).
+	a, b = plainValue(a), plainValue(b)
 	if a == nil && b == nil {
 		return false
 	}

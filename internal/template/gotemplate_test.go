@@ -1,6 +1,7 @@
 package template_test
 
 import (
+	gohtml "html/template"
 	"os"
 	"path/filepath"
 
@@ -64,11 +65,28 @@ var _ = Describe("GoEngine", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(tpl).NotTo(BeNil())
 
+			// The pipeline hands the engine rendered page HTML already marked
+			// as trusted; the engine no longer trusts a value because its key
+			// is named "content" (issue #1267).
 			result, err := tpl.Render(map[string]interface{}{
-				"content": "<p>Page body</p>",
+				"content": gohtml.HTML("<p>Page body</p>"),
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(result)).To(ContainSubstring("<p>Page body</p>"))
+		})
+
+		It("escapes a plain string under the key content — trust is by origin, not name (issue #1267)", func() {
+			tpl, err := engine.Parse("layout", []byte(`<div>{{ .content }}|{{ .data.summary }}</div>`))
+			Expect(err).NotTo(HaveOccurred())
+			result, err := tpl.Render(map[string]interface{}{
+				"content": "<script>x()</script>",
+				"data":    map[string]interface{}{"summary": "<u>s</u>"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(result)).To(Equal("<div>&lt;script&gt;x()&lt;/script&gt;|&lt;u&gt;s&lt;/u&gt;</div>"),
+				"a plain string must be escaped whatever its key is named — "+
+					"markHTMLSafe trusted any string under content or summary at "+
+					"any depth, so data files could inject script (issue #1267)")
 		})
 
 		It("returns parse error for invalid Go template syntax", func() {
@@ -357,7 +375,7 @@ var _ = Describe("GoEngine", func() {
 
 			// Content rendering should not leak layout variables
 			result, err := tpl.Render(map[string]interface{}{
-				"content":     "<p>Body</p>",
+				"content":     gohtml.HTML("<p>Body</p>"), // trusted by origin (issue #1267)
 				"layout_only": "should not appear in content",
 			})
 			Expect(err).NotTo(HaveOccurred())

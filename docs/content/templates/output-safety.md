@@ -33,9 +33,23 @@ Liquid's behavior matches Jekyll and Shopify. Go's comes from its `html/template
 
 In Liquid the `safe*` filters do nothing and return the value unchanged, so a template that uses them works in either engine.
 
-### One exception: `content` and `summary`
+### What Go prints as HTML without a filter
 
-Go templates print any value under a key named `content` or `summary` as HTML, without escaping it. That's how `.page.content`, your rendered Markdown, prints as HTML. It isn't limited to pages, though: the same key names in a data file print as written too.
+Go templates print two things as written without a `safe*` filter, because Alloy produced them or vouches for them: your pages' rendered Markdown and your pages' summaries. Everything else is escaped. What a value is called doesn't matter, only where it came from:
+
+{% raw %}
+| Value | Printed as HTML? |
+|---|---|
+| `{{ .content }}` in a layout: the page's rendered Markdown | yes |
+| `{{ .page.content }}`, when it's the page's rendered Markdown | yes |
+| a `summary` in the page's own front matter: `{{ .page.summary }}`, and `.summary` on pages in `site.pages`, collections, taxonomy pages and pagination | yes |
+| a `summary` the page inherits, from a `_data.yaml` or a data file named `summary` | no, escaped |
+| a `content` or `summary` field in a data file, at any depth | no, escaped |
+| a front-matter `content` field, on a page with no body | no, escaped |
+| everything else | no, escaped |
+{% endraw %}
+
+So a data file's `content` field is escaped like any other field. To print it as HTML, use `safeHTML`:
 
 ```yaml
 # data/review.yaml
@@ -47,17 +61,15 @@ content: "<b>Great</b>"
 ```go-html-template
 <p>{{ .site.data.review.author }}</p>
 <p>{{ .site.data.review.content }}</p>
-<p>{{ printf "%s" .site.data.review.content }}</p>
+<p>{{ safeHTML .site.data.review.content }}</p>
 ```
 {% endraw %}
 
 ```html
 <p>&lt;b&gt;Sam&lt;/b&gt;</p>
-<p><b>Great</b></p>
 <p>&lt;b&gt;Great&lt;/b&gt;</p>
+<p><b>Great</b></p>
 ```
-
-To escape one of these values in Go, turn it back into plain text with `printf "%s"`, as in the last line. Don't use `escape` for this: Go escapes its result a second time, and the page shows `&lt;b&gt;` instead of `<b>`.
 
 ## Switching from Go templates to Liquid
 
@@ -71,7 +83,7 @@ Before switching, look for values that aren't meant to be HTML — names, titles
 ```
 {% endraw %}
 
-Going the other way, from Liquid to Go, is mostly the safe direction: values that printed as HTML start printing escaped, and anything that needs to stay HTML gets the matching `safe*` filter. The exception is values under a `content` or `summary` key, which keep printing as HTML in Go — see [One exception](#one-exception-content-and-summary). Check those before you switch.
+Going the other way, from Liquid to Go, is the safe direction: values that printed as HTML start printing escaped, apart from your pages' rendered Markdown and summaries — see [What Go prints as HTML](#what-go-prints-as-html-without-a-filter). Anything else that needs to stay HTML gets the matching `safe*` filter.
 
 ## Trusted means you checked it
 

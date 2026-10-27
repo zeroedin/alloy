@@ -304,7 +304,7 @@ func renderPageFormats(page *content.Page, layoutsDir, engineName string, rc *Re
 			return fmt.Errorf("format layout: %w", err)
 		}
 		fmtCtx := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "").ToMap()
-		fmtCtx["content"] = page.HTML()
+		fmtCtx["content"] = content.MarkTrustedHTML(page.HTML())
 		fmtResult, err := fmtTpl.Render(fmtCtx)
 		if err != nil {
 			return fmt.Errorf("rendering format layout %s: %w", fmtLayoutPath, err)
@@ -341,7 +341,7 @@ func renderPageThroughLayouts(page *content.Page, layoutPath, layoutsDir, engine
 
 		tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "")
 		ctx := tc.ToMap()
-		ctx["content"] = page.HTML()
+		ctx["content"] = content.MarkTrustedHTML(page.HTML())
 		layoutResult, err := tpl.Render(ctx)
 		if err != nil {
 			return fmt.Errorf("rendering layout %s: %w", lp, err)

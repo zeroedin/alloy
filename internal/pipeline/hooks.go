@@ -259,6 +259,11 @@ func virtualPageFromMap(m map[string]interface{}) (*content.Page, error) {
 			page.Layout = s
 		}
 	}
+	// The plugin's frontMatter is the page's own, so its summary is trusted
+	// like a parsed page's (issue #1267).
+	if s, ok := fm["summary"].(string); ok {
+		page.Summary = s
+	}
 	return page, nil
 }
 

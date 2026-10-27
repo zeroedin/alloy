@@ -33,6 +33,7 @@ type PageContext struct {
 	Date         interface{}
 	Collection   string
 	FrontMatter  map[string]interface{}
+	Summary      string                   // the page's own front-matter summary, not one inherited through the cascade
 	Translations []map[string]interface{} // translation info: url, lang
 	TOC          []content.TOCEntry
 }
@@ -76,6 +77,7 @@ func BuildTemplateContext(page *content.Page, siteData map[string]interface{}, a
 	ctx.Page.URL = page.URL
 	ctx.Page.Collection = page.Collection
 	ctx.Page.FrontMatter = page.FrontMatter
+	ctx.Page.Summary = page.Summary
 	ctx.Page.TOC = page.TOC
 	if !page.Date.IsZero() {
 		ctx.Page.Date = page.Date
@@ -136,8 +138,16 @@ func (tc *TemplateContext) ToMap() map[string]interface{} {
 	if tc.Page.Collection != "" {
 		pageCtx["collection"] = tc.Page.Collection
 	}
+	// The rendered body and the page's own summary are the HTML Alloy vouches
+	// for (issue #1267). A front-matter content field on an empty page, and a
+	// summary inherited through the cascade, stay plain strings and are escaped.
+	if tc.Page.Summary != "" {
+		if summary, ok := pageCtx["summary"].(string); ok {
+			pageCtx["summary"] = content.MarkTrustedHTML(summary)
+		}
+	}
 	if tc.Content != "" {
-		pageCtx["content"] = tc.Content
+		pageCtx["content"] = content.MarkTrustedHTML(tc.Content)
 	}
 	if tc.Page.Translations != nil {
 		pageCtx["translations"] = tc.Page.Translations

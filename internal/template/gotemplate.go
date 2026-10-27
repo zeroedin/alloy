@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/ordered"
 )
 
@@ -22,6 +23,13 @@ type goEngine struct {
 	absIncludesDir string
 	includeCache   sync.Map // map[string]*gohtml.Template
 	depth          atomic.Int32
+}
+
+// IsGoEngine reports whether e renders with Go html/template, the engine
+// that needs trusted values marked (issue #1267).
+func IsGoEngine(e TemplateEngine) bool {
+	_, ok := e.(*goEngine)
+	return ok
 }
 
 // NewGoEngine creates a new Go html/template engine.
@@ -244,20 +252,16 @@ func (t *goTemplate) Render(ctx map[string]interface{}) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// markHTMLSafe recursively converts string values in known HTML fields
-// (content, summary) to template.HTML so they render unescaped.
-// Recurses into nested maps so that fields like page.content and
-// page.summary are also converted at any depth.
+// markHTMLSafe converts content.TrustedHTML values to template.HTML so they
+// render unescaped, at any depth. Trust is set where Alloy creates the value
+// (the rendered body, a page's summary); a plain string is escaped whatever
+// its key is called, so a data file's "content" field is data (issue #1267).
 func markHTMLSafe(ctx map[string]interface{}) map[string]interface{} {
 	out := make(map[string]interface{}, len(ctx))
 	for k, v := range ctx {
 		switch val := v.(type) {
-		case string:
-			if k == "content" || k == "summary" {
-				out[k] = gohtml.HTML(val)
-			} else {
-				out[k] = v
-			}
+		case content.TrustedHTML:
+			out[k] = gohtml.HTML(val)
 		case map[string]interface{}:
 			out[k] = markHTMLSafe(val)
 		case []interface{}:
@@ -270,8 +274,8 @@ func markHTMLSafe(ctx map[string]interface{}) map[string]interface{} {
 			// has nowhere to store — iteration becomes sorted instead.
 			//
 			// ToGoMap already recurses through nested maps and slices, but it
-			// does not mark content/summary as HTML, so convert first and let
-			// this walk descend into the result.
+			// does not convert TrustedHTML, so convert first and let this walk
+			// descend into the result.
 			out[k] = markHTMLSafe(val.ToGoMap())
 		default:
 			out[k] = v
@@ -294,6 +298,8 @@ func markHTMLSafeSlice(in []interface{}) []interface{} {
 	out := make([]interface{}, len(in))
 	for i, v := range in {
 		switch val := v.(type) {
+		case content.TrustedHTML:
+			out[i] = gohtml.HTML(val)
 		case map[string]interface{}:
 			out[i] = markHTMLSafe(val)
 		case []interface{}:

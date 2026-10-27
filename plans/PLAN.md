@@ -2267,6 +2267,46 @@ The pipeline strips layout front matter before rendering (it is not output as li
 - **Liquid:** `{% include "partial" %}` and `{% render "partial" %}` for partials. Resolves from the layouts directory, trying `name.liquid`, then `name.html`. Extensionless files are not resolved — a template file without a recognized extension has no clear use case and is almost certainly a mistake (issue #880). **Plugin-registered filters must work in partials** — the same filter dispatch mechanism that applies to content templates and layouts must also apply to included files. If the engine uses template pre-processing (e.g., rewriting novel filter names for dispatch), that pre-processing must also run on partial source before parsing (issue #376).
 - **Go:** `{{ include "path" }}` function for includes (issues #823, #883). Named `include` for parity with Liquid's `{% include %}`. Resolves from the layouts directory, trying `path.html` only. Extensionless files are not resolved (issue #880). The context argument is optional — defaults to the current template dot (like Liquid's `{% include %}` which shares scope). Explicit context narrows scope: `{{ include "partials/card" (dict "item" . "compact" true) }}`. Returns rendered output as `template.HTML` (usable in variable assignment and pipelines — unlike `{{ template }}` which is an action, not a function). `{{ block "name" . }}` / `{{ define "name" }}` remain available for same-file layout inheritance. Nesting depth is capped at 100 (matching Ruby/Go Liquid's `Block::MAX_DEPTH`); exceeding it is a build error. Missing includes and paths that traverse outside the layouts root are build errors.
 
+**Go templates trust HTML by origin, not by key name (issue #1267).** Go templates escape every value by default. Until #1267, the Go engine made one exception by *name*: any string under a key called `content` or `summary`, at any depth in the context, printed as raw HTML. A data file therefore decided its own trust. Measured on `dab5e93`:
+
+```
+data/reviews.json  {"content": "Great! <script>steal()</script>", "rating": "5 <stars>"}
+{{ .site.data.reviews.rating }}    → 5 &lt;stars&gt;                  escaped
+{{ .site.data.reviews.content }}   → Great! <script>steal()</script>   raw — the script runs
+```
+
+Two fields of the same object behaved differently, so nothing looked broken.
+
+**The rule.** Go templates print raw only HTML that Alloy produced or vouches for, decided where the value is created — never by what its key is called:
+
+| Value | Raw in Go templates? | Why |
+|---|---|---|
+| `{{ .content }}` in a layout — the page's rendered body | yes | Alloy produced it |
+| `{{ .page.content }}` when it is the page's rendered body | yes | Alloy produced it |
+| a `summary` in the page's **own** front matter — `{{ .page.summary }}`, and `.summary` on the page's items in `site.pages`, collections, taxonomy pages and pagination. This includes the per-item summary pagination renders from the page's own summary, and the `frontMatter.summary` of a page a plugin adds with `addPages` | yes | maintainer decision: the author's own page summary is trusted |
+| a `summary` the page **inherits** through the data cascade — a directory `_data.yaml`, global data, including a data file named `summary` | **no** | it is data, not the page's own summary (maintainer decision, #1282 review) |
+| a `content` or `summary` field in a data file or plugin data, at any depth | **no** | it is data, not HTML Alloy produced |
+| a front-matter `content` field that fills `page.content` because the page has no body | **no** | authored text, not the rendered body |
+| everything else | no | unchanged |
+
+`summary` stays trusted as a stated decision, not as a side effect of its name: it is the page's own summary wherever the page appears. A field called `summary` that is not the page's own — in a data file, or inherited through the cascade — is escaped. The cascade merges directory and global data into every page's front matter as defaults, so without this a data file could set every page's "own" summary:
+
+```
+data/summary.yaml        "<script>global()</script>"
+content/blog/_data.yaml  summary: "<script>dir()</script>"
+{{ .page.summary }} on a page with no summary of its own   → escaped
+```
+
+**Filters that compare values compare the text.** A trusted value still equals the plain string it holds, so `site.pages | where: "summary", "<b>sum</b>"` matches that page in both engines. In Go templates this was already broken before #1267 — `summary` was typed as HTML and `where` compared with `==`, so it matched nothing — and it is fixed by the same rule. The same holds for `sort` (number-like text sorts as numbers: summaries `10`, `9`, `9` sort `9, 9, 10`; Go templates used to sort them as text) and for `uniq`, `intersect`, `union` and `complement` (a trusted `9` and a plain `9` are the same value).
+
+**Liquid is unchanged.** Liquid does not escape data at all (see "Output safety (issue #1266)"), so this rule has nothing to change there. Values are marked as trusted **only in Go-template builds**; a Liquid build sees the plain strings it always had (maintainer decision, #1282 review). A marker reaching Liquid changes its output: liquidgo unwraps a value only at the end of a lookup, so `{{ page.summary.size }}` came out empty and `{{ collections.blog | sum: "summary" }}` came out `0`.
+
+**Opting back in.** A data file whose HTML used to print raw because its key was `content` now escapes. The supported way to print it raw is `{{ safeHTML .site.data.x.content }}`. That requires `safeHTML` to work, which is #1266. **#1267 must not ship before #1266's implementation**: narrowing the rule first would leave authors with no working way back. The opt-in test enforces this order.
+
+**This is a visible change for Go-template sites** that print HTML from a data file's `content` or `summary` field: those tags start showing as text. The changeset and docs must say so and point at `safeHTML`.
+
+**What does not change.** Rendered page bodies and a page's own summary print exactly as before, including through `{{ include "x" .page }}`. (An inherited summary is now escaped — see the table.) Escaping of all other fields is unchanged. Hook payloads are not template context and are not affected — the `content` a plugin returns from `onFormatRendered` never reaches a template.
+
 **Content-relative file inlining** — `{% inline "./path" %}` reads a file relative to the current content file's directory and inserts its raw contents into the output. No template processing — the file is inserted verbatim. This is an Alloy-specific tag, not part of the Liquid spec.
 
 ```markdown

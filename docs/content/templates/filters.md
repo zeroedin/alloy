@@ -305,7 +305,7 @@ This is useful for rendering Markdown in front matter fields or data file values
 
 ### Output safety: safeHTML, safeCSS, safeJS, safeURL, safeHTMLAttr
 
-Go templates escape the values you print (apart from values under a `content` or `summary` key — see [Output safety](/templates/output-safety/#one-exception-content-and-summary)), and how depends on where it lands — in the page body, inside `<style>`, inside `<script>`, in a link, or as an attribute. These five filters tell Go a value is **trusted** for one of those places, so it is printed as written. Use the one that matches where the value goes:
+Go templates escape the values you print (apart from your pages' rendered Markdown and summaries — see [Output safety](/templates/output-safety/#what-go-prints-as-html-without-a-filter)), and how depends on where it lands — in the page body, inside `<style>`, inside `<script>`, in a link, or as an attribute. These five filters tell Go a value is **trusted** for one of those places, so it is printed as written. Use the one that matches where the value goes:
 
 | Filter | Use it for | Without it, Go… |
 |---|---|---|

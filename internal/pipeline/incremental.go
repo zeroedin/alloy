@@ -193,6 +193,10 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 			return nil, psErr
 		}
 	}
+	// A reused PipelineState skips createEngine, so set trust marking from
+	// the engine this build renders with, not whichever build set it last
+	// (#1267).
+	content.SetTrustMarkers(tmpl.IsGoEngine(ps.Engine))
 
 	// Inject site data into plugin runtimes (issue #339).
 	// Skip when PipelineState was provided by the caller — site data was
