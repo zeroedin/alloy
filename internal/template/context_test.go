@@ -221,7 +221,7 @@ var _ = Describe("Template Context Shape (§3)", func() {
 			"slug must be accessible on site.pages items")
 		Expect(p).To(HaveKeyWithValue("collection", "blog"),
 			"collection must be accessible on site.pages items")
-		Expect(p).To(HaveKeyWithValue("summary", "A test post"),
+		Expect(p).To(HaveKeyWithValue("summary", BeEquivalentTo("A test post")), // text, not type (issue #1267)
 			"summary must be accessible on site.pages items")
 	})
 

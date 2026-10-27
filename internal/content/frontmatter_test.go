@@ -275,7 +275,9 @@ var _ = Describe("ParseFrontMatter", func() {
 			}
 			m := p.ToTemplateMap()
 			Expect(m["date"]).To(Equal(now))
-			Expect(m["summary"]).To(Equal("A brief summary"))
+			// Compare the text, not the Go type: summary is marked as trusted
+			// HTML for Go templates (issue #1267).
+			Expect(m["summary"]).To(BeEquivalentTo("A brief summary"))
 		})
 	})
 
