@@ -2854,6 +2854,13 @@ Built-in filters covering common SSG needs. Compiled Go functions registered wit
 
 Same data, same line: `<b>hi</b>` prints as `<b>hi</b>` in Liquid and as `&lt;b&gt;hi&lt;/b&gt;` in Go templates. Liquid's raw default matches Jekyll and Shopify. Making Liquid escape by default was considered and rejected: every Liquid site that prints HTML from data would start showing `&lt;b&gt;` with no change to its templates. The divergence is documented instead (see "Documentation" below). The risk it documents is a site moving from Go templates to Liquid: values that were escaped start printing raw, with no error and no change in the template source.
 
+**`escape` is Liquid only (issue #1280).** `escape` returns a plain string that already holds entities, and `html/template` escapes a plain string again, so in Go templates it escapes twice: `Tom & Jerry` prints as `Tom &amp;amp; Jerry`, in the page body and in attributes alike. This is documented, not changed: Go template support is planned for removal (#1285), so `escape` keeps its current behavior and stays registered in both engines. The docs must:
+- mark `escape` as Liquid only in the filter table
+- say in the output-safety table not to add it in Go
+- leave it out of every Go example
+
+To show trusted HTML as text in Go (a page's rendered body or own summary), the docs use `printf "%s"`, which turns the trusted value back into a plain string that Go escapes once. Go XML feeds need this for `summary`: printed as is, a summary with `&` or `<` breaks the XML. They also print the `<?xml ?>` declaration with `safeHTML`, since `html/template` escapes it to `&lt;?xml`. Go also escapes for HTML in JSON output, `json` filter included, so `&` comes out as `&amp;` in a JSON string. That is out of scope here and goes to #1285.
+
 **Go templates escape by context, so there is one filter per context.** `html/template` applies a different rule depending on where a value lands, and a plain string never bypasses any of them. Only a value of the matching `html/template` type does:
 
 | Filter | Marks the value as | Unlocks | Without the filter, `html/template`… |

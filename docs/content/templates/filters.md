@@ -39,7 +39,7 @@ All built-in filters are registered in both engines, but the calling syntax diff
 </wa-tab-group>
 {% endraw %}
 
-Go's pipe syntax works for filters that take no extra arguments (`{% raw %}{{ .page.title | upcase }}{% endraw %}`), because Go pipelines pass the piped value as the *last* argument. For filters that take arguments, use function-call syntax so the input stays in the first position.
+Go's pipe syntax works for filters that take no extra arguments (`{{ .page.title | upcase }}`), because Go pipelines pass the piped value as the *last* argument. For filters that take arguments, use function-call syntax so the input stays in the first position.
 
 The examples in the reference tables below use Liquid syntax.
 
@@ -48,23 +48,23 @@ The examples in the reference tables below use Liquid syntax.
 {% raw %}
 | Filter | Description | Example |
 |---|---|---|
-| `upcase` | Convert to uppercase | `{{ "hello" | upcase }}` --> `HELLO` |
-| `downcase` | Convert to lowercase | `{{ "HELLO" | downcase }}` --> `hello` |
-| `capitalize` | Capitalize first character | `{{ "hello world" | capitalize }}` --> `Hello world` |
-| `slugify` | URL-safe slug | `{{ "My Blog Post!" | slugify }}` --> `my-blog-post` |
-| `truncate` | Truncate to character count | `{{ page.summary | truncate: 100 }}` |
-| `truncatewords` | Truncate to word count | `{{ page.summary | truncatewords: 20 }}` |
-| `strip_html` | Remove all HTML tags | `{{ page.summary | strip_html }}` |
-| `escape` | HTML-escape special characters | `{{ page.title | escape }}` |
-| `replace` | Replace all occurrences | `{{ page.title | replace: " ", "-" }}` |
-| `replace_first` | Replace first occurrence | `{{ "aabbcc" | replace_first: "a", "x" }}` --> `xabbcc` |
-| `split` | Split string into array | `{{ "a,b,c" | split: "," }}` |
-| `join` | Join array into string | `{{ page.tags | join: ", " }}` |
-| `strip` | Remove leading/trailing whitespace | `{{ " hello " | strip }}` --> `hello` |
-| `append` | Append a string | `{{ page.slug | append: ".html" }}` |
-| `prepend` | Prepend a string | `{{ page.slug | prepend: "/blog/" }}` |
-| `newline_to_br` | Convert newlines to `&lt;br&gt;` | `{{ page.bio | newline_to_br }}` |
-| `contains` | Check if string contains substring | `{{ page.title | contains: "Guide" }}` --> `true` |
+| `upcase` | Convert to uppercase | `{{ "hello" \| upcase }}` --> `HELLO` |
+| `downcase` | Convert to lowercase | `{{ "HELLO" \| downcase }}` --> `hello` |
+| `capitalize` | Capitalize first character | `{{ "hello world" \| capitalize }}` --> `Hello world` |
+| `slugify` | URL-safe slug | `{{ "My Blog Post!" \| slugify }}` --> `my-blog-post` |
+| `truncate` | Truncate to character count | `{{ page.summary \| truncate: 100 }}` |
+| `truncatewords` | Truncate to word count | `{{ page.summary \| truncatewords: 20 }}` |
+| `strip_html` | Remove all HTML tags | `{{ page.summary \| strip_html }}` |
+| `escape` | HTML-escape special characters. Liquid only: Go templates already escape, so in Go it escapes a second time. See [Output safety](/templates/output-safety/) | `{{ page.title \| escape }}` |
+| `replace` | Replace all occurrences | `{{ page.title \| replace: " ", "-" }}` |
+| `replace_first` | Replace first occurrence | `{{ "aabbcc" \| replace_first: "a", "x" }}` --> `xabbcc` |
+| `split` | Split string into array | `{{ "a,b,c" \| split: "," }}` |
+| `join` | Join array into string | `{{ page.tags \| join: ", " }}` |
+| `strip` | Remove leading/trailing whitespace | `{{ " hello " \| strip }}` --> `hello` |
+| `append` | Append a string | `{{ page.slug \| append: ".html" }}` |
+| `prepend` | Prepend a string | `{{ page.slug \| prepend: "/blog/" }}` |
+| `newline_to_br` | Convert newlines to `&lt;br&gt;` | `{{ page.bio \| newline_to_br }}` |
+| `contains` | Check if string contains substring | `{{ page.title \| contains: "Guide" }}` --> `true` |
 {% endraw %}
 
 ### slugify
@@ -118,17 +118,17 @@ Array filters operate on collections, taxonomy groups, and any list data.
 {% raw %}
 | Filter | Description | Example |
 |---|---|---|
-| `sort` | Sort by a key | `{{ collections.blog | sort: "title" }}` |
-| `reverse` | Reverse order | `{{ collections.blog | reverse }}` |
-| `first` | First item | `{{ collections.blog | first }}` |
-| `last` | Last item | `{{ collections.blog | last }}` |
-| `limit` | First N items | `{{ collections.blog | limit: 5 }}` |
-| `size` | Count items | `{{ collections.blog | size }}` |
-| `map` | Extract a single field | `{{ collections.blog | map: "title" }}` |
-| `uniq` | Remove duplicates | `{{ page.tags | uniq }}` |
-| `compact` | Remove nil values | `{{ pages | compact }}` |
-| `concat` | Concatenate two arrays | `{{ collections.blog | concat: collections.docs }}` |
-| `flatten` | Flatten nested arrays one level | `{{ nested_lists | flatten }}` |
+| `sort` | Sort by a key | `{{ collections.blog \| sort: "title" }}` |
+| `reverse` | Reverse order | `{{ collections.blog \| reverse }}` |
+| `first` | First item | `{{ collections.blog \| first }}` |
+| `last` | Last item | `{{ collections.blog \| last }}` |
+| `limit` | First N items | `{{ collections.blog \| limit: 5 }}` |
+| `size` | Count items | `{{ collections.blog \| size }}` |
+| `map` | Extract a single field | `{{ collections.blog \| map: "title" }}` |
+| `uniq` | Remove duplicates | `{{ page.tags \| uniq }}` |
+| `compact` | Remove nil values | `{{ pages \| compact }}` |
+| `concat` | Concatenate two arrays | `{{ collections.blog \| concat: collections.docs }}` |
+| `flatten` | Flatten nested arrays one level | `{{ nested_lists \| flatten }}` |
 {% endraw %}
 
 ### where
@@ -237,9 +237,9 @@ The `map` filter extracts a single field from every item in an array:
 {% raw %}
 | Filter | Description | Example |
 |---|---|---|
-| `intersect` | Items in both arrays | `{{ page.tags | intersect: featured_tags }}` |
-| `union` | Items in either array (deduplicated) | `{{ page.tags | union: default_tags }}` |
-| `complement` | Items in first array but not second | `{{ all_tags | complement: hidden_tags }}` |
+| `intersect` | Items in both arrays | `{{ page.tags \| intersect: featured_tags }}` |
+| `union` | Items in either array (deduplicated) | `{{ page.tags \| union: default_tags }}` |
+| `complement` | Items in first array but not second | `{{ all_tags \| complement: hidden_tags }}` |
 {% endraw %}
 
 ## URL filters
@@ -247,10 +247,10 @@ The `map` filter extracts a single field from every item in an array:
 {% raw %}
 | Filter | Description | Example |
 |---|---|---|
-| `url` | Resolve path relative to baseURL path prefix | `{{ "css/main.css" | url }}` --> `/blog/css/main.css` |
-| `absolute_url` | Prepend full baseURL to a path | `{{ page.url | absolute_url }}` --> `https://example.com/page/` |
-| `url_encode` | Percent-encode a string | `{{ page.title | url_encode }}` |
-| `url_decode` | Decode a percent-encoded string | `{{ encoded | url_decode }}` |
+| `url` | Resolve path relative to baseURL path prefix | `{{ "css/main.css" \| url }}` --> `/blog/css/main.css` |
+| `absolute_url` | Prepend full baseURL to a path | `{{ page.url \| absolute_url }}` --> `https://example.com/page/` |
+| `url_encode` | Percent-encode a string | `{{ page.title \| url_encode }}` |
+| `url_decode` | Decode a percent-encoded string | `{{ encoded \| url_decode }}` |
 {% endraw %}
 
 ```liquid
@@ -265,15 +265,15 @@ Both filters use the site's configured `baseURL` automatically. `url` prepends t
 {% raw %}
 | Filter | Description | Example |
 |---|---|---|
-| `plus` | Add | `{{ 5 | plus: 3 }}` --> `8` |
-| `minus` | Subtract | `{{ 10 | minus: 3 }}` --> `7` |
-| `times` | Multiply | `{{ 4 | times: 3 }}` --> `12` |
-| `divided_by` | Divide | `{{ 10 | divided_by: 3 }}` --> `3` |
-| `modulo` | Remainder | `{{ 10 | modulo: 3 }}` --> `1` |
-| `ceil` | Round up | `{{ 4.2 | ceil }}` --> `5` |
-| `floor` | Round down | `{{ 4.8 | floor }}` --> `4` |
-| `round` | Round to nearest | `{{ 4.5 | round }}` --> `5` |
-| `abs` | Absolute value | `{{ -5 | abs }}` --> `5` |
+| `plus` | Add | `{{ 5 \| plus: 3 }}` --> `8` |
+| `minus` | Subtract | `{{ 10 \| minus: 3 }}` --> `7` |
+| `times` | Multiply | `{{ 4 \| times: 3 }}` --> `12` |
+| `divided_by` | Divide | `{{ 10 \| divided_by: 3 }}` --> `3` |
+| `modulo` | Remainder | `{{ 10 \| modulo: 3 }}` --> `1` |
+| `ceil` | Round up | `{{ 4.2 \| ceil }}` --> `5` |
+| `floor` | Round down | `{{ 4.8 \| floor }}` --> `4` |
+| `round` | Round to nearest | `{{ 4.5 \| round }}` --> `5` |
+| `abs` | Absolute value | `{{ -5 \| abs }}` --> `5` |
 {% endraw %}
 
 ## Content filters
@@ -363,8 +363,8 @@ See [Output safety](/templates/output-safety/) for how escaping differs between 
 {% raw %}
 | Filter | Description | Example |
 |---|---|---|
-| `findRE` | Find regex matches | `{{ page.content | findRE: "&lt;h2&gt;(.*?)&lt;/h2&gt;" }}` |
-| `replaceRE` | Regex replace | `{{ page.title | replaceRE: "[^a-z]", "" }}` |
+| `findRE` | Find regex matches | `{{ page.content \| findRE: "&lt;h2&gt;(.*?)&lt;/h2&gt;" }}` |
+| `replaceRE` | Regex replace | `{{ page.title \| replaceRE: "[^a-z]", "" }}` |
 {% endraw %}
 
 ## Data filters
@@ -372,8 +372,8 @@ See [Output safety](/templates/output-safety/) for how escaping differs between 
 {% raw %}
 | Filter | Description | Example |
 |---|---|---|
-| `json` | Serialize value to JSON | `{{ site.data.config | json }}` |
-| `default` | Fallback value if nil or empty | `{{ page.author | default: "Anonymous" }}` |
+| `json` | Serialize value to JSON | `{{ site.data.config \| json }}` |
+| `default` | Fallback value if nil or empty | `{{ page.author \| default: "Anonymous" }}` |
 {% endraw %}
 
 ```liquid
@@ -416,7 +416,7 @@ Useful for Subresource Integrity attributes: `integrity="sha256-{{ 'js/app.js' |
 
 ## Building feeds with filters
 
-RSS and Atom feed templates combine `escape` (XML entities are a subset of HTML escaping), the `date` filter with an RFC 822 format string, and `absolute_url`:
+In Liquid, RSS and Atom feed templates combine `escape` (XML entities are a subset of HTML escaping), the `date` filter with an RFC 822 format string, and `absolute_url` (Go templates escape values themselves, so a Go feed leaves out `escape`):
 
 ```liquid
 <!-- layouts/feed.xml.liquid -->
