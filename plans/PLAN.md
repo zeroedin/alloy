@@ -2857,7 +2857,7 @@ Built-in filters covering common SSG needs. Compiled Go functions registered wit
 
 Only the first argument is read. With an indent, the layout is Go's standard indented JSON: one value per line, `"key": value` with a space after the colon, and empty `[]` and `{}` kept on one line. Everything else is unchanged:
 - **Key order.** A data file object (`*ordered.Map`) keeps file order at every level. Indenting must not lose it.
-- **Escaping.** `<`, `>` and `&` in strings stay escaped as `<`, `>` and `&`, so the output is still safe to print raw in a Liquid page.
+- **Escaping.** `<`, `>` and `&` inside JSON strings stay escaped as `\u003c`, `\u003e` and `\u0026`, so a data value can't add HTML when the output is printed raw in a Liquid page. The indent is different: it is inserted as written, like any other template text. It comes from the template or the site's own data, not from page content, but an indent such as `<b>` would add that HTML. Use whitespace.
 - **Errors.** A value JSON can't encode still returns `{}`.
 
 In Liquid: `{{ site.data.nav | json: "  " }}` or `{{ site.data.nav | json: 2 }}`. In Go templates, use function form, `{{ json .site.data.nav "  " }}`. The pipe form `{{ .site.data.nav | json "  " }}` passes the value last, so it serializes the `"  "` instead. That is Go's documented pipe order, and the filters docs already tell Go users to call filters with arguments as functions. An indent only shows as line breaks inside `<pre>` or a non-HTML output.
