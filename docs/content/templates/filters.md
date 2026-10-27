@@ -303,13 +303,60 @@ This is useful for rendering Markdown in front matter fields or data file values
 {% endfor %}
 ```
 
-### safeHTML
+### Output safety: safeHTML, safeCSS, safeJS, safeURL, safeHTMLAttr
 
-Bypasses auto-escaping for trusted HTML content. Relevant primarily for the Go template engine:
+Go templates escape the values you print (apart from values under a `content` or `summary` key — see [Output safety](/templates/output-safety/#one-exception-content-and-summary)), and how depends on where it lands — in the page body, inside `<style>`, inside `<script>`, in a link, or as an attribute. These five filters tell Go a value is **trusted** for one of those places, so it is printed as written. Use the one that matches where the value goes:
 
-```liquid
-{{ page.embed_code | safeHTML }}
+| Filter | Use it for | Without it, Go… |
+|---|---|---|
+| `safeHTML` | HTML in the page body | escapes it: `<b>` prints as `&lt;b&gt;` |
+| `safeCSS` | CSS inside `<style>` or `style="…"` | replaces anything it can't prove harmless, like `url(…)`, with `ZgotmplZ` |
+| `safeJS` | JavaScript inside `<script>` | prints it as a quoted string |
+| `safeURL` | a link in `href`, `src` and similar | replaces anything that isn't `http`, `https` or `mailto` with `#ZgotmplZ` |
+| `safeHTMLAttr` | a whole attribute, like `data-sale="true"` | replaces it with `ZgotmplZ` |
+
+With this data file:
+
+```yaml
+# data/promo.yaml
+banner: "<b>Sale today</b>"
+style: "color: red; background: url(sale.png)"
+tracking: "{ id: 42 }"
+link: "tel:+15551234567"
+attr: 'data-sale="true"'
 ```
+
+{% raw %}
+```html
+{{ safeHTML .site.data.promo.banner }}
+<style>.promo { {{ safeCSS .site.data.promo.style }} }</style>
+<script>const tracking = {{ safeJS .site.data.promo.tracking }};</script>
+<a href="{{ safeURL .site.data.promo.link }}">Call us</a>
+<div {{ safeHTMLAttr .site.data.promo.attr }}>…</div>
+```
+{% endraw %}
+
+renders as:
+
+```html
+<b>Sale today</b>
+<style>.promo { color: red; background: url(sale.png) }</style>
+<script>const tracking = { id: 42 };</script>
+<a href="tel:&#43;15551234567">Call us</a>
+<div data-sale="true">…</div>
+```
+
+Go may still encode characters to keep a value well-formed where it lands — the `+` above becomes `&#43;`, which the browser reads back as `+`. The meaning is kept; the exact bytes are not promised.
+
+Each filter works only for its own place. `safeHTML` in an `href` is still checked as a link, so a `tel:` link there still prints `#ZgotmplZ` — use `safeURL`.
+
+**Put the `safe*` filter last.** A filter that changes the value hands back ordinary text, which Go escapes again: {% raw %}`{{ safeHTML .v | upcase }}`{% endraw %} prints `&lt;B&gt;…`, while {% raw %}`{{ upcase .v | safeHTML }}`{% endraw %} prints `<B>…`. A filter that returns the value unchanged, like `default` when the value is present, keeps it trusted.
+
+**In Liquid these filters do nothing.** Liquid doesn't escape in the first place, so they return the value unchanged. They're registered so a template that uses them works in either engine.
+
+**Only use them on content you wrote.** They tell Go to skip its safety checks; Alloy doesn't verify the value. On data you don't control — a third-party feed, user submissions — `safeJS` and `safeURL` let script in.
+
+See [Output safety](/templates/output-safety/) for how escaping differs between the two engines.
 
 ## Regex filters
 

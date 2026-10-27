@@ -48,9 +48,9 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/blog/index.md":    "---\ntitle: Blog\n---\n# Blog",
-				"content/blog/_data.yaml":  "layout: post",
-				"content/blog/icon.svg":    "<svg></svg>",
+				"content/blog/index.md":   "---\ntitle: Blog\n---\n# Blog",
+				"content/blog/_data.yaml": "layout: post",
+				"content/blog/icon.svg":   "<svg></svg>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred())
@@ -120,7 +120,7 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/guide.md": "---\ntitle: Guide\nlayout: default\n---\n## Getting Started\n\n### Installation\n\n## Configuration",
+				"content/guide.md":       "---\ntitle: Guide\nlayout: default\n---\n## Getting Started\n\n### Installation\n\n## Configuration",
 				"layouts/default.liquid": `<html><body>{{ content }}<nav>{% for item in page.toc %}<a href="#{{ item.id }}">{{ item.text }}</a>{% endfor %}</nav></body></html>`,
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -156,7 +156,7 @@ var _ = Describe("Build Pipeline", func() {
 			contentMap := map[string]string{
 				"content/index.md":              "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"external/custom-elements.json": `{"schemaVersion":"1.0","modules":[{"kind":"javascript-module"}]}`,
-				"layouts/default.liquid":         `<html><body>{{ content }}<p>Schema: {{ site.data.cem.schemaVersion }}</p></body></html>`,
+				"layouts/default.liquid":        `<html><body>{{ content }}<p>Schema: {{ site.data.cem.schemaVersion }}</p></body></html>`,
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred())
@@ -180,9 +180,9 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 			contentMap := map[string]string{
-				"content/index.md":   "---\ntitle: Home\n---\n# Home",
-				"data/nav.yaml":      "- title: Home\n  url: /",
-				"external/nav.json":  `[{"title":"About","url":"/about/"}]`,
+				"content/index.md":  "---\ntitle: Home\n---\n# Home",
+				"data/nav.yaml":     "- title: Home\n  url: /",
+				"external/nav.json": `[{"title":"About","url":"/about/"}]`,
 			}
 			_, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).To(HaveOccurred(),
@@ -222,7 +222,7 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/page.md": "---\ntitle: Test\n---\n[Click here](https://example.com)",
+				"content/page.md":                    "---\ntitle: Test\n---\n[Click here](https://example.com)",
 				"layouts/_markup/render-link.liquid": `<a href="{{ markup.destination }}" class="custom-link">{{ markup.text }}</a>`,
 				"layouts/default.liquid":             "<html><body>{{ content }}</body></html>",
 			}
@@ -248,7 +248,7 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/tokens.html": "---\ntitle: Tokens\nlayout: default\n---\n{% assign val = \"4px\" %}\n<td><code>{{ val }}</code></td>",
+				"content/tokens.html":    "---\ntitle: Tokens\nlayout: default\n---\n{% assign val = \"4px\" %}\n<td><code>{{ val }}</code></td>",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -271,7 +271,7 @@ var _ = Describe("Build Pipeline", func() {
 				Content: config.ContentConfig{Formats: []string{"liquid"}},
 			}
 			contentMap := map[string]string{
-				"content/tokens.liquid": "---\ntitle: Tokens\nlayout: default\n---\n{% assign val = \"4px\" %}\n<td><code>{{ val }}</code></td>",
+				"content/tokens.liquid":  "---\ntitle: Tokens\nlayout: default\n---\n{% assign val = \"4px\" %}\n<td><code>{{ val }}</code></td>",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -314,8 +314,8 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			contentMap := map[string]string{
 				"content/example.md":                      "---\ntitle: Example\nlayout: default\n---\n```liquid\n{% for item in collections.blog %}\n  {{ item.title }}\n{% endfor %}\n```",
-				"layouts/_markup/render-codeblock.liquid":  `<alloy-code lang="{{ markup.language }}">{{ markup.inner }}</alloy-code>`,
-				"layouts/default.liquid":                   "<html><body>{{ content }}</body></html>",
+				"layouts/_markup/render-codeblock.liquid": `<alloy-code lang="{{ markup.language }}">{{ markup.inner }}</alloy-code>`,
+				"layouts/default.liquid":                  "<html><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred())
@@ -408,13 +408,13 @@ var _ = Describe("Build Pipeline", func() {
 	Describe("Gotemplate layout rendering (issue #385)", func() {
 		It("gotemplate engine applies layout from .html file", func() {
 			cfg := &config.Config{
-				Title:   "Go Template Layout Test",
-				BaseURL: "https://example.com",
-				Build:   config.BuildConfig{Output: "_site"},
+				Title:     "Go Template Layout Test",
+				BaseURL:   "https://example.com",
+				Build:     config.BuildConfig{Output: "_site"},
 				Templates: config.TemplatesConfig{Engine: "gotemplate"},
 			}
 			contentMap := map[string]string{
-				"content/about.md":    "---\ntitle: About\nlayout: default\n---\n# About\n\nThis uses Go templates.",
+				"content/about.md":     "---\ntitle: About\nlayout: default\n---\n# About\n\nThis uses Go templates.",
 				"layouts/default.html": `<!DOCTYPE html><html><head><title>{{ .page.title }}</title></head><body><main>{{ .content }}</main></body></html>`,
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -437,9 +437,9 @@ var _ = Describe("Build Pipeline", func() {
 
 		It("gotemplate engine renders page.title and site.title in layout", func() {
 			cfg := &config.Config{
-				Title:   "My Site",
-				BaseURL: "https://example.com",
-				Build:   config.BuildConfig{Output: "_site"},
+				Title:     "My Site",
+				BaseURL:   "https://example.com",
+				Build:     config.BuildConfig{Output: "_site"},
 				Templates: config.TemplatesConfig{Engine: "gotemplate"},
 			}
 			contentMap := map[string]string{
@@ -503,8 +503,8 @@ var _ = Describe("Build Pipeline", func() {
 				Templates: config.TemplatesConfig{Engine: "gotemplate"},
 			}
 			contentMap := map[string]string{
-				"data/colors.json": `{"white":"#fff","black":"#000","accent":"#e00","brand":"#ee0","surface":"#f0f"}`,
-				"content/index.md": "---\ntitle: Colors\nlayout: default\n---\n# Colors",
+				"data/colors.json":     `{"white":"#fff","black":"#000","accent":"#e00","brand":"#ee0","surface":"#f0f"}`,
+				"content/index.md":     "---\ntitle: Colors\nlayout: default\n---\n# Colors",
 				"layouts/default.html": `<html><body>{{ range orange .site.data.colors }}<span>{{ .Key }}</span>{{ end }}{{ .content }}</body></html>`,
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -639,9 +639,9 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			content := map[string]string{
-				"content/page.md":          "---\ntitle: Test\nlayout: has-toc\n---\n# Hello",
-				"layouts/has-toc.liquid":   "---\nlayout: \"base\"\n---\n<div class=\"toc\">{{ content }}</div>",
-				"layouts/base.liquid":      "<html><body>{{ content }}</body></html>",
+				"content/page.md":        "---\ntitle: Test\nlayout: has-toc\n---\n# Hello",
+				"layouts/has-toc.liquid": "---\nlayout: \"base\"\n---\n<div class=\"toc\">{{ content }}</div>",
+				"layouts/base.liquid":    "<html><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, content)
 			Expect(err).NotTo(HaveOccurred())
@@ -668,9 +668,9 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			content := map[string]string{
-				"content/page.md":         "---\ntitle: Test\nlayout: child\n---\nContent here",
-				"layouts/child.liquid":    "---\nlayout: \"parent\"\n---\n<main>{{ content }}</main>",
-				"layouts/parent.liquid":   "<html>{{ content }}</html>",
+				"content/page.md":       "---\ntitle: Test\nlayout: child\n---\nContent here",
+				"layouts/child.liquid":  "---\nlayout: \"parent\"\n---\n<main>{{ content }}</main>",
+				"layouts/parent.liquid": "<html>{{ content }}</html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, content)
 			Expect(err).NotTo(HaveOccurred())
@@ -779,9 +779,9 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			content := map[string]string{
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
-				"content/page-1.md":     "---\ntitle: Page 1\nlayout: default\n---\n# First",
-				"content/page-2.md":     "---\ntitle: Page 2\nlayout: default\n---\n# Second",
-				"content/page-3.md":     "---\ntitle: Page 3\nlayout: default\n---\n# Third",
+				"content/page-1.md":      "---\ntitle: Page 1\nlayout: default\n---\n# First",
+				"content/page-2.md":      "---\ntitle: Page 2\nlayout: default\n---\n# Second",
+				"content/page-3.md":      "---\ntitle: Page 3\nlayout: default\n---\n# Third",
 			}
 			result, err := pipeline.BuildWithContent(cfg, content)
 			Expect(err).NotTo(HaveOccurred())
@@ -825,9 +825,9 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			files := map[string]string{
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
-				"content/page-1.md":     "---\ntitle: Page 1\nlayout: default\n---\n## Introduction\n\nFirst page.",
-				"content/page-2.md":     "---\ntitle: Page 2\nlayout: default\n---\n## Getting Started\n\nSecond page.",
-				"content/page-3.md":     "---\ntitle: Page 3\nlayout: default\n---\n## API Reference\n\nThird page.",
+				"content/page-1.md":      "---\ntitle: Page 1\nlayout: default\n---\n## Introduction\n\nFirst page.",
+				"content/page-2.md":      "---\ntitle: Page 2\nlayout: default\n---\n## Getting Started\n\nSecond page.",
+				"content/page-3.md":      "---\ntitle: Page 3\nlayout: default\n---\n## API Reference\n\nThird page.",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).NotTo(HaveOccurred())
@@ -861,7 +861,7 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/guide.md":         "---\ntitle: Guide\nlayout: default\n---\n## Getting Started\n\n### Installation\n\n## Configuration",
+				"content/guide.md":       "---\ntitle: Guide\nlayout: default\n---\n## Getting Started\n\n### Installation\n\n## Configuration",
 				"layouts/default.liquid": `<html><body>{{ content }}<nav>{% for item in page.toc %}<a href="#{{ item.id }}">{{ item.text }}</a>{% endfor %}</nav></body></html>`,
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -889,7 +889,7 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 			contentMap := map[string]string{
-				"content/guide.md":         "---\ntitle: Guide\nlayout: default\n---\n## Getting Started\n\n### Installation\n\n## Configuration",
+				"content/guide.md":       "---\ntitle: Guide\nlayout: default\n---\n## Getting Started\n\n### Installation\n\n## Configuration",
 				"layouts/default.liquid": `<html><body>{{ content }}<nav class="toc">{% for item in page.toc %}<a href="#{{ item.id }}">{{ item.text }}</a>{% endfor %}</nav></body></html>`,
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)

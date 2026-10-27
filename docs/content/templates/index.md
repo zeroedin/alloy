@@ -60,6 +60,8 @@ Both engines receive the same `map[string]any` context from the data cascade. Al
 
 Set the engine to `"gotemplate"` (or the shorthand `"go"`) for Go templates. Any unrecognized value fails config validation with an error.
 
+The two engines escape what you print in opposite ways: Liquid prints values as written, and Go templates escape them. Switching engines changes your output without changing your templates — see [Output safety](/templates/output-safety/) before you switch.
+
 Plugin-provided template engines (Nunjucks, EJS, Pug via the Node bridge) are an experimental design concept and are **not implemented** -- today the `engine` setting accepts only `"liquid"` and `"gotemplate"` (or `"go"`), and unrecognized values are rejected at startup.
 
 ## Template context

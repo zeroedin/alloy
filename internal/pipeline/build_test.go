@@ -17,12 +17,12 @@ import (
 
 // spyReporter records all ProgressReporter calls for test assertions.
 type spyReporter struct {
-	stages       []string
-	stageTotals  []int
-	messages     []string
-	updates      []spyUpdate
-	ended        int
-	summaries    []spySummary
+	stages      []string
+	stageTotals []int
+	messages    []string
+	updates     []spyUpdate
+	ended       int
+	summaries   []spySummary
 }
 
 type spyUpdate struct {
@@ -250,10 +250,10 @@ var _ = Describe("Build Pipeline", func() {
 			// not just the conflicting ones. After the fix, the build must
 			// abort entirely — no partial data loading.
 			result, err := pipeline.BuildWithContent(cfg, map[string]string{
-				"data/navigation.yaml": "items:\n  - name: Home\n    url: /\n",
-				"data/team.yaml":       "name: Alice\n",
-				"data/team.json":       `{"name": "Bob"}`,
-				"content/index.md":     "---\ntitle: Home\nlayout: default\n---\nhello",
+				"data/navigation.yaml":   "items:\n  - name: Home\n    url: /\n",
+				"data/team.yaml":         "name: Alice\n",
+				"data/team.json":         `{"name": "Bob"}`,
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\nhello",
 				"layouts/default.liquid": "NAV:{{ site.data.navigation.items[0].name }}|{{ content }}",
 			})
 			Expect(err).To(HaveOccurred(),
@@ -403,9 +403,9 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			content := map[string]string{
-				"content/page.md":        "---\ntitle: Test\nlayout: child\n---\n# Hello",
-				"layouts/child.liquid":   "---\nlayout: \"base\"\n---\n<main>{{ content }}</main>",
-				"layouts/base.liquid":    "<html><body>{{ content }}</body></html>",
+				"content/page.md":      "---\ntitle: Test\nlayout: child\n---\n# Hello",
+				"layouts/child.liquid": "---\nlayout: \"base\"\n---\n<main>{{ content }}</main>",
+				"layouts/base.liquid":  "<html><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, content)
 			Expect(err).NotTo(HaveOccurred())
@@ -470,8 +470,8 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			files := map[string]string{
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
-				"content/page-a.md":     "---\ntitle: Page A\nlayout: default\npermalink: /about/\n---\n# Page A content",
-				"content/page-b.md":     "---\ntitle: Page B\nlayout: default\npermalink: /about/\n---\n# Page B content",
+				"content/page-a.md":      "---\ntitle: Page A\nlayout: default\npermalink: /about/\n---\n# Page A content",
+				"content/page-b.md":      "---\ntitle: Page B\nlayout: default\npermalink: /about/\n---\n# Page B content",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).To(HaveOccurred(),
@@ -493,8 +493,8 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			files := map[string]string{
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
-				"content/page-a.md":     "---\ntitle: Page A\nlayout: default\npermalink: /guide/\n---\n# Page A",
-				"content/page-b.md":     "---\ntitle: Page B\nlayout: default\npermalink: /tutorial/\naliases:\n  - /guide/\n---\n# Page B",
+				"content/page-a.md":      "---\ntitle: Page A\nlayout: default\npermalink: /guide/\n---\n# Page A",
+				"content/page-b.md":      "---\ntitle: Page B\nlayout: default\npermalink: /tutorial/\naliases:\n  - /guide/\n---\n# Page B",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).To(HaveOccurred(),
@@ -514,8 +514,8 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			files := map[string]string{
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
-				"content/page-a.md":     "---\ntitle: Page A\nlayout: default\npermalink: /about/\n---\n# About",
-				"content/page-b.md":     "---\ntitle: Page B\nlayout: default\npermalink: /contact/\n---\n# Contact",
+				"content/page-a.md":      "---\ntitle: Page A\nlayout: default\npermalink: /about/\n---\n# About",
+				"content/page-b.md":      "---\ntitle: Page B\nlayout: default\npermalink: /contact/\n---\n# Contact",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).NotTo(HaveOccurred(),
@@ -535,7 +535,7 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			files := map[string]string{
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
-				"content/index.md":      "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files, pipeline.BuildOptions{Profile: true})
 			Expect(err).NotTo(HaveOccurred())
@@ -586,11 +586,11 @@ var _ = Describe("Build Pipeline", func() {
 			// blog/posts/ adds date-based URLs — the file system can't express
 			// :year/:month, so a nested _data.yaml provides them.
 			files := map[string]string{
-				"layouts/default.liquid":             "URL:{{ page.url }}",
-				"content/blog/_data.yaml":            "permalink: \"/blog/:slug/\"",
-				"content/blog/posts/_data.yaml":      "permalink: \"/blog/:year/:month/:slug/\"",
-				"content/blog/about.md":              "---\ntitle: About\ndate: 2026-04-10\nlayout: default\n---\n# About",
-				"content/blog/posts/first-post.md":   "---\ntitle: First Post\ndate: 2026-04-10\nlayout: default\n---\n# First",
+				"layouts/default.liquid":           "URL:{{ page.url }}",
+				"content/blog/_data.yaml":          "permalink: \"/blog/:slug/\"",
+				"content/blog/posts/_data.yaml":    "permalink: \"/blog/:year/:month/:slug/\"",
+				"content/blog/about.md":            "---\ntitle: About\ndate: 2026-04-10\nlayout: default\n---\n# About",
+				"content/blog/posts/first-post.md": "---\ntitle: First Post\ndate: 2026-04-10\nlayout: default\n---\n# First",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).NotTo(HaveOccurred())
@@ -623,10 +623,10 @@ var _ = Describe("Build Pipeline", func() {
 			// blog/ sets a date-based permalink. blog/posts/ has a _data.yaml
 			// for layout but no permalink key — must inherit the parent's pattern.
 			files := map[string]string{
-				"layouts/default.liquid":             "URL:{{ page.url }}",
-				"content/blog/_data.yaml":            "permalink: \"/blog/:year/:slug/\"",
-				"content/blog/posts/_data.yaml":      "layout: default",
-				"content/blog/posts/inherited.md":    "---\ntitle: Inherited\ndate: 2026-06-15\nlayout: default\n---\n# Inherited",
+				"layouts/default.liquid":          "URL:{{ page.url }}",
+				"content/blog/_data.yaml":         "permalink: \"/blog/:year/:slug/\"",
+				"content/blog/posts/_data.yaml":   "layout: default",
+				"content/blog/posts/inherited.md": "---\ntitle: Inherited\ndate: 2026-06-15\nlayout: default\n---\n# Inherited",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).NotTo(HaveOccurred())
@@ -647,9 +647,9 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			files := map[string]string{
-				"layouts/default.liquid":             "URL:{{ page.url }}",
-				"content/blog/posts/_data.yaml":      "permalink: \"/blog/:year/:month/:slug/\"",
-				"content/blog/posts/custom.md":       "---\ntitle: Custom\ndate: 2026-04-10\nlayout: default\npermalink: /my-custom-path/\n---\n# Custom",
+				"layouts/default.liquid":        "URL:{{ page.url }}",
+				"content/blog/posts/_data.yaml": "permalink: \"/blog/:year/:month/:slug/\"",
+				"content/blog/posts/custom.md":  "---\ntitle: Custom\ndate: 2026-04-10\nlayout: default\npermalink: /my-custom-path/\n---\n# Custom",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).NotTo(HaveOccurred())
@@ -670,11 +670,11 @@ var _ = Describe("Build Pipeline", func() {
 			// Three levels: blog/ uses simple slugs, blog/posts/ adds dates,
 			// blog/posts/featured/ uses a curated URL scheme.
 			files := map[string]string{
-				"layouts/default.liquid":                          "URL:{{ page.url }}",
-				"content/blog/_data.yaml":                         "permalink: \"/blog/:slug/\"",
-				"content/blog/posts/_data.yaml":                   "permalink: \"/blog/:year/:month/:slug/\"",
-				"content/blog/posts/featured/_data.yaml":          "permalink: \"/blog/featured/:slug/\"",
-				"content/blog/posts/featured/highlight.md":        "---\ntitle: Highlight\ndate: 2026-04-10\nlayout: default\n---\n# Highlight",
+				"layouts/default.liquid":                   "URL:{{ page.url }}",
+				"content/blog/_data.yaml":                  "permalink: \"/blog/:slug/\"",
+				"content/blog/posts/_data.yaml":            "permalink: \"/blog/:year/:month/:slug/\"",
+				"content/blog/posts/featured/_data.yaml":   "permalink: \"/blog/featured/:slug/\"",
+				"content/blog/posts/featured/highlight.md": "---\ntitle: Highlight\ndate: 2026-04-10\nlayout: default\n---\n# Highlight",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).NotTo(HaveOccurred())
@@ -695,10 +695,10 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			files := map[string]string{
-				"layouts/default.liquid":             "URL:{{ page.url }}",
-				"content/blog/posts/_data.yaml":      "permalink: \"/blog/:year/:month/:slug/\"",
-				"content/blog/posts/index.md":        "---\ntitle: All Posts\nlayout: default\n---\n# All Posts",
-				"content/blog/posts/first-post.md":   "---\ntitle: First Post\ndate: 2026-04-10\nlayout: default\n---\n# First",
+				"layouts/default.liquid":           "URL:{{ page.url }}",
+				"content/blog/posts/_data.yaml":    "permalink: \"/blog/:year/:month/:slug/\"",
+				"content/blog/posts/index.md":      "---\ntitle: All Posts\nlayout: default\n---\n# All Posts",
+				"content/blog/posts/first-post.md": "---\ntitle: First Post\ndate: 2026-04-10\nlayout: default\n---\n# First",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).NotTo(HaveOccurred())
@@ -746,10 +746,10 @@ var _ = Describe("Build Pipeline", func() {
 				Build: config.BuildConfig{Output: "_site"},
 			}
 			files := map[string]string{
-				"layouts/default.liquid":         "URL:{{ page.url }}",
-				"content/es/blog/_data.yaml":     "permalink: \"/:slug/\"",
-				"content/es/blog/hola.md":        "---\ntitle: Hola\ndate: 2026-04-10\nlayout: default\n---\n# Hola",
-				"content/en/blog/hello.md":       "---\ntitle: Hello\ndate: 2026-04-10\nlayout: default\n---\n# Hello",
+				"layouts/default.liquid":     "URL:{{ page.url }}",
+				"content/es/blog/_data.yaml": "permalink: \"/:slug/\"",
+				"content/es/blog/hola.md":    "---\ntitle: Hola\ndate: 2026-04-10\nlayout: default\n---\n# Hola",
+				"content/en/blog/hello.md":   "---\ntitle: Hello\ndate: 2026-04-10\nlayout: default\n---\n# Hello",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).NotTo(HaveOccurred())
@@ -783,9 +783,9 @@ var _ = Describe("Build Pipeline", func() {
 				Build: config.BuildConfig{Output: "_site"},
 			}
 			files := map[string]string{
-				"layouts/default.liquid":         "URL:{{ page.url }}",
-				"content/en/blog/_data.yaml":     "permalink: \"/articles/:slug/\"",
-				"content/en/blog/hello.md":       "---\ntitle: Hello\ndate: 2026-04-10\nlayout: default\n---\n# Hello",
+				"layouts/default.liquid":     "URL:{{ page.url }}",
+				"content/en/blog/_data.yaml": "permalink: \"/articles/:slug/\"",
+				"content/en/blog/hello.md":   "---\ntitle: Hello\ndate: 2026-04-10\nlayout: default\n---\n# Hello",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).NotTo(HaveOccurred())
@@ -813,8 +813,8 @@ var _ = Describe("Build Pipeline", func() {
 				Build: config.BuildConfig{Output: "_site"},
 			}
 			files := map[string]string{
-				"layouts/default.liquid":         "URL:{{ page.url }}",
-				"content/fr/blog/bonjour.md":     "---\ntitle: Bonjour\ndate: 2026-04-10\nlayout: default\n---\n# Bonjour",
+				"layouts/default.liquid":     "URL:{{ page.url }}",
+				"content/fr/blog/bonjour.md": "---\ntitle: Bonjour\ndate: 2026-04-10\nlayout: default\n---\n# Bonjour",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).NotTo(HaveOccurred())
@@ -839,11 +839,11 @@ var _ = Describe("Build Pipeline", func() {
 				Build: config.BuildConfig{Output: "_site"},
 			}
 			files := map[string]string{
-				"layouts/default.liquid":         "URL:{{ page.url }}",
-				"content/en/blog/_data.yaml":     "permalink: \"/posts/:slug/\"",
-				"content/es/blog/_data.yaml":     "permalink: \"/:slug/\"",
-				"content/en/blog/hello.md":       "---\ntitle: Hello\ndate: 2026-04-10\nlayout: default\n---\n# Hello",
-				"content/es/blog/hola.md":        "---\ntitle: Hola\ndate: 2026-04-10\nlayout: default\n---\n# Hola",
+				"layouts/default.liquid":     "URL:{{ page.url }}",
+				"content/en/blog/_data.yaml": "permalink: \"/posts/:slug/\"",
+				"content/es/blog/_data.yaml": "permalink: \"/:slug/\"",
+				"content/en/blog/hello.md":   "---\ntitle: Hello\ndate: 2026-04-10\nlayout: default\n---\n# Hello",
+				"content/es/blog/hola.md":    "---\ntitle: Hola\ndate: 2026-04-10\nlayout: default\n---\n# Hola",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).NotTo(HaveOccurred())
@@ -876,11 +876,11 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			files := map[string]string{
-				"data/nav/main.yaml":    "items:\n  - label: Home\n    url: /\n  - label: About\n    url: /about/",
-				"data/nav/footer.yaml":  "links:\n  - label: Privacy\n    url: /privacy/",
-				"data/settings.yaml":    "site_name: Test Site",
+				"data/nav/main.yaml":     "items:\n  - label: Home\n    url: /\n  - label: About\n    url: /about/",
+				"data/nav/footer.yaml":   "links:\n  - label: Privacy\n    url: /privacy/",
+				"data/settings.yaml":     "site_name: Test Site",
 				"layouts/default.liquid": "<html><body>NAV:{{ site.data.nav.main.items[0].label }}|FOOTER:{{ site.data.nav.footer.links[0].label }}|SITE:{{ site.data.settings.site_name }}</body></html>",
-				"content/index.md":      "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 			}
 			result, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).NotTo(HaveOccurred(),
@@ -932,10 +932,10 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			files := map[string]string{
-				"data/nav.yaml":         "items:\n  - Home",
-				"data/nav/main.yaml":    "items:\n  - label: Home\n    url: /",
+				"data/nav.yaml":          "items:\n  - Home",
+				"data/nav/main.yaml":     "items:\n  - label: Home\n    url: /",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
-				"content/index.md":      "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 			}
 			_, err := pipeline.BuildWithContent(cfg, files)
 			Expect(err).To(HaveOccurred(),
@@ -1331,8 +1331,8 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 			contentMap := map[string]string{
-				"content/index.md":       "---\ntitle: Blog\nlayout: blog\n---\n# Blog Index",
-				"layouts/blog.liquid":    "{% for post in site.data.posts %}TITLE:{{ post.title }}|{% endfor %}{{ content }}",
+				"content/index.md":    "---\ntitle: Blog\nlayout: blog\n---\n# Blog Index",
+				"layouts/blog.liquid": "{% for post in site.data.posts %}TITLE:{{ post.title }}|{% endfor %}{{ content }}",
 			}
 
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -1426,7 +1426,7 @@ var _ = Describe("Build Pipeline", func() {
 		throw new Error("intentional filter error");
 	});
 }`,
-				"content/index.md": "---\ntitle: Home\nlayout: default\n---\n{{ \"hello world\" | errorFilter }}",
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n{{ \"hello world\" | errorFilter }}",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -1454,7 +1454,7 @@ var _ = Describe("Build Pipeline", func() {
 		throw new Error("intentional filter error");
 	});
 }`,
-				"content/index.md":    "---\ntitle: Home\nlayout: default\n---\n{{ errorFilter \"hello world\" }}",
+				"content/index.md":     "---\ntitle: Home\nlayout: default\n---\n{{ errorFilter \"hello world\" }}",
 				"layouts/default.html": "<html><body>{{ .content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -1509,7 +1509,7 @@ var _ = Describe("Build Pipeline", func() {
 		throw new Error("intentional shortcode error");
 	});
 }`,
-				"content/index.md":    "---\ntitle: Home\nlayout: default\n---\n{{ errorShortcode \"arg1\" }}",
+				"content/index.md":     "---\ntitle: Home\nlayout: default\n---\n{{ errorShortcode \"arg1\" }}",
 				"layouts/default.html": "<html><body>{{ .content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
@@ -1563,9 +1563,9 @@ var _ = Describe("Build Pipeline", func() {
 		throw new Error("intentional filter error");
 	});
 }`,
-				"content/good-page.md":    "---\ntitle: Good Page\nlayout: default\n---\nThis page is fine.",
-				"content/bad-page.md":     "---\ntitle: Bad Page\nlayout: default\n---\n{{ \"value\" | errorFilter }}",
-				"layouts/default.liquid":  "<html><body>{{ content }}</body></html>",
+				"content/good-page.md":   "---\ntitle: Good Page\nlayout: default\n---\nThis page is fine.",
+				"content/bad-page.md":    "---\ntitle: Bad Page\nlayout: default\n---\n{{ \"value\" | errorFilter }}",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).To(HaveOccurred(),
@@ -1585,8 +1585,8 @@ var _ = Describe("Build Pipeline", func() {
 				"plugins/upcase-filter.js": `export default function(alloy) {
 	alloy.filter("shout", (input) => String(input).toUpperCase());
 }`,
-				"content/index.md":        "---\ntitle: Home\nlayout: default\n---\n{{ \"hello world\" | shout }}",
-				"layouts/default.liquid":   "<html><body>{{ content }}</body></html>",
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n{{ \"hello world\" | shout }}",
+				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred(),

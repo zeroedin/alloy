@@ -737,9 +737,9 @@ var _ = Describe("ResolveLayout", func() {
 			It("layout: false in front matter overrides cascade layout in format chain", func() {
 				layoutsDir := createLayoutsDir("article.json.liquid", "default.json.liquid")
 				page := &content.Page{
-					RelPath:     "blog/my-post.md",
-					Section:     "blog",
-					Outputs:     []string{"html", "json"},
+					RelPath: "blog/my-post.md",
+					Section: "blog",
+					Outputs: []string{"html", "json"},
 					FrontMatter: map[string]interface{}{
 						"layout": false,
 					},

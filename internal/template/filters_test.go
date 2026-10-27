@@ -772,6 +772,7 @@ var _ = Describe("Built-in Filters", func() {
 			"modulo", "ceil", "floor", "round", "abs",
 			"markdownify", "findRE", "replaceRE",
 			"json", "default", "safeHTML",
+			"safeCSS", "safeJS", "safeURL", "safeHTMLAttr", // issue #1266: output safety family
 			"flatten",
 			"cachebust", "get_hash", // issue #559: asset fingerprinting
 		}

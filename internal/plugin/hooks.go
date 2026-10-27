@@ -58,15 +58,15 @@ const (
 // PagesScope controls which pages a hook receives.
 type PagesScope struct {
 	Mode       PagesScopeMode
-	Glob       string                       // path pattern when Mode == PagesScopeGlob
-	Taxonomies map[string][]string          // taxonomy → terms when Mode == PagesScopeTaxonomy
-	Explicit   bool                         // true when the plugin explicitly set a pages value
+	Glob       string              // path pattern when Mode == PagesScopeGlob
+	Taxonomies map[string][]string // taxonomy → terms when Mode == PagesScopeTaxonomy
+	Explicit   bool                // true when the plugin explicitly set a pages value
 }
 
 // HookScope declares what data subset a plugin hook needs.
 type HookScope struct {
-	Data       []string   `json:"data"`       // siteData keys; nil = omit, ["*"] = all
-	Pages      PagesScope                     // page filtering mode
+	Data       []string   `json:"data"` // siteData keys; nil = omit, ["*"] = all
+	Pages      PagesScope // page filtering mode
 	PageFields []string   `json:"pageFields"` // per-page fields; nil = all
 }
 

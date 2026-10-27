@@ -185,7 +185,7 @@ var _ = Describe("CLI Commands", func() {
 
 			flag := devCmd.Flags().Lookup("no-drafts")
 			if flag == nil {
-				Fail("--no-drafts flag must be registered on dev command — "+
+				Fail("--no-drafts flag must be registered on dev command — " +
 					"dev mode shows drafts by default, --no-drafts hides them")
 				return
 			}

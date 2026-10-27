@@ -21,9 +21,9 @@ var _ = Describe("onConfig path traversal validation (issue #998)", func() {
 
 	baseContent := func(pluginName, pluginCode string) map[string]string {
 		return map[string]string{
-			"content/index.md":         "---\ntitle: Home\nlayout: default\n---\n# Home",
-			"layouts/default.liquid":   "<html><body>{{ content }}</body></html>",
-			"plugins/" + pluginName:    pluginCode,
+			"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
+			"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
+			"plugins/" + pluginName:  pluginCode,
 		}
 	}
 

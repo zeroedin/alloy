@@ -23,9 +23,9 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/about.md": "---\ntitle: About\nlayout: default\n---\n## Section One\n\nContent here.\n\n## Section Two\n\nMore content.",
+				"content/about.md":       "---\ntitle: About\nlayout: default\n---\n## Section One\n\nContent here.\n\n## Section Two\n\nMore content.",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
-				"plugins/toc-check.js": "export default function(alloy) {\n  alloy.hook('onContentTransformed', {}, (page) => {\n    if (typeof page === 'string') throw new Error('payload must be object, got string');\n    if (!page.html) throw new Error('page.html missing');\n    if (!page.path) throw new Error('page.path missing');\n    if (!page.frontMatter) throw new Error('page.frontMatter missing');\n    return page;\n  });\n}",
+				"plugins/toc-check.js":   "export default function(alloy) {\n  alloy.hook('onContentTransformed', {}, (page) => {\n    if (typeof page === 'string') throw new Error('payload must be object, got string');\n    if (!page.html) throw new Error('page.html missing');\n    if (!page.path) throw new Error('page.path missing');\n    if (!page.frontMatter) throw new Error('page.frontMatter missing');\n    return page;\n  });\n}",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred(),
@@ -43,7 +43,7 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/index.html": "---\ntitle: Index\nlayout: default\n---\n<h2 id=\"custom\">Custom Heading</h2>\n<p>No goldmark TOC for HTML content.</p>",
+				"content/index.html":     "---\ntitle: Index\nlayout: default\n---\n<h2 id=\"custom\">Custom Heading</h2>\n<p>No goldmark TOC for HTML content.</p>",
 				"layouts/default.liquid": "<html><body>{% for entry in page.toc %}<a href=\"#{{ entry.id }}\">{{ entry.text }}</a>{% endfor %}{{ content }}</body></html>",
 				"plugins/toc-builder.js": "export default function(alloy) {\n  alloy.hook('onContentTransformed', {}, (page) => {\n    if (!page.toc || page.toc.length === 0) {\n      page.toc = [{id: 'custom', text: 'Custom Heading', level: 2}];\n    }\n    return page;\n  });\n}",
 			}
@@ -405,7 +405,7 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			contentMap := map[string]string{
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
-				"content/about.md":      "---\ntitle: About\nlayout: default\n---\n# About",
+				"content/about.md":       "---\ntitle: About\nlayout: default\n---\n# About",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				"plugins/cascade-remove.js": `export default function(alloy) {
   alloy.hook('onDataCascadeReady', { pages: true }, function(pages) {
@@ -473,7 +473,7 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 			contentMap := map[string]string{
-				"content/index.md": "---\ntitle: Home\nlayout: default\ntags: [\"core\"]\n---\n{% for p in taxonomies.tags.demo %}<span class=\"injected\">{{ p.title }}</span>{% endfor %}",
+				"content/index.md":       "---\ntitle: Home\nlayout: default\ntags: [\"core\"]\n---\n{% for p in taxonomies.tags.demo %}<span class=\"injected\">{{ p.title }}</span>{% endfor %}",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				"plugins/inject-tagged.js": `export default function(alloy) {
   alloy.hook('onPagesReady', { pages: true, pageFields: ["*"] }, function(payload) {
@@ -724,8 +724,8 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"data/elements.json": `[{"name":"Button","slug":"button"},{"name":"Card","slug":"card"}]`,
-				"content/index.md":   "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"data/elements.json":     `[{"name":"Button","slug":"button"},{"name":"Card","slug":"card"}]`,
+				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				// Plugin declares pages: false — must NOT receive existing pages in payload.
 				// If pages are sent despite pages: false, the plugin throws an error.
@@ -777,7 +777,7 @@ var _ = Describe("Build Pipeline", func() {
 				},
 			}
 			contentMap := map[string]string{
-				"content/index.md": "---\ntitle: Home\nlayout: default\ntags: [\"core\"]\n---\n{% for p in taxonomies.tags.component %}<span class=\"vp\">{{ p.title }}</span>{% endfor %}",
+				"content/index.md":       "---\ntitle: Home\nlayout: default\ntags: [\"core\"]\n---\n{% for p in taxonomies.tags.component %}<span class=\"vp\">{{ p.title }}</span>{% endfor %}",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				"plugins/add-tagged.js": `export default function(alloy) {
   alloy.hook('onPagesReady', { pages: false }, function(payload) {
@@ -855,7 +855,7 @@ var _ = Describe("Build Pipeline", func() {
 			}
 			contentMap := map[string]string{
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
-				"content/about.md":      "---\ntitle: About\nlayout: default\n---\n# About",
+				"content/about.md":       "---\ntitle: About\nlayout: default\n---\n# About",
 				"layouts/default.liquid": "<html><body><h1>{{ page.title }}</h1>{{ content }}</body></html>",
 				// Plugin with pages: true reads existing pages and uses addPages to inject.
 				// This proves addPages is not gated by pages: false — it works with any scope.
@@ -1272,9 +1272,9 @@ var _ = Describe("Build Pipeline", func() {
 			// If the onConfig mutation is applied, the pipeline uses "templates/" → "REDIRECTED".
 			// If not applied, it uses "layouts/" → "ORIGINAL".
 			contentMap := map[string]string{
-				"content/index.md":            "---\ntitle: Home\nlayout: default\n---\n# Home",
-				"layouts/default.liquid":      "<html><body>ORIGINAL_LAYOUT {{ content }}</body></html>",
-				"templates/default.liquid":    "<html><body>REDIRECTED_LAYOUT {{ content }}</body></html>",
+				"content/index.md":         "---\ntitle: Home\nlayout: default\n---\n# Home",
+				"layouts/default.liquid":   "<html><body>ORIGINAL_LAYOUT {{ content }}</body></html>",
+				"templates/default.liquid": "<html><body>REDIRECTED_LAYOUT {{ content }}</body></html>",
 				"plugins/redirect-layouts.js": `export default function(alloy) {
   alloy.hook('onConfig', {}, (config) => {
     config.structure.layouts = "templates";
@@ -1561,8 +1561,8 @@ var _ = Describe("Build Pipeline", func() {
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				// Source directories that the passthrough mappings reference must
 				// exist in the temp dir — Build() copies them during Phase 3.
-				"vendor/fonts/bold.woff2":          "fake-font-data",
-				"node_modules/icons/dist/icon.svg": "<svg/>",
+				"vendor/fonts/bold.woff2":              "fake-font-data",
+				"node_modules/icons/dist/icon.svg":     "<svg/>",
 				"node_modules/icons/dist/icon.svg.map": "source-map-data",
 				"plugins/aaa-set-passthrough.js": `export default function(alloy) {
   alloy.hook('onConfig', { priority: 10 }, (config) => {
@@ -2000,8 +2000,8 @@ var _ = Describe("Build Pipeline", func() {
 			// verify each page gets its own mutation, not a cloned one.
 			contentMap := map[string]string{
 				"content/index.md":       "---\ntitle: Home\nlayout: default\n---\n# Home",
-				"content/about.md":      "---\ntitle: About\nlayout: default\n---\n# About",
-				"content/contact.md":    "---\ntitle: Contact\nlayout: default\n---\n# Contact",
+				"content/about.md":       "---\ntitle: About\nlayout: default\n---\n# About",
+				"content/contact.md":     "---\ntitle: Contact\nlayout: default\n---\n# Contact",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				"plugins/batch-rewrite.js": `export default function(alloy) {
   alloy.hook('onContentLoaded', { pages: true, pageFields: ["*"] }, function(pages) {
@@ -2884,8 +2884,8 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/post.md": "---\ntitle: Blog Post\nlayout: default\n---\n## Post Heading\n\nPost content here.",
-				"content/demo.md": "---\ntitle: Demo Page\nlayout: default\nskipTransforms: true\n---\n## Demo Heading\n\nDemo content here.",
+				"content/post.md":        "---\ntitle: Blog Post\nlayout: default\n---\n## Post Heading\n\nPost content here.",
+				"content/demo.md":        "---\ntitle: Demo Page\nlayout: default\nskipTransforms: true\n---\n## Demo Heading\n\nDemo content here.",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				"plugins/conditional-transform.js": `export default function(alloy) {
   alloy.hook('onPageRendered', {}, function(page) {
@@ -3050,7 +3050,7 @@ var _ = Describe("Build Pipeline", func() {
 				// *ordered.Map values for nested maps. convertOrderedMaps in
 				// buildPageRenderedPayload must flatten these so plugins receive
 				// plain JavaScript objects.
-				"content/index.md": "---\ntitle: Nested FM\nlayout: default\nmetadata:\n  author:\n    name: Jane Doe\n    social:\n      twitter: \"@janedoe\"\n      github: janedoe\n  version: 2\n---\n# Nested Front Matter",
+				"content/index.md":       "---\ntitle: Nested FM\nlayout: default\nmetadata:\n  author:\n    name: Jane Doe\n    social:\n      twitter: \"@janedoe\"\n      github: janedoe\n  version: 2\n---\n# Nested Front Matter",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				"plugins/nested-fm-check.js": `export default function(alloy) {
   alloy.hook('onPageRendered', {}, function(page) {
@@ -3172,7 +3172,7 @@ var _ = Describe("Build Pipeline", func() {
 			contentMap := map[string]string{
 				// Page declares outputs: ["json"] — no HTML output.
 				// onPageRendered must NOT fire for this page.
-				"content/search.md": "---\ntitle: Search Index\nlayout: default\noutputs:\n  - json\n---\nSearch data here.",
+				"content/search.md":           "---\ntitle: Search Index\nlayout: default\noutputs:\n  - json\n---\nSearch data here.",
 				"layouts/default.liquid":      "{{ content }}",
 				"layouts/default.json.liquid": `{"title":"{{ page.title }}","body":"{{ content | strip_html }}"}`,
 				"plugins/page-rendered-guard.js": `export default function(alloy) {
@@ -3201,7 +3201,7 @@ var _ = Describe("Build Pipeline", func() {
 			contentMap := map[string]string{
 				// Page has both HTML and JSON outputs.
 				// onPageRendered must fire with the HTML body, not the JSON body.
-				"content/post.md": "---\ntitle: Blog Post\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Blog Content",
+				"content/post.md":             "---\ntitle: Blog Post\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Blog Content",
 				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
 				"layouts/default.json.liquid": `{"title":"{{ page.title }}"}`,
 				"plugins/html-only-check.js": `export default function(alloy) {
@@ -3237,7 +3237,7 @@ var _ = Describe("Build Pipeline", func() {
 			contentMap := map[string]string{
 				// HTML is second in the outputs array — pageHasHTMLOutput must
 				// check all elements, not just index 0.
-				"content/post.md": "---\ntitle: Non-First HTML\nlayout: default\noutputs:\n  - json\n  - html\n---\n# Non-First HTML Post",
+				"content/post.md":             "---\ntitle: Non-First HTML\nlayout: default\noutputs:\n  - json\n  - html\n---\n# Non-First HTML Post",
 				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
 				"layouts/default.json.liquid": `{"title":"{{ page.title }}"}`,
 				"plugins/non-first-html.js": `export default function(alloy) {
@@ -3270,7 +3270,7 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/post.md": "---\ntitle: Payload Check\nlayout: default\nauthor: Jane\noutputs:\n  - html\n  - json\n---\n# Post",
+				"content/post.md":             "---\ntitle: Payload Check\nlayout: default\nauthor: Jane\noutputs:\n  - html\n  - json\n---\n# Post",
 				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
 				"layouts/default.json.liquid": `{"title":"{{ page.title }}"}`,
 				"plugins/format-payload-check.js": `export default function(alloy) {
@@ -3320,7 +3320,7 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/post.md": "---\ntitle: Mutate Me\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Post Body",
+				"content/post.md":             "---\ntitle: Mutate Me\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Post Body",
 				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
 				"layouts/default.json.liquid": `{"title":"{{ page.title }}","original":true}`,
 				"plugins/format-mutate.js": `export default function(alloy) {
@@ -3367,7 +3367,7 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/post.md": "---\ntitle: Keep Me\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Preserved",
+				"content/post.md":             "---\ntitle: Keep Me\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Preserved",
 				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
 				"layouts/default.json.liquid": `{"title":"{{ page.title }}","preserved":true}`,
 				"plugins/format-nil-return.js": `export default function(alloy) {
@@ -3402,7 +3402,7 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/post.md": "---\ntitle: Still Here\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Intact",
+				"content/post.md":             "---\ntitle: Still Here\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Intact",
 				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
 				"layouts/default.json.liquid": `{"title":"{{ page.title }}","intact":true}`,
 				"plugins/format-no-content.js": `export default function(alloy) {
@@ -3462,7 +3462,7 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/api.md": "---\ntitle: API Data\nlayout: default\noutputs:\n  - json\n---\nRaw API content.",
+				"content/api.md":              "---\ntitle: API Data\nlayout: default\noutputs:\n  - json\n---\nRaw API content.",
 				"layouts/default.liquid":      "{{ content }}",
 				"layouts/default.json.liquid": `{"title":"{{ page.title }}"}`,
 				"plugins/single-format-check.js": `export default function(alloy) {
@@ -3506,7 +3506,7 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/feed.md": "---\ntitle: Feed Page\nlayout: default\noutputs:\n  - html\n  - json\n  - xml\n---\n# Feed",
+				"content/feed.md":             "---\ntitle: Feed Page\nlayout: default\noutputs:\n  - html\n  - json\n  - xml\n---\n# Feed",
 				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
 				"layouts/default.json.liquid": `{"title":"{{ page.title }}"}`,
 				"layouts/default.xml.liquid":  `<feed><title>{{ page.title }}</title></feed>`,
@@ -3558,7 +3558,7 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/post.md": "---\ntitle: Original\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Post",
+				"content/post.md":             "---\ntitle: Original\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Post",
 				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
 				"layouts/default.json.liquid": `{"title":"{{ page.title }}"}`,
 				// First plugin mutates all read-only fields
@@ -3619,7 +3619,7 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/post.md": "---\ntitle: Dual Hook\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Dual Hook Post",
+				"content/post.md":             "---\ntitle: Dual Hook\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Dual Hook Post",
 				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
 				"layouts/default.json.liquid": `{"title":"{{ page.title }}","body":"dual-hook-body"}`,
 				"plugins/dual-hooks.js": `export default function(alloy) {
@@ -3682,7 +3682,7 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/post.md": "---\ntitle: Type Safe\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Post",
+				"content/post.md":             "---\ntitle: Type Safe\nlayout: default\noutputs:\n  - html\n  - json\n---\n# Post",
 				"layouts/default.liquid":      "<html><body>{{ content }}</body></html>",
 				"layouts/default.json.liquid": `{"title":"{{ page.title }}","safe":true}`,
 				"plugins/format-non-string.js": `export default function(alloy) {
@@ -3723,7 +3723,7 @@ var _ = Describe("Build Pipeline", func() {
 				Build:   config.BuildConfig{Output: "_site"},
 			}
 			contentMap := map[string]string{
-				"content/page.md":       "---\ntitle: Chain Test\nlayout: default\n---\n# Hello",
+				"content/page.md":        "---\ntitle: Chain Test\nlayout: default\n---\n# Hello",
 				"layouts/default.liquid": "<html><body>{{ content }}</body></html>",
 				// Plugin 01 runs first (alphabetical order, same default priority 50).
 				// It appends a marker to the HTML.
