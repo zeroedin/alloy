@@ -25,8 +25,9 @@ banner: "<b>Sale today</b>"
 | | Liquid | Go templates |
 |---|---|---|
 | By default | prints values **as written** | **escapes** values |
-| To escape a value | `{{ v \| escape }}` | already escaped |
+| To escape a value | `{{ v \| escape }}` | already escaped. Don't add `escape`: it escapes a second time, and `&` shows as `&amp;` |
 | To print trusted HTML as written | already printed as written | the [`safe*` filters](/templates/filters/#output-safety-safehtml-safecss-safejs-safeurl-safehtmlattr) |
+| To show a page's HTML as text, such as its summary | `{{ page.summary \| escape }}` | `{{ printf "%s" .page.summary }}` |
 {% endraw %}
 
 Liquid's behavior matches Jekyll and Shopify. Go's comes from its `html/template` package, which escapes each value by the rules of where it lands — the page body, `<style>`, `<script>`, a link, or an attribute. That's why Go needs one filter per place: `safeHTML`, `safeCSS`, `safeJS`, `safeURL` and `safeHTMLAttr`. The [filter reference](/templates/filters/#output-safety-safehtml-safecss-safejs-safeurl-safehtmlattr) has an example of each.

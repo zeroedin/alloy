@@ -149,10 +149,10 @@ outputs: ["html", "json"]
   "posts": [
     {{ range $i, $post := .collections.blog }}{{ if $i }},{{ end }}
     {
-      "title": "{{ escape $post.title }}",
+      "title": "{{ $post.title }}",
       "url": "{{ absolute_url $post.url $.site.baseURL }}",
       "date": "{{ date $post.date "%Y-%m-%dT%H:%M:%S%z" }}",
-      "summary": "{{ escape $post.summary }}"
+      "summary": "{{ printf "%s" $post.summary }}"
     }
     {{ end }}
   ]
@@ -162,6 +162,8 @@ outputs: ["html", "json"]
 {% endraw %}
 
 Output: `/blog/index.json` with a machine-readable list of posts.
+
+**Escaping differs between the engines.** Liquid prints values as written, so the Liquid example adds `escape`. Go templates escape every value themselves, so the Go example leaves `escape` out: adding it escapes the value a second time, and `&` comes out as `&amp;amp;`. A page's summary is the one exception, because Go prints it as HTML. `printf "%s"` turns it back into plain text so Go escapes it too. Go escapes for HTML even in JSON output, so `&` in a title comes out as `&amp;` in the JSON.
 
 ### RSS/Atom feed
 
@@ -201,18 +203,18 @@ outputs: ["html", "xml"]
 </wa-tab-panel>
 <wa-tab-panel name="fmtrss-go">
 <alloy-code language="html">&lt;!-- layouts/blog.xml --&gt;
-&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+{{ safeHTML `&lt;?xml version="1.0" encoding="UTF-8"?&gt;` }}
 &lt;rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"&gt;
   &lt;channel&gt;
     &lt;title&gt;{{ .site.title }}&lt;/title&gt;
     &lt;link&gt;{{ .site.baseURL }}&lt;/link&gt;
     {{ range limit .collections.blog 20 }}
     &lt;item&gt;
-      &lt;title&gt;{{ escape .title }}&lt;/title&gt;
+      &lt;title&gt;{{ .title }}&lt;/title&gt;
       &lt;link&gt;{{ absolute_url .url $.site.baseURL }}&lt;/link&gt;
       &lt;pubDate&gt;{{ date .date "%a, %d %b %Y %H:%M:%S %z" }}&lt;/pubDate&gt;
       &lt;guid&gt;{{ absolute_url .url $.site.baseURL }}&lt;/guid&gt;
-      &lt;description&gt;{{ escape .summary }}&lt;/description&gt;
+      &lt;description&gt;{{ printf "%s" .summary }}&lt;/description&gt;
     &lt;/item&gt;
     {{ end }}
   &lt;/channel&gt;
@@ -221,7 +223,7 @@ outputs: ["html", "xml"]
 </wa-tab-group>
 {% endraw %}
 
-Output: `/blog/index.xml` alongside the HTML index. The template has access to the same `collections`, `taxonomies`, and `site` context as any other template -- XML entity escaping uses the standard `escape` filter, and RFC 822 dates come from the `date` filter with the format string shown above.
+Output: `/blog/index.xml` alongside the HTML index. The template has access to the same `collections`, `taxonomies`, and `site` context as any other template. RFC 822 dates come from the `date` filter with the format string shown above. For XML entities, Liquid uses the `escape` filter. Go templates escape values themselves, so the Go example uses no filter, and `printf "%s"` for the summary, which Go would otherwise print as HTML and break the XML. The Go example also prints the `<?xml ?>` line with `safeHTML`, because Go would otherwise escape it to `&lt;?xml`.
 
 ### Sitemap
 
@@ -298,9 +300,9 @@ permalink: "/search/"
 [
   {{ range $i, $page := .site.pages }}{{ if $i }},{{ end }}
   {
-    "title": "{{ escape $page.title }}",
+    "title": "{{ $page.title }}",
     "url": "{{ $page.url }}",
-    "content": "{{ escape (strip_html $page.summary) }}"
+    "content": "{{ strip_html $page.summary }}"
   }
   {{ end }}
 ]</alloy-code>
