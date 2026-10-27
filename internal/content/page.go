@@ -1,6 +1,9 @@
 package content
 
-import "time"
+import (
+	"sync/atomic"
+	"time"
+)
 
 // Page represents a single content file with its metadata and rendered output.
 type Page struct {
@@ -71,15 +74,33 @@ func (p *Page) HTML() string {
 }
 
 // TrustedHTML is HTML Alloy produced or vouches for: a page's rendered body
-// and its front-matter summary. It is marked where the value is created, and
-// the Go template engine prints only this type unescaped — a string is never
-// trusted because of the key it sits under (issue #1267).
+// and the summary in its own front matter. It is marked where the value is
+// created, and the Go template engine prints only this type unescaped — a
+// string is never trusted because of the key it sits under (issue #1267).
 type TrustedHTML string
 
-// ToLiquid hands Liquid a plain string. liquidgo calls it on lookup; without
-// it Liquid's own filters treat the named type as a non-string and
-// {{ page.summary | size }} returns 0.
+// ToLiquid hands Liquid a plain string. Liquid builds never see the marker
+// (see MarkTrustedHTML); this covers a TrustedHTML reaching Liquid any other
+// way, since liquidgo calls ToLiquid on lookup.
 func (t TrustedHTML) ToLiquid() interface{} { return string(t) }
+
+// trustMarkers is set for a build that renders with Go templates.
+var trustMarkers atomic.Bool
+
+// SetTrustMarkers turns TrustedHTML marking on for a build that renders with
+// Go templates, and off for Liquid. liquidgo tests for string in property
+// lookups ({{ page.summary.size }}) and filters such as sum, so a Liquid build
+// gets the plain strings it always had (issue #1267).
+func SetTrustMarkers(on bool) { trustMarkers.Store(on) }
+
+// MarkTrustedHTML returns s as TrustedHTML in a Go-template build and as a
+// plain string otherwise.
+func MarkTrustedHTML(s string) interface{} {
+	if trustMarkers.Load() {
+		return TrustedHTML(s)
+	}
+	return s
+}
 
 // ToTemplateMap converts a Page to a map with lowercase keys for reliable
 // Liquid template access. Struct fields (URL, Date, etc.) are merged on top
@@ -95,14 +116,10 @@ func (p *Page) ToTemplateMap() map[string]interface{} {
 	if !p.Date.IsZero() {
 		m["date"] = p.Date
 	}
+	// Summary is the page's own; a summary inherited through the data
+	// cascade stays a plain string and is escaped (issue #1267).
 	if p.Summary != "" {
-		m["summary"] = p.Summary
-	}
-	// Mark the page's summary whichever way it arrived — parsed into Summary,
-	// or only in FrontMatter on pagination and plugin pages — so page lists
-	// trust the same value the page's own context does (issue #1267).
-	if s, ok := m["summary"].(string); ok {
-		m["summary"] = TrustedHTML(s)
+		m["summary"] = MarkTrustedHTML(p.Summary)
 	}
 	if p.Section != "" {
 		m["collection"] = p.Section

@@ -120,6 +120,13 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 				}
 				vp.FrontMatter["_paginationData"] = converted
 			}
+			// Keep the page's own summary, as rendered for this item, so page
+			// lists trust it like the page's own context does (issue #1267).
+			if page.Summary != "" {
+				if s, ok := vp.FrontMatter["summary"].(string); ok {
+					vp.Summary = s
+				}
+			}
 			result = append(result, vp)
 		}
 	}

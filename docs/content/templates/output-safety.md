@@ -42,7 +42,8 @@ Go templates print two things as written without a `safe*` filter, because Alloy
 |---|---|
 | `{{ .content }}` in a layout: the page's rendered Markdown | yes |
 | `{{ .page.content }}`, when it's the page's rendered Markdown | yes |
-| a page's front-matter `summary`: `{{ .page.summary }}`, and `.summary` on pages in `site.pages`, collections, taxonomy pages and pagination | yes |
+| a `summary` in the page's own front matter: `{{ .page.summary }}`, and `.summary` on pages in `site.pages`, collections, taxonomy pages and pagination | yes |
+| a `summary` the page inherits, from a `_data.yaml` or a data file named `summary` | no, escaped |
 | a `content` or `summary` field in a data file, at any depth | no, escaped |
 | a front-matter `content` field, on a page with no body | no, escaped |
 | everything else | no, escaped |
