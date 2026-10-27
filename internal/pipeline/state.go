@@ -119,7 +119,7 @@ func createEngine(cfg *config.Config) (tmpl.TemplateEngine, error) {
 	} else {
 		engine = tmpl.NewLiquidEngine()
 	}
-	content.SetTrustMarkers(cfg.Templates.Engine == "gotemplate")
+	content.SetTrustMarkers(tmpl.IsGoEngine(engine))
 	tmpl.InitMarkdownify(content.MarkdownOptions{
 		Unsafe:         cfg.Content.Markdown.Goldmark.UnsafeValue(),
 		Typographer:    cfg.Content.Markdown.Goldmark.Typographer,

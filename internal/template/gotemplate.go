@@ -25,6 +25,13 @@ type goEngine struct {
 	depth          atomic.Int32
 }
 
+// IsGoEngine reports whether e renders with Go html/template, the engine
+// that needs trusted values marked (issue #1267).
+func IsGoEngine(e TemplateEngine) bool {
+	_, ok := e.(*goEngine)
+	return ok
+}
+
 // NewGoEngine creates a new Go html/template engine.
 func NewGoEngine() TemplateEngine {
 	e := &goEngine{
