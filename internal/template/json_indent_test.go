@@ -1,6 +1,7 @@
 package template_test
 
 import (
+	"math"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -107,6 +108,9 @@ var _ = Describe("json filter indent argument (issue #1269)", func() {
 		Entry("4 spaces", 4, withIndent("    ")),
 		Entry("a fraction is cut toward zero", 2.9, jsonIndentTwo),
 		Entry("is capped at 10", 25, withIndent("          ")),
+		Entry("a huge number is capped at 10, not overflowed", 1e20, withIndent("          ")),
+		Entry("a huge negative number means no indent", -1e20, jsonIndentCompact),
+		Entry("NaN means no indent", math.NaN(), jsonIndentCompact),
 		Entry("0 means no indent", 0, jsonIndentCompact),
 		Entry("below 1 means no indent", 0.5, jsonIndentCompact),
 		Entry("a negative number means no indent", -3, jsonIndentCompact),

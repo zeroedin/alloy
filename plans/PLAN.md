@@ -2851,8 +2851,8 @@ Built-in filters covering common SSG needs. Compiled Go functions registered wit
 | none | none: one line, exactly as before |
 | a string, such as `"  "` or `"\t"` | the string, cut to its first 10 characters (characters, not bytes) |
 | `""` | none |
-| a number | that many spaces, cut toward zero (`2.9` is 2) and capped at 10. Any number type works: a Liquid literal, a Go literal, or a value from a data file |
-| a number below 1, such as `0`, `0.5` or `-3` | none |
+| a number | that many spaces, cut toward zero (`2.9` is 2) and capped at 10, however large (`1e20` is 10). Any number type works: a Liquid literal, a Go literal, or a value from a data file |
+| a number below 1, such as `0`, `0.5` or `-3`, or `NaN` | none |
 | anything else (`nil`, a bool, a map, a list) | none: the argument is ignored |
 
 Only the first argument is read. With an indent, the layout is Go's standard indented JSON: one value per line, `"key": value` with a space after the colon, and empty `[]` and `{}` kept on one line. Everything else is unchanged:
