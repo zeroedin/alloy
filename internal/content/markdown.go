@@ -54,26 +54,21 @@ type TemplateTagBlock struct {
 	TagText []byte
 
 	// Raw block shortcode state (issue #1245). Raw is set when the open tag
-	// carried the `>` marker (`{%> name %}` / `{{%> name %}}`), which makes the
-	// block's body pass through goldmark verbatim. TagName and GoDelims
-	// identify the close tag the block is waiting for, CloseText holds that
+	// carried the `>` marker (`{%> name %}`), which makes the block's body
+	// pass through goldmark verbatim. TagName identifies the close tag the
+	// block is waiting for, CloseText holds that
 	// close tag as the author wrote it, OpenLine is the 1-based source line of
 	// the open tag (reported by the unterminated-block error), and depth counts
 	// nesting of same-name tags while the block is open.
 	Raw       bool
 	TagName   string
-	GoDelims  bool
 	CloseText []byte
 	OpenLine  int
 	depth     int
 }
 
-// ExpectedCloseTag returns the close tag a raw block shortcode is waiting for,
-// in the native syntax of its delimiter family.
+// ExpectedCloseTag returns the close tag a raw block shortcode is waiting for.
 func (n *TemplateTagBlock) ExpectedCloseTag() string {
-	if n.GoDelims {
-		return "{{% /" + n.TagName + " %}}"
-	}
 	return "{% end" + n.TagName + " %}"
 }
 
@@ -154,20 +149,13 @@ func (p *templateTagBlockParser) Open(parent ast.Node, reader text.Reader, pc pa
 	line, seg := reader.PeekLine()
 	trimmed := bytes.TrimSpace(line)
 
-	var tagStart int
-	var closeSeq []byte
-
-	// {{% %}} — Go template block shortcode delimiters
-	if len(trimmed) >= 5 && trimmed[0] == '{' && trimmed[1] == '{' && trimmed[2] == '%' {
-		tagStart = 3
-		closeSeq = []byte("%}}")
-	} else if len(trimmed) >= 4 && trimmed[0] == '{' && trimmed[1] == '%' {
-		// {% %} — Liquid control tag delimiters
-		tagStart = 2
-		closeSeq = []byte("%}")
-	} else {
+	// {% %} — Liquid control tag delimiters. A {{% %}} line is not a block
+	// tag (issue #1285); the inline parser treats it as a {{ }} span.
+	if len(trimmed) < 4 || trimmed[0] != '{' || trimmed[1] != '%' {
 		return nil, parser.NoChildren
 	}
+	const tagStart = 2
+	closeSeq := []byte("%}")
 
 	closeIdx := bytes.Index(trimmed[tagStart:], closeSeq)
 	if closeIdx == -1 {
@@ -193,7 +181,6 @@ func (p *templateTagBlockParser) Open(parent ast.Node, reader text.Reader, pc pa
 		if name != "" {
 			node.Raw = true
 			node.TagName = name
-			node.GoDelims = len(closeSeq) == 3
 			node.depth = 1
 			node.OpenLine = bytes.Count(reader.Source()[:seg.Start], []byte("\n")) + 1
 		}
@@ -211,7 +198,7 @@ func (p *templateTagBlockParser) Continue(node ast.Node, reader text.Reader, pc 
 	}
 
 	line, seg := reader.PeekLine()
-	switch classifyRawTagLine(bytes.TrimSpace(line), n.TagName, n.GoDelims) {
+	switch classifyRawTagLine(bytes.TrimSpace(line), n.TagName) {
 	case rawTagOpen:
 		n.depth++
 	case rawTagClose:
@@ -282,17 +269,14 @@ const (
 	rawTagClose
 )
 
-// splitBlockTag decomposes a trimmed line that is exactly one block tag into
-// its delimiter family and the text between the delimiters. It reports false
-// for anything that is not a whole-line block tag.
-func splitBlockTag(trimmed []byte) (goDelims bool, body []byte, ok bool) {
-	if len(trimmed) >= 6 && bytes.HasPrefix(trimmed, []byte("{{%")) && bytes.HasSuffix(trimmed, []byte("%}}")) {
-		return true, trimmed[3 : len(trimmed)-3], true
-	}
+// splitBlockTag returns the text between the delimiters of a trimmed line
+// that is exactly one {% %} block tag. It reports false for anything that is
+// not a whole-line block tag.
+func splitBlockTag(trimmed []byte) (body []byte, ok bool) {
 	if len(trimmed) >= 4 && trimmed[0] == '{' && trimmed[1] == '%' && bytes.HasSuffix(trimmed, []byte("%}")) {
-		return false, trimmed[2 : len(trimmed)-2], true
+		return trimmed[2 : len(trimmed)-2], true
 	}
-	return false, nil, false
+	return nil, false
 }
 
 // trimTagBody strips the raw marker, whitespace-control dashes, and surrounding
@@ -321,24 +305,17 @@ func firstTagWord(body []byte) string {
 }
 
 // classifyRawTagLine reports whether a raw block's body line is an own-line
-// open or close tag for that block's own name and delimiter family, and so
-// affects nesting depth. Tags sharing a line with other text, tags of another
-// name, and tags of the other delimiter family are all body content.
-func classifyRawTagLine(trimmed []byte, name string, goDelims bool) int {
-	family, body, ok := splitBlockTag(trimmed)
-	if !ok || family != goDelims {
+// open or close tag for that block's own name, and so affects nesting depth.
+// Tags sharing a line with other text, and tags of another name, are body
+// content.
+func classifyRawTagLine(trimmed []byte, name string) int {
+	body, ok := splitBlockTag(trimmed)
+	if !ok {
 		return rawTagNone
 	}
 	body = trimTagBody(body)
 
-	if goDelims {
-		if rest, found := bytes.CutPrefix(body, []byte("/")); found {
-			if firstTagWord(bytes.TrimSpace(rest)) == name {
-				return rawTagClose
-			}
-			return rawTagNone
-		}
-	} else if rest, found := bytes.CutPrefix(body, []byte("end")); found {
+	if rest, found := bytes.CutPrefix(body, []byte("end")); found {
 		if firstTagWord(rest) == name {
 			return rawTagClose
 		}
@@ -352,16 +329,10 @@ func classifyRawTagLine(trimmed []byte, name string, goDelims bool) int {
 
 // stripRawMarker removes the `>` from a raw block's open tag and normalizes to
 // exactly one space between the delimiter and the tag name, so the template
-// engine — and ProcessBlockShortcodes, whose open pattern requires whitespace
-// after `{{%` — sees ordinary native syntax.
+// engine sees ordinary Liquid syntax.
 func stripRawMarker(tag []byte) []byte {
-	var prefix string
-	switch {
-	case bytes.HasPrefix(tag, []byte("{{%>")):
-		prefix = "{{%"
-	case bytes.HasPrefix(tag, []byte("{%>")):
-		prefix = "{%"
-	default:
+	const prefix = "{%"
+	if !bytes.HasPrefix(tag, []byte("{%>")) {
 		return tag
 	}
 	rest := bytes.TrimLeft(tag[len(prefix)+1:], " \t")
@@ -408,7 +379,7 @@ func (r *templateTagRenderer) renderBlock(w util.BufWriter, source []byte, node 
 	}
 	n := node.(*TemplateTagBlock)
 	if n.Raw {
-		// The `>` is an Alloy-level signal and never reaches either engine.
+		// The `>` is an Alloy-level signal and never reaches the engine.
 		_, _ = w.Write(stripRawMarker(n.TagText))
 		_ = w.WriteByte('\n')
 		writeRawBody(w, source, n)

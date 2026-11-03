@@ -181,8 +181,7 @@ var knownLiquidFilters = map[string]bool{
 	"slugify": true, "group_by": true, "flatten": true,
 	"intersect": true, "union": true, "complement": true,
 	"absolute_url": true, "markdownify": true,
-	"json": true, "safeHTML": true, "url": true,
-	"safeCSS": true, "safeJS": true, "safeURL": true, "safeHTMLAttr": true,
+	"json": true, "url": true,
 	"cachebust": true, "get_hash": true,
 }
 
@@ -427,30 +426,6 @@ func (f *alloyFilterBridge) ReplaceRE(input interface{}, args ...interface{}) in
 
 func (f *alloyFilterBridge) JSON(input interface{}, args ...interface{}) interface{} {
 	return f.call("json", input, args...)
-}
-
-func (f *alloyFilterBridge) SafeHTML(input interface{}, args ...interface{}) interface{} {
-	return f.call("safeHTML", input, args...)
-}
-
-// SafeCSS, SafeJS, SafeURL and SafeHTMLAttr must exist as methods, not only
-// as registered funcs: RenderTemplate has no plugin_filter rewrite, so a
-// filter with no bridge method is "undefined" there (issue #1266).
-
-func (f *alloyFilterBridge) SafeCSS(input interface{}, args ...interface{}) interface{} {
-	return f.call("safeCSS", input, args...)
-}
-
-func (f *alloyFilterBridge) SafeJS(input interface{}, args ...interface{}) interface{} {
-	return f.call("safeJS", input, args...)
-}
-
-func (f *alloyFilterBridge) SafeURL(input interface{}, args ...interface{}) interface{} {
-	return f.call("safeURL", input, args...)
-}
-
-func (f *alloyFilterBridge) SafeHTMLAttr(input interface{}, args ...interface{}) interface{} {
-	return f.call("safeHTMLAttr", input, args...)
 }
 
 func (f *alloyFilterBridge) Cachebust(input interface{}, args ...interface{}) interface{} {
