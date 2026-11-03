@@ -463,9 +463,6 @@ func (f *alloyFilterBridge) URL(input interface{}, args ...interface{}) interfac
 // failure) for propagation through the template rendering pipeline via panic.
 // Implements liquid.LiquidError so liquidgo's internal recover preserves
 // the error message instead of replacing it with a generic "internal" string.
-// Go's html/template.Execute catches panics that satisfy the error interface,
-// so this type works for both engines without changing FilterFunc/TagFunc
-// signatures.
 // ---------------------------------------------------------------------------
 
 type PluginCallError struct {

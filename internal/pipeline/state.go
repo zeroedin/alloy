@@ -113,13 +113,7 @@ func InitPipelineState(cfg *config.Config, registry *plugin.Registry, hooks *plu
 }
 
 func createEngine(cfg *config.Config) (tmpl.TemplateEngine, error) {
-	var engine tmpl.TemplateEngine
-	if cfg.Templates.Engine == "gotemplate" {
-		engine = tmpl.NewGoEngine()
-	} else {
-		engine = tmpl.NewLiquidEngine()
-	}
-	content.SetTrustMarkers(tmpl.IsGoEngine(engine))
+	engine := tmpl.NewLiquidEngine()
 	tmpl.InitMarkdownify(content.MarkdownOptions{
 		Unsafe:         cfg.Content.Markdown.Goldmark.UnsafeValue(),
 		Typographer:    cfg.Content.Markdown.Goldmark.Typographer,

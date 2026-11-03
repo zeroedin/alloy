@@ -112,7 +112,6 @@ type TemplateRenderer func(source string, ctx map[string]interface{}) (string, e
 
 // PaginateWithTemplatePermalink generates one virtual page per data item,
 // using the provided renderer callback to resolve the permalink template.
-// This works with any template engine (Liquid, Go templates, etc.).
 func PaginateWithTemplatePermalink(data []interface{}, permalinkTemplate string, as string, renderer TemplateRenderer) ([]PaginationContext, []string, error) {
 	if len(data) == 0 {
 		return nil, nil, nil
