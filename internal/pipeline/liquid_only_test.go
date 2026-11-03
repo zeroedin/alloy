@@ -21,15 +21,16 @@ import (
 
 var _ = Describe("Liquid is the only template engine (issue #1285)", func() {
 
-	// buildFromDisk writes a site whose alloy.config.yaml still says
-	// `templates: engine: gotemplate`, loads that config the way the CLI
-	// does, and returns the rendered index page.
-	buildFromDisk := func(layoutName, layout string) string {
+	// buildFromDisk writes a site whose alloy.config.yaml still sets
+	// `templates: engine: <engine>`, loads and validates that config the way
+	// the CLI does (cmd/root.go → LoadWithDefaults, cmd/build.go → Validate),
+	// and returns the rendered index page.
+	buildFromDisk := func(engine, layoutName, layout string) string {
 		GinkgoHelper()
 		dir := GinkgoT().TempDir()
 		files := map[string]string{
 			"alloy.config.yaml": "title: T\nbaseURL: https://example.com\n" +
-				"templates:\n  engine: gotemplate\n",
+				"templates:\n  engine: " + engine + "\n",
 			"content/index.md":      "---\ntitle: Home\nlayout: default\n---\nBody",
 			"layouts/" + layoutName: layout,
 		}
@@ -38,24 +39,35 @@ var _ = Describe("Liquid is the only template engine (issue #1285)", func() {
 			Expect(os.MkdirAll(filepath.Dir(path), 0755)).To(Succeed())
 			Expect(os.WriteFile(path, []byte(body), 0644)).To(Succeed())
 		}
-		cfg, err := config.Load(filepath.Join(dir, "alloy.config.yaml"))
+		cfg, err := config.LoadWithDefaults(filepath.Join(dir, "alloy.config.yaml"))
 		Expect(err).NotTo(HaveOccurred(), "a leftover templates: key must not fail config loading")
+		Expect(config.Validate(cfg)).To(Succeed(),
+			"a leftover templates: key must not fail config validation, whatever its value (#1285)")
 		result, err := pipeline.Build(cfg, pipeline.BuildOptions{CaptureRenderedContent: true})
 		Expect(err).NotTo(HaveOccurred())
 		return result.RenderedContent["index.md"]
 	}
 
 	It("ignores a leftover templates.engine and renders the .liquid layout with Liquid", func() {
-		Expect(buildFromDisk("default.liquid", "L[{{ page.title | upcase }}]")).To(
+		Expect(buildFromDisk("gotemplate", "default.liquid", "L[{{ page.title | upcase }}]")).To(
 			ContainSubstring("L[HOME]"),
 			"templates.engine is gone, so a site that still sets it to gotemplate "+
 				"renders with Liquid (#1285)")
 	})
 
 	It("reads a bare .html layout as Liquid", func() {
-		Expect(buildFromDisk("default.html", "H[{{ page.title | upcase }}]")).To(
+		Expect(buildFromDisk("gotemplate", "default.html", "H[{{ page.title | upcase }}]")).To(
 			ContainSubstring("H[HOME]"),
 			"a .html layout is Liquid's bare-extension fallback, never a Go template (#1285)")
+	})
+
+	// The engine check is gone with the setting, so a value Alloy never
+	// supported is ignored too — it must not fail validation the way an
+	// unknown engine did before #1285.
+	It("ignores a leftover templates.engine value Alloy never supported", func() {
+		Expect(buildFromDisk("jinja", "default.liquid", "J[{{ page.title | upcase }}]")).To(
+			ContainSubstring("J[HOME]"),
+			"any leftover templates.engine value is ignored, not validated (#1285)")
 	})
 
 	It("fails the build on a safe* filter, which no longer exists", func() {

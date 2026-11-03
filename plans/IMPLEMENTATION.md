@@ -442,9 +442,9 @@ Three developer steps, each its own PR into `feature/remove-gotemplate`. D3 can 
 **D1 — remove the Go engine and the `templates.engine` setting (#1290)**
 - Delete `internal/template/gotemplate.go` and `internal/template/gotemplate_block_shortcode.go` (`goEngine`, `NewGoEngine`, `IsGoEngine`, the Go `include`, `markHTMLSafe`, `ProcessBlockShortcodes`).
 - `internal/pipeline/render.go`: delete the `engineName == "gotemplate"` branch and `processGoTemplateBlockShortcodes`.
-- `internal/config/config.go`: delete the `Templates` field, `TemplatesConfig`, the `"liquid"` default, the `"go"` alias and the engine validation. Do not add unknown-key checking: a leftover `templates:` key must load without error.
+- `internal/config/config.go`: delete the `Templates` field, `TemplatesConfig`, the `"liquid"` default, the `"go"` alias and the engine validation. Do not add unknown-key checking: a leftover `templates:` key, whatever its value, must load and pass `Validate` without error.
 - `internal/pipeline/state.go` `createEngine`: create Liquid only and call `SetIncludesDir` directly.
-- Drop the `engine` string parameter everywhere it is threaded: `layout.go` (delete `layoutExtension`; keep the Liquid candidates — `.liquid`, then the bare extension — and the hard error for a missing explicit layout), `hooks.go` (`.liquid` only), `taxonomy.go`, and the `engineName` locals in `build.go`, `render.go` and `incremental.go`. Callers that pass `""` today get Go-style lookup; after this they get the Liquid chain.
+- Drop the `engine` string parameter everywhere it is threaded: `layout.go` (delete `layoutExtension`; keep the Liquid candidates — `.liquid`, then the bare extension — and the hard error for a missing explicit layout), `hooks.go` (`.liquid` only — render hooks get no bare-extension fallback, unlike layouts), `taxonomy.go`, and the `engineName` locals in `build.go`, `render.go` and `incremental.go`. Callers that pass `""` today get Go-style lookup; after this they get the Liquid chain.
 - Keep the `TemplateEngine` interface; Liquid is its only implementation.
 - Fix stale comments in `engine.go`, `shortcodes.go`, `pagination/pagination.go` and `data/keyorder.go`.
 - The architect pushes the compile-only test edits (dropping the `"liquid"` arguments in `layout_test.go`, `liquid_test.go` and `crosscutting_test.go`) onto this branch.

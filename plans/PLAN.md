@@ -1886,8 +1886,10 @@ Alloy has one template engine: Liquid, through Notifuse/liquidgo, run in-process
 
 Go `html/template` support is removed. This is a wholesale removal: no compatibility path and no migration guide. Pre-1.0, so no major version bump.
 
-- **No engine setting.** There is no `templates` config section. A site config that still has `templates: engine: ...` (any value, including `gotemplate`) loads without error or warning — the key is ignored like any other unknown key — and the site renders with Liquid.
-- **Template files.** Layouts, partials and render hooks are Liquid. Alloy looks for `<name>.liquid` first, then the bare extension (`<name>.html`, `<name>.json`, ...), and reads both as Liquid. A `.html` layout is never treated as a Go template.
+- **No engine setting.** There is no `templates` config section. A site config that still has `templates: engine: ...` (any value, including `gotemplate` and values Alloy never supported, such as `jinja`) loads and passes `config.Validate` without error or warning — the key is ignored like any other unknown key — and the site renders with Liquid.
+- **Template files.** Layouts, partials and render hooks are Liquid.
+  - Layouts and partials: Alloy looks for `<name>.liquid` first, then the bare extension (`<name>.html`, `<name>.json`, ...), and reads both as Liquid. A `.html` layout is never treated as a Go template.
+  - Render hooks: `.liquid` only, with no bare-extension fallback. A `layouts/_markup/render-link.html` is not a hook, even when there is no `render-link.liquid`. This is what Liquid sites already get today.
 - **Output.** Liquid prints values as written; `| escape` escapes them. `content`, `summary` and other page values reach Liquid as plain strings.
 - **Removed with Go templates.** These existed only for Go templates and are gone:
   - the `safeHTML`, `safeCSS`, `safeJS`, `safeURL` and `safeHTMLAttr` filters. A template that uses one fails the build with Liquid's `undefined filter <name>` error, in both the engine and the `RenderTemplate` path.
@@ -1897,7 +1899,7 @@ Go `html/template` support is removed. This is a wholesale removal: no compatibi
 - **Kept, though Go-motivated.** Liquid output depends on these, so they stay; changing any of them is separate work: `html.UnescapeString` in permalink and front-matter interpolation, the ordered-map conversion for pagination items and permalinks, the per-page `Summary` copies, and `plainValue` / `isEmptyString` (minus their `TrustedHTML` handling).
 - **History stays.** `CHANGELOG.md` and the release notes under `docs/content/releases/` keep their Go mentions.
 
-Tests: `internal/pipeline/liquid_only_test.go`, `internal/template/output_safety_test.go`, and the "`{{% %}}` has no special meaning" context in `internal/content/markdown_test.go`.
+Tests: `internal/pipeline/liquid_only_test.go`, `internal/template/output_safety_test.go`, the "`{{% %}}` has no special meaning" context in `internal/content/markdown_test.go`, and the `.liquid`-only hook tests under `DiscoverRenderHooks` in `internal/template/liquid_test.go`.
 
 ### Layout Lookup Order
 

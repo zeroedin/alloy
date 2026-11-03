@@ -1275,6 +1275,24 @@ var _ = Describe("LiquidEngine", func() {
 				"render hooks are .liquid files")
 		})
 
+		// Render hooks have no bare-extension fallback, unlike layouts and
+		// partials: a render-*.html file is not a hook (#1285).
+		It("does not discover a .html render hook when no .liquid one exists", func() {
+			tmpDir, err := os.MkdirTemp("", "hooks-test-*")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+			markupDir := filepath.Join(tmpDir, "layouts", "_markup")
+			Expect(os.MkdirAll(markupDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(markupDir, "render-link.html"),
+				[]byte("html link"), 0644)).To(Succeed())
+
+			hooks, err := tmpl.DiscoverRenderHooks(filepath.Join(tmpDir, "layouts"), "liquid")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(hooks).NotTo(HaveKey("link"),
+				"render hooks are .liquid only; a render-link.html is not a hook (#1285)")
+		})
+
 		It("ignores unrecognized filenames", func() {
 			tmpDir, err := os.MkdirTemp("", "hooks-test-*")
 			Expect(err).NotTo(HaveOccurred())
