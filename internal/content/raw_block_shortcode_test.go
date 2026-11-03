@@ -10,15 +10,16 @@ import (
 // ── Raw block shortcode content (issue #1245) ─────────────────────────
 //
 // A `>` immediately after the opening delimiter on a block tag's OPEN tag
-// (`{%> name %}` for Liquid, `{{%> name %}}` for Go templates) makes that
-// invocation's body pass through Goldmark completely unparsed. Close tags
-// keep each engine's native syntax and are unchanged.
+// (`{%> name %}`) makes that invocation's body pass through Goldmark
+// completely unparsed. Close tags keep Liquid's native syntax and are
+// unchanged. Go templates' `{{%> name %}}` form was removed with Go
+// template support (#1285).
 //
 // The signal lives on the call site, not the shortcode definition — the same
 // shortcode is legitimately used raw on one page and Markdown-parsed on
 // another. The `>` is an Alloy-level marker that never reaches the template
 // engine: the Goldmark renderer strips it, so everything downstream
-// (ProcessBlockShortcodes, Liquid's block-tag detection) sees native syntax.
+// (Liquid's block-tag detection) sees native syntax.
 //
 // Spec: PLAN.md → "Raw block shortcode content (issue #1245)".
 
@@ -250,7 +251,7 @@ var _ = Describe("Raw block shortcode content (issue #1245)", func() {
 			Expect(err).NotTo(HaveOccurred())
 			html := string(out)
 			Expect(html).To(ContainSubstring("{{% helmet %}}"),
-				"a Go template tag inside a Liquid raw block is body text, "+
+				"a {{% %}} line inside a raw block is body text, "+
 					"not a depth-affecting open tag")
 			Expect(html).To(ContainSubstring("# not a heading"))
 			Expect(html).NotTo(ContainSubstring("<h1"),
@@ -380,58 +381,4 @@ var _ = Describe("Raw block shortcode content (issue #1245)", func() {
 		})
 	})
 
-	// ── Go template delimiters ────────────────────────────────────────
-
-	Context("Go template raw blocks", func() {
-		It("captures the body verbatim and strips the marker", func() {
-			source := []byte("{{%> helmet %}}\n# not a heading\nif (a < 2 && b > 1) {}\n{{% /helmet %}}\n")
-			out, _, err := content.RenderMarkdown(source, rawMD)
-			Expect(err).NotTo(HaveOccurred())
-			html := string(out)
-			Expect(html).To(ContainSubstring("{{% helmet %}}"),
-				"the open tag must reach the engine in native Go template syntax")
-			Expect(html).NotTo(ContainSubstring("{{%>"),
-				"the > marker must never reach the engine")
-			Expect(html).To(ContainSubstring("{{% /helmet %}}"),
-				"the close tag uses /name and is emitted unchanged")
-			Expect(html).To(ContainSubstring("# not a heading"))
-			Expect(html).To(ContainSubstring("if (a < 2 && b > 1) {}"))
-			Expect(html).NotTo(ContainSubstring("<h1"))
-			Expect(html).NotTo(ContainSubstring("&lt;"))
-		})
-
-		It("preserves arguments so the block shortcode preprocessor still matches", func() {
-			// ProcessBlockShortcodes' open pattern requires whitespace after
-			// {{%, so stripping must not run the delimiter into the tag name.
-			source := []byte("{{%> helmet \"a b\" %}}\nbody\n{{% /helmet %}}\n")
-			out, _, err := content.RenderMarkdown(source, rawMD)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(string(out)).To(ContainSubstring(`{{% helmet "a b" %}}`),
-				"the stripped open tag must match the {{% tag \"args\" %}} pattern exactly")
-		})
-
-		It("depth-counts a balanced same-name pair inside the body", func() {
-			source := []byte("{{%> callout %}}\nouter\n{{% callout %}}\ninner\n{{% /callout %}}\nstill outer\n{{% /callout %}}\n\nAfter.\n")
-			out, _, err := content.RenderMarkdown(source, rawMD)
-			Expect(err).NotTo(HaveOccurred())
-			html := string(out)
-			Expect(html).To(ContainSubstring("still outer"),
-				"a balanced nested pair must not close the outer raw block early")
-			Expect(html).NotTo(ContainSubstring("<p>still outer</p>"),
-				"content after the nested pair is still raw body, not Markdown")
-			Expect(html).To(ContainSubstring("<p>After.</p>"))
-		})
-
-		It("errors on an unterminated block with the Go template close tag", func() {
-			source := []byte("{{%> helmet %}}\nbody\n")
-			_, _, err := content.RenderMarkdown(source, rawMD)
-			Expect(err).To(HaveOccurred())
-			msg := err.Error()
-			Expect(msg).To(ContainSubstring("unterminated raw block shortcode"))
-			Expect(msg).To(ContainSubstring("{{%> helmet %}}"),
-				"the error must quote the open tag as written")
-			Expect(msg).To(ContainSubstring("{{% /helmet %}}"),
-				"the expected close tag must use the Go template /name form")
-		})
-	})
 })

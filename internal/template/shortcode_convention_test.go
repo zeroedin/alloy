@@ -10,17 +10,14 @@ import (
 )
 
 // ── Shortcode calling convention (issue #981) ─────────────────────────
-// Specifies the cross-engine contract for shortcode argument resolution
-// and empty-return behavior. Both engines must produce identical results
-// for the same logical operation.
+// Specifies the contract for shortcode argument resolution and
+// empty-return behavior.
 
 var _ = Describe("Shortcode calling convention (issue #981)", func() {
 
 	// ── 1. Variable argument resolution in Liquid ─────────────────────
 	// Unquoted args in Liquid shortcodes must resolve as Liquid expressions
 	// against the template context. Quoted args remain literal strings.
-	// This matches Go template behavior where {{ func .page.field }}
-	// naturally resolves .page.field before calling the function.
 
 	Describe("Liquid variable argument resolution", func() {
 
@@ -312,7 +309,7 @@ var _ = Describe("Shortcode calling convention (issue #981)", func() {
 	})
 
 	// ── 2. Empty return behavior ──────────────────────────────────────
-	// When a shortcode callback returns "", both engines must emit nothing.
+	// When a shortcode callback returns "", the shortcode emits nothing.
 	// No <alloy-shortcode> placeholder, no wrapper element, just empty output.
 
 	Describe("Empty return behavior", func() {
@@ -359,54 +356,6 @@ var _ = Describe("Shortcode calling convention (issue #981)", func() {
 				"<alloy-shortcode> placeholder must not appear in output")
 			Expect(string(out)).NotTo(ContainSubstring("inner content"),
 				"block inner content must not leak when shortcode returns empty")
-		})
-
-		It("Go engine inline shortcode returning empty string emits nothing", func() {
-			engine := tmpl.NewGoEngine()
-
-			err := engine.AddTag("noop", func(args []string, content string) string {
-				return ""
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			tpl, err := engine.Parse("test", []byte(`before{{ noop }}after`))
-			Expect(err).NotTo(HaveOccurred())
-
-			out, err := tpl.Render(map[string]interface{}{})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(string(out)).To(Equal("beforeafter"),
-				"Go engine empty-returning shortcode must produce no output — "+
-					"establishes baseline for cross-engine consistency")
-		})
-
-		It("both engines produce identical empty output (cross-engine parity)", func() {
-			liquidEngine := tmpl.NewLiquidEngine()
-			goEngine := tmpl.NewGoEngine()
-
-			shortcodeFn := func(args []string, content string) string {
-				return ""
-			}
-
-			err := liquidEngine.AddTag("empty", shortcodeFn)
-			Expect(err).NotTo(HaveOccurred())
-			err = goEngine.AddTag("empty", shortcodeFn)
-			Expect(err).NotTo(HaveOccurred())
-
-			liquidTpl, err := liquidEngine.Parse("test", []byte(`X{% empty %}Y`))
-			Expect(err).NotTo(HaveOccurred())
-			goTpl, err := goEngine.Parse("test", []byte(`X{{ empty }}Y`))
-			Expect(err).NotTo(HaveOccurred())
-
-			liquidOut, err := liquidTpl.Render(map[string]interface{}{})
-			Expect(err).NotTo(HaveOccurred())
-			goOut, err := goTpl.Render(map[string]interface{}{})
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(string(liquidOut)).To(Equal(string(goOut)),
-				"Liquid and Go engines must produce identical output when shortcode returns empty — "+
-					"cross-engine parity is the core contract of the calling convention")
-			Expect(string(liquidOut)).To(Equal("XY"),
-				"both engines: empty shortcode produces no output between X and Y")
 		})
 
 		It("Liquid shortcode returning non-empty string still renders normally", func() {

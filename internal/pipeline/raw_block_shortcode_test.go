@@ -11,11 +11,11 @@ import (
 // ── Raw block shortcode pipeline integration (issue #1245) ────────────
 //
 // End-to-end proof that the `>` marker does what it exists to do: the body
-// of a `{%> name %}` / `{{%> name %}}` invocation reaches the shortcode
+// of a `{%> name %}` invocation reaches the shortcode
 // function byte-for-byte, and the marker itself never reaches the template
 // engine. The content-layer contract is specified in
 // internal/content/raw_block_shortcode_test.go; these tests exercise the
-// full build: Goldmark → ProcessBlockShortcodes / Liquid → layout.
+// full build: Goldmark → Liquid → layout.
 //
 // Spec: PLAN.md → "Raw block shortcode content (issue #1245)".
 
@@ -27,47 +27,6 @@ var _ = Describe("Raw block shortcode pipeline integration (issue #1245)", func(
 	const scriptBody = `<script type="application/ld+json">` + "\n" +
 		`  { "name": "A -- B", "ok": 1 < 2 && 3 > 2 }` + "\n" +
 		`</script>`
-
-	It("passes a raw body to a Go template block shortcode verbatim", func() {
-		cfg := &config.Config{
-			Title:     "Raw Block Shortcode GoTemplate Test",
-			BaseURL:   "https://example.com",
-			Build:     config.BuildConfig{Output: "_site"},
-			Templates: config.TemplatesConfig{Engine: "gotemplate"},
-		}
-		contentMap := map[string]string{
-			"content/index.md": "---\ntitle: Home\nlayout: default\n---\n" +
-				"# Welcome\n\n" +
-				"{{%> helmet %}}\n" + scriptBody + "\n{{% /helmet %}}\n",
-			"layouts/default.html": `<!DOCTYPE html><html><body>{{ .content }}</body></html>`,
-			"plugins/shortcodes.js": `export default function(alloy) {
-  alloy.shortcode("helmet", function(args, content) {
-    return '<div class="helmet">' + content + '</div>';
-  });
-}`,
-		}
-		result, err := pipeline.BuildWithContent(cfg, contentMap)
-		Expect(err).NotTo(HaveOccurred(),
-			"a raw block shortcode must build — if this fails on a template parse "+
-				"error, the > marker is reaching the Go template engine instead of "+
-				"being stripped by the Goldmark renderer")
-		Expect(result).NotTo(BeNil())
-
-		html := result.RenderedContent["index.md"]
-		Expect(html).To(ContainSubstring(`<div class="helmet">`),
-			"the shortcode callback must run")
-		Expect(html).To(ContainSubstring(`{ "name": "A -- B", "ok": 1 < 2 && 3 > 2 }`),
-			"the shortcode must receive the body byte-for-byte — no entity escaping, "+
-				"no typographer substitution")
-		Expect(html).NotTo(ContainSubstring("&amp;&amp;"),
-			"&& must not be entity-escaped on the way to the shortcode")
-		Expect(html).NotTo(ContainSubstring("&ndash;"),
-			"-- must not be smartened on the way to the shortcode")
-		Expect(html).NotTo(ContainSubstring("{{%"),
-			"no {{% delimiters may survive into the rendered page")
-		Expect(html).NotTo(ContainSubstring(">"+" helmet"),
-			"the > marker must not appear in rendered output")
-	})
 
 	It("passes a raw body to a Liquid block shortcode verbatim", func() {
 		cfg := &config.Config{

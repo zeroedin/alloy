@@ -547,9 +547,9 @@ var _ = Describe("Discovery", func() {
 		})
 
 		// ── Liquid content files (issue #337) ────────────────────────
-		// .liquid is a valid content format when engine is liquid, but
-		// NOT in the default formats list. User adds it explicitly.
-		// When engine is gotemplate, .liquid files are passthrough.
+		// .liquid is a valid content format, but NOT in the default
+		// formats list. User adds it explicitly; otherwise .liquid files
+		// are passthrough.
 
 		Context("Liquid content files", func() {
 			It("Liquid with front matter is content when liquid is in formats", func() {
@@ -612,8 +612,7 @@ var _ = Describe("Discovery", func() {
 					contentDir, []string{"md", "html"})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(pages).To(BeEmpty(),
-					"Liquid file must not be processed when liquid is not in formats — "+
-						"e.g., when engine is gotemplate")
+					"Liquid file must not be processed when liquid is not in formats")
 				Expect(passthroughs).To(ContainElement("widget.liquid"),
 					"Liquid file must be passthrough when not in formats")
 			})
