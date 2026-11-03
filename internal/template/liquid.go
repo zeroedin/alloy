@@ -30,6 +30,19 @@ type deferredTagEntry struct {
 
 // NewLiquidEngine creates a new Liquid template engine with standard tags and filters.
 func NewLiquidEngine() TemplateEngine {
+	return newLiquidEngine()
+}
+
+// NewLiquidEngineWithIncludes creates a Liquid engine whose {% include %} and
+// {% render %} tags resolve against includesDir. The build uses it with the
+// site's layouts directory.
+func NewLiquidEngineWithIncludes(includesDir string) TemplateEngine {
+	e := newLiquidEngine()
+	e.SetIncludesDir(includesDir)
+	return e
+}
+
+func newLiquidEngine() *liquidEngine {
 	env := liquid.NewEnvironment()
 	tags.RegisterStandardTags(env)
 
