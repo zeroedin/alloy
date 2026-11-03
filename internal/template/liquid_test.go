@@ -1255,7 +1255,7 @@ var _ = Describe("LiquidEngine", func() {
 				"no hooks when _markup/ doesn't exist")
 		})
 
-		It("only discovers files matching the configured engine extension", func() {
+		It("discovers only .liquid render hooks", func() {
 			tmpDir, err := os.MkdirTemp("", "hooks-test-*")
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(func() { os.RemoveAll(tmpDir) })
@@ -1263,23 +1263,16 @@ var _ = Describe("LiquidEngine", func() {
 			markupDir := filepath.Join(tmpDir, "layouts", "_markup")
 			Expect(os.MkdirAll(markupDir, 0755)).To(Succeed())
 
-			// Both liquid and html files exist
+			// A .liquid and a .html hook exist
 			Expect(os.WriteFile(filepath.Join(markupDir, "render-link.liquid"),
 				[]byte("liquid link"), 0644)).To(Succeed())
 			Expect(os.WriteFile(filepath.Join(markupDir, "render-link.html"),
 				[]byte("go link"), 0644)).To(Succeed())
 
-			// With liquid engine, only .liquid files are discovered
 			hooks, err := tmpl.DiscoverRenderHooks(filepath.Join(tmpDir, "layouts"), "liquid")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(hooks["link"]).To(Equal("liquid link"),
-				"must discover .liquid files when engine is liquid")
-
-			// With gotemplate engine, only .html files are discovered
-			hooks, err = tmpl.DiscoverRenderHooks(filepath.Join(tmpDir, "layouts"), "gotemplate")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(hooks["link"]).To(Equal("go link"),
-				"must discover .html files when engine is gotemplate")
+				"render hooks are .liquid files")
 		})
 
 		It("ignores unrecognized filenames", func() {

@@ -32,23 +32,6 @@ var _ = Describe("Plugin-Template Integration", func() {
 				"built-in filter must transform value during Liquid rendering")
 		})
 
-		It("Tier 1 built-in filter is accessible during Go template render", func() {
-			engine := template.NewGoEngine()
-			err := engine.AddFilter("upcase", func(input interface{}, args ...interface{}) interface{} {
-				return nil
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			tmpl, err := engine.Parse("test", []byte(`{{ upcase .title }}`))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(tmpl).NotTo(BeNil())
-
-			result, err := tmpl.Render(map[string]interface{}{"title": "hello"})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(string(result)).To(Equal("HELLO"),
-				"built-in filter must transform value during Go template rendering")
-		})
-
 		// Issue #196: WASM filter input type assertion fails when Liquid
 		// engine passes a typed wrapper instead of plain Go string.
 		// The filter must coerce input to string regardless of concrete type.
@@ -124,7 +107,7 @@ var _ = Describe("Plugin-Template Integration", func() {
 		})
 	})
 
-	Describe("Shortcode integration with template engines", func() {
+	Describe("Shortcode integration with the template engine", func() {
 		It("plugin-registered shortcode expands in content rendering", func() {
 			engine := template.NewLiquidEngine()
 			err := engine.AddTag("youtube", func(args []string, content string) string {
@@ -143,23 +126,6 @@ var _ = Describe("Plugin-Template Integration", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(result)).To(ContainSubstring("youtube.com/embed/dQw4w9WgXcQ"),
 				"shortcode must expand to rendered HTML with the provided argument")
-		})
-
-		It("shortcode registered once wires into both Liquid and Go engines", func() {
-			shortcodeFn := func(args []string, content string) string {
-				return "<div class='callout'>" + content + "</div>"
-			}
-
-			liquidEngine := template.NewLiquidEngine()
-			goEngine := template.NewGoEngine()
-
-			errLiquid := liquidEngine.AddTag("callout", shortcodeFn)
-			errGo := goEngine.AddTag("callout", shortcodeFn)
-
-			Expect(errLiquid).NotTo(HaveOccurred(),
-				"shortcode must register in Liquid engine without error")
-			Expect(errGo).NotTo(HaveOccurred(),
-				"same shortcode must register in Go engine without error")
 		})
 
 		// ── Issue #160: Inline shortcode followed by more content ────

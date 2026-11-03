@@ -1439,34 +1439,6 @@ var _ = Describe("Build Pipeline", func() {
 				"error message must name the failing filter so the user knows what to fix")
 		})
 
-		It("filter call error during Go template rendering fails the build", func() {
-			cfg := &config.Config{
-				Title:   "Filter Error GoTemplate Test",
-				BaseURL: "https://example.com",
-				Build:   config.BuildConfig{Output: "_site"},
-				Templates: config.TemplatesConfig{
-					Engine: "gotemplate",
-				},
-			}
-			contentMap := map[string]string{
-				"plugins/error-filter.js": `export default function(alloy) {
-	alloy.filter("errorFilter", (input) => {
-		throw new Error("intentional filter error");
-	});
-}`,
-				"content/index.md":     "---\ntitle: Home\nlayout: default\n---\n{{ errorFilter \"hello world\" }}",
-				"layouts/default.html": "<html><body>{{ .content }}</body></html>",
-			}
-			result, err := pipeline.BuildWithContent(cfg, contentMap)
-			Expect(err).To(HaveOccurred(),
-				"build must fail when a plugin filter throws at runtime in Go template mode — "+
-					"the error propagation mechanism must work for both template engines (issue #1224)")
-			Expect(result).To(BeNil(),
-				"failed build must not return a partial result")
-			Expect(err.Error()).To(ContainSubstring("errorFilter"),
-				"error message must name the failing filter regardless of template engine")
-		})
-
 		It("error message includes the page path", func() {
 			cfg := &config.Config{
 				Title:   "Error Path Test",
@@ -1490,38 +1462,6 @@ var _ = Describe("Build Pipeline", func() {
 					"a bare filter name without file context is not actionable for sites with hundreds of pages")
 		})
 
-		// Shortcode error tests cover both engines because Liquid dispatches
-		// shortcodes through deferredTags (liquid.go) while Go templates use
-		// funcMap — different code paths that each need error propagation.
-
-		It("shortcode call error during Go template rendering fails the build", func() {
-			cfg := &config.Config{
-				Title:   "Shortcode Error GoTemplate Test",
-				BaseURL: "https://example.com",
-				Build:   config.BuildConfig{Output: "_site"},
-				Templates: config.TemplatesConfig{
-					Engine: "gotemplate",
-				},
-			}
-			contentMap := map[string]string{
-				"plugins/error-shortcode.js": `export default function(alloy) {
-	alloy.shortcode("errorShortcode", (args, content) => {
-		throw new Error("intentional shortcode error");
-	});
-}`,
-				"content/index.md":     "---\ntitle: Home\nlayout: default\n---\n{{ errorShortcode \"arg1\" }}",
-				"layouts/default.html": "<html><body>{{ .content }}</body></html>",
-			}
-			result, err := pipeline.BuildWithContent(cfg, contentMap)
-			Expect(err).To(HaveOccurred(),
-				"build must fail when a plugin shortcode throws at runtime — "+
-					"returning empty string silently produces broken output (issue #1224)")
-			Expect(result).To(BeNil(),
-				"failed build must not return a partial result")
-			Expect(err.Error()).To(ContainSubstring("errorShortcode"),
-				"error message must name the failing shortcode so the user knows what to fix")
-		})
-
 		It("shortcode call error during Liquid rendering fails the build", func() {
 			cfg := &config.Config{
 				Title:   "Shortcode Error Liquid Test",
@@ -1540,12 +1480,12 @@ var _ = Describe("Build Pipeline", func() {
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).To(HaveOccurred(),
 				"build must fail when a Liquid shortcode throws at runtime — "+
-					"Liquid dispatches shortcodes through deferredTags, a different code path "+
-					"than Go template funcMap; both must propagate errors (issue #1224)")
+					"Liquid dispatches shortcodes through deferredTags, which must "+
+					"propagate errors (issue #1224)")
 			Expect(result).To(BeNil(),
 				"failed build must not return a partial result")
 			Expect(err.Error()).To(ContainSubstring("errorShortcode"),
-				"error message must name the failing shortcode regardless of template engine")
+				"error message must name the failing shortcode")
 			Expect(err.Error()).To(ContainSubstring("components/widget.md"),
 				"error message must include the page path so the user can locate the problem — "+
 					"a bare shortcode name without file context is not actionable")

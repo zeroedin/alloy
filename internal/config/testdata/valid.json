@@ -16,9 +16,6 @@
       }
     }
   },
-  "templates": {
-    "engine": "liquid"
-  },
   "plugins": {
     "node": true,
     "timeout": 5000

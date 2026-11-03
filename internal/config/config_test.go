@@ -72,11 +72,6 @@ var _ = Describe("Config", func() {
 				Expect(cfg.Content.Markdown.Goldmark.TemplateTagsValue()).To(BeTrue())
 			})
 
-			It("parses templates.engine", func() {
-				Expect(err).NotTo(HaveOccurred())
-				Expect(cfg.Templates.Engine).To(Equal("liquid"))
-			})
-
 			It("parses plugins.node", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(cfg.Plugins.Node).To(BeTrue())
@@ -258,9 +253,8 @@ var _ = Describe("Config", func() {
 				Expect(tomlCfg.Content.Markdown.Goldmark.TemplateTagsValue()).To(BeTrue())
 			})
 
-			It("parses templates, plugins, and pagination identically to YAML", func() {
+			It("parses plugins and pagination identically to YAML", func() {
 				Expect(loadErr).NotTo(HaveOccurred())
-				Expect(tomlCfg.Templates.Engine).To(Equal("liquid"))
 				Expect(tomlCfg.Plugins.Node).To(BeTrue())
 				Expect(tomlCfg.Plugins.Timeout).To(Equal(5000))
 				Expect(tomlCfg.Pagination.Path).To(Equal("page"))
@@ -409,9 +403,8 @@ var _ = Describe("Config", func() {
 				Expect(jsonCfg.Content.Markdown.Goldmark.TemplateTagsValue()).To(BeTrue())
 			})
 
-			It("parses templates, plugins, and pagination identically to YAML", func() {
+			It("parses plugins and pagination identically to YAML", func() {
 				Expect(loadErr).NotTo(HaveOccurred())
-				Expect(jsonCfg.Templates.Engine).To(Equal("liquid"))
 				Expect(jsonCfg.Plugins.Node).To(BeTrue())
 				Expect(jsonCfg.Plugins.Timeout).To(Equal(5000))
 				Expect(jsonCfg.Pagination.Path).To(Equal("page"))
@@ -574,11 +567,6 @@ var _ = Describe("Config", func() {
 		It("defaults build.output to _site", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cfg.Build.Output).To(Equal("_site"))
-		})
-
-		It("defaults templates.engine to liquid", func() {
-			Expect(err).NotTo(HaveOccurred())
-			Expect(cfg.Templates.Engine).To(Equal("liquid"))
 		})
 
 		It("defaults content.markdown.goldmark.templateTags to true", func() {
@@ -798,16 +786,6 @@ components = "elements"
 				"existing layout must not be overwritten")
 		})
 
-		It("normalizes engine \"go\" to \"gotemplate\" (issue #818)", func() {
-			cfg := &config.Config{
-				Templates: config.TemplatesConfig{Engine: "go"},
-			}
-			config.ApplyDefaults(cfg)
-			Expect(cfg.Templates.Engine).To(Equal("gotemplate"),
-				"\"go\" must be normalized to \"gotemplate\" — the short form is "+
-					"intuitive but the engine checks only match \"gotemplate\"; without "+
-					"normalization, \"go\" silently falls through to Liquid (issue #818)")
-		})
 	})
 
 	// ── Config file auto-detection (§1 Data Formats) ─────────────────
@@ -1036,41 +1014,6 @@ components = "elements"
 			err := config.Validate(cfg)
 			Expect(err).NotTo(HaveOccurred(),
 				"config with zero taxonomies must be valid")
-		})
-	})
-
-	// ── Templates.Engine validation (issue #818) ─────────────────────
-	// Unknown engine values must fail validation with a clear error.
-	// Known values ("liquid", "gotemplate") must pass.
-
-	Describe("Templates.Engine validation (issue #818)", func() {
-		It("rejects unknown engine value", func() {
-			cfg := &config.Config{
-				Title:     "Test",
-				BaseURL:   "https://example.com",
-				Templates: config.TemplatesConfig{Engine: "jinja"},
-			}
-			err := config.Validate(cfg)
-			Expect(err).To(HaveOccurred(),
-				"unknown engine \"jinja\" must fail validation — without this "+
-					"guard, a typo silently falls through to Liquid at 4 comparison "+
-					"sites, then fails with a confusing \"no layout found\" error "+
-					"(issue #818)")
-			Expect(err.Error()).To(ContainSubstring("jinja"),
-				"error message must name the invalid value so the user knows what to fix")
-		})
-
-		It("accepts known engine values", func() {
-			for _, engine := range []string{"liquid", "gotemplate"} {
-				cfg := &config.Config{
-					Title:     "Test",
-					BaseURL:   "https://example.com",
-					Templates: config.TemplatesConfig{Engine: engine},
-				}
-				err := config.Validate(cfg)
-				Expect(err).NotTo(HaveOccurred(),
-					"engine %q is a known value and must pass validation", engine)
-			}
 		})
 	})
 

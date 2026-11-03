@@ -3,8 +3,6 @@ baseURL: "https://example.com"
 build:
   output: _site
   clean: true
-templates:
-  engine: liquid
 ssr:
   command: "golit serve --stdio"
   mode: "stream"
