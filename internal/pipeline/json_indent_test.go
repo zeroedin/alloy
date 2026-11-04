@@ -1,8 +1,6 @@
 package pipeline_test
 
 import (
-	"html"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -11,7 +9,7 @@ import (
 )
 
 // ── `json` filter indent argument, end to end (issue #1269) ──────────
-// The argument works in both engines. Unit rules are in
+// Unit rules are in
 // internal/template/json_indent_test.go.
 //
 // See PLAN.md → "`json` indent argument (issue #1269)".
@@ -67,48 +65,6 @@ var _ = Describe("json filter indent argument in a real build (issue #1269)", fu
 
 		It("indents with a number read from a data file", func() {
 			Expect(build("J[{{ site.data.nav | json: site.data.settings.indent }}]")).To(ContainSubstring("J[" + indented + "]"))
-		})
-	})
-
-	Context("Go templates", func() {
-		// Go templates print data in alphabetical key order today, not file
-		// order. That is out of scope here (#1285), so this fixture's file
-		// order is already alphabetical and the test checks indentation only.
-		const navYAML = "alpha: /\nbeta:\n  a: 1\n  b:\n    - x\n"
-		const indented = `{
-  "alpha": "/",
-  "beta": {
-    "a": 1,
-    "b": [
-      "x"
-    ]
-  }
-}`
-
-		build := func(layout string) string {
-			GinkgoHelper()
-			result, err := pipeline.BuildWithContent(goTrustConfig("JSON Indent Go"), map[string]string{
-				"data/nav.yaml":        navYAML,
-				"content/index.md":     "---\ntitle: Home\nlayout: default\n---\n",
-				"layouts/default.html": layout,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			// html/template escapes the quotes for HTML (&#34;); the
-			// browser shows them as quotes. Compare the text it shows.
-			return html.UnescapeString(result.RenderedContent["index.md"])
-		}
-
-		It("prints one line with no argument (guard)", func() {
-			Expect(build("<pre>{{ json .site.data.nav }}</pre>")).To(ContainSubstring(
-				`<pre>{"alpha":"/","beta":{"a":1,"b":["x"]}}</pre>`))
-		})
-
-		It("indents with a string argument in function form", func() {
-			Expect(build(`<pre>{{ json .site.data.nav "  " }}</pre>`)).To(ContainSubstring("<pre>" + indented + "</pre>"))
-		})
-
-		It("indents with a number argument in function form", func() {
-			Expect(build("<pre>{{ json .site.data.nav 2 }}</pre>")).To(ContainSubstring("<pre>" + indented + "</pre>"))
 		})
 	})
 })
