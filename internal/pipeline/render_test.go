@@ -49,6 +49,8 @@ var _ = Describe("Build Pipeline", func() {
 				"content/blog/index.md":   "---\ntitle: Blog\n---\n# Blog",
 				"content/blog/_data.yaml": "layout: post",
 				"content/blog/icon.svg":   "<svg></svg>",
+				// The cascade names "post", so it must exist (issue #1296).
+				"layouts/post.liquid": "{{ content }}",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
 			Expect(err).NotTo(HaveOccurred())
@@ -399,12 +401,13 @@ var _ = Describe("Build Pipeline", func() {
 		})
 	})
 
-	// ── Layout resolution diagnostics (issue #385) ────────────────────
+	// ── Layout resolution diagnostics (issues #385, #1296) ─────────────
 	// When a page explicitly requests a layout via front matter but the
-	// layout file doesn't exist, the build must log a warning — not
-	// silently produce layoutless output.
+	// layout file doesn't exist, the build fails (issue #1296). It used to
+	// log a warning and write the page without its layout (issue #385).
+	// More cases are in build_errors_test.go.
 	Describe("Layout resolution diagnostics (issue #385)", func() {
-		It("page with explicit layout but missing file still renders (without layout)", func() {
+		It("page with explicit layout but missing file fails the build (issue #1296)", func() {
 			cfg := &config.Config{
 				Title:   "Missing Layout Test",
 				BaseURL: "https://example.com",
@@ -414,16 +417,13 @@ var _ = Describe("Build Pipeline", func() {
 				"content/about.md": "---\ntitle: About\nlayout: nonexistent\n---\n# About",
 			}
 			result, err := pipeline.BuildWithContent(cfg, contentMap)
-			Expect(err).NotTo(HaveOccurred(),
-				"missing layout must not cause build failure — page renders without layout")
-			Expect(result).NotTo(BeNil())
-			Expect(result.PageCount).To(Equal(1))
-
-			html := result.RenderedContent["about.md"]
-			Expect(html).NotTo(BeEmpty(),
-				"page must still render even without layout")
-			Expect(html).To(ContainSubstring("About"),
-				"markdown content must be present even without layout wrapping")
+			Expect(err).To(HaveOccurred(),
+				"a missing named layout fails the build instead of writing the page without it")
+			Expect(result).To(BeNil(), "a failed build must not return a partial result")
+			Expect(err.Error()).To(ContainSubstring(`layout "nonexistent" not found`),
+				"the error names the missing layout")
+			Expect(err.Error()).To(ContainSubstring("about.md"),
+				"the error names the page")
 		})
 
 		It("Build defaults ProjectRoot to cwd when empty", func() {
