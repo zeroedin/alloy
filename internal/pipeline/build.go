@@ -451,7 +451,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 
 		// Pagination
-		batchPages = processPagination(batchPages, cfg, siteData, bc.Collections, engine)
+		batchPages, err = processPagination(batchPages, cfg, siteData, bc.Collections, engine)
+		if err != nil {
+			return nil, err
+		}
 
 		pages = append(pages, batchPages...)
 		batches = append(batches, langBatch{
@@ -901,8 +904,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			}
 			layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, permalinkCfg)
 			if err != nil {
+				// A layout the page names (front matter or _data.yaml
+				// cascade) that doesn't exist fails the build (issue #1296).
 				if layoutVal, hasLayout := page.FrontMatter["layout"]; hasLayout && layoutVal != nil {
-					log.Printf("warning: layout %v not found for %s: %v", layoutVal, page.RelPath, err)
+					return nil, err
 				}
 				layoutPageIdx++
 				if reporter != nil {

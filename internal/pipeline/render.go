@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"html"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -154,14 +154,21 @@ func copyFrontMatter(fm map[string]interface{}) map[string]interface{} {
 }
 
 // interpolateFrontMatter resolves template tags in string-valued front matter
-// fields for single-item paginated virtual pages.
-func interpolateFrontMatter(vp *content.Page, asVar string, item interface{}, engine tmpl.TemplateEngine) {
+// fields for single-item paginated virtual pages. A field that fails to parse
+// or render fails the build (issue #1294). Fields are visited in key order so
+// the same site always reports the same field first.
+func interpolateFrontMatter(vp *content.Page, asVar string, item interface{}, engine tmpl.TemplateEngine) error {
 	skipKeys := map[string]bool{
 		"permalink": true, "layout": true, "pagination": true,
 	}
 	ctx := map[string]interface{}{asVar: item}
-	for k, v := range vp.FrontMatter {
-		s, ok := v.(string)
+	keys := make([]string, 0, len(vp.FrontMatter))
+	for k := range vp.FrontMatter {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		s, ok := vp.FrontMatter[k].(string)
 		if !ok || (!strings.Contains(s, "{{") && !strings.Contains(s, "{%")) {
 			continue
 		}
@@ -171,19 +178,18 @@ func interpolateFrontMatter(vp *content.Page, asVar string, item interface{}, en
 		if engine != nil {
 			tpl, err := engine.Parse("_fm_"+k, []byte(s))
 			if err != nil {
-				log.Printf("warning: front matter interpolation for %s.%s: %v", vp.RelPath, k, err)
-				continue
+				return fmt.Errorf("front matter interpolation for %s field %q: %w", vp.RelPath, k, err)
 			}
 			out, err := tpl.Render(ctx)
 			if err != nil {
-				log.Printf("warning: front matter interpolation for %s.%s: %v", vp.RelPath, k, err)
-				continue
+				return fmt.Errorf("front matter interpolation for %s field %q: %w", vp.RelPath, k, err)
 			}
 			vp.FrontMatter[k] = html.UnescapeString(strings.TrimSpace(string(out)))
 		} else {
 			vp.FrontMatter[k] = strings.TrimSpace(pagination.RenderSimpleLiquid(s, asVar, item))
 		}
 	}
+	return nil
 }
 
 // codeBlockPattern matches <code> elements (including those with attributes).

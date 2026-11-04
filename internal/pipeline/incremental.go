@@ -376,7 +376,10 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
-	allPages = processPagination(allPages, cfg, ps.SiteData, bc.Collections, ps.Engine)
+	allPages, err = processPagination(allPages, cfg, ps.SiteData, bc.Collections, ps.Engine)
+	if err != nil {
+		return nil, err
+	}
 
 	// Rebuild pagesToRender from post-pagination allPages so virtual pages
 	// generated from a changed source page are included.
@@ -514,8 +517,10 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	for _, page := range pagesToRender {
 		layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, permalinkCfg)
 		if err != nil {
+			// A layout the page names (front matter or _data.yaml cascade)
+			// that doesn't exist fails the build (issue #1296).
 			if layoutVal, hasLayout := page.FrontMatter["layout"]; hasLayout && layoutVal != nil {
-				log.Printf("warning: layout %v not found for %s: %v", layoutVal, page.RelPath, err)
+				return nil, err
 			}
 			continue
 		}
