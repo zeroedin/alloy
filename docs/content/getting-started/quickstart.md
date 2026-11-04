@@ -28,117 +28,56 @@ taxonomies:
 
 `alloy init` creates a `layouts/default.liquid` with a minimal HTML5 boilerplate. Open it and replace it with a layout that includes a header and navigation:
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="qs-default-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="qs-default-go">Go templates</wa-tab>
-
-<wa-tab-panel name="qs-default-liquid" active>
-<alloy-code language="liquid">&lt;!-- layouts/default.liquid --&gt;
-&lt;!DOCTYPE html&gt;
-&lt;html lang="en"&gt;
-&lt;head&gt;
-  &lt;meta charset="utf-8"&gt;
-  &lt;title&gt;{{ page.title }} | {{ site.title }}&lt;/title&gt;
-&lt;/head&gt;
-&lt;body&gt;
-  &lt;header&gt;
-    &lt;a href="/"&gt;{{ site.title }}&lt;/a&gt;
-  &lt;/header&gt;
-  &lt;main&gt;
+```liquid
+<!-- layouts/default.liquid -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ page.title }} | {{ site.title }}</title>
+</head>
+<body>
+  <header>
+    <a href="/">{{ site.title }}</a>
+  </header>
+  <main>
     {{ content }}
-  &lt;/main&gt;
-&lt;/body&gt;
-&lt;/html&gt;</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="qs-default-go">
-<alloy-code language="html">&lt;!-- layouts/default.html --&gt;
-&lt;!DOCTYPE html&gt;
-&lt;html lang="en"&gt;
-&lt;head&gt;
-  &lt;meta charset="utf-8"&gt;
-  &lt;title&gt;{{ .page.title }} | {{ .site.title }}&lt;/title&gt;
-&lt;/head&gt;
-&lt;body&gt;
-  &lt;header&gt;
-    &lt;a href="/"&gt;{{ .site.title }}&lt;/a&gt;
-  &lt;/header&gt;
-  &lt;main&gt;
-    {{ .content }}
-  &lt;/main&gt;
-&lt;/body&gt;
-&lt;/html&gt;</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+  </main>
+</body>
+</html>
+```
 
-Create a layout for blog posts. Children of a section with date-based permalinks automatically resolve to `post.liquid` (or `post.html` for Go templates):
+Create a layout for blog posts. Children of a section with date-based permalinks automatically resolve to `post.liquid`:
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="qs-post-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="qs-post-go">Go templates</wa-tab>
-
-<wa-tab-panel name="qs-post-liquid" active>
-<alloy-code language="liquid">&lt;!-- layouts/post.liquid --&gt;
-&lt;!DOCTYPE html&gt;
-&lt;html lang="en"&gt;
-&lt;head&gt;
-  &lt;meta charset="utf-8"&gt;
-  &lt;title&gt;{{ page.title }} | {{ site.title }}&lt;/title&gt;
-&lt;/head&gt;
-&lt;body&gt;
-  &lt;header&gt;
-    &lt;a href="/"&gt;{{ site.title }}&lt;/a&gt;
-  &lt;/header&gt;
-  &lt;main&gt;
-    &lt;article&gt;
-      &lt;h1&gt;{{ page.title }}&lt;/h1&gt;
-      &lt;time&gt;{{ page.date | date: "%B %d, %Y" }}&lt;/time&gt;
+```liquid
+<!-- layouts/post.liquid -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ page.title }} | {{ site.title }}</title>
+</head>
+<body>
+  <header>
+    <a href="/">{{ site.title }}</a>
+  </header>
+  <main>
+    <article>
+      <h1>{{ page.title }}</h1>
+      <time>{{ page.date | date: "%B %d, %Y" }}</time>
       {% if page.tags %}
-        &lt;ul class="tags"&gt;
+        <ul class="tags">
           {% for tag in page.tags %}
-            &lt;li&gt;{{ tag }}&lt;/li&gt;
+            <li>{{ tag }}</li>
           {% endfor %}
-        &lt;/ul&gt;
+        </ul>
       {% endif %}
       {{ content }}
-    &lt;/article&gt;
-  &lt;/main&gt;
-&lt;/body&gt;
-&lt;/html&gt;</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="qs-post-go">
-<alloy-code language="html">&lt;!-- layouts/post.html --&gt;
-&lt;!DOCTYPE html&gt;
-&lt;html lang="en"&gt;
-&lt;head&gt;
-  &lt;meta charset="utf-8"&gt;
-  &lt;title&gt;{{ .page.title }} | {{ .site.title }}&lt;/title&gt;
-&lt;/head&gt;
-&lt;body&gt;
-  &lt;header&gt;
-    &lt;a href="/"&gt;{{ .site.title }}&lt;/a&gt;
-  &lt;/header&gt;
-  &lt;main&gt;
-    &lt;article&gt;
-      &lt;h1&gt;{{ .page.title }}&lt;/h1&gt;
-      &lt;time&gt;{{ date .page.date "%B %d, %Y" }}&lt;/time&gt;
-      {{ if .page.tags }}
-        &lt;ul class="tags"&gt;
-          {{ range .page.tags }}
-            &lt;li&gt;{{ . }}&lt;/li&gt;
-          {{ end }}
-        &lt;/ul&gt;
-      {{ end }}
-      {{ .content }}
-    &lt;/article&gt;
-  &lt;/main&gt;
-&lt;/body&gt;
-&lt;/html&gt;</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+    </article>
+  </main>
+</body>
+</html>
+```
 
 ## 3. Add content
 

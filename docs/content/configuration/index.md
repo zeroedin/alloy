@@ -77,17 +77,6 @@ content:
 | `content.markdown.goldmark.autoHeadingID` | boolean | `true` | Add `id` attributes to headings. Also activates `{.class #id key=value}` block-level attribute syntax. |
 | `content.markdown.goldmark.customElements` | boolean | `true` | Treat multi-line custom elements (tags with hyphens) as block-level HTML. Preserves content inside verbatim. |
 
-## `templates`
-
-```yaml
-templates:
-  engine: "liquid"
-```
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `templates.engine` | string | `"liquid"` | Template engine. `"liquid"` or `"gotemplate"` (alias `"go"`). One engine per project. |
-
 ## `structure`
 
 Override default directory names. All paths are relative to the project root.
@@ -362,9 +351,6 @@ content:
       templateTags: true
       autoHeadingID: true
       customElements: true
-
-templates:
-  engine: "liquid"
 
 structure:
   content: "content"

@@ -103,7 +103,7 @@ permalink: "/articles/{{ page.slug }}/"
 ---
 ```
 
-Template permalinks render through Liquid regardless of the configured engine. The `page` object contains front matter fields, date, slug, summary, and collection:
+Template permalinks render through Liquid. The `page` object contains front matter fields, date, slug, summary, and collection:
 
 | Token | Template equivalent |
 |---|---|

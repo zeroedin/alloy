@@ -2,67 +2,25 @@
 layout: doc
 title: Templates Overview
 nav_weight: 10
-description: "An overview of Alloy's Liquid and Go html/template engines, layout lookup, and the data available during rendering."
+description: "An overview of Alloy's Liquid templates, layout lookup, output escaping, and the data available during rendering."
 ---
 
-Alloy uses the [Liquid](https://liquidmarkup.org/) template language by default. Templates live in the `layouts/` directory, are parsed once at startup, and rendered per page with full access to the site's data cascade.
+Alloy templates use the [Liquid](https://liquidmarkup.org/) template language. Templates live in the `layouts/` directory, are parsed once at startup, and rendered per page with full access to the site's data cascade.
 
-```yaml
-# alloy.config.yaml
-templates:
-  engine: "liquid"   # default; also supports "gotemplate" or "go"
-```
-
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="overview-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="overview-go">Go templates</wa-tab>
-
-<wa-tab-panel name="overview-liquid" active>
-<alloy-code language="liquid">&lt;!-- layouts/default.liquid --&gt;
-&lt;!DOCTYPE html&gt;
-&lt;html&gt;
-&lt;head&gt;&lt;title&gt;{{ page.title }}&lt;/title&gt;&lt;/head&gt;
-&lt;body&gt;
+```liquid
+<!-- layouts/default.liquid -->
+<!DOCTYPE html>
+<html>
+<head><title>{{ page.title }}</title></head>
+<body>
   {% include "partials/header" %}
   {{ content }}
   {% include "partials/footer" %}
-&lt;/body&gt;
-&lt;/html&gt;</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="overview-go">
-<alloy-code language="html">&lt;!-- layouts/default.html --&gt;
-&lt;!DOCTYPE html&gt;
-&lt;html&gt;
-&lt;head&gt;&lt;title&gt;{{ .page.title }}&lt;/title&gt;&lt;/head&gt;
-&lt;body&gt;
-  {{ include "partials/header" }}
-  {{ .content }}
-  {{ include "partials/footer" }}
-&lt;/body&gt;
-&lt;/html&gt;</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+</body>
+</html>
+```
 
 Every content page is rendered through its resolved layout. The layout receives the page's rendered body as `{{ content }}` and can access all front matter fields via the `page` object.
-
-## Template engines
-
-Alloy supports two built-in (Tier 1) template engines. The engine is a global, project-wide setting -- one engine is active per build.
-
-| Engine | Config value | File extension | Syntax |
-|---|---|---|---|
-| Liquid | `"liquid"` (default) | `.liquid` | `{{ var }}`, `{% tag %}` |
-| Go templates | `"gotemplate"` or `"go"` | `.html` | `{{ .var }}`, `{{ range }}` |
-
-Both engines receive the same `map[string]any` context from the data cascade. All built-in [filters](/templates/filters/) are registered in both engines at startup -- in Go templates, filters are called as functions (`{{ upcase .page.title }}`) rather than with pipe-and-colon syntax. See [Filter syntax by engine](/templates/filters/#filter-syntax-by-engine).
-
-Set the engine to `"gotemplate"` (or the shorthand `"go"`) for Go templates. Any unrecognized value fails config validation with an error.
-
-The two engines escape what you print in opposite ways: Liquid prints values as written, and Go templates escape them. Switching engines changes your output without changing your templates — see [Output safety](/templates/output-safety/) before you switch.
-
-Plugin-provided template engines (Nunjucks, EJS, Pug via the Node bridge) are an experimental design concept and are **not implemented** -- today the `engine` setting accepts only `"liquid"` and `"gotemplate"` (or `"go"`), and unrecognized values are rejected at startup.
 
 ## Template context
 
@@ -77,33 +35,34 @@ Every template receives these top-level variables:
 | `taxonomies` | Taxonomy groups: `taxonomies.tags.javascript`, `taxonomies.categories.tutorials`, etc. |
 | `pagination` | Pagination context (only on paginated pages): `pagination.pageNumber`, `pagination.totalPages`, `pagination.nextPage`, `pagination.previousPage` |
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="context-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="context-go">Go templates</wa-tab>
-
-<wa-tab-panel name="context-liquid" active>
-<alloy-code language="liquid">&lt;h1&gt;{{ page.title }}&lt;/h1&gt;
-&lt;time&gt;{{ page.date | date: "%B %d, %Y" }}&lt;/time&gt;
+```liquid
+<h1>{{ page.title }}</h1>
+<time>{{ page.date | date: "%B %d, %Y" }}</time>
 {{ content }}
 
-&lt;h2&gt;Recent posts&lt;/h2&gt;
+<h2>Recent posts</h2>
 {% for post in collections.blog limit: 5 %}
-  &lt;a href="{{ post.url }}"&gt;{{ post.title }}&lt;/a&gt;
-{% endfor %}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="context-go">
-<alloy-code language="html">&lt;h1&gt;{{ .page.title }}&lt;/h1&gt;
-&lt;time&gt;{{ date .page.date "%B %d, %Y" }}&lt;/time&gt;
-{{ .content }}
+  <a href="{{ post.url }}">{{ post.title }}</a>
+{% endfor %}
+```
 
-&lt;h2&gt;Recent posts&lt;/h2&gt;
-{{ range limit .collections.blog 5 }}
-  &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
-{{ end }}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+## Output escaping
+
+Liquid prints values exactly as written. A data-file value of `<b>Sale today</b>` prints as bold text, not as the literal tags. That's what you want for your own rendered Markdown (`{{ content }}`) and HTML you wrote yourself.
+
+To print a value as text, escape it with the `escape` filter:
+
+```liquid
+<p>{{ site.data.promo.banner }}</p>          <!-- <b>Sale today</b> prints as bold text -->
+<p>{{ site.data.promo.banner | escape }}</p> <!-- prints the tags as text -->
+```
+
+Use `escape` on anything you didn't write yourself, such as a third-party feed or user-submitted data. It encodes `<`, `>`, `&` and quotes, which is enough for page text and for a quoted attribute like `title="…"` or `alt="…"`.
+
+`escape` doesn't check what a value means, only how it's written:
+
+- **Links:** `href="{{ link | escape }}"` still prints `javascript:alert(1)` unchanged, and it runs when clicked. Check the scheme (`https:`, `mailto:`, …) of any URL you didn't write before you print it in `href` or `src`.
+- **Script and style:** don't print untrusted values inside `<script>`, `<style>`, or event attributes like `onclick` and `style`. HTML encoding doesn't make them safe there.
 
 ## Template resolution
 
@@ -115,24 +74,22 @@ layouts/feed.xml.liquid         --> XML output
 layouts/api.json.liquid         --> JSON output
 ```
 
-The configured engine determines which extensions are checked first. The Liquid engine looks for `.liquid` files and falls back to bare extensions (e.g., `default.html`) when no `.liquid` file is found, parsing the bare file as Liquid. The Go template engine resolves `.html` files only.
+Alloy looks for the `.liquid` file first and falls back to the bare extension (e.g., `default.html`) when no `.liquid` file is found. Both are read as Liquid.
 
 ```
 layouts/
-├── default.liquid       <-- used when engine: "liquid"
-├── default.html         <-- used when engine: "gotemplate" (or Liquid fallback)
-├── feed.xml.liquid      <-- XML format layout (Liquid)
-└── feed.xml             <-- XML format layout (Go templates, or Liquid fallback)
+├── default.liquid       <-- used first
+├── default.html         <-- used when there is no default.liquid, read as Liquid
+├── feed.xml.liquid      <-- XML format layout
+└── feed.xml             <-- used when there is no feed.xml.liquid, read as Liquid
 ```
-
-If a file contains syntax for the wrong engine, the build fails with a parse error. Alloy does not inspect file contents to determine the engine.
 
 ## Rendering pipeline
 
 Alloy renders content in a strict order:
 
 1. **Markdown rendering** -- Goldmark parses `.md` files into HTML. Template tags (`{{ }}`, `{% %}`) are preserved through Markdown via a custom goldmark extension.
-2. **Template rendering** -- The configured engine evaluates Liquid or Go template syntax in the rendered output and in layouts.
+2. **Template rendering** -- Liquid evaluates the template tags in the rendered output and in layouts.
 3. **Layout wrapping** -- The page body is injected into its resolved layout via `{{ content }}`. Layouts can chain to parent layouts.
 
 Template tags inside `<code>` blocks in Markdown files are automatically escaped so they display as literal text rather than being evaluated. See the next section for the full rules.
@@ -175,7 +132,6 @@ Also live -- and `user.name` is empty in this page's context, so the rendered se
    {% raw %}Handlebars uses {{name}} for interpolation.{% endraw %}
    ```
 
-   `{% raw %}` is a Liquid tag. Under the Go template engine, emit literal braces with a quoted expression instead: `{{ "{{" }}name{{ "}}" }}`.
 3. **`templateTags: false` for the whole site.** If your content writes *about* template syntax everywhere and never uses tags in prose, turn prose evaluation off globally in [Markdown configuration](/content/#markdown-configuration):
 
    ```yaml
