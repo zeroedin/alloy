@@ -117,6 +117,21 @@ If you need a specific order that is not alphabetical and not the file order, ad
 
 To see what a data file actually loaded as, pipe it through [`json`](/templates/filters/#data-filters) rather than printing it directly — `{{ site.data.nav | json }}` renders `{"home":"/","products":"/products/"}`, in file order. Printing the value on its own gives an internal representation that is not meant to be read.
 
+For a larger file, pass an indent and wrap the output in `<pre>` so the line breaks show:
+
+```liquid
+<pre>{{ site.data.nav | json: 2 }}</pre>
+```
+
+```html
+<pre>{
+  "home": "/",
+  "products": "/products/"
+}</pre>
+```
+
+See [`json`](/templates/filters/#json) for the indent rules.
+
 ### Iterating maps
 
 {% raw %}
