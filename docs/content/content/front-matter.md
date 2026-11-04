@@ -123,35 +123,17 @@ If no `summary` is set, `{{ page.summary }}` is nil. Alloy does not auto-generat
 
 Use summaries in list templates:
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="summary-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="summary-go">Go templates</wa-tab>
-
-<wa-tab-panel name="summary-liquid" active>
-<alloy-code language="liquid">{% for article in collections.articles %}
-  &lt;article&gt;
-    &lt;h2&gt;&lt;a href="{{ article.url }}"&gt;{{ article.title }}&lt;/a&gt;&lt;/h2&gt;
-    &lt;p&gt;By {{ article.author }} -- {{ article.date | date: "%B %Y" }}&lt;/p&gt;
+```liquid
+{% for article in collections.articles %}
+  <article>
+    <h2><a href="{{ article.url }}">{{ article.title }}</a></h2>
+    <p>By {{ article.author }} -- {{ article.date | date: "%B %Y" }}</p>
     {% if article.summary %}
-      &lt;p&gt;{{ article.summary }}&lt;/p&gt;
+      <p>{{ article.summary }}</p>
     {% endif %}
-  &lt;/article&gt;
-{% endfor %}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="summary-go">
-<alloy-code language="html">{{ range .collections.articles }}
-  &lt;article&gt;
-    &lt;h2&gt;&lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;&lt;/h2&gt;
-    &lt;p&gt;By {{ .author }} -- {{ date .date "%B %Y" }}&lt;/p&gt;
-    {{ if .summary }}
-      &lt;p&gt;{{ .summary }}&lt;/p&gt;
-    {{ end }}
-  &lt;/article&gt;
-{{ end }}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+  </article>
+{% endfor %}
+```
 
 ### tags
 

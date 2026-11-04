@@ -76,23 +76,11 @@ export default function(alloy) {
 
 After registration, use your filter and shortcode in templates:
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="pluguse-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="pluguse-go">Go templates</wa-tab>
+```liquid
+{{ page.content | wordCount }} words
 
-<wa-tab-panel name="pluguse-liquid" active>
-<alloy-code language="liquid">{{ page.content | wordCount }} words
-
-{% youtube "dQw4w9WgXcQ" %}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="pluguse-go">
-<alloy-code language="html">{{ wordCount .page.content }} words
-
-{{ youtube "dQw4w9WgXcQ" }}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+{% youtube "dQw4w9WgXcQ" %}
+```
 
 ## Site Data Access
 

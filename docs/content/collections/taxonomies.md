@@ -69,45 +69,22 @@ When `render: true` (the default), Alloy generates two kinds of pages per taxono
 
 Both use the same layout template. The `taxonomy` object in the template context tells you which type you are rendering:
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="taxpage-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="taxpage-go">Go templates</wa-tab>
-
-<wa-tab-panel name="taxpage-liquid" active>
-<alloy-code language="liquid">{% if taxonomy.term %}
-  &lt;!-- Rendering /tags/javascript/ --&gt;
-  &lt;h1&gt;{{ taxonomy.term }}&lt;/h1&gt;
+```liquid
+{% if taxonomy.term %}
+  <!-- Rendering /tags/javascript/ -->
+  <h1>{{ taxonomy.term }}</h1>
   {% for post in taxonomy.pages %}
-    &lt;a href="{{ post.url }}"&gt;{{ post.title }}&lt;/a&gt;
+    <a href="{{ post.url }}">{{ post.title }}</a>
   {% endfor %}
 {% else %}
-  &lt;!-- Rendering /tags/ --&gt;
+  <!-- Rendering /tags/ -->
   {% for term in taxonomy.terms %}
-    &lt;a href="{{ term.url }}"&gt;
+    <a href="{{ term.url }}">
       {{ term.name }} ({{ term.pages | size }})
-    &lt;/a&gt;
+    </a>
   {% endfor %}
-{% endif %}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="taxpage-go">
-<alloy-code language="html">{{ if .taxonomy.term }}
-  &lt;!-- Rendering /tags/javascript/ --&gt;
-  &lt;h1&gt;{{ .taxonomy.term }}&lt;/h1&gt;
-  {{ range .taxonomy.pages }}
-    &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
-  {{ end }}
-{{ else }}
-  &lt;!-- Rendering /tags/ --&gt;
-  {{ range .taxonomy.terms }}
-    &lt;a href="{{ .url }}"&gt;
-      {{ .name }} ({{ size .pages }})
-    &lt;/a&gt;
-  {{ end }}
-{{ end }}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+{% endif %}
+```
 
 ### Layout Lookup Order
 
@@ -141,27 +118,13 @@ taxonomies:
 
 The data is still available as `taxonomies.tags.*` in templates. This is useful for organizing content into navigation sections without needing browsable taxonomy pages:
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="taxnav-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="taxnav-go">Go templates</wa-tab>
-
-<wa-tab-panel name="taxnav-liquid" active>
-<alloy-code language="liquid">&lt;!-- Use tags for navigation without dedicated tag pages --&gt;
+```liquid
+<!-- Use tags for navigation without dedicated tag pages -->
 {% assign nav_items = taxonomies.tags.foundations | sort: "order" %}
 {% for page in nav_items %}
-  &lt;a href="{{ page.url }}"&gt;{{ page.title }}&lt;/a&gt;
-{% endfor %}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="taxnav-go">
-<alloy-code language="html">&lt;!-- Use tags for navigation without dedicated tag pages --&gt;
-{{ $nav_items := sort .taxonomies.tags.foundations "order" }}
-{{ range $nav_items }}
-  &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
-{{ end }}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+  <a href="{{ page.url }}">{{ page.title }}</a>
+{% endfor %}
+```
 
 When `render: false`, duplicate term slugs are not an error since no output pages are generated.
 
@@ -169,83 +132,37 @@ When `render: false`, duplicate term slugs are not an error since no output page
 
 ### Accessing All Terms
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="taxterms-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="taxterms-go">Go templates</wa-tab>
-
-<wa-tab-panel name="taxterms-liquid" active>
-<alloy-code language="liquid">&lt;!-- List all tags with page counts --&gt;
-&lt;ul&gt;
+```liquid
+<!-- List all tags with page counts -->
+<ul>
   {% for term in taxonomy.terms %}
-    &lt;li&gt;
-      &lt;a href="{{ term.url }}"&gt;{{ term.name }}&lt;/a&gt;
-      &lt;span&gt;({{ term.pages | size }})&lt;/span&gt;
-    &lt;/li&gt;
+    <li>
+      <a href="{{ term.url }}">{{ term.name }}</a>
+      <span>({{ term.pages | size }})</span>
+    </li>
   {% endfor %}
-&lt;/ul&gt;</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="taxterms-go">
-<alloy-code language="html">&lt;!-- List all tags with page counts --&gt;
-&lt;ul&gt;
-  {{ range .taxonomy.terms }}
-    &lt;li&gt;
-      &lt;a href="{{ .url }}"&gt;{{ .name }}&lt;/a&gt;
-      &lt;span&gt;({{ size .pages }})&lt;/span&gt;
-    &lt;/li&gt;
-  {{ end }}
-&lt;/ul&gt;</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+</ul>
+```
 
 ### Accessing a Specific Term
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="taxspecific-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="taxspecific-go">Go templates</wa-tab>
-
-<wa-tab-panel name="taxspecific-liquid" active>
-<alloy-code language="liquid">&lt;!-- Show all pages tagged "javascript" --&gt;
+```liquid
+<!-- Show all pages tagged "javascript" -->
 {% for post in taxonomies.tags.javascript %}
-  &lt;article&gt;
-    &lt;h3&gt;&lt;a href="{{ post.url }}"&gt;{{ post.title }}&lt;/a&gt;&lt;/h3&gt;
-  &lt;/article&gt;
-{% endfor %}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="taxspecific-go">
-<alloy-code language="html">&lt;!-- Show all pages tagged "javascript" --&gt;
-{{ range .taxonomies.tags.javascript }}
-  &lt;article&gt;
-    &lt;h3&gt;&lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;&lt;/h3&gt;
-  &lt;/article&gt;
-{{ end }}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+  <article>
+    <h3><a href="{{ post.url }}">{{ post.title }}</a></h3>
+  </article>
+{% endfor %}
+```
 
 ### Sorting Taxonomy Collections
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="taxsort-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="taxsort-go">Go templates</wa-tab>
-
-<wa-tab-panel name="taxsort-liquid" active>
-<alloy-code language="liquid">{% assign sorted = taxonomies.tags.foundations | sort: "order" %}
+```liquid
+{% assign sorted = taxonomies.tags.foundations | sort: "order" %}
 {% for page in sorted %}
-  &lt;a href="{{ page.url }}"&gt;{{ page.title }}&lt;/a&gt;
-{% endfor %}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="taxsort-go">
-<alloy-code language="html">{{ $sorted := sort .taxonomies.tags.foundations "order" }}
-{{ range $sorted }}
-  &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
-{{ end }}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+  <a href="{{ page.url }}">{{ page.title }}</a>
+{% endfor %}
+```
 
 ## Applying Tags via Data Cascade
 
@@ -295,21 +212,10 @@ If a post has `mood: ["happy"]` in front matter but `mood` is not in the `taxono
 
 Taxonomies live under their own top-level template variable, `taxonomies`, separate from section collections:
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="taxns-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="taxns-go">Go templates</wa-tab>
-
-<wa-tab-panel name="taxns-liquid" active>
-<alloy-code language="liquid">{{ collections.blog }}            &lt;!-- section collection --&gt;
-{{ taxonomies.tags.javascript }}  &lt;!-- taxonomy collection --&gt;</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="taxns-go">
-<alloy-code language="html">{{ .collections.blog }}            &lt;!-- section collection --&gt;
-{{ .taxonomies.tags.javascript }}  &lt;!-- taxonomy collection --&gt;</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+```liquid
+{{ collections.blog }}            <!-- section collection -->
+{{ taxonomies.tags.javascript }}  <!-- taxonomy collection -->
+```
 
 This prevents collisions between section names and taxonomy names.
 
