@@ -5,7 +5,7 @@ nav_weight: 30
 description: "Reference for Alloy's 50+ built-in template filters covering strings, dates, arrays, URLs, math, and content processing."
 ---
 
-Filters transform values in template expressions. Alloy ships with 50+ built-in filters covering strings, dates, arrays, URLs, math, and content processing. Filters are registered in both the Liquid and Go template engines at startup.
+Filters transform values in template expressions. Alloy ships with 50+ built-in filters covering strings, dates, arrays, URLs, math, and content processing.
 
 ```liquid
 {{ page.title | upcase }}
@@ -14,34 +14,6 @@ Filters transform values in template expressions. Alloy ships with 50+ built-in 
 ```
 
 Filters chain left to right. Each filter receives the output of the previous expression as its input.
-
-## Filter syntax by engine
-
-All built-in filters are registered in both engines, but the calling syntax differs. Liquid uses pipe-and-colon syntax; Go templates call filters as functions with the input as the first argument.
-
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="syntax-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="syntax-go">Go templates</wa-tab>
-
-<wa-tab-panel name="syntax-liquid" active>
-<alloy-code language="liquid">{{ page.title | upcase }}
-{{ page.summary | truncate: 100 }}
-{{ page.date | date: "%B %d, %Y" }}
-{{ collections.blog | sort: "title" | first }}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="syntax-go">
-<alloy-code language="html">{{ upcase .page.title }}
-{{ truncate .page.summary 100 }}
-{{ date .page.date "%B %d, %Y" }}
-{{ first (sort .collections.blog "title") }}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
-
-Go's pipe syntax works for filters that take no extra arguments (`{{ .page.title | upcase }}`), because Go pipelines pass the piped value as the *last* argument. For filters that take arguments, use function-call syntax so the input stays in the first position.
-
-The examples in the reference tables below use Liquid syntax.
 
 ## String filters
 
@@ -55,7 +27,7 @@ The examples in the reference tables below use Liquid syntax.
 | `truncate` | Truncate to character count | `{{ page.summary \| truncate: 100 }}` |
 | `truncatewords` | Truncate to word count | `{{ page.summary \| truncatewords: 20 }}` |
 | `strip_html` | Remove all HTML tags | `{{ page.summary \| strip_html }}` |
-| `escape` | HTML-escape special characters. Liquid only: Go templates already escape, so in Go it escapes a second time. See [Output safety](/templates/output-safety/) | `{{ page.title \| escape }}` |
+| `escape` | HTML-escape special characters. See [Output escaping](/templates/#output-escaping) | `{{ page.title \| escape }}` |
 | `replace` | Replace all occurrences | `{{ page.title \| replace: " ", "-" }}` |
 | `replace_first` | Replace first occurrence | `{{ "aabbcc" \| replace_first: "a", "x" }}` --> `xabbcc` |
 | `split` | Split string into array | `{{ "a,b,c" \| split: "," }}` |
@@ -146,45 +118,22 @@ The `where` filter selects items from an array where a field matches a value:
 
 ### limit
 
-The `limit` filter returns the first N items from an array. It provides Go template parity with Liquid's `{% for ... limit: N %}` loop clause:
+The `limit` filter returns the first N items from an array. It's the filter form of Liquid's `{% for ... limit: N %}` loop clause:
 
 {% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="limit-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="limit-go">Go templates</wa-tab>
-
-<wa-tab-panel name="limit-liquid" active>
-<alloy-code language="liquid">&lt;h2&gt;Recent posts&lt;/h2&gt;
+```liquid
+<h2>Recent posts</h2>
 {% assign recent = collections.blog | limit: 5 %}
 {% for post in recent %}
-  &lt;a href="{{ post.url }}"&gt;{{ post.title }}&lt;/a&gt;
-{% endfor %}</alloy-code>
+  <a href="{{ post.url }}">{{ post.title }}</a>
+{% endfor %}
+```
 
 Liquid's `{% for ... limit: 5 %}` clause still works -- the `limit` filter is an alternative that's useful in `assign` chains or when composing filters:
 
-<alloy-code language="liquid">{% assign top3 = collections.blog | sort: "date" | reverse | limit: 3 %}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="limit-go">
-<alloy-code language="html">&lt;h2&gt;Recent posts&lt;/h2&gt;
-{{ range limit .collections.blog 5 }}
-  &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
-{{ end }}</alloy-code>
-
-Go templates also have a built-in `slice` function (from Go's standard library, not an Alloy filter) that supports both start and end indices:
-
-<alloy-code language="html">&lt;!-- slice: native Go built-in, equivalent to limit --&gt;
-{{ range slice .collections.blog 0 5 }}
-  &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
-{{ end }}
-
-&lt;!-- slice with offset: items 6-10 --&gt;
-{{ range slice .collections.blog 5 10 }}
-  &lt;a href="{{ .url }}"&gt;{{ .title }}&lt;/a&gt;
-{{ end }}</alloy-code>
-
-`slice` is a Go template built-in (not an Alloy filter) and is not available in Liquid. Use `limit` for cross-engine compatibility.
-</wa-tab-panel>
-</wa-tab-group>
+```liquid
+{% assign top3 = collections.blog | sort: "date" | reverse | limit: 3 %}
+```
 {% endraw %}
 
 `limit` clamps to array bounds -- `limit: 100` on a 3-item array returns all 3 items. A negative or zero argument returns an empty array. Calling `limit` with no argument returns the array unchanged.
@@ -303,61 +252,6 @@ This is useful for rendering Markdown in front matter fields or data file values
 {% endfor %}
 ```
 
-### Output safety: safeHTML, safeCSS, safeJS, safeURL, safeHTMLAttr
-
-Go templates escape the values you print (apart from your pages' rendered Markdown and summaries — see [Output safety](/templates/output-safety/#what-go-prints-as-html-without-a-filter)), and how depends on where it lands — in the page body, inside `<style>`, inside `<script>`, in a link, or as an attribute. These five filters tell Go a value is **trusted** for one of those places, so it is printed as written. Use the one that matches where the value goes:
-
-| Filter | Use it for | Without it, Go… |
-|---|---|---|
-| `safeHTML` | HTML in the page body | escapes it: `<b>` prints as `&lt;b&gt;` |
-| `safeCSS` | CSS inside `<style>` or `style="…"` | replaces anything it can't prove harmless, like `url(…)`, with `ZgotmplZ` |
-| `safeJS` | JavaScript inside `<script>` | prints it as a quoted string |
-| `safeURL` | a link in `href`, `src` and similar | replaces anything that isn't `http`, `https` or `mailto` with `#ZgotmplZ` |
-| `safeHTMLAttr` | a whole attribute, like `data-sale="true"` | replaces it with `ZgotmplZ` |
-
-With this data file:
-
-```yaml
-# data/promo.yaml
-banner: "<b>Sale today</b>"
-style: "color: red; background: url(sale.png)"
-tracking: "{ id: 42 }"
-link: "tel:+15551234567"
-attr: 'data-sale="true"'
-```
-
-{% raw %}
-```html
-{{ safeHTML .site.data.promo.banner }}
-<style>.promo { {{ safeCSS .site.data.promo.style }} }</style>
-<script>const tracking = {{ safeJS .site.data.promo.tracking }};</script>
-<a href="{{ safeURL .site.data.promo.link }}">Call us</a>
-<div {{ safeHTMLAttr .site.data.promo.attr }}>…</div>
-```
-{% endraw %}
-
-renders as:
-
-```html
-<b>Sale today</b>
-<style>.promo { color: red; background: url(sale.png) }</style>
-<script>const tracking = { id: 42 };</script>
-<a href="tel:&#43;15551234567">Call us</a>
-<div data-sale="true">…</div>
-```
-
-Go may still encode characters to keep a value well-formed where it lands — the `+` above becomes `&#43;`, which the browser reads back as `+`. The meaning is kept; the exact bytes are not promised.
-
-Each filter works only for its own place. `safeHTML` in an `href` is still checked as a link, so a `tel:` link there still prints `#ZgotmplZ` — use `safeURL`.
-
-**Put the `safe*` filter last.** A filter that changes the value hands back ordinary text, which Go escapes again: {% raw %}`{{ safeHTML .v | upcase }}`{% endraw %} prints `&lt;B&gt;…`, while {% raw %}`{{ upcase .v | safeHTML }}`{% endraw %} prints `<B>…`. A filter that returns the value unchanged, like `default` when the value is present, keeps it trusted.
-
-**In Liquid these filters do nothing.** Liquid doesn't escape in the first place, so they return the value unchanged. They're registered so a template that uses them works in either engine.
-
-**Only use them on content you wrote.** They tell Go to skip its safety checks; Alloy doesn't verify the value. On data you don't control — a third-party feed, user submissions — `safeJS` and `safeURL` let script in.
-
-See [Output safety](/templates/output-safety/) for how escaping differs between the two engines.
-
 ## Regex filters
 
 {% raw %}
@@ -416,7 +310,7 @@ Useful for Subresource Integrity attributes: `integrity="sha256-{{ 'js/app.js' |
 
 ## Building feeds with filters
 
-In Liquid, RSS and Atom feed templates combine `escape` (XML entities are a subset of HTML escaping), the `date` filter with an RFC 822 format string, and `absolute_url` (Go templates escape values themselves, so a Go feed leaves out `escape`):
+RSS and Atom feed templates combine `escape` (XML entities are a subset of HTML escaping), the `date` filter with an RFC 822 format string, and `absolute_url`:
 
 ```liquid
 <!-- layouts/feed.xml.liquid -->
@@ -431,13 +325,11 @@ In Liquid, RSS and Atom feed templates combine `escape` (XML entities are a subs
 
 See [Output Formats](/templates/output-formats/) for the full feed setup.
 
-## Liquid-only standard filters
+## Standard Liquid filters
 
-The Liquid engine is built on a full Liquid implementation, so the standard Shopify Liquid filters are also available even though they are not part of Alloy's built-in set:
+Alloy is built on a full Liquid implementation, so the standard Shopify Liquid filters are also available even though they are not part of Alloy's built-in set:
 
 `slice`, `sort_natural`, `at_least`, `at_most`, `remove`, `remove_first`, `remove_last`, `replace_last`, `lstrip`, `rstrip`, `strip_newlines`, `escape_once`, `reject`, `has`, `find`, `find_index`, `sum`, `base64_encode`, `base64_decode`, `base64_url_safe_encode`, `base64_url_safe_decode`
-
-These are not registered in the Go template engine -- templates that use them are not portable across engines.
 
 ## Custom filters via plugins
 
@@ -482,4 +374,4 @@ If two plugins register the same filter name, the last one loaded wins. Alloy lo
         overwrites built-in filter "slugify"
 ```
 
-Load order: built-in Go filters first, then Tier 2 plugins (`.js` and `.wasm` alphabetically), then Tier 3 Node plugins.
+Load order: built-in filters first, then Tier 2 plugins (`.js` and `.wasm` alphabetically), then Tier 3 Node plugins.

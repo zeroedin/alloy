@@ -28,8 +28,6 @@ export default function (alloy) {
 }
 ```
 
-**Go templates are unaffected** — they still sort map keys alphabetically, on every build, whatever the format. Ordering is visible in Liquid and to plugins. If order matters in a Go template, model the data as a list; a list iterates in file order in both engines.
-
 Two things deliberately stay as they are. The `_data.yaml` directory cascade still sorts, because it merges each file into the one above it. CSV keeps its row order and has no column order to preserve.
 
 Everything else about loading is unchanged: dates still load as dates, numbers as numbers, duplicate keys and merge keys (`<<: *anchor`) behave exactly as before.

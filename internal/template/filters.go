@@ -750,26 +750,21 @@ func Default(input interface{}, args ...interface{}) interface{} {
 		}
 		return nil
 	}
-	// The input itself, not a copy: a trusted Go-template value such as
-	// template.HTML stays trusted through default (issue #1266).
 	return input
 }
 
 // isEmptyString reports whether v is a string-kinded value with no text.
-// It compares the text rather than the interface, because Go's trusted
-// template types (template.HTML and the rest) are string-kinded but are
-// never == "" — an empty trusted value would otherwise never fall back
-// (issue #1266).
+// It compares the text rather than the interface, so a named string type
+// with no text falls back like "" does (issue #1266).
 func isEmptyString(v interface{}) bool {
 	rv := reflect.ValueOf(v)
 	return rv.Kind() == reflect.String && rv.Len() == 0
 }
 
 // plainValue returns the text of a string-kinded value and anything else
-// unchanged, for filters that compare or key by value. A trusted value
-// (content.TrustedHTML in Liquid, template.HTML in Go templates) must still
-// equal the plain string it holds, so where: "summary", "<b>x</b>" matches
-// (issue #1267).
+// unchanged, for filters that compare or key by value. A named string type
+// must still equal the plain string it holds, so where: "summary",
+// "<b>x</b>" matches (issue #1267).
 func plainValue(v interface{}) interface{} {
 	if v == nil {
 		return nil
@@ -778,35 +773,6 @@ func plainValue(v interface{}) interface{} {
 		return rv.String()
 	}
 	return v
-}
-
-// --- Output safety filters ---
-
-// The safe* filters mark trusted content so Go's html/template does not
-// escape it, one filter per escaping context (issue #1266). These shared
-// versions return a plain string on purpose: Liquid calls them too, and
-// Liquid's own filters treat html/template's named types as non-strings
-// ({{ v | safeHTML | size }} would become 0). The Go engine wraps them in
-// the matching html/template type — see goEngine.AddFilter.
-
-func SafeHTML(input interface{}, args ...interface{}) interface{} {
-	return toString(input)
-}
-
-func SafeCSS(input interface{}, args ...interface{}) interface{} {
-	return toString(input)
-}
-
-func SafeJS(input interface{}, args ...interface{}) interface{} {
-	return toString(input)
-}
-
-func SafeURL(input interface{}, args ...interface{}) interface{} {
-	return toString(input)
-}
-
-func SafeHTMLAttr(input interface{}, args ...interface{}) interface{} {
-	return toString(input)
 }
 
 // --- Asset fingerprinting filters ---
@@ -911,11 +877,6 @@ var builtinFilters = map[string]FilterFunc{
 	"replaceRE":     replaceREFilter,
 	"json":          JSONFilter,
 	"default":       Default,
-	"safeHTML":      SafeHTML,
-	"safeCSS":       SafeCSS,
-	"safeJS":        SafeJS,
-	"safeURL":       SafeURL,
-	"safeHTMLAttr":  SafeHTMLAttr,
 	"cachebust":     CacheBust,
 	"get_hash":      GetHash,
 }
@@ -938,8 +899,8 @@ func IsBuiltinFilter(name string) bool {
 // --- Helper functions ---
 
 func compareValues(a, b interface{}) bool {
-	// Compare trusted values by their text, so "9" sorts before "10" whether
-	// or not it is a page's summary (issue #1267).
+	// Compare string-kinded values by their text, so "9" sorts before "10"
+	// (issue #1267).
 	a, b = plainValue(a), plainValue(b)
 	if a == nil && b == nil {
 		return false

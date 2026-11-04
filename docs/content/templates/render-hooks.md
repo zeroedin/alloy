@@ -49,14 +49,9 @@ Each render hook template receives a `markup` object with properties specific to
 
 The `markup` object is the only context available inside a render hook -- `page.*` and `site.*` are not passed to hook templates. Hooks are pure element transformers.
 
-## Engine selection
+## Hook file extension
 
-Render hook templates follow the configured template engine:
-
-| Engine | Config value | Hook file extension | Syntax |
-|---|---|---|---|
-| Liquid | `"liquid"` (default) | `.liquid` | `{{ markup.language }}` |
-| Go templates | `"gotemplate"` or `"go"` | `.html` | `{{ .markup.language }}` |
+Render hooks are `.liquid` files only. Unlike layouts, they have no bare-extension fallback: a `layouts/_markup/render-link.html` is not a hook, even when there is no `render-link.liquid`.
 
 ## Language-specific code blocks
 
@@ -74,21 +69,10 @@ Lookup order:
 
 Output a web component instead of the default `<pre><code>`:
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="hook-codeblock-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="hook-codeblock-go">Go templates</wa-tab>
-
-<wa-tab-panel name="hook-codeblock-liquid" active>
-<alloy-code language="liquid">&lt;!-- layouts/_markup/render-codeblock.liquid --&gt;
-&lt;alloy-code language="{{ markup.language }}"&gt;{{ markup.inner }}&lt;/alloy-code&gt;</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="hook-codeblock-go">
-<alloy-code language="html">&lt;!-- layouts/_markup/render-codeblock.html --&gt;
-&lt;alloy-code language="{{ .markup.language }}"&gt;{{ .markup.inner }}&lt;/alloy-code&gt;</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+```liquid
+<!-- layouts/_markup/render-codeblock.liquid -->
+<alloy-code language="{{ markup.language }}">{{ markup.inner }}</alloy-code>
+```
 
 Pair this with a build plugin that applies syntax highlighting to `<alloy-code>` elements during `onPageRendered`, and the component handles copy-to-clipboard and filename display on the client.
 
@@ -96,49 +80,23 @@ Pair this with a build plugin that applies syntax highlighting to `<alloy-code>`
 
 Add `target="_blank"` and an icon to external links:
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="hook-link-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="hook-link-go">Go templates</wa-tab>
-
-<wa-tab-panel name="hook-link-liquid" active>
-<alloy-code language="liquid">&lt;!-- layouts/_markup/render-link.liquid --&gt;
+```liquid
+<!-- layouts/_markup/render-link.liquid -->
 {% if markup.is_external %}
-  &lt;a href="{{ markup.destination }}" target="_blank" rel="noopener"&gt;{{ markup.text }} ↗&lt;/a&gt;
+  <a href="{{ markup.destination }}" target="_blank" rel="noopener">{{ markup.text }} ↗</a>
 {% else %}
-  &lt;a href="{{ markup.destination }}"&gt;{{ markup.text }}&lt;/a&gt;
-{% endif %}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="hook-link-go">
-<alloy-code language="html">&lt;!-- layouts/_markup/render-link.html --&gt;
-{{ if .markup.is_external }}
-  &lt;a href="{{ .markup.destination }}" target="_blank" rel="noopener"&gt;{{ .markup.text }} ↗&lt;/a&gt;
-{{ else }}
-  &lt;a href="{{ .markup.destination }}"&gt;{{ .markup.text }}&lt;/a&gt;
-{{ end }}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+  <a href="{{ markup.destination }}">{{ markup.text }}</a>
+{% endif %}
+```
 
 ### Mermaid diagrams
 
 Render mermaid code blocks as diagram containers instead of code:
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="hook-mermaid-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="hook-mermaid-go">Go templates</wa-tab>
-
-<wa-tab-panel name="hook-mermaid-liquid" active>
-<alloy-code language="liquid">&lt;!-- layouts/_markup/render-codeblock-mermaid.liquid --&gt;
-&lt;div class="mermaid"&gt;{{ markup.inner }}&lt;/div&gt;</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="hook-mermaid-go">
-<alloy-code language="html">&lt;!-- layouts/_markup/render-codeblock-mermaid.html --&gt;
-&lt;div class="mermaid"&gt;{{ .markup.inner }}&lt;/div&gt;</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+```liquid
+<!-- layouts/_markup/render-codeblock-mermaid.liquid -->
+<div class="mermaid">{{ markup.inner }}</div>
+```
 
 Standard code blocks still use the generic `render-codeblock.liquid` (or default rendering). Only blocks tagged with ` ```mermaid ` are affected.
 
@@ -146,27 +104,13 @@ Standard code blocks still use the generic `render-codeblock.liquid` (or default
 
 Add anchor links to headings. `markup.inner` contains the rendered HTML (so `## Hello **world**` gives `Hello <strong>world</strong>`), while `markup.text` contains the plain text (`Hello world`):
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="hook-heading-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="hook-heading-go">Go templates</wa-tab>
-
-<wa-tab-panel name="hook-heading-liquid" active>
-<alloy-code language="liquid">&lt;!-- layouts/_markup/render-heading.liquid --&gt;
-&lt;h{{ markup.level }} id="{{ markup.id }}"&gt;
-  &lt;a href="#{{ markup.id }}" class="anchor"&gt;#&lt;/a&gt;
+```liquid
+<!-- layouts/_markup/render-heading.liquid -->
+<h{{ markup.level }} id="{{ markup.id }}">
+  <a href="#{{ markup.id }}" class="anchor">#</a>
   {{ markup.inner }}
-&lt;/h{{ markup.level }}&gt;</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="hook-heading-go">
-<alloy-code language="html">&lt;!-- layouts/_markup/render-heading.html --&gt;
-&lt;h{{ .markup.level }} id="{{ .markup.id }}"&gt;
-  &lt;a href="#{{ .markup.id }}" class="anchor"&gt;#&lt;/a&gt;
-  {{ .markup.inner }}
-&lt;/h{{ .markup.level }}&gt;</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+</h{{ markup.level }}>
+```
 
 The `markup.id` is auto-generated from the heading text using Alloy's `slugify` function (e.g., "My Section" becomes `my-section`). A `{#custom-id}` attribute overrides the auto-generated slug.
 
@@ -174,25 +118,12 @@ The `markup.id` is auto-generated from the heading text using Alloy's `slugify` 
 
 Use `markup.attributes` to pass classes and IDs from Markdown to your hook output:
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="hook-attrs-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="hook-attrs-go">Go templates</wa-tab>
-
-<wa-tab-panel name="hook-attrs-liquid" active>
-<alloy-code language="liquid">&lt;!-- layouts/_markup/render-codeblock.liquid --&gt;
-&lt;pre class="{{ markup.attributes.class }}"{% if markup.attributes.id %} id="{{ markup.attributes.id }}"{% endif %}&gt;
-  &lt;code data-lang="{{ markup.language }}"&gt;{{ markup.inner }}&lt;/code&gt;
-&lt;/pre&gt;</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="hook-attrs-go">
-<alloy-code language="html">&lt;!-- layouts/_markup/render-codeblock.html --&gt;
-&lt;pre class="{{ .markup.attributes.class }}"{{ if .markup.attributes.id }} id="{{ .markup.attributes.id }}"{{ end }}&gt;
-  &lt;code data-lang="{{ .markup.language }}"&gt;{{ .markup.inner }}&lt;/code&gt;
-&lt;/pre&gt;</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+```liquid
+<!-- layouts/_markup/render-codeblock.liquid -->
+<pre class="{{ markup.attributes.class }}"{% if markup.attributes.id %} id="{{ markup.attributes.id }}"{% endif %}>
+  <code data-lang="{{ markup.language }}">{{ markup.inner }}</code>
+</pre>
+```
 
 ## Block-level attributes
 
@@ -229,7 +160,7 @@ The `markup.inner` content in code block hooks is already escaped by Goldmark �
 
 ## Related
 
-- [Templates Overview](/templates/) — template engines, context, rendering pipeline
+- [Templates Overview](/templates/) — Liquid templates, context, rendering pipeline
 - [Layouts](/templates/layouts/) — layout chaining and resolution
 - [Shortcodes](/templates/shortcodes/) — reusable content snippets
 - [Filters](/templates/filters/) — built-in template filters

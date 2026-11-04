@@ -44,31 +44,6 @@ var _ = Describe("Template permalinks (issue #830)", func() {
 					"through the template engine")
 		})
 
-		It("renders template permalink through Go template engine", func() {
-			cfg := &config.Config{
-				Title:     "GoTemplate Permalink Test",
-				BaseURL:   "https://example.com",
-				Build:     config.BuildConfig{Output: "_site"},
-				Templates: config.TemplatesConfig{Engine: "gotemplate"},
-			}
-			contentMap := map[string]string{
-				"content/blog/hello.md": "---\ntitle: Hello World\nslug: hello-world\nlayout: default\npermalink: \"/posts/{{ .page.slug }}/\"\n---\n# Hello",
-				"layouts/default.html":  "<html><body><span class=\"url\">{{ .page.url }}</span>{{ .content }}</body></html>",
-			}
-			result, err := pipeline.BuildWithContent(cfg, contentMap)
-			Expect(err).NotTo(HaveOccurred(),
-				"build must succeed when a regular page uses a Go template permalink — "+
-					"the configured engine must be used for permalink rendering, not Liquid")
-			Expect(result).NotTo(BeNil())
-
-			html := result.RenderedContent["blog/hello.md"]
-			Expect(html).NotTo(BeEmpty(),
-				"page with Go template permalink must render")
-			Expect(html).To(ContainSubstring("<span class=\"url\">/posts/hello-world/</span>"),
-				"Go template permalink must resolve {{ .page.slug }} to the actual slug value — "+
-					"if this fails, permalink rendering fell back to Liquid and failed to parse Go syntax")
-		})
-
 		It("template permalink accesses custom front matter fields", func() {
 			cfg := &config.Config{
 				Title:   "Custom Field Permalink Test",
@@ -183,43 +158,10 @@ var _ = Describe("Template permalinks (issue #830)", func() {
 		})
 	})
 
-	// ── Engine-aware pagination template permalinks ────────────────
+	// ── Pagination template permalinks ────────────────────────────────
 
-	Describe("Engine-aware pagination template permalinks", func() {
-		It("pagination template permalink renders through Go template engine", func() {
-			cfg := &config.Config{
-				Title:     "GoTemplate Pagination Permalink Test",
-				BaseURL:   "https://example.com",
-				Build:     config.BuildConfig{Output: "_site"},
-				Templates: config.TemplatesConfig{Engine: "gotemplate"},
-			}
-			contentMap := map[string]string{
-				"data/team.json":       `[{"name":"Alice","slug":"alice"},{"name":"Bob","slug":"bob"}]`,
-				"content/team.md":      "---\ntitle: Team\nlayout: default\npagination:\n  data: site.data.team\n  perPage: 1\n  as: member\npermalink: \"/team/{{ .member.slug }}/\"\n---\n<p>{{ .member.name }}</p>",
-				"layouts/default.html": "<html><body>{{ .content }}</body></html>",
-			}
-			result, err := pipeline.BuildWithContent(cfg, contentMap)
-			Expect(err).NotTo(HaveOccurred(),
-				"build must succeed — pagination template permalink must render through "+
-					"the configured Go template engine, not fall back to Liquid")
-			Expect(result).NotTo(BeNil())
-
-			// Pagination virtual pages are keyed by URL in RenderedContent
-			aliceHTML := result.RenderedContent["/team/alice/"]
-			Expect(aliceHTML).NotTo(BeEmpty(),
-				"virtual page for Alice must render at /team/alice/ — "+
-					"if empty, Go template engine was not used for pagination permalink rendering")
-			Expect(aliceHTML).To(ContainSubstring("Alice"),
-				"Alice's page must contain her name in the rendered body")
-
-			bobHTML := result.RenderedContent["/team/bob/"]
-			Expect(bobHTML).NotTo(BeEmpty(),
-				"virtual page for Bob must render at /team/bob/")
-			Expect(bobHTML).To(ContainSubstring("Bob"),
-				"Bob's page must contain his name in the rendered body")
-		})
-
-		It("pagination template permalink continues to work with Liquid (regression)", func() {
+	Describe("Pagination template permalinks", func() {
+		It("pagination template permalink renders through Liquid (regression)", func() {
 			cfg := &config.Config{
 				Title:   "Liquid Pagination Permalink Regression Test",
 				BaseURL: "https://example.com",

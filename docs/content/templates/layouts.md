@@ -7,47 +7,27 @@ description: "How layouts wrap page content in shared HTML structure using the {
 
 Layouts wrap your page content in shared HTML structure. Every content page is rendered into a layout, which injects the page body via `{{ content }}`.
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="layout-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="layout-go">Go templates</wa-tab>
-
-<wa-tab-panel name="layout-liquid" active>
-<alloy-code language="liquid">&lt;!-- layouts/default.liquid --&gt;
-&lt;!DOCTYPE html&gt;
-&lt;html lang="{{ site.language }}"&gt;
-&lt;head&gt;
-  &lt;meta charset="utf-8"&gt;
-  &lt;title&gt;{{ page.title }} - {{ site.title }}&lt;/title&gt;
-&lt;/head&gt;
-&lt;body&gt;
+```liquid
+<!-- layouts/default.liquid -->
+<!DOCTYPE html>
+<html lang="{{ site.language }}">
+<head>
+  <meta charset="utf-8">
+  <title>{{ page.title }} - {{ site.title }}</title>
+</head>
+<body>
   {% include "partials/header" %}
-  &lt;main&gt;{{ content }}&lt;/main&gt;
+  <main>{{ content }}</main>
   {% include "partials/footer" %}
-&lt;/body&gt;
-&lt;/html&gt;</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="layout-go">
-<alloy-code language="html">&lt;!-- layouts/default.html --&gt;
-&lt;!DOCTYPE html&gt;
-&lt;html lang="{{ .site.language }}"&gt;
-&lt;head&gt;
-  &lt;meta charset="utf-8"&gt;
-  &lt;title&gt;{{ .page.title }} - {{ .site.title }}&lt;/title&gt;
-&lt;/head&gt;
-&lt;body&gt;
-  &lt;main&gt;{{ .content }}&lt;/main&gt;
-&lt;/body&gt;
-&lt;/html&gt;</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+</body>
+</html>
+```
 
 The `{{ content }}` variable holds the fully rendered body of the current page. For Markdown files, this is already converted to HTML before the layout is applied.
 
 ## Layout resolution order
 
-Alloy resolves layouts through a predictable lookup chain. The configured engine determines the extension checked at each step: the Liquid engine tries `.liquid` first, then falls back to the bare extension (e.g., `.html`); the Go template engine checks `.html` only.
+Alloy resolves layouts through a predictable lookup chain. At each step it tries `.liquid` first, then falls back to the bare extension (e.g., `.html`). Both are read as Liquid.
 
 ### Blog-like sections
 
@@ -108,7 +88,7 @@ All pages in `content/docs/` and subdirectories inherit this layout unless they 
 
 ### Extension-bearing layout names
 
-A layout name that includes a recognized extension (`.liquid`, `.html`, `.xml`, `.json`, `.txt`) is used as a literal filename -- no engine extension is appended:
+A layout name that includes a recognized extension (`.liquid`, `.html`, `.xml`, `.json`, `.txt`) is used as a literal filename -- no `.liquid` extension is appended:
 
 ```yaml
 ---
@@ -116,7 +96,7 @@ layout: "base.html"   # resolves to layouts/base.html exactly
 ---
 ```
 
-Bare names (without an extension) get the engine-specific lookup: `base` → `layouts/base.liquid` → `layouts/base.html` for the Liquid engine.
+Bare names (without an extension) get the usual lookup: `base` → `layouts/base.liquid` → `layouts/base.html`.
 
 Extension-bearing layout names cannot be used with [output formats](/templates/output-formats/) -- `layout: "article.liquid"` with `outputs: ["html", "json"]` produces a build error with a fix-it message suggesting `layout: "article"` instead.
 
@@ -173,128 +153,43 @@ Alloy scans all layout files at build start and fails the build if a cycle exist
 
 All front matter fields are available inside layouts via the `page` object:
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="pagedata-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="pagedata-go">Go templates</wa-tab>
-
-<wa-tab-panel name="pagedata-liquid" active>
-<alloy-code language="liquid">&lt;article class="post"&gt;
-  &lt;h1&gt;{{ page.title }}&lt;/h1&gt;
-  &lt;time datetime="{{ page.date | date: '%Y-%m-%d' }}"&gt;
+```liquid
+<article class="post">
+  <h1>{{ page.title }}</h1>
+  <time datetime="{{ page.date | date: '%Y-%m-%d' }}">
     {{ page.date | date: "%B %d, %Y" }}
-  &lt;/time&gt;
+  </time>
   {% if page.summary %}
-    &lt;p class="summary"&gt;{{ page.summary }}&lt;/p&gt;
+    <p class="summary">{{ page.summary }}</p>
   {% endif %}
   {{ content }}
   {% if page.tags %}
-    &lt;ul class="tags"&gt;
+    <ul class="tags">
       {% for tag in page.tags %}
-        &lt;li&gt;&lt;a href="/tags/{{ tag | slugify }}/"&gt;{{ tag }}&lt;/a&gt;&lt;/li&gt;
+        <li><a href="/tags/{{ tag | slugify }}/">{{ tag }}</a></li>
       {% endfor %}
-    &lt;/ul&gt;
+    </ul>
   {% endif %}
-&lt;/article&gt;</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="pagedata-go">
-<alloy-code language="html">&lt;article class="post"&gt;
-  &lt;h1&gt;{{ .page.title }}&lt;/h1&gt;
-  &lt;time datetime="{{ date .page.date "%Y-%m-%d" }}"&gt;
-    {{ date .page.date "%B %d, %Y" }}
-  &lt;/time&gt;
-  {{ if .page.summary }}
-    &lt;p class="summary"&gt;{{ .page.summary }}&lt;/p&gt;
-  {{ end }}
-  {{ .content }}
-  {{ if .page.tags }}
-    &lt;ul class="tags"&gt;
-      {{ range .page.tags }}
-        &lt;li&gt;&lt;a href="/tags/{{ slugify . }}/"&gt;{{ . }}&lt;/a&gt;&lt;/li&gt;
-      {{ end }}
-    &lt;/ul&gt;
-  {{ end }}
-&lt;/article&gt;</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+</article>
+```
 
 Custom front matter fields work the same way. If your content defines `author: "Alice"` in front matter, the layout accesses it as `{{ page.author }}`.
 
 ## Partials and includes
 
-Partials are reusable template fragments stored in `layouts/partials/` (by convention -- any path under `layouts/` works). Both engines resolve partials from the layouts directory.
+Partials are reusable template fragments stored in `layouts/partials/` (by convention -- any path under `layouts/` works). Partials resolve from the layouts directory.
 
 {% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="partials-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="partials-go">Go templates</wa-tab>
-
-<wa-tab-panel name="partials-liquid" active>
-<alloy-code language="liquid">{% include "partials/header" %}
+```liquid
+{% include "partials/header" %}
 {% include "partials/footer" %}
-{% render "partials/social-links" %}</alloy-code>
+{% render "partials/social-links" %}
+```
 
 Both tags resolve paths relative to the `layouts/` directory, trying `name.liquid`, then `name.html`, then the bare name. The difference: `{% include %}` shares the parent template's variable scope, while `{% render %}` creates an isolated scope (variables from the parent are not accessible unless explicitly passed).
-</wa-tab-panel>
-<wa-tab-panel name="partials-go">
-<alloy-code language="html">{{ include "partials/header" }}
-{{ include "partials/footer" }}
-{{ include "partials/social-links" }}</alloy-code>
-
-The `include` function resolves paths relative to the `layouts/` directory, trying `name.html`. Context is optional -- with no argument, the include inherits the current template context (like Liquid's `{% include %}`). Pass an explicit context to narrow scope:
-
-<alloy-code language="html">{{ include "partials/card" (dict "item" . "compact" true) }}</alloy-code>
-
-Unlike Go's built-in `{{ template }}` action, `include` is a function -- its output can be captured in variables and used in pipelines:
-
-<alloy-code language="html">{{ $nav := include "partials/nav" }}
-{{ if $nav }}&lt;div class="has-nav"&gt;{{ $nav }}&lt;/div&gt;{{ end }}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
 {% endraw %}
 
-Plugin-registered filters work inside partials in both engines -- the same filter dispatch mechanism applies to all template files. Partials can include other partials (nesting is capped at 100 levels).
-
-### Go template engine
-
-With the Go template engine (`engine: "gotemplate"` or `"go"`), layouts are `.html` files using Go syntax. The same context is available with a leading dot: `{{ .page.title }}`, `{{ .site.title }}`, `{{ .content }}`:
-
-```html
-<!-- layouts/default.html -->
-<!DOCTYPE html>
-<html>
-<head><title>{{ .page.title }} - {{ .site.title }}</title></head>
-<body>
-  {{ .content }}
-</body>
-</html>
-```
-
-Layout chaining works identically in both engines -- a `layout:` directive in the layout's front matter names the parent (see [Layout chaining](#layout-chaining)). Cross-file includes use the `{{ include }}` function (see [Partials and includes](#partials-and-includes)). `{% render %}` and `{% inline %}` are Liquid-only tags.
-
-Data from any file format is reachable with ordinary dot notation and `range`, at any depth and through arrays:
-
-```html
-{{ .site.data.config.title }}
-{{ .site.data.tokens.color.brand }}
-{{ range $key, $value := .site.data.nav }}
-  <a href="{{ $value.url }}">{{ $key }}</a>
-{{ end }}
-```
-
-Map keys come out **sorted alphabetically** in Go templates, on every build. If you need a particular order, model the data as a list — it iterates in file order in both engines. See [Key order](/content/data-files/#key-order).
-
-Two helper functions remain for cases dot notation cannot cover:
-
-```html
-{{ oget .site.data.config "title" }}           <!-- same as .site.data.config.title -->
-{{ range orange .site.data.nav }}              <!-- Key/Value pairs, sorted -->
-  <a href="{{ .Value.url }}">{{ .Key }}</a>
-{{ end }}
-```
-
-For a key that is not a valid template identifier — one containing a hyphen, say — use `index`: `{{ index .site.data.tokens "color-brand" }}`
+Plugin-registered filters work inside partials -- the same filter dispatch mechanism applies to all template files. Partials can include other partials (nesting is capped at 100 levels).
 
 ## Content-relative file inlining
 
@@ -313,11 +208,10 @@ This is useful for SVGs that need to respond to CSS custom properties and cannot
 - Paths must start with `./` or `../` -- bare paths like `{% inline "diagram.svg" %}` are rejected
 - The resolved path must stay within the content root directory
 - Only text file types are accepted: `.svg`, `.html`, `.htm`, `.txt`, `.css`, `.js`, `.json`, `.xml`, `.toml`, `.yaml`, `.yml`, `.md`. Binary types like `.png` produce a build error suggesting `<img>` instead
-- `{% inline %}` is a Liquid tag; it is not available in the Go template engine
 
 ### Symlinks in layouts
 
-Symlinks inside the `layouts/` directory are followed. A symlink at `layouts/partials/shared.liquid` pointing to a file outside the project root is valid -- `{% include %}` and `{{ include }}` read the symlink target. The path traversal check applies to the logical path within the layouts tree, not the symlink's physical target.
+Symlinks inside the `layouts/` directory are followed. A symlink at `layouts/partials/shared.liquid` pointing to a file outside the project root is valid -- `{% include %}` and `{% render %}` read the symlink target. The path traversal check applies to the logical path within the layouts tree, not the symlink's physical target.
 
 ## Table of contents
 

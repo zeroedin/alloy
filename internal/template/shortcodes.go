@@ -14,7 +14,7 @@ type BlockShortcodeFunc func(args []string, content string) string
 var inlineShortcodes = map[string]ShortcodeFunc{}
 var blockShortcodes = map[string]BlockShortcodeFunc{}
 
-// RegisterShortcode registers a shortcode that works in both Liquid and Go template engines.
+// RegisterShortcode registers an inline shortcode.
 func RegisterShortcode(name string, fn ShortcodeFunc) error {
 	inlineShortcodes[name] = fn
 	return nil

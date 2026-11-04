@@ -62,19 +62,9 @@ export default function(alloy) {
 
 Use it in a template:
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="nodehello-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="nodehello-go">Go templates</wa-tab>
-
-<wa-tab-panel name="nodehello-liquid" active>
-<alloy-code language="liquid">&lt;img src="/hero.jpg" {{ "hero.jpg" | dimensions }} alt="Hero"&gt;</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="nodehello-go">
-<alloy-code language="html">&lt;img src="/hero.jpg" {{ dimensions "hero.jpg" }} alt="Hero"&gt;</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+```liquid
+<img src="/hero.jpg" {{ "hero.jpg" | dimensions }} alt="Hero">
+```
 
 This is what Node plugins are for, and it needs both halves of the runtime: an npm package to parse the image header, and filesystem access to read the file. Neither is available to a QuickJS plugin, and neither can be done from a template. Drop the `runtime = "node"` marker and this plugin stops working.
 
@@ -97,19 +87,9 @@ export default function(alloy) {
 }
 ```
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="nodefilt-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="nodefilt-go">Go templates</wa-tab>
-
-<wa-tab-panel name="nodefilt-liquid" active>
-<alloy-code language="liquid">{{ page.content | smartQuotes }}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="nodefilt-go">
-<alloy-code language="html">{{ smartQuotes .page.content }}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+```liquid
+{{ page.content | smartQuotes }}
+```
 
 Filter arguments are passed as additional parameters:
 
@@ -119,19 +99,9 @@ alloy.filter("imageUrl", (path, width, format) => {
 });
 ```
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="nodeimg-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="nodeimg-go">Go templates</wa-tab>
-
-<wa-tab-panel name="nodeimg-liquid" active>
-<alloy-code language="liquid">{{ "hero.jpg" | imageUrl: 800, "webp" }}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="nodeimg-go">
-<alloy-code language="html">{{ imageUrl "hero.jpg" 800 "webp" }}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+```liquid
+{{ "hero.jpg" | imageUrl: 800, "webp" }}
+```
 
 ## Registering Shortcodes
 

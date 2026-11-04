@@ -34,14 +34,6 @@ var _ = Describe("Raw block marker stripping with whitespace control (issue #124
 			"the close tag is emitted unchanged")
 	})
 
-	It("keeps a Go template trim dash flush against the delimiter", func() {
-		source := []byte("{{%>- helmet -%}}\nbody\n{{% /helmet %}}\n")
-		out, _, err := content.RenderMarkdown(source, rawMD)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(string(out)).To(ContainSubstring("{{%- helmet -%}}"))
-		Expect(string(out)).NotTo(ContainSubstring("{{% - helmet"))
-	})
-
 	It("still inserts one space when no trim dash is present", func() {
 		source := []byte("{%>helmet %}\nbody\n{% endhelmet %}\n")
 		out, _, err := content.RenderMarkdown(source, rawMD)
