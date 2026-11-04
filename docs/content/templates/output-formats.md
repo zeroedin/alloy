@@ -18,8 +18,8 @@ outputs: ["html", "json"]
 <!-- layouts/post.json.liquid -->
 {
   "title": {{ page.title | json }},
-  "url": "{{ page.url | absolute_url: site.baseURL }}",
-  "date": "{{ page.date | date: '%Y-%m-%dT%H:%M:%S%z' }}",
+  "url": {{ page.url | absolute_url: site.baseURL | json }},
+  "date": {{ page.date | date: '%Y-%m-%dT%H:%M:%S%z' | json }},
   "content": {{ content | json }}
 }
 ```
@@ -102,8 +102,8 @@ outputs: ["html", "json"]
     {% for post in collections.blog %}
     {
       "title": {{ post.title | json }},
-      "url": "{{ post.url | absolute_url: site.baseURL }}",
-      "date": "{{ post.date | date: '%Y-%m-%dT%H:%M:%S%z' }}",
+      "url": {{ post.url | absolute_url: site.baseURL | json }},
+      "date": {{ post.date | date: '%Y-%m-%dT%H:%M:%S%z' | json }},
       "summary": {{ post.summary | json }}
     }{% unless forloop.last %},{% endunless %}
     {% endfor %}
@@ -113,7 +113,7 @@ outputs: ["html", "json"]
 
 Output: `/blog/index.json` with a machine-readable list of posts.
 
-Liquid prints values as written, so the example passes each text value through `json`. It prints the value as a quoted JSON string, escaping quotes, backslashes and newlines, and prints a missing value as `null`. Don't use `escape` here: it's HTML escaping, so it turns `"` into `&#34;` and leaves a newline that breaks the JSON.
+Liquid prints values as written, so the examples pass every value through `json`. It prints the value as a quoted JSON string, escaping quotes, backslashes and newlines, and prints a missing value as `null`. Don't use `escape` here: it's HTML escaping, so it turns `"` into `&#34;` and leaves a newline that breaks the JSON.
 
 ### RSS/Atom feed
 
@@ -208,7 +208,7 @@ permalink: "/search/"
   {% for page in site.pages %}
   {
     "title": {{ page.title | json }},
-    "url": "{{ page.url }}",
+    "url": {{ page.url | json }},
     "content": {{ page.summary | strip_html | json }}
   }{% unless forloop.last %},{% endunless %}
   {% endfor %}
