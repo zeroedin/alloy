@@ -57,7 +57,12 @@ To print a value as text, escape it with the `escape` filter:
 <p>{{ site.data.promo.banner | escape }}</p> <!-- prints the tags as text -->
 ```
 
-Use `escape` on anything you didn't write yourself, such as a third-party feed or user-submitted data, and on values you place inside an HTML attribute.
+Use `escape` on anything you didn't write yourself, such as a third-party feed or user-submitted data. It encodes `<`, `>`, `&` and quotes, which is enough for page text and for a quoted attribute like `title="…"` or `alt="…"`.
+
+`escape` doesn't check what a value means, only how it's written:
+
+- **Links:** `href="{{ link | escape }}"` still prints `javascript:alert(1)` unchanged, and it runs when clicked. Check the scheme (`https:`, `mailto:`, …) of any URL you didn't write before you print it in `href` or `src`.
+- **Script and style:** don't print untrusted values inside `<script>`, `<style>`, or event attributes like `onclick` and `style`. HTML encoding doesn't make them safe there.
 
 ## Template resolution
 
