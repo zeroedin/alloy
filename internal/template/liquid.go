@@ -30,6 +30,19 @@ type deferredTagEntry struct {
 
 // NewLiquidEngine creates a new Liquid template engine with standard tags and filters.
 func NewLiquidEngine() TemplateEngine {
+	return newLiquidEngine()
+}
+
+// NewLiquidEngineWithIncludes creates a Liquid engine whose {% include %} and
+// {% render %} tags resolve against includesDir. The build uses it with the
+// site's layouts directory.
+func NewLiquidEngineWithIncludes(includesDir string) TemplateEngine {
+	e := newLiquidEngine()
+	e.SetIncludesDir(includesDir)
+	return e
+}
+
+func newLiquidEngine() *liquidEngine {
 	env := liquid.NewEnvironment()
 	tags.RegisterStandardTags(env)
 
@@ -463,9 +476,6 @@ func (f *alloyFilterBridge) URL(input interface{}, args ...interface{}) interfac
 // failure) for propagation through the template rendering pipeline via panic.
 // Implements liquid.LiquidError so liquidgo's internal recover preserves
 // the error message instead of replacing it with a generic "internal" string.
-// Go's html/template.Execute catches panics that satisfy the error interface,
-// so this type works for both engines without changing FilterFunc/TagFunc
-// signatures.
 // ---------------------------------------------------------------------------
 
 type PluginCallError struct {

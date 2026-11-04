@@ -15,11 +15,10 @@ var validHookTypes = map[string]bool{
 	"table":      true,
 }
 
-func DiscoverRenderHooks(layoutsDir, engine string) (map[string]string, error) {
-	ext := ".liquid"
-	if engine == "gotemplate" {
-		ext = ".html"
-	}
+// DiscoverRenderHooks loads layouts/_markup/render-<type>.liquid files. Hooks
+// are .liquid only, with no bare-extension fallback (issue #1285).
+func DiscoverRenderHooks(layoutsDir string) (map[string]string, error) {
+	const ext = ".liquid"
 
 	markupDir := filepath.Join(layoutsDir, "_markup")
 	entries, err := os.ReadDir(markupDir)

@@ -248,7 +248,6 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	contentDir := ps.ContentDir
 	layoutsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts)
-	engineName := cfg.Templates.Engine
 
 	// Fetch external data sources and merge into siteData
 	timer.Start("External sources")
@@ -900,7 +899,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			if reporter != nil {
 				pageStart = time.Now()
 			}
-			layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, engineName, permalinkCfg)
+			layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, permalinkCfg)
 			if err != nil {
 				if layoutVal, hasLayout := page.FrontMatter["layout"]; hasLayout && layoutVal != nil {
 					log.Printf("warning: layout %v not found for %s: %v", layoutVal, page.RelPath, err)
@@ -919,11 +918,11 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				continue
 			}
 
-			if err := renderPageThroughLayouts(page, layoutPath, layoutsDir, engineName, rc); err != nil {
+			if err := renderPageThroughLayouts(page, layoutPath, layoutsDir, rc); err != nil {
 				return nil, err
 			}
 
-			if err := renderPageFormats(page, layoutsDir, engineName, rc); err != nil {
+			if err := renderPageFormats(page, layoutsDir, rc); err != nil {
 				return nil, err
 			}
 			layoutPageIdx++
@@ -937,7 +936,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			if multiLang {
 				taxLangCtx = &batch.ctx
 			}
-			taxPages, err := generateTaxonomyPages(batch.taxonomies, layoutsDir, engineName, rc, taxLangCtx)
+			taxPages, err := generateTaxonomyPages(batch.taxonomies, layoutsDir, rc, taxLangCtx)
 			if err != nil {
 				return nil, err
 			}
@@ -1304,9 +1303,10 @@ func buildPermalinkCfg(ps *PipelineState) map[string]string {
 
 // newPermalinkRenderer creates a PermalinkRenderer from the configured template
 // engine. When engine is nil, falls back to Liquid-only RenderTemplate.
-// Applies html.UnescapeString to output because Go's html/template escapes
-// special characters (&, <, >) which corrupts URL paths. Recovers panics
-// from malformed templates to return an actionable error.
+// Applies html.UnescapeString to output. It was added because Go templates
+// escaped &, < and > in URL paths; it stays now that Liquid is the only engine
+// (issue #1285). Recovers panics from malformed templates to return an
+// actionable error.
 func newPermalinkRenderer(engine tmpl.TemplateEngine) permalink.PermalinkRenderer {
 	if engine != nil {
 		return func(source string, ctx map[string]interface{}) (result string, err error) {

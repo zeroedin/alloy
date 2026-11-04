@@ -86,9 +86,6 @@ func InitPipelineState(cfg *config.Config, registry *plugin.Registry, hooks *plu
 	if err := registerPluginExtensions(registry, engine); err != nil {
 		return nil, err
 	}
-	if setter, ok := engine.(interface{ SetIncludesDir(string) }); ok {
-		setter.SetIncludesDir(resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts))
-	}
 
 	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
 	cascadeData, cascadeErr := cascade.LoadDirectoryCascade(contentDir)
@@ -113,13 +110,7 @@ func InitPipelineState(cfg *config.Config, registry *plugin.Registry, hooks *plu
 }
 
 func createEngine(cfg *config.Config) (tmpl.TemplateEngine, error) {
-	var engine tmpl.TemplateEngine
-	if cfg.Templates.Engine == "gotemplate" {
-		engine = tmpl.NewGoEngine()
-	} else {
-		engine = tmpl.NewLiquidEngine()
-	}
-	content.SetTrustMarkers(tmpl.IsGoEngine(engine))
+	engine := tmpl.NewLiquidEngineWithIncludes(resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts))
 	tmpl.InitMarkdownify(content.MarkdownOptions{
 		Unsafe:         cfg.Content.Markdown.Goldmark.UnsafeValue(),
 		Typographer:    cfg.Content.Markdown.Goldmark.Typographer,

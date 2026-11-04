@@ -193,10 +193,6 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 			return nil, psErr
 		}
 	}
-	// A reused PipelineState skips createEngine, so set trust marking from
-	// the engine this build renders with, not whichever build set it last
-	// (#1267).
-	content.SetTrustMarkers(tmpl.IsGoEngine(ps.Engine))
 
 	// Inject site data into plugin runtimes (issue #339).
 	// Skip when PipelineState was provided by the caller — site data was
@@ -515,9 +511,8 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 
 	// Pass 2: layout resolution + rendering (issue #628)
 	layoutsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts)
-	engineName := cfg.Templates.Engine
 	for _, page := range pagesToRender {
-		layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, engineName, permalinkCfg)
+		layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, permalinkCfg)
 		if err != nil {
 			if layoutVal, hasLayout := page.FrontMatter["layout"]; hasLayout && layoutVal != nil {
 				log.Printf("warning: layout %v not found for %s: %v", layoutVal, page.RelPath, err)
@@ -527,10 +522,10 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		if layoutPath == "" {
 			continue
 		}
-		if err := renderPageThroughLayouts(page, layoutPath, layoutsDir, engineName, rc); err != nil {
+		if err := renderPageThroughLayouts(page, layoutPath, layoutsDir, rc); err != nil {
 			return nil, err
 		}
-		if err := renderPageFormats(page, layoutsDir, engineName, rc); err != nil {
+		if err := renderPageFormats(page, layoutsDir, rc); err != nil {
 			return nil, err
 		}
 	}
