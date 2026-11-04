@@ -56,6 +56,28 @@ var _ = Describe("Layout partials in a full build (issue #1297)", func() {
 		Expect(html).NotTo(ContainSubstring("Liquid error"))
 	})
 
+	// When both files exist, the .liquid partial wins (issue #1302). The two
+	// tests above each have only one of them, so they would pass even if the
+	// lookup order were reversed.
+	It("prefers the .liquid partial when a .html one also exists", func() {
+		result, err := pipeline.BuildWithContent(&config.Config{
+			Title:   "Includes",
+			BaseURL: "https://example.com",
+			Build:   config.BuildConfig{Output: "_site"},
+		}, map[string]string{
+			"content/index.md":            "---\ntitle: Home\nlayout: default\n---\nHi",
+			"layouts/default.liquid":      layout,
+			"layouts/partials/nav.liquid": "<nav>LIQUID</nav>",
+			"layouts/partials/nav.html":   "<nav>HTML</nav>",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		html := result.RenderedContent["index.md"]
+		Expect(html).To(ContainSubstring("<nav>LIQUID</nav>|<nav>LIQUID</nav>"),
+			"{% include %} and {% render %} must both use name.liquid before name.html")
+		Expect(html).NotTo(ContainSubstring("<nav>HTML</nav>"),
+			"the .html partial is only a fallback for when there is no .liquid one")
+	})
+
 	// The dev server builds through InitPipelineState + BuildIncremental,
 	// which is a separate entry point from Build.
 	It("renders partials through BuildIncremental with the pipeline state", func() {
