@@ -6,7 +6,8 @@ type FilterFunc func(input interface{}, args ...interface{}) interface{}
 // TagFunc is the signature for custom template tag/shortcode functions.
 type TagFunc func(args []string, content string) string
 
-// TemplateEngine is the abstraction over Liquid and Go template engines.
+// TemplateEngine is the abstraction over the template engine. Liquid is its
+// only implementation (issue #1285).
 type TemplateEngine interface {
 	Parse(name string, content []byte) (Template, error)
 	AddFilter(name string, fn FilterFunc) error

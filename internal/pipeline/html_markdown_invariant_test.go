@@ -183,27 +183,6 @@ var _ = Describe("Markdown-only Goldmark invariant (issue #1249)", func() {
 			Expect(err.Error()).To(ContainSubstring("page.html"))
 		})
 
-		It("leaves the marker intact for Go templates to reject", func() {
-			cfg := &config.Config{
-				Title:     "HTML Invariant Test",
-				BaseURL:   "https://example.com",
-				Build:     config.BuildConfig{Output: "_site"},
-				Templates: config.TemplatesConfig{Engine: "gotemplate"},
-			}
-			contentMap := map[string]string{
-				"content/page.html": "---\ntitle: Page\nlayout: default\n---\n" +
-					"{{%> helmet %}}\n<script>var a = 1;</script>\n{{% /helmet %}}\n",
-				"layouts/default.html":  `<html><body>{{ .content }}</body></html>`,
-				"plugins/shortcodes.js": helmetPlugin,
-			}
-			_, err := pipeline.BuildWithContent(cfg, contentMap)
-			Expect(err).To(HaveOccurred(),
-				"the > marker must survive an .html file on the Go template path too")
-			Expect(err.Error()).To(ContainSubstring("unexpected closing tag"),
-				"the block shortcode preprocessor must reject the unmatched close tag, "+
-					"proving the {{%> open tag was never rewritten to native syntax")
-		})
-
 		It("does not raise the Markdown-stage unterminated error in .html", func() {
 			// An unterminated raw block is a Goldmark-stage build error for .md.
 			// In .html there is no Goldmark stage, so the file must fail (if at

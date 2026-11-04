@@ -121,31 +121,15 @@ pagination:
 
 Every paginated page receives a `pagination` object in its template context:
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="pagctx-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="pagctx-go">Go templates</wa-tab>
-
-<wa-tab-panel name="pagctx-liquid" active>
-<alloy-code language="liquid">{{ pagination.pageNumber }}    -- Current page number (1-based)
+```liquid
+{{ pagination.pageNumber }}    -- Current page number (1-based)
 {{ pagination.totalPages }}    -- Total page count
 {{ pagination.previousPage }}  -- URL of previous page (nil if first)
 {{ pagination.nextPage }}      -- URL of next page (nil if last)
 {{ pagination.first }}         -- URL of first page
 {{ pagination.last }}          -- URL of last page
-{{ pagination.items }}         -- Items on the current page</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="pagctx-go">
-<alloy-code language="html">{{ .pagination.pageNumber }}    -- Current page number (1-based)
-{{ .pagination.totalPages }}    -- Total page count
-{{ .pagination.previousPage }}  -- URL of previous page (nil if first)
-{{ .pagination.nextPage }}      -- URL of next page (nil if last)
-{{ .pagination.first }}         -- URL of first page
-{{ .pagination.last }}          -- URL of last page
-{{ .pagination.items }}         -- Items on the current page (use {{ range }})</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+{{ pagination.items }}         -- Items on the current page
+```
 
 The `as` variable is an alias for `pagination.items`. Both refer to the same data.
 

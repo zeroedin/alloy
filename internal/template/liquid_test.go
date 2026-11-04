@@ -1212,7 +1212,7 @@ var _ = Describe("LiquidEngine", func() {
 			Expect(os.WriteFile(filepath.Join(markupDir, "render-codeblock.liquid"),
 				[]byte(`<pre class="custom">{{ markup.inner }}</pre>`), 0644)).To(Succeed())
 
-			hooks, err := tmpl.DiscoverRenderHooks(filepath.Join(tmpDir, "layouts"), "liquid")
+			hooks, err := tmpl.DiscoverRenderHooks(filepath.Join(tmpDir, "layouts"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(hooks).To(HaveLen(2))
 			Expect(hooks).To(HaveKey("link"),
@@ -1234,7 +1234,7 @@ var _ = Describe("LiquidEngine", func() {
 			Expect(os.WriteFile(filepath.Join(markupDir, "render-codeblock-mermaid.liquid"),
 				[]byte(`<div class="mermaid">{{ markup.inner }}</div>`), 0644)).To(Succeed())
 
-			hooks, err := tmpl.DiscoverRenderHooks(filepath.Join(tmpDir, "layouts"), "liquid")
+			hooks, err := tmpl.DiscoverRenderHooks(filepath.Join(tmpDir, "layouts"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(hooks).To(HaveKey("codeblock-mermaid"),
 				"render-codeblock-mermaid.liquid must be discovered as hook 'codeblock-mermaid'")
@@ -1248,14 +1248,14 @@ var _ = Describe("LiquidEngine", func() {
 			Expect(os.MkdirAll(filepath.Join(tmpDir, "layouts"), 0755)).To(Succeed())
 			// No _markup/ directory
 
-			hooks, err := tmpl.DiscoverRenderHooks(filepath.Join(tmpDir, "layouts"), "liquid")
+			hooks, err := tmpl.DiscoverRenderHooks(filepath.Join(tmpDir, "layouts"))
 			Expect(err).NotTo(HaveOccurred(),
 				"missing _markup/ directory must not be an error")
 			Expect(hooks).To(BeEmpty(),
 				"no hooks when _markup/ doesn't exist")
 		})
 
-		It("only discovers files matching the configured engine extension", func() {
+		It("discovers only .liquid render hooks", func() {
 			tmpDir, err := os.MkdirTemp("", "hooks-test-*")
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(func() { os.RemoveAll(tmpDir) })
@@ -1263,23 +1263,34 @@ var _ = Describe("LiquidEngine", func() {
 			markupDir := filepath.Join(tmpDir, "layouts", "_markup")
 			Expect(os.MkdirAll(markupDir, 0755)).To(Succeed())
 
-			// Both liquid and html files exist
+			// A .liquid and a .html hook exist
 			Expect(os.WriteFile(filepath.Join(markupDir, "render-link.liquid"),
 				[]byte("liquid link"), 0644)).To(Succeed())
 			Expect(os.WriteFile(filepath.Join(markupDir, "render-link.html"),
 				[]byte("go link"), 0644)).To(Succeed())
 
-			// With liquid engine, only .liquid files are discovered
-			hooks, err := tmpl.DiscoverRenderHooks(filepath.Join(tmpDir, "layouts"), "liquid")
+			hooks, err := tmpl.DiscoverRenderHooks(filepath.Join(tmpDir, "layouts"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(hooks["link"]).To(Equal("liquid link"),
-				"must discover .liquid files when engine is liquid")
+				"render hooks are .liquid files")
+		})
 
-			// With gotemplate engine, only .html files are discovered
-			hooks, err = tmpl.DiscoverRenderHooks(filepath.Join(tmpDir, "layouts"), "gotemplate")
+		// Render hooks have no bare-extension fallback, unlike layouts and
+		// partials: a render-*.html file is not a hook (#1285).
+		It("does not discover a .html render hook when no .liquid one exists", func() {
+			tmpDir, err := os.MkdirTemp("", "hooks-test-*")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(hooks["link"]).To(Equal("go link"),
-				"must discover .html files when engine is gotemplate")
+			DeferCleanup(func() { os.RemoveAll(tmpDir) })
+
+			markupDir := filepath.Join(tmpDir, "layouts", "_markup")
+			Expect(os.MkdirAll(markupDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(markupDir, "render-link.html"),
+				[]byte("html link"), 0644)).To(Succeed())
+
+			hooks, err := tmpl.DiscoverRenderHooks(filepath.Join(tmpDir, "layouts"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(hooks).NotTo(HaveKey("link"),
+				"render hooks are .liquid only; a render-link.html is not a hook (#1285)")
 		})
 
 		It("ignores unrecognized filenames", func() {
@@ -1297,7 +1308,7 @@ var _ = Describe("LiquidEngine", func() {
 			Expect(os.WriteFile(filepath.Join(markupDir, "render-unicorn.liquid"),
 				[]byte("not a valid hook type"), 0644)).To(Succeed())
 
-			hooks, err := tmpl.DiscoverRenderHooks(filepath.Join(tmpDir, "layouts"), "liquid")
+			hooks, err := tmpl.DiscoverRenderHooks(filepath.Join(tmpDir, "layouts"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(hooks).To(HaveLen(1),
 				"only recognized render-{type} files must be discovered")

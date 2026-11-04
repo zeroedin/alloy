@@ -62,7 +62,7 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 
 		if useTemplatePermalink && perPage == 1 {
 			// Wrap the base permalink renderer with *ordered.Map conversion
-			// so Go templates can access JSON data fields via .member.slug syntax.
+			// so data fields resolve with dot syntax (member.slug).
 			baseRenderer := newPermalinkRenderer(engine)
 			var renderer pagination.TemplateRenderer = func(source string, ctx map[string]interface{}) (string, error) {
 				return baseRenderer(source, convertOrderedMaps(ctx))
@@ -107,8 +107,8 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 			}
 			vp.FrontMatter["_paginationAs"] = asVar
 			// Make the data items available under the 'as' variable name.
-			// Convert *ordered.Map items to map[string]interface{} so both
-			// Liquid and Go template engines can access fields via dot syntax.
+			// Convert *ordered.Map items to map[string]interface{} so templates
+			// can access fields via dot syntax.
 			if perPage == 1 && len(pctx.Items) == 1 {
 				item := convertOrderedValue(pctx.Items[0])
 				vp.FrontMatter["_paginationData"] = item
@@ -121,7 +121,7 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 				vp.FrontMatter["_paginationData"] = converted
 			}
 			// Keep the page's own summary, as rendered for this item, so page
-			// lists trust it like the page's own context does (issue #1267).
+			// lists show it like the page's own context does (issue #1267).
 			if page.Summary != "" {
 				if s, ok := vp.FrontMatter["summary"].(string); ok {
 					vp.Summary = s

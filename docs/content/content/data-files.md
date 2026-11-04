@@ -76,7 +76,7 @@ A file and a non-empty directory sharing the same stem (e.g., `nav.yaml` alongsi
 
 ## Key order
 
-**If order matters, use a list.** A list iterates in file order in both engines, with no special handling:
+**If order matters, use a list.** A list iterates in file order, with no special handling:
 
 ```json
 // data/nav.json
@@ -95,21 +95,19 @@ A file and a non-empty directory sharing the same stem (e.g., `nav.yaml` alongsi
 {% endfor %}{% endraw %}
 ```
 
-This is the recommendation for navigation menus and anything else where the order you wrote is the order you want. It works the same in Liquid and Go templates, and it is unaffected by everything below.
+This is the recommendation for navigation menus and anything else where the order you wrote is the order you want. It is unaffected by everything below.
 
-### What each engine does with map keys
+### Map keys
 
-Map key order depends on both the file format and the engine:
+Map keys come out in this order:
 
-| Data | Liquid | Go templates |
-| --- | --- | --- |
-| YAML, TOML, JSON objects | file order | sorted by key |
-| Plugin return values | the order the plugin built them | sorted by key |
-| Lists (any format) | file order | file order |
+| Data | Key order |
+| --- | --- |
+| YAML, TOML, JSON objects | file order |
+| Plugin return values | the order the plugin built them |
+| Lists (any format) | file order |
 
 Every object in a YAML, TOML or JSON data file — at the top level or nested inside lists — is loaded into an ordered map that keeps the order you wrote, so renaming `nav.json` to `nav.yaml` no longer changes the order your keys come out in. Lists stay lists, and CSV files load as a list of rows, as the table above shows. Values returned from a plugin are ordered maps too, keeping the order the plugin inserted them.
-
-Liquid reads those maps directly, so it shows that order. Go templates reach all the same data — `{{ .site.data.sections.intro.title }}` works at any depth, including through arrays — but they do not show that order. Looking a value up by name needs a plain Go map, so the ordered map is converted before rendering, and a Go map has nowhere to store order. Keys iterate sorted alphabetically instead, consistently on every build.
 
 One exception: the `_data.yaml` directory cascade still sorts its keys. It has its own loader, and it merges each file into the one above it, which is not a thing key order survives.
 
@@ -121,51 +119,17 @@ To see what a data file actually loaded as, pipe it through [`json`](/templates/
 
 ### Iterating maps
 
-The iteration syntax differs between template engines:
-
 {% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="ordered-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="ordered-go">Go templates</wa-tab>
+A `{% for %}` loop over a map yields `[key, value]` pairs. Access them by index:
 
-<wa-tab-panel name="ordered-liquid" active>
-
-In Liquid, `{% for %}` over a map yields `[key, value]` pairs. Access them by index:
-
-<alloy-code language="liquid">{% for pair in site.data.sections %}
-  &lt;h2&gt;{{ pair[0] }}&lt;/h2&gt;  &lt;!-- key: "intro", "setup", "usage" --&gt;
-  &lt;p&gt;{{ pair[1].title }}&lt;/p&gt;
-{% endfor %}</alloy-code>
+```liquid
+{% for pair in site.data.sections %}
+  <h2>{{ pair[0] }}</h2>  <!-- key: "intro", "setup", "usage" -->
+  <p>{{ pair[1].title }}</p>
+{% endfor %}
+```
 
 These come out in file order, for YAML, TOML and JSON alike. Dot access works for individual keys: `{{ site.data.sections.intro.title }}`
-
-</wa-tab-panel>
-<wa-tab-panel name="ordered-go">
-
-Dot access works directly, at any depth, including through arrays:
-
-<alloy-code language="html">{{ .site.data.sections.intro.title }}
-{{ .site.data.tokens.color.brand }}
-{{ (index .site.data.sections.items 0).name }}</alloy-code>
-
-`{{ range }}` works directly too, yielding keys in sorted order:
-
-<alloy-code language="html">{{ range $key, $value := .site.data.sections }}
-  &lt;h2&gt;{{ $key }}&lt;/h2&gt;
-  &lt;p&gt;{{ $value.title }}&lt;/p&gt;
-{{ end }}</alloy-code>
-
-The `orange` helper still works and gives the same sorted order as `Key`/`Value` pairs:
-
-<alloy-code language="html">{{ range orange .site.data.sections }}
-  &lt;h2&gt;{{ .Key }}&lt;/h2&gt;
-  &lt;p&gt;{{ .Value.title }}&lt;/p&gt;
-{{ end }}</alloy-code>
-
-`oget` also still works, but you rarely need it now: `{{ oget .site.data.sections "intro" }}` is the same as `{{ .site.data.sections.intro }}`. Reach for `index` when a key is not a valid template identifier — one containing a hyphen, say: `{{ index .site.data.tokens "color-brand" }}`
-
-</wa-tab-panel>
-</wa-tab-group>
 {% endraw %}
 
 ## CSV files

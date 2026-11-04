@@ -10,7 +10,7 @@ import (
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
-func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection, layoutsDir, engineName string, rc *RenderContext, langCtx *i18n.LanguageContext) ([]*content.Page, error) {
+func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection, layoutsDir string, rc *RenderContext, langCtx *i18n.LanguageContext) ([]*content.Page, error) {
 	cfg := rc.Cfg
 	for taxName, tc := range taxonomies {
 		taxCfg := cfg.Taxonomies[taxName]
@@ -36,7 +36,7 @@ func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection,
 		if !taxCfg.ShouldRender() {
 			continue
 		}
-		layoutPath, err := tmpl.ResolveTaxonomyLayout(taxName, taxCfg.Layout, layoutsDir, engineName)
+		layoutPath, err := tmpl.ResolveTaxonomyLayout(taxName, taxCfg.Layout, layoutsDir)
 		if err != nil {
 			return nil, fmt.Errorf("taxonomy %q layout: %w", taxName, err)
 		}
@@ -66,7 +66,7 @@ func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection,
 				return nil, fmt.Errorf("rendering taxonomy page %s: %w", taxPage.URL, err)
 			}
 			taxPage.SetRenderedBody(out)
-			if err := renderPageFormats(taxPage, layoutsDir, engineName, rc); err != nil {
+			if err := renderPageFormats(taxPage, layoutsDir, rc); err != nil {
 				return nil, err
 			}
 			result = append(result, taxPage)

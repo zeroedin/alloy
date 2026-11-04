@@ -11,7 +11,7 @@ Static site generators tend to make you choose between speed and extensibility. 
 ## Features
 
 - **Fast builds** — Go-powered concurrent pipeline targeting < 5s for 1,000 pages
-- **Liquid templates** — Familiar syntax with Go `html/template` as an alternative
+- **Liquid templates** — Familiar syntax for layouts, partials, shortcodes and render hooks
 - **Data cascade** — Global data, directory-level `_data.yaml`, and front matter deep-merge predictably (front matter wins)
 - **Collections and taxonomies** — Date-based section collections, cross-cutting taxonomy groups, auto-generated term pages
 - **Pagination** — Paginated lists and virtual page generation from data
@@ -73,7 +73,7 @@ See [Project Structure](https://alloyssg.dev/getting-started/project-structure/)
 
 ## Configuration
 
-All site settings live in `alloy.config.yaml` (TOML and JSON also supported). Directory paths, build output, template engine, taxonomies, pagination, and passthrough mappings are all configurable. See [Configuration](https://alloyssg.dev/getting-started/) for the full reference.
+All site settings live in `alloy.config.yaml` (TOML and JSON also supported). Directory paths, build output, taxonomies, pagination, and passthrough mappings are all configurable. See [Configuration](https://alloyssg.dev/getting-started/) for the full reference.
 
 ## Content
 
@@ -81,7 +81,7 @@ Content files live in `content/` with YAML, TOML, or JSON front matter. Template
 
 ## Templates
 
-Alloy supports Liquid (default) and Go `html/template` as built-in engines. Both share the same layout lookup order, data context, and built-in filters. See [Templates](https://alloyssg.dev/templates/) for details.
+Layouts, partials and render hooks are Liquid templates. Layouts and partials get the page, site and collection data; render hooks get only the element they render, as `markup`, with no `page` or `site`. See [Templates](https://alloyssg.dev/templates/) for details.
 
 ## Data Cascade
 
@@ -194,7 +194,7 @@ internal/
   server/               Dev server, file watcher, WebSocket
   ssr/                  Web Component SSR (experimental)
   static/               Static file and passthrough copy
-  template/             Liquid + Go template engines, filters
+  template/             Liquid engine, filters
   update/               Update notification (GitHub release checks)
   validation/           Output path conflict detection
 test/

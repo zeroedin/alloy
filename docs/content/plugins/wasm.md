@@ -162,19 +162,9 @@ wat2wasm echo.wat -o plugins/echo.wasm
 
 Then use it in a template:
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="wasmfirst-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="wasmfirst-go">Go templates</wa-tab>
-
-<wa-tab-panel name="wasmfirst-liquid" active>
-<alloy-code language="liquid">{{ "hello" | echo }}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="wasmfirst-go">
-<alloy-code language="html">{{ echo "hello" }}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+```liquid
+{{ "hello" | echo }}
+```
 
 The filter is called `echo`, not `echo.wasm` — **the template name is the exported function's name**, not the filename. See [Filters](#filters).
 

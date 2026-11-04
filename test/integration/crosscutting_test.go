@@ -494,7 +494,7 @@ var _ = Describe("Cross-Cutting Integration", func() {
 			// with format infixed — no "single" concept. The function now
 			// requires permalinkCfg to detect date-based sections.
 			// "layouts" dir doesn't exist on disk — must return an error.
-			_, err := template.ResolveLayoutForFormat(page, "layouts", "liquid", "json", map[string]string{})
+			_, err := template.ResolveLayoutForFormat(page, "layouts", "json", map[string]string{})
 			Expect(err).To(HaveOccurred(),
 				"format layout resolution must error when layouts directory does not exist")
 		})

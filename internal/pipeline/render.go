@@ -15,7 +15,6 @@ import (
 	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/i18n"
 	"github.com/zeroedin/alloy/internal/pagination"
-	"github.com/zeroedin/alloy/internal/plugin"
 	tmpl "github.com/zeroedin/alloy/internal/template"
 )
 
@@ -34,9 +33,8 @@ func renderPages(pages []*content.Page, rc *RenderContext, reporter ProgressRepo
 	}
 
 	layoutsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts)
-	engineName := cfg.Templates.Engine
 
-	hooks, err := tmpl.DiscoverRenderHooks(layoutsDir, engineName)
+	hooks, err := tmpl.DiscoverRenderHooks(layoutsDir)
 	if err != nil {
 		return nil, fmt.Errorf("render hook discovery: %w", err)
 	}
@@ -91,14 +89,6 @@ func renderPages(pages []*content.Page, rc *RenderContext, reporter ProgressRepo
 		}
 
 		if ext == ".md" {
-			html = escapeTemplateTagsInCode(html)
-		}
-
-		if engineName == "gotemplate" && rc.Registry != nil {
-			html, err = processGoTemplateBlockShortcodes(html, rc.Registry)
-			if err != nil {
-				return nil, fmt.Errorf("block shortcode: %s: %w", page.RelPath, err)
-			}
 			html = escapeTemplateTagsInCode(html)
 		}
 
@@ -203,26 +193,6 @@ func interpolateFrontMatter(vp *content.Page, asVar string, item interface{}, en
 // single <code>…</code> pair.
 var codeBlockPattern = regexp.MustCompile(`(?s)<code[^>]*>.*?</code>`)
 
-// processGoTemplateBlockShortcodes runs ProcessBlockShortcodes with a callback
-// that routes through the plugin registry's CallShortcode. A shortcode-to-runtime
-// map is built once and used for O(1) lookup in the callback.
-func processGoTemplateBlockShortcodes(html []byte, registry *plugin.Registry) ([]byte, error) {
-	scRuntimes := make(map[string]plugin.PluginFilterRuntime)
-	for _, rt := range registry.Runtimes() {
-		for _, name := range rt.RegisteredShortcodes() {
-			scRuntimes[name] = rt
-		}
-	}
-	callback := func(name string, args []string, content string) (string, error) {
-		rt, ok := scRuntimes[name]
-		if !ok {
-			return "", fmt.Errorf("shortcode %q not registered by any plugin", name)
-		}
-		return rt.CallShortcode(name, args, content)
-	}
-	return tmpl.ProcessBlockShortcodes(html, callback)
-}
-
 // escapeTemplateTagsInCode replaces {{ }}, {% %} inside <code> elements with
 // HTML entities so Liquid won't process them. This preserves template syntax
 // examples in code fences for display purposes.
@@ -286,7 +256,7 @@ func formatOutputPath(htmlPath string, format string) string {
 // For each non-HTML format in page.Outputs, resolves a format-specific layout,
 // renders through it, and stores the result in page.FormatBodies.
 // Returns a build error if a declared format has no matching layout.
-func renderPageFormats(page *content.Page, layoutsDir, engineName string, rc *RenderContext) error {
+func renderPageFormats(page *content.Page, layoutsDir string, rc *RenderContext) error {
 	if !pageHasNonHTMLOutput(page) {
 		return nil
 	}
@@ -295,7 +265,7 @@ func renderPageFormats(page *content.Page, layoutsDir, engineName string, rc *Re
 		if format == "html" {
 			continue
 		}
-		fmtLayoutPath, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, engineName, format, rc.PermalinkCfg)
+		fmtLayoutPath, err := tmpl.ResolveLayoutForFormat(page, layoutsDir, format, rc.PermalinkCfg)
 		if err != nil {
 			return fmt.Errorf("no %s layout found for %s: %w", format, page.RelPath, err)
 		}
@@ -304,7 +274,7 @@ func renderPageFormats(page *content.Page, layoutsDir, engineName string, rc *Re
 			return fmt.Errorf("format layout: %w", err)
 		}
 		fmtCtx := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "").ToMap()
-		fmtCtx["content"] = content.MarkTrustedHTML(page.HTML())
+		fmtCtx["content"] = page.HTML()
 		fmtResult, err := fmtTpl.Render(fmtCtx)
 		if err != nil {
 			return fmt.Errorf("rendering format layout %s: %w", fmtLayoutPath, err)
@@ -317,8 +287,8 @@ func renderPageFormats(page *content.Page, layoutsDir, engineName string, rc *Re
 // renderPageThroughLayouts resolves the layout chain for a page, strips front
 // matter from each layout, and renders inside-out. Updates page.RenderedBody
 // and tracks all layouts in templateUsage for cache invalidation.
-func renderPageThroughLayouts(page *content.Page, layoutPath, layoutsDir, engineName string, rc *RenderContext) error {
-	chain, err := tmpl.ResolveLayoutChain(layoutPath, layoutsDir, engineName)
+func renderPageThroughLayouts(page *content.Page, layoutPath, layoutsDir string, rc *RenderContext) error {
+	chain, err := tmpl.ResolveLayoutChain(layoutPath, layoutsDir)
 	if err != nil {
 		return fmt.Errorf("layout chain for %s: %w", page.RelPath, err)
 	}
@@ -341,7 +311,7 @@ func renderPageThroughLayouts(page *content.Page, layoutPath, layoutsDir, engine
 
 		tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "")
 		ctx := tc.ToMap()
-		ctx["content"] = content.MarkTrustedHTML(page.HTML())
+		ctx["content"] = page.HTML()
 		layoutResult, err := tpl.Render(ctx)
 		if err != nil {
 			return fmt.Errorf("rendering layout %s: %w", lp, err)

@@ -13,9 +13,8 @@ import (
 //
 // Both decoders here replace a plain unmarshal that produced
 // map[string]interface{}, which has no order, so renaming nav.json to
-// nav.yaml silently reordered a nav menu. Liquid and plugins are what see
-// the difference; Go templates sort every map shape (issue #1237) and are
-// unaffected either way.
+// nav.yaml silently reordered a nav menu. Liquid and plugins see the
+// difference.
 //
 // Only LoadFileAny uses these. LoadFile keeps flattening through ToGoMap.
 
@@ -376,11 +375,10 @@ func buildTOMLOrder(md toml.MetaData) *tomlOrder {
 // applyTOMLOrder rebuilds the decoded tree with ordered maps, and
 // normalizes array-of-tables to []interface{}.
 //
-// toml.Decode returns array-of-tables as []map[string]interface{}, a
-// container the Go template engine's converter does not traverse
-// (PLAN.md, "Which containers the walk must traverse"). Left typed, the
-// ordered maps inside it would never be converted and {{ .name }} would
-// fail at render on a case that works today.
+// toml.Decode returns array-of-tables as []map[string]interface{}.
+// Normalizing to []interface{} gives them the same shape as YAML and JSON
+// arrays. (It was added for the Go template engine's converter, issue
+// #1237; Go templates are gone, issue #1285, and the shape is kept.)
 func applyTOMLOrder(v interface{}, ord *tomlOrder) interface{} {
 	switch val := v.(type) {
 	case map[string]interface{}:

@@ -30,6 +30,19 @@ type deferredTagEntry struct {
 
 // NewLiquidEngine creates a new Liquid template engine with standard tags and filters.
 func NewLiquidEngine() TemplateEngine {
+	return newLiquidEngine()
+}
+
+// NewLiquidEngineWithIncludes creates a Liquid engine whose {% include %} and
+// {% render %} tags resolve against includesDir. The build uses it with the
+// site's layouts directory.
+func NewLiquidEngineWithIncludes(includesDir string) TemplateEngine {
+	e := newLiquidEngine()
+	e.SetIncludesDir(includesDir)
+	return e
+}
+
+func newLiquidEngine() *liquidEngine {
 	env := liquid.NewEnvironment()
 	tags.RegisterStandardTags(env)
 
@@ -168,8 +181,7 @@ var knownLiquidFilters = map[string]bool{
 	"slugify": true, "group_by": true, "flatten": true,
 	"intersect": true, "union": true, "complement": true,
 	"absolute_url": true, "markdownify": true,
-	"json": true, "safeHTML": true, "url": true,
-	"safeCSS": true, "safeJS": true, "safeURL": true, "safeHTMLAttr": true,
+	"json": true, "url": true,
 	"cachebust": true, "get_hash": true,
 }
 
@@ -416,30 +428,6 @@ func (f *alloyFilterBridge) JSON(input interface{}, args ...interface{}) interfa
 	return f.call("json", input, args...)
 }
 
-func (f *alloyFilterBridge) SafeHTML(input interface{}, args ...interface{}) interface{} {
-	return f.call("safeHTML", input, args...)
-}
-
-// SafeCSS, SafeJS, SafeURL and SafeHTMLAttr must exist as methods, not only
-// as registered funcs: RenderTemplate has no plugin_filter rewrite, so a
-// filter with no bridge method is "undefined" there (issue #1266).
-
-func (f *alloyFilterBridge) SafeCSS(input interface{}, args ...interface{}) interface{} {
-	return f.call("safeCSS", input, args...)
-}
-
-func (f *alloyFilterBridge) SafeJS(input interface{}, args ...interface{}) interface{} {
-	return f.call("safeJS", input, args...)
-}
-
-func (f *alloyFilterBridge) SafeURL(input interface{}, args ...interface{}) interface{} {
-	return f.call("safeURL", input, args...)
-}
-
-func (f *alloyFilterBridge) SafeHTMLAttr(input interface{}, args ...interface{}) interface{} {
-	return f.call("safeHTMLAttr", input, args...)
-}
-
 func (f *alloyFilterBridge) Cachebust(input interface{}, args ...interface{}) interface{} {
 	return f.call("cachebust", input, args...)
 }
@@ -463,9 +451,6 @@ func (f *alloyFilterBridge) URL(input interface{}, args ...interface{}) interfac
 // failure) for propagation through the template rendering pipeline via panic.
 // Implements liquid.LiquidError so liquidgo's internal recover preserves
 // the error message instead of replacing it with a generic "internal" string.
-// Go's html/template.Execute catches panics that satisfy the error interface,
-// so this type works for both engines without changing FilterFunc/TagFunc
-// signatures.
 // ---------------------------------------------------------------------------
 
 type PluginCallError struct {

@@ -14,9 +14,6 @@ unsafe = true
 typographer = true
 templateTags = true
 
-[templates]
-engine = "liquid"
-
 [plugins]
 node = true
 timeout = 5000

@@ -539,16 +539,6 @@ var _ = Describe("Built-in Filters", func() {
 		Expect(result).To(Equal("present"))
 	})
 
-	// ── Output safety filters (individual — type assertion) ─────────────
-
-	It("safeHTML marks content as safe for Go template rendering", func() {
-		result := tmpl.SafeHTML("<p>Trusted content</p>")
-		s, ok := result.(string)
-		Expect(ok).To(BeTrue())
-		Expect(s).To(Equal("<p>Trusted content</p>"),
-			"safeHTML must return the input unchanged (not escaped)")
-	})
-
 	// ── String filter edge cases (individual) ───────────────────────────
 
 	It("slugify handles empty string", func() {
@@ -651,8 +641,8 @@ var _ = Describe("Built-in Filters", func() {
 	})
 
 	// ── limit filter (issue #826) ──────────────────────────────────────
-	// limit returns the first N elements of an array, providing Go template
-	// parity with Liquid's {% for ... limit: N %} clause.
+	// limit returns the first N elements of an array, like Liquid's
+	// {% for ... limit: N %} clause but usable anywhere a filter is.
 
 	Context("limit filter (issue #826)", func() {
 		It("returns the first N elements from an array", func() {
@@ -733,8 +723,7 @@ var _ = Describe("Built-in Filters", func() {
 			result := tmpl.ApplyFilter("limit", input, 2)
 			Expect(result).To(Equal([]interface{}{"a", "b"}),
 				"limit must be registered in the builtinFilters map so "+
-					"ApplyFilter can dispatch it — this is how the Liquid engine "+
-					"and Go template engine resolve filters at runtime (issue #826)")
+					"ApplyFilter can dispatch it (issue #826)")
 		})
 
 		It("no-arg dispatch via ApplyFilter returns full array", func() {
@@ -771,8 +760,7 @@ var _ = Describe("Built-in Filters", func() {
 			"plus", "minus", "times", "divided_by",
 			"modulo", "ceil", "floor", "round", "abs",
 			"markdownify", "findRE", "replaceRE",
-			"json", "default", "safeHTML",
-			"safeCSS", "safeJS", "safeURL", "safeHTMLAttr", // issue #1266: output safety family
+			"json", "default",
 			"flatten",
 			"cachebust", "get_hash", // issue #559: asset fingerprinting
 		}
@@ -799,7 +787,7 @@ var _ = Describe("Built-in Filters", func() {
 			stringFilters := []string{
 				"slugify", "upcase", "downcase", "capitalize",
 				"strip_html", "escape", "strip", "newline_to_br",
-				"url_encode", "url_decode", "json", "safeHTML",
+				"url_encode", "url_decode", "json",
 			}
 			for _, name := range stringFilters {
 				result := tmpl.ApplyFilter(name, "test")

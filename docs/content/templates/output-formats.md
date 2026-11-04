@@ -14,31 +14,15 @@ outputs: ["html", "json"]
 ---
 ```
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="fmtjson-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="fmtjson-go">Go templates</wa-tab>
-
-<wa-tab-panel name="fmtjson-liquid" active>
-<alloy-code language="liquid">&lt;!-- layouts/post.json.liquid --&gt;
+```liquid
+<!-- layouts/post.json.liquid -->
 {
-  "title": "{{ page.title }}",
-  "url": "{{ page.url | absolute_url: site.baseURL }}",
-  "date": "{{ page.date | date: '%Y-%m-%dT%H:%M:%S%z' }}",
+  "title": {{ page.title | json }},
+  "url": {{ page.url | absolute_url: site.baseURL | json }},
+  "date": {{ page.date | date: '%Y-%m-%dT%H:%M:%S%z' | json }},
   "content": {{ content | json }}
-}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="fmtjson-go">
-<alloy-code language="html">&lt;!-- layouts/post.json --&gt;
-{
-  "title": "{{ .page.title }}",
-  "url": "{{ absolute_url .page.url .site.baseURL }}",
-  "date": "{{ date .page.date "%Y-%m-%dT%H:%M:%S%z" }}",
-  "content": {{ json .content }}
-}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+}
+```
 
 This page generates both `/my-blog-post/index.html` and `/my-blog-post/index.json`.
 
@@ -50,9 +34,7 @@ The `outputs` front matter field lists which formats to generate. When omitted, 
 
 ## Template file extensions
 
-The format sits between the layout name and the engine extension:
-
-**Liquid engine:**
+The format sits between the layout name and the `.liquid` extension:
 
 ```
 layouts/default.liquid          --> HTML output
@@ -60,14 +42,6 @@ layouts/post.json.liquid        --> JSON output
 layouts/feed.xml.liquid         --> XML output
 layouts/data.csv.liquid         --> CSV output
 layouts/robots.txt.liquid       --> plain text output
-```
-
-**Go template engine:**
-
-```
-layouts/default.html            --> HTML output
-layouts/post.json               --> JSON output
-layouts/feed.xml                --> XML output
 ```
 
 ## Requesting multiple formats
@@ -88,7 +62,7 @@ Front matter `layout:` drives format resolution too. A page with `layout: "artic
 
 ### Layout resolution for formats
 
-Format layout resolution mirrors the HTML layout chain, with the format infixed before the engine extension. Each candidate has a bare-extension fallback step.
+Format layout resolution mirrors the HTML layout chain, with the format infixed before the `.liquid` extension. Each candidate has a bare-extension fallback step.
 
 **With `layout` set** (front matter or cascade), for a page requesting `json` output with `layout: "article"`:
 
@@ -101,8 +75,6 @@ Format layout resolution mirrors the HTML layout chain, with the format infixed 
 2. `layouts/<section>.json.liquid` → `layouts/<section>.json` (section index only)
 3. `layouts/default.json.liquid` → `layouts/default.json` (fallback)
 4. Build error
-
-The Go template engine checks `name.json` (bare format extension) at each step instead of `name.json.liquid`.
 
 Extension-bearing layout names (e.g., `layout: "article.liquid"`) with `outputs:` produce a build error. Use bare names (`layout: "article"`) when requesting format outputs.
 
@@ -123,47 +95,25 @@ outputs: ["html", "json"]
 ---
 ```
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="fmtapi-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="fmtapi-go">Go templates</wa-tab>
-
-<wa-tab-panel name="fmtapi-liquid" active>
-<alloy-code language="liquid">&lt;!-- layouts/blog.json.liquid --&gt;
+```liquid
+<!-- layouts/blog.json.liquid -->
 {
   "posts": [
     {% for post in collections.blog %}
     {
-      "title": "{{ post.title | escape }}",
-      "url": "{{ post.url | absolute_url: site.baseURL }}",
-      "date": "{{ post.date | date: '%Y-%m-%dT%H:%M:%S%z' }}",
-      "summary": "{{ post.summary | escape }}"
+      "title": {{ post.title | json }},
+      "url": {{ post.url | absolute_url: site.baseURL | json }},
+      "date": {{ post.date | date: '%Y-%m-%dT%H:%M:%S%z' | json }},
+      "summary": {{ post.summary | json }}
     }{% unless forloop.last %},{% endunless %}
     {% endfor %}
   ]
-}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="fmtapi-go">
-<alloy-code language="html">&lt;!-- layouts/blog.json --&gt;
-{
-  "posts": [
-    {{ range $i, $post := .collections.blog }}{{ if $i }},{{ end }}
-    {
-      "title": "{{ $post.title }}",
-      "url": "{{ absolute_url $post.url $.site.baseURL }}",
-      "date": "{{ date $post.date "%Y-%m-%dT%H:%M:%S%z" }}",
-      "summary": "{{ printf "%s" $post.summary }}"
-    }
-    {{ end }}
-  ]
-}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+}
+```
 
 Output: `/blog/index.json` with a machine-readable list of posts.
 
-**Escaping differs between the engines.** Liquid prints values as written, so the Liquid example adds `escape`. Go templates escape every value themselves, so the Go example leaves `escape` out: adding it escapes the value a second time, and `&` comes out as `&amp;amp;`. A page's summary is the one exception, because Go prints it as HTML. `printf "%s"` turns it back into plain text so Go escapes it too. Go escapes for HTML even in JSON output, so `&` in a title comes out as `&amp;` in the JSON.
+Liquid prints values as written, so the examples pass every value through `json`. It prints the value as a quoted JSON string, escaping quotes, backslashes and newlines, and prints a missing value as `null`. Don't use `escape` here: it's HTML escaping, so it turns `"` into `&#34;` and leaves a newline that breaks the JSON.
 
 ### RSS/Atom feed
 
@@ -177,53 +127,27 @@ outputs: ["html", "xml"]
 ---
 ```
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="fmtrss-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="fmtrss-go">Go templates</wa-tab>
-
-<wa-tab-panel name="fmtrss-liquid" active>
-<alloy-code language="liquid">&lt;!-- layouts/blog.xml.liquid --&gt;
-&lt;?xml version="1.0" encoding="UTF-8"?&gt;
-&lt;rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"&gt;
-  &lt;channel&gt;
-    &lt;title&gt;{{ site.title }}&lt;/title&gt;
-    &lt;link&gt;{{ site.baseURL }}&lt;/link&gt;
+```liquid
+<!-- layouts/blog.xml.liquid -->
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>{{ site.title }}</title>
+    <link>{{ site.baseURL }}</link>
     {% for post in collections.blog limit: 20 %}
-    &lt;item&gt;
-      &lt;title&gt;{{ post.title | escape }}&lt;/title&gt;
-      &lt;link&gt;{{ post.url | absolute_url: site.baseURL }}&lt;/link&gt;
-      &lt;pubDate&gt;{{ post.date | date: "%a, %d %b %Y %H:%M:%S %z" }}&lt;/pubDate&gt;
-      &lt;guid&gt;{{ post.url | absolute_url: site.baseURL }}&lt;/guid&gt;
-      &lt;description&gt;{{ post.summary | escape }}&lt;/description&gt;
-    &lt;/item&gt;
+    <item>
+      <title>{{ post.title | escape }}</title>
+      <link>{{ post.url | absolute_url: site.baseURL }}</link>
+      <pubDate>{{ post.date | date: "%a, %d %b %Y %H:%M:%S %z" }}</pubDate>
+      <guid>{{ post.url | absolute_url: site.baseURL }}</guid>
+      <description>{{ post.summary | escape }}</description>
+    </item>
     {% endfor %}
-  &lt;/channel&gt;
-&lt;/rss&gt;</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="fmtrss-go">
-<alloy-code language="html">&lt;!-- layouts/blog.xml --&gt;
-{{ safeHTML `&lt;?xml version="1.0" encoding="UTF-8"?&gt;` }}
-&lt;rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"&gt;
-  &lt;channel&gt;
-    &lt;title&gt;{{ .site.title }}&lt;/title&gt;
-    &lt;link&gt;{{ .site.baseURL }}&lt;/link&gt;
-    {{ range limit .collections.blog 20 }}
-    &lt;item&gt;
-      &lt;title&gt;{{ .title }}&lt;/title&gt;
-      &lt;link&gt;{{ absolute_url .url $.site.baseURL }}&lt;/link&gt;
-      &lt;pubDate&gt;{{ date .date "%a, %d %b %Y %H:%M:%S %z" }}&lt;/pubDate&gt;
-      &lt;guid&gt;{{ absolute_url .url $.site.baseURL }}&lt;/guid&gt;
-      &lt;description&gt;{{ printf "%s" .summary }}&lt;/description&gt;
-    &lt;/item&gt;
-    {{ end }}
-  &lt;/channel&gt;
-&lt;/rss&gt;</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+  </channel>
+</rss>
+```
 
-Output: `/blog/index.xml` alongside the HTML index. The template has access to the same `collections`, `taxonomies`, and `site` context as any other template. RFC 822 dates come from the `date` filter with the format string shown above. For XML entities, Liquid uses the `escape` filter. Go templates escape values themselves, so the Go example uses no filter, and `printf "%s"` for the summary, which Go would otherwise print as HTML and break the XML. The Go example also prints the `<?xml ?>` line with `safeHTML`, because Go would otherwise escape it to `&lt;?xml`.
+Output: `/blog/index.xml` alongside the HTML index. The template has access to the same `collections`, `taxonomies`, and `site` context as any other template. RFC 822 dates come from the `date` filter with the format string shown above. For XML entities, use the `escape` filter.
 
 ### Sitemap
 
@@ -278,65 +202,31 @@ permalink: "/search/"
 ---
 ```
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="fmtsearch-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="fmtsearch-go">Go templates</wa-tab>
-
-<wa-tab-panel name="fmtsearch-liquid" active>
-<alloy-code language="liquid">&lt;!-- layouts/search.json.liquid --&gt;
+```liquid
+<!-- layouts/search.json.liquid -->
 [
   {% for page in site.pages %}
   {
-    "title": "{{ page.title | escape }}",
-    "url": "{{ page.url }}",
-    "content": "{{ page.summary | strip_html | escape }}"
+    "title": {{ page.title | json }},
+    "url": {{ page.url | json }},
+    "content": {{ page.summary | strip_html | json }}
   }{% unless forloop.last %},{% endunless %}
   {% endfor %}
-]</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="fmtsearch-go">
-<alloy-code language="html">&lt;!-- layouts/search.json --&gt;
-[
-  {{ range $i, $page := .site.pages }}{{ if $i }},{{ end }}
-  {
-    "title": "{{ $page.title }}",
-    "url": "{{ $page.url }}",
-    "content": "{{ strip_html $page.summary }}"
-  }
-  {{ end }}
-]</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+]
+```
 
 ## Custom output formats
 
 Any text-based format works. The output format is determined by the layout file extension, not by a predefined list. Create a layout with the appropriate extension and reference it from your content:
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="fmtcss-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="fmtcss-go">Go templates</wa-tab>
-
-<wa-tab-panel name="fmtcss-liquid" active>
-<alloy-code language="liquid">&lt;!-- layouts/component.css.liquid --&gt;
+```liquid
+<!-- layouts/component.css.liquid -->
 :host {
   {% for token in site.data.tokens %}
   --{{ token.name }}: {{ token.value }};
   {% endfor %}
-}</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="fmtcss-go">
-<alloy-code language="html">&lt;!-- layouts/component.css --&gt;
-:host {
-  {{ range .site.data.tokens }}
-  --{{ .name }}: {{ .value }};
-  {{ end }}
-}</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+}
+```
 
 ```yaml
 # content/tokens.md
@@ -362,14 +252,8 @@ This generates a CSS file from your design token data.
 
 Return `{ content: "..." }` from `onFormatRendered` to replace the rendered body. See the [`onFormatRendered` reference](/hooks/#onformatrendered) for payload fields and return value rules.
 
-## Engine-specific notes
-
-The template engine is a global, project-wide setting. One engine is active per build. You cannot mix Liquid and Go template syntax within a single project's active templates.
-
-When switching engines, create layout files with the appropriate extensions for the new engine. Alloy does not convert between template syntaxes.
-
 ## Related
 
-- [Templates Overview](/templates/) -- engine configuration and template context
+- [Templates Overview](/templates/) -- template context and output escaping
 - [Layouts](/templates/layouts/) -- layout resolution and chaining
 - [Filters](/templates/filters/) -- filters useful for feed and API output (`escape`, `json`, `date`, `absolute_url`)

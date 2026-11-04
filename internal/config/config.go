@@ -23,7 +23,6 @@ type Config struct {
 	Data          DataConfig                   `yaml:"data" toml:"data" json:"data"`
 	Build         BuildConfig                  `yaml:"build" toml:"build" json:"build"`
 	Content       ContentConfig                `yaml:"content" toml:"content" json:"content"`
-	Templates     TemplatesConfig              `yaml:"templates" toml:"templates" json:"templates"`
 	Plugins       PluginsConfig                `yaml:"plugins" toml:"plugins" json:"plugins"`
 	Taxonomies    map[string]*TaxonomyConfig   `yaml:"taxonomies" toml:"taxonomies" json:"taxonomies"`
 	Pagination    PaginationConfig             `yaml:"pagination" toml:"pagination" json:"pagination"`
@@ -129,11 +128,6 @@ func (g *GoldmarkConfig) AutoHeadingIDValue() bool {
 // nil (omitted) defaults to true; only explicit false disables.
 func (g *GoldmarkConfig) CustomElementsValue() bool {
 	return g.CustomElements == nil || *g.CustomElements
-}
-
-// TemplatesConfig holds the template engine selection.
-type TemplatesConfig struct {
-	Engine string `yaml:"engine" toml:"engine" json:"engine"`
 }
 
 // PluginsConfig holds plugin system settings.
@@ -287,12 +281,6 @@ func ApplyDefaults(cfg *Config) {
 	if cfg.Build.Output == "" {
 		cfg.Build.Output = "_site"
 	}
-	if cfg.Templates.Engine == "" {
-		cfg.Templates.Engine = "liquid"
-	}
-	if cfg.Templates.Engine == "go" {
-		cfg.Templates.Engine = "gotemplate"
-	}
 	if len(cfg.Content.Formats) == 0 {
 		cfg.Content.Formats = []string{"md", "html"}
 	}
@@ -413,11 +401,6 @@ func Validate(cfg *Config) error {
 	}
 	if cfg.Plugins.Timeout < 0 {
 		return fmt.Errorf("validation error: plugins timeout must not be negative (got %d)", cfg.Plugins.Timeout)
-	}
-	switch cfg.Templates.Engine {
-	case "liquid", "gotemplate", "":
-	default:
-		return fmt.Errorf("validation error: unknown templates.engine %q (expected \"liquid\" or \"gotemplate\")", cfg.Templates.Engine)
 	}
 
 	structDir := func(configured, fallback string) string {

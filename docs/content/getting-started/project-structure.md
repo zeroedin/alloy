@@ -54,9 +54,6 @@ content:
       typographer: true
       templateTags: true     # false = treat {{ }} and {% %} as literal text
 
-templates:
-  engine: "liquid"
-
 taxonomies:
   tags:
   categories:
@@ -87,7 +84,7 @@ HTML files without front matter are classified based on content: full documents 
 
 ## `layouts/`
 
-Template files rendered by the configured engine. The Liquid engine looks for `.liquid` files first, falling back to bare extensions (e.g., `.html`) when no `.liquid` file is found. The Go template engine (`engine: "gotemplate"` or `"go"`) resolves `.html` files only.
+Liquid template files. Alloy looks for `.liquid` files first, falling back to bare extensions (e.g., `.html`) when no `.liquid` file is found. Both are read as Liquid.
 
 Layout lookup follows an explicit chain:
 
@@ -98,33 +95,16 @@ Layout lookup follows an explicit chain:
 
 Layouts can chain via front matter `layout:` directives, enabling multi-level composition:
 
-{% raw %}
-<wa-tab-group>
-<wa-tab slot="nav" panel="chain-liquid" active>Liquid</wa-tab>
-<wa-tab slot="nav" panel="chain-go">Go templates</wa-tab>
-
-<wa-tab-panel name="chain-liquid" active>
-<alloy-code language="liquid">&lt;!-- layouts/has-toc.liquid --&gt;
+```liquid
+<!-- layouts/has-toc.liquid -->
 ---
 layout: "base"
 ---
-&lt;div class="with-toc"&gt;
-  &lt;aside&gt;{% include "partials/toc" %}&lt;/aside&gt;
-  &lt;main&gt;{{ content }}&lt;/main&gt;
-&lt;/div&gt;</alloy-code>
-</wa-tab-panel>
-<wa-tab-panel name="chain-go">
-<alloy-code language="html">&lt;!-- layouts/has-toc.html --&gt;
----
-layout: "base"
----
-&lt;div class="with-toc"&gt;
-  &lt;aside&gt;{{ include "partials/toc" }}&lt;/aside&gt;
-  &lt;main&gt;{{ .content }}&lt;/main&gt;
-&lt;/div&gt;</alloy-code>
-</wa-tab-panel>
-</wa-tab-group>
-{% endraw %}
+<div class="with-toc">
+  <aside>{% include "partials/toc" %}</aside>
+  <main>{{ content }}</main>
+</div>
+```
 
 ## `data/`
 

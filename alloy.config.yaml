@@ -12,9 +12,6 @@ content:
       unsafe: true
       typographer: true
 
-templates:
-  engine: "liquid"
-
 plugins:
   node: true
 

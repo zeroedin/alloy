@@ -102,9 +102,6 @@ content:
       templateTags: true       # Auto-detect and preserve {{ }}/{% %} in Markdown (default: true)
       customElements: true     # Treat custom elements (tags with hyphens) as block-level HTML (default: true)
 
-templates:
-  engine: "liquid"             # "liquid" (default) or "go" (Go html/template)
-
 plugins:
   node: true                   # Enable Node bridge
   timeout: 5000                # Plugin timeout (ms)
@@ -207,15 +204,14 @@ content/about/
 
 1. **Has front matter** (`---`, `+++`, `{`) → content page, processed normally
 2. **No front matter + full HTML document** (starts with `<!DOCTYPE` or `<html>`) → passthrough, copied to output as-is
-3. **No front matter + HTML fragment** (no DOCTYPE, no `<html>`) → content page with empty front matter. The file body is the page content, rendered into the cascade layout via `{{ content }}`. All metadata (layout, tags, etc.) comes from the `_data.yaml` cascade. **Note:** HTML fragments go through template processing — Liquid/Go template tags ARE evaluated.
+3. **No front matter + HTML fragment** (no DOCTYPE, no `<html>`) → content page with empty front matter. The file body is the page content, rendered into the cascade layout via `{{ content }}`. All metadata (layout, tags, etc.) comes from the `_data.yaml` cascade. **Note:** HTML fragments go through template processing — Liquid tags ARE evaluated.
 
-**Engine-specific content extensions** — `content.formats` controls which extensions are eligible to be content, but `templates.engine` controls which template syntax Alloy can render. Both must agree:
+**`.liquid` content files** — `content.formats` controls which extensions are eligible to be content:
 
-- `templates.engine: "liquid"` + `liquid` in `content.formats` → `.liquid` files processed as content
-- `templates.engine: "gotemplate"` → `.liquid` files are always passthrough, even if `liquid` is in `content.formats` (the Go template engine cannot render Liquid syntax)
+- `liquid` in `content.formats` → `.liquid` files processed as content
 - `.liquid` is NOT in the default `content.formats` list — with default settings, `.liquid` files in `content/` are passthrough
 
-Fragments inherit layout from the cascade chain: `_data.yaml` `layout:` → default layout fallback (`default.liquid` for Liquid engine, `default.html` for Go engine). A `_data.yaml` with `layout: element` wraps every fragment in that directory with the element layout, producing full HTML documents in the output. `layout: false` in `_data.yaml` skips layout wrapping — the fragment passes through unwrapped.
+Fragments inherit layout from the cascade chain: `_data.yaml` `layout:` → default layout fallback (`default.liquid`, then `default.html`). A `_data.yaml` with `layout: element` wraps every fragment in that directory with the element layout, producing full HTML documents in the output. `layout: false` in `_data.yaml` skips layout wrapping — the fragment passes through unwrapped.
 
 ```
 content/patterns/card/
@@ -302,14 +298,13 @@ different output.
 Measured on `d9c7cfe`, one file saved three ways, keys written `zebra, apple,
 middle`:
 
-| Format | Go templates | Liquid |
-|---|---|---|
-| YAML | sorted | sorted |
-| TOML | sorted | sorted |
-| JSON | sorted | **file order** |
+| Format | Liquid |
+|---|---|
+| YAML | sorted |
+| TOML | sorted |
+| JSON | **file order** |
 
 Liquid is where the split shows, because it consumes `*ordered.Map` directly.
-Go templates sort every map shape (issue #1237) and are unaffected either way.
 Plugins see the same split — `alloy.data` is JSON-serialized from Go, and
 `*ordered.Map` has a `MarshalJSON` that preserves order while `encoding/json`
 sorts plain map keys:
@@ -394,17 +389,9 @@ Order within an array-of-tables element is therefore not recoverable from
 `Keys()` alone and must come from the element's own decode.
 
 **TOML array-of-tables must be normalized to `[]interface{}`.** `toml.Decode`
-returns them as a typed `[]map[string]interface{}`, which is precisely the
-container shape the Go engine's converter does not traverse (§ "Which containers
-the walk must traverse", issue #1237). Leaving it typed while its elements become
-`*ordered.Map` would break a feature that works today — verified on `d9c7cfe`:
-
-```
-{{ range .site.data.nav.items }}{{ .name }};{{ end }}   →  first;second;
-```
-
-That output must be unchanged after this issue. Without normalization it becomes
-`can't evaluate field name in type interface {}`.
+returns them as a typed `[]map[string]interface{}`. Normalizing keeps every
+container a loader emits to the three output shapes below, so each element can
+become an `*ordered.Map`.
 
 **CSV** is unchanged. `LoadCSV` returns `[]map[string]string`: row order is
 already preserved, and column order is not represented at all. Preserving column
@@ -415,168 +402,18 @@ rather than an oversight.
 #### Output shapes
 
 The loaders must emit only `*ordered.Map`, `[]interface{}`, and scalars — the
-same alphabet already required of `ordered.UnmarshalJSONValue` and
-`ordered.RewrapValue`, for the same reason: the Go template engine's converter
-traverses exactly those three shapes, so anything else hides ordered maps from
-it. `internal/ordered/output_shapes_test.go` pins that alphabet for the JSON
-producers; `internal/data/key_order_test.go` pins it for the loaders, where the
-YAML and TOML producers live. The TOML array-of-tables case is exactly what it
-catches — the guard is red on today's code for that reason, which is harmless
-now (the elements are plain maps) and would not be after this change.
+same alphabet as `ordered.UnmarshalJSONValue` and `ordered.RewrapValue`.
+`internal/data/key_order_test.go` pins it for the loaders, where the YAML and
+TOML producers live; the TOML array-of-tables case is what it catches.
 
 #### What does not change
 
-- **Go template output.** Go templates sort every map shape, so their rendering
-  is byte-identical before and after. Only Liquid and plugins see a difference.
-- **Dot notation** in either engine — `{{ site.data.pkg.version }}` and
-  `{{ .site.data.pkg.version }}` keep working; ordered maps are traversable in
-  Go templates as of issue #1237, which is what makes this change safe to land.
+- **Dot notation** — `{{ site.data.pkg.version }}` keeps working.
 - **Error handling.** Malformed data files remain fatal, stem collisions remain
   fatal, and a missing external file remains fatal (§ "All data directory errors
   are fatal").
 - **`LoadFile`**, which returns `map[string]interface{}` for callers that want a
   plain map, keeps that signature and keeps flattening via `ToGoMap`.
-
----
-
-### Ordered Data in Go Templates (issue #1237)
-
-Some structured data reaches templates as `*ordered.Map` — a map that remembers
-the order its keys were written. Go's `html/template` cannot traverse that type
-with dot notation, so every access to such data required nested `oget` calls:
-
-```
-Liquid:   {{ site.data.pkg.version }}
-Go:       {{ oget (oget .site.data "pkg") "version" }}
-```
-
-**The rule: every `*ordered.Map` reaching the Go template engine's render
-context is converted to `map[string]interface{}` before rendering.** The
-boundary is the Go engine, not any particular producer of ordered data — what
-matters is that a value arrives at a Go template, never where it came from.
-Today's producers (JSON data files via `ordered.UnmarshalJSONValue`, plugin hook
-returns via `ordered.RewrapValue`, `onConfig` results) are illustrations of the
-rule, not its definition; a producer added later is covered without amending
-this section.
-
-Conversion is recursive through nested maps **and through slices** — an array of
-objects is the commonest JSON shape, and its elements are ordered maps too:
-
-```
-{{ .site.data.pkgjson.zebra }}                        <!-- object -->
-{{ range .site.data.items }}{{ .label }}{{ end }}     <!-- array elements -->
-{{ .site.data.deep.nested.leaf }}                     <!-- any depth -->
-```
-
-**Which containers the walk must traverse.** `map[string]interface{}`,
-`[]interface{}`, and `*ordered.Map` — and no others. This is not an arbitrary
-shortlist: it is the complete output alphabet of the two functions that produce
-ordered maps. `ordered.UnmarshalJSONValue` returns `*Map` for objects,
-`[]interface{}` for arrays, and plain scalars; `ordered.RewrapValue` recurses
-through exactly `*Map`, `map[string]interface{}`, and `[]interface{}` and returns
-everything else untouched. Neither can emit a typed container, so an
-`*ordered.Map` is never reachable through one.
-
-Typed containers do exist in the render context — `[]map[string]interface{}` for
-page translations, TOC entries, and taxonomy terms — and the walk deliberately
-does not descend into them. Verified that none can hold an ordered map:
-translations and TOC entries carry only strings and ints, and the one payload
-that could (page front matter, reachable under taxonomy terms) is flattened by
-`convertedFrontMatter` when hook results are applied. Confirmed against a real
-Node-runtime plugin mutating front matter — `{{ .page.injected.zulu }}` resolves
-today, on main, without this change, because the value reaching the renderer is
-already a plain map.
-
-**This narrowing is load-bearing and has a guard.** It holds only while the
-ordered-map producers emit nothing but those three shapes; a producer that
-returned, say, `[]map[string]interface{}` would put ordered maps somewhere the
-walk never looks, and the failure would be silent. `internal/ordered` carries a
-test pinning the output alphabet of both functions. If that test is ever changed
-rather than fixed, this section must be revisited — widen the walk (reflection
-over slice and map kinds) rather than quietly extend the list.
-
-**Conversion is engine-local.** It happens inside the Go engine at render time
-and must not be hoisted into the data loader, `PipelineState`, or the pipeline's
-context builders. Liquid consumes `*ordered.Map` directly through
-`LiquidMethodMissing` and `Each` and depends on it for insertion-order
-iteration; converting earlier would silently flatten Liquid's ordering. Plugin
-hook payloads are built from the pipeline context, not the engine's render copy,
-and are likewise unaffected — `*ordered.Map` still crosses the plugin boundary
-as specified in §7.
-
-#### Iteration order
-
-Iteration order is the cost of this decision and differs by engine. This is a
-deliberate divergence, not an oversight:
-
-| Engine | Ordered-map data (data files, plugin returns) | Plain-map data (front matter, collections, directory namespaces) | List data |
-|---|---|---|---|
-| Liquid | insertion order | sorted by key | file order |
-| Go templates | **sorted by key** | sorted by key | file order |
-
-**The split is by data shape, not by file format.** Only `*ordered.Map` carries
-insertion order. Every data file produces one — YAML, TOML and JSON alike, per
-§ "Data files preserve author key order (issue #1262)" — as do plugin hook
-returns.
-
-The plain-map column is what Alloy builds itself or deliberately leaves flat:
-the directory namespace maps `LoadDirectory` assembles, collection and taxonomy
-entries, and page front matter. Front matter is the one with authored order that
-is discarded, and that is a scope decision recorded in the §1262 section, not an
-accident — both engines sort it.
-
-After this change Go templates sort every map shape, so the engines agree
-everywhere except ordered-map data, where Liquid keeps insertion order.
-
-Go's `text/template` sorts map keys on every `range`, with no extension point
-(`exec.go` resolves `.field` as method → struct field → map index, and
-`walkRange` sorts map keys through `fmtsort`). A value that supports dot
-notation must be a map, and a Go map cannot carry order. **Dot notation and
-insertion-order iteration are mutually exclusive on the same value** — this
-confirms the constraint recorded for issue #458 and is the reason `oget` and
-`orange` exist at all. What changed is the choice of which side to take, not
-the constraint.
-
-Consequences, all of which must be documented rather than worked around:
-
-- `orange` **must sort its keys**. It currently ranges the underlying map
-  directly, which for a plain Go map is randomized per run — verified as
-  nondeterministic build output across repeated builds of unchanged input
-  (issue #1262). After conversion every input to `orange` is a plain map, so
-  without an explicit sort the nondeterminism would spread from YAML and TOML
-  data to all data. Sorted output is the contract; random output is a defect.
-- `oget` keeps working unchanged — it already accepts `map[string]interface{}`.
-- Bare `{{ range }}` over map data now succeeds where it previously errored
-  with `range can't iterate over …`, and yields sorted key order.
-- `PLAN.md` §1i's claim that "Both Liquid and Go templates access the same data"
-  remains true of *access*; it is not a claim about iteration order.
-
-**When order matters, the data should be a list.** Lists are ordered by nature
-and iterate in file order in both engines with no special handling, and they
-carry an explicit label field rather than overloading the key as a display
-string. A sequence stored in a map — a nav menu, a set of steps — is a
-modelling choice that asks the engine to remember an order the data shape never
-recorded. Documentation must steer authors to lists for sequences.
-
-#### What this does not change
-
-- **Keys that are not valid Go template identifiers stay unreachable by dot
-  notation.** `{{ .site.data.nav.my-key }}` is a *parse* error (`bad character
-  U+002D`), not a render error, and `index` is the answer:
-  `{{ index .site.data.nav "my-key" }}`. This is Go template syntax and applies
-  equally to plain maps today — it is out of scope here and must not be
-  "fixed" by rewriting template source.
-- **Missing keys render empty**, matching plain-map behavior:
-  `{{ .site.data.pkg.nope }}` produces the empty string, not an error.
-- **The original `*ordered.Map` must not be mutated.** Conversion produces new
-  values; the source tree is shared with `PipelineState`, incremental rebuild
-  state, and plugin payloads.
-- **Value filters are unaffected.** `where`, `sort`, `group_by`, and `map`
-  resolve fields through `getMapValue`, which already handles both
-  `map[string]interface{}` and `*ordered.Map` (issue #477). They keep working on
-  converted data through its existing map branch.
-
----
 
 ---
 
@@ -624,30 +461,27 @@ A static page at `content/blog/about.md` resolves to `/blog/about/` (parent patt
 | `:section` | Top-level content directory | `blog` |
 | `:filename` | Source filename without extension | `my-first-post` |
 
-**Front matter permalinks containing `{{ }}` trigger template rendering** — uses the configured template engine (Liquid or Go templates), ~50µs per page. **A template permalink that renders to an empty or whitespace-only string is a fatal build error** — distinct from `permalink: false` which is an intentional opt-out:
+**Front matter permalinks containing `{{ }}` trigger template rendering** — renders with Liquid, ~50µs per page. **A template permalink that renders to an empty or whitespace-only string is a fatal build error** — distinct from `permalink: false` which is an intentional opt-out:
 
 ```yaml
 ---
 title: "My Post"
-# Liquid engine:
 permalink: "/{{ page.customField | slugify }}/{{ page.date | date: '%Y' }}/"
-# Go template engine:
-# permalink: "/{{ .page.customField | slugify }}/{{ .page.date | date "%Y" }}/"
 ---
 ```
 
-The permalink template syntax must match the configured engine. A Liquid permalink (`{{ page.slug }}`) in a Go template project will fail — and vice versa. Detection uses `{{` which is shared by both engines, but rendering uses the configured engine. Missing field behavior follows engine defaults: Liquid silently produces empty strings; Go templates error.
+A missing field renders as an empty string, following Liquid's default.
 
 **Token and template modes are mutually exclusive.** When `{{` is detected in a permalink, the entire string is a template expression. Token syntax (`:year`, `:slug`, etc.) is not processed — `:year` would appear as literal text. Every token has a template equivalent:
 
-| Token | Liquid equivalent | Go template equivalent |
-|---|---|---|
-| `:year` | `{{ page.date \| date: '%Y' }}` | `{{ .page.date \| date "%Y" }}` |
-| `:month` | `{{ page.date \| date: '%m' }}` | `{{ .page.date \| date "%m" }}` |
-| `:day` | `{{ page.date \| date: '%d' }}` | `{{ .page.date \| date "%d" }}` |
-| `:slug` | `{{ page.slug }}` | `{{ .page.slug }}` |
-| `:title` | `{{ page.title }}` | `{{ .page.title }}` |
-| `:section` | `{{ page.collection }}` | `{{ .page.collection }}` |
+| Token | Liquid equivalent |
+|---|---|
+| `:year` | `{{ page.date \| date: '%Y' }}` |
+| `:month` | `{{ page.date \| date: '%m' }}` |
+| `:day` | `{{ page.date \| date: '%d' }}` |
+| `:slug` | `{{ page.slug }}` |
+| `:title` | `{{ page.title }}` |
+| `:section` | `{{ page.collection }}` |
 
 `:filename` has no direct template equivalent — use `{{ page.slug }}` or a custom front matter field instead.
 
@@ -825,7 +659,8 @@ For a team member `{name: "Alice", slug: "alice"}`, the virtual page gets:
 **Rules:**
 - Only string-valued front matter fields are interpolated. Non-string values (numbers, booleans, arrays, maps) are left unchanged.
 - Only fields containing `{{ }}` or `{% %}` markers are rendered through the template engine. Fields without markers skip the renderer entirely — no performance cost.
-- Interpolation uses the same template engine and renderer as permalink processing. Full Liquid (or Go template) syntax is supported, including filters. The renderer must use the **configured engine** (`engine: "gotemplate"` or the default Liquid) — it must not fall back to Liquid when a Go template engine is configured.
+- Interpolation uses the same template engine and renderer as permalink processing. Full Liquid syntax is supported, including filters.
+- A field that fails to parse or render (for example, an unknown filter) does not fail the build. Alloy logs `warning: front matter interpolation for <page>.<field>: <error>` and keeps the field's original string.
 - The template context contains only the `as:` variable (e.g., `{member: item}`). `site.*`, `page.*`, and `collections.*` are not available during front matter interpolation — this runs at pagination time, before the full template context is built.
 - Skipped fields: `permalink` (already processed), `layout`, `pagination`, and any key starting with `_` (internal transport keys such as `_paginationCtx`, `_paginationAs`, `_paginationData`).
 - Only applies to virtual pages (`perPage: 1`). Paginated list pages (`perPage > 1`) do not interpolate front matter — the `as:` variable is a list, not a single item.
@@ -859,51 +694,31 @@ See §1e (Output Formats) for the multi-format rendering pipeline.
 
 ## 1e. Output Formats
 
-Liquid is format-agnostic — templates can output HTML, JSON, XML, plain text, or anything else. Everything in `layouts/` is a template — rendered by whichever engine is configured.
+Liquid is format-agnostic — templates can output HTML, JSON, XML, plain text, or anything else. Everything in `layouts/` is a template — rendered by Liquid.
 
 ### Template File Extensions
 
-The `.liquid` extension marks a file as a Liquid template. Files without `.liquid` are Go templates (or shared static files with no template tags). The file extension before `.liquid` (or the bare extension for Go) determines the output format.
-
-**Liquid engine** — looks for `.liquid` files first, falls back to bare extension:
+All templates are Liquid. The file extension before `.liquid` determines the output format. Alloy looks for `.liquid` files first and falls back to the bare extension, which is also read as Liquid:
 
 ```
 layouts/feed.xml.liquid         → rendered by Liquid, outputs XML
 layouts/api.json.liquid         → rendered by Liquid, outputs JSON
 layouts/default.liquid          → rendered by Liquid, outputs HTML (default)
+layouts/default.html            → used when there is no default.liquid; read as Liquid
 ```
 
-**Go engine** — uses bare extension files directly:
-
-```
-layouts/feed.xml                → rendered by Go templates, outputs XML
-layouts/api.json                → rendered by Go templates, outputs JSON
-layouts/default.html            → rendered by Go templates, outputs HTML
-```
-
-**The template engine is a global, project-wide setting** — not per-page. One engine is active per build. The `.liquid` extension is a convenience for users who want to keep both Liquid and Go template files in `layouts/` side by side (e.g., to make switching engines easier), but only the configured engine's files are used at build time:
-
-```
-layouts/
-├── default.liquid     ← used when engine: "liquid"
-├── default.html       ← used when engine: "go" (or as Liquid fallback)
-├── feed.xml.liquid    ← used when engine: "liquid"
-├── feed.xml           ← used when engine: "go" (or as Liquid fallback)
-└── robots.txt         ← static content, no template tags, used by either
-```
-
-If the Liquid engine finds no `.liquid` file, it falls back to the bare extension and parses it as Liquid. This fallback applies to all **automatic** layout lookup candidates — the "post", section-name, and "default" steps in `ResolveLayout`, and all candidates in `ResolveLayoutForFormat` and `ResolveTaxonomyLayout`. At each candidate step, the resolver tries `<name>.liquid` first, then the bare extension form `<name>.html` (or `<name>.json`, `<name>.xml` for format layouts). Layout chain parent references (`layout:` inside layout files) are explicit names, not automatic candidates — they follow the bare-name vs. extension-bearing rules below.
+If Alloy finds no `.liquid` file, it falls back to the bare extension and parses it as Liquid. This fallback applies to all **automatic** layout lookup candidates — the "post", section-name, and "default" steps in `ResolveLayout`, and all candidates in `ResolveLayoutForFormat` and `ResolveTaxonomyLayout`. At each candidate step, the resolver tries `<name>.liquid` first, then the bare extension form `<name>.html` (or `<name>.json`, `<name>.xml` for format layouts). Layout chain parent references (`layout:` inside layout files) are explicit names, not automatic candidates — they follow the bare-name vs. extension-bearing rules below.
 
 **Explicit layout names distinguish bare names from extension-bearing filenames.** When a layout name is set via front matter `layout:`, `_data.yaml` cascade `layout:`, or layout chain parent references (`layout:` inside layout front matter):
 
-- **Bare name** (no recognized extension) — e.g., `layout: "base"`. For the Liquid engine, the resolver tries `base.liquid` first, then `base.html` (same fallback as auto candidates). For the Go engine, it tries `base.html` only (Go never reads `.liquid` files). If the file does not exist, the build errors — the resolver does not fall through to auto candidates.
+- **Bare name** (no recognized extension) — e.g., `layout: "base"`. The resolver tries `base.liquid` first, then `base.html` (same fallback as auto candidates). If the file does not exist, the build errors — the resolver does not fall through to auto candidates.
 - **Extension-bearing name** (has a recognized template/output extension) — e.g., `layout: "base.html"`, `layout: "base.liquid"`, `layout: "feed.xml"`. The name is used as a literal filename. No extension is appended, no fallback is attempted. If the file does not exist, the build errors.
 
-Recognized extensions for this purpose are `.liquid`, `.html`, `.xml`, `.json`, and `.txt` — the template engine extensions and the output format extensions Alloy supports. Any other extension (e.g., `.md`) is treated as part of a bare name.
+Recognized extensions for this purpose are `.liquid`, `.html`, `.xml`, `.json`, and `.txt` — the Liquid extension and the output format extensions Alloy supports. Any other extension (e.g., `.md`) is treated as part of a bare name.
 
 The same rules apply uniformly to all layout name sources: front matter `layout:`, cascade `_data.yaml` `layout:`, and `layout:` directives inside layout files (layout chaining).
 
-The Go engine only reads bare extension files — it never reads `.liquid` files. Alloy does not inspect file contents to determine the engine — it sends whatever file it finds to the configured engine. If the file contains syntax for the wrong engine, the engine will return a parse error and the build fails. This is the implementor's responsibility, not something Alloy guards against.
+Alloy does not inspect file contents — every file it finds is parsed as Liquid. A file with syntax Liquid can't parse fails the build with Liquid's parse error.
 
 ### Multiple Output Formats
 
@@ -915,18 +730,12 @@ outputs: ["html", "json"]     # Generate both /my-post/index.html and /my-post/i
 ---
 ```
 
-The corresponding layout must exist for each format. Format layout resolution uses the same chain as HTML layout resolution with the output format infixed. There is no separate algorithm — one function, one lookup order. At each step, the Liquid engine tries `<name>.<format>.liquid` first, then `<name>.<format>` (bare extension fallback, same as the HTML chain). The Go engine uses `<name>.<format>` directly — the format extension IS the file extension, consistent with the Go engine's bare-extension rule (§1e: "Go engine — uses bare extension files directly").
+The corresponding layout must exist for each format. Format layout resolution uses the same chain as HTML layout resolution with the output format infixed. There is no separate algorithm — one function, one lookup order. At each step, Alloy tries `<name>.<format>.liquid` first, then `<name>.<format>` (bare extension fallback, same as the HTML chain).
 
-**Liquid engine** — a blog child page (`content/blog/my-post.md`) with `outputs: ["html", "json"]` and a date-based permalink section resolves the JSON layout as:
+A blog child page (`content/blog/my-post.md`) with `outputs: ["html", "json"]` and a date-based permalink section resolves the JSON layout as:
 1. `layouts/<front-matter-layout>.json.liquid` (if `layout:` set in front matter or `_data.yaml` cascade)
 2. `layouts/post.json.liquid` (date-based section child — same as the HTML chain's "post" step)
 3. `layouts/default.json.liquid` (fallback)
-4. Build error
-
-**Go engine** — same chain, bare format extensions:
-1. `layouts/<front-matter-layout>.json` (if `layout:` set)
-2. `layouts/post.json` (date-based section child)
-3. `layouts/default.json` (fallback)
 4. Build error
 
 This mirrors the HTML chain exactly: front matter > post (date-based child) > section name (index page) > default. The `layout: false` directive suppresses format outputs the same way it suppresses HTML output. There is no `single` concept — Alloy explicitly rejects Hugo's `single` vs `list` distinction (see Layout Lookup Order below).
@@ -986,7 +795,7 @@ If no `summary` in front matter, `page.summary` is `nil`. Alloy does not auto-ge
 
 Available in templates as `{{ page.summary }}`.
 
-**Summaries are static data — not template-rendered.** They do not pass through the Liquid or Go template engine. Rendering summaries through the template engine would require coupling the content transformation and template rendering pipeline stages (or a two-pass render), both of which break pipeline independence and degrade incremental build performance — this is a known cause of slowdowns in 11ty.
+**Summaries are static data — not template-rendered.** They do not pass through Liquid. Rendering summaries through the template engine would require coupling the content transformation and template rendering pipeline stages (or a two-pass render), both of which break pipeline independence and degrade incremental build performance — this is a known cause of slowdowns in 11ty.
 
 ### Dynamic Summaries
 
@@ -1520,10 +1329,7 @@ Layouts are shared across all languages. One `layouts/` directory serves all lan
 </article>
 ```
 
-Both Liquid and Go templates access the same data:
-
-- **Liquid**: `{{ site.language.strings.read_more }}`
-- **Go**: `{{ .site.language.strings.read_more }}`
+Templates read a translated string as `{{ site.language.strings.read_more }}`.
 
 ### Translation Linking
 
@@ -1592,7 +1398,7 @@ Data cascade and front matter are already assembled from Phase 0; taxonomy data 
 14. **Plugin Hook: `onContentLoaded`** — Plugins can modify `frontMatter` and `html` on existing pages after content rendering. Fires once with the full pages array. Other fields (`content`, `path`, `url`) are present for inspection but mutations are not applied back. Cannot inject virtual pages — return array must be same length and same order as input (use `onPagesReady` for injection).
 15. **Template Resolution** — Match each content file to its layout (lookup order)
 16. **Content Template Rendering** — Content body is rendered through the template engine with page data + site data context, producing an HTML string.
-17. **Layout Rendering** — The rendered content HTML is injected into the resolved layout as `{{ content }}` (Liquid) or `{{ .content }}` (Go), then the layout is rendered. Content and layout have isolated scopes — variables defined in content do not leak into layout or vice versa.
+17. **Layout Rendering** — The rendered content HTML is injected into the resolved layout as `{{ content }}`, then the layout is rendered. Content and layout have isolated scopes — variables defined in content do not leak into layout or vice versa.
 18. **Plugin Hook: `onPageRendered`** — Plugins can post-process intermediate page HTML. Fires once per page **only when the page has HTML output** — i.e., `page.Outputs` is nil/empty (defaults to `["html"]`) or contains `"html"` (issue #1102). Pages with only non-HTML outputs (e.g., `outputs: ["json"]`) are excluded. Payload: `{ html, frontMatter, url, path }` (see Lifecycle Events in §5 for payload contract). Only `html` in the return is applied back — other fields are read-only context for conditional processing (issue #1095).
 19. **Plugin Hook: `onFormatRendered`** — Fires once per non-HTML format body (issue #1102). For pages with `outputs: ["html", "json"]`, fires once with format `"json"`. For pages with `outputs: ["html", "json", "xml"]`, fires twice — once for `"json"`, once for `"xml"`. For pages with only non-HTML outputs (e.g., `outputs: ["json"]`), fires once with the page's rendered body as content and the output format string. Does not fire for HTML-only pages (default). Payload: `{ format, content, url, path, frontMatter }`. Only `content` in the return is applied back — `format`, `url`, `path`, and `frontMatter` are read-only context. See Lifecycle Events in §5 for full payload contract.
 
@@ -1628,7 +1434,7 @@ Errors are treated differently depending on the mode. The core principle: **`all
 
 - **Any page failure aborts the entire build.** If 1 out of 1,000 pages fails to render, no output is written. A partial deploy could publish assets, layouts, or pages that depend on the failed page being present.
 - **Plugin error or crash aborts the build.** A hook returning an error and a plugin crash (process exit, panic, unhandled exception) are treated identically — both are fatal. The build stops immediately. The only non-fatal plugin failure is a **timeout**: a timed-out hook produces a warning, discards its modifications, and continues with the pre-hook payload.
-- **Plugin filter or shortcode call error during rendering aborts the build (issue #1224).** When a template invokes a plugin-registered filter or shortcode and the call returns an error (JS throw, WASM trap, Node error), the error must propagate as a render failure for the page — no silent fallback to original input (filters) or empty string (shortcodes). This applies to all plugin tiers (QuickJS, WASM, Node) and both template engines (Liquid, Go templates). The error message must include the filter/shortcode name and the page path. Silent passthrough on filter errors is the most dangerous failure mode — code that loads fine, compiles, and silently does nothing, producing incorrect output with no warning.
+- **Plugin filter or shortcode call error during rendering aborts the build (issue #1224).** When a template invokes a plugin-registered filter or shortcode and the call returns an error (JS throw, WASM trap, Node error), the error must propagate as a render failure for the page — no silent fallback to original input (filters) or empty string (shortcodes). This applies to all plugin tiers (QuickJS, WASM, Node). The error message must include the filter/shortcode name and the page path. Silent passthrough on filter errors is the most dangerous failure mode — code that loads fine, compiles, and silently does nothing, producing incorrect output with no warning.
 - **External data source unreachable aborts the build.** Even if stale cached data exists, the build fails. The user may be deploying specifically to pick up new data — serving stale content silently could publish an incomplete or inconsistent site.
 - **Error output includes:** file path, line number (when available), error message, and the pipeline stage where the failure occurred. For template errors, include the relevant source snippet.
 
@@ -1903,18 +1709,6 @@ Templates can also sort inline using built-in array filters:
 {% endfor %}
 ```
 
-**Go templates:**
-```html
-{{ $alphabetical := sort .collections.blog "title" }}
-{{ $recent := sort .collections.blog "date" | reverse }}
-
-<!-- Sort taxonomy collection by a front matter field -->
-{{ $sorted := sort .taxonomies.tags.foundations "order" }}
-{{ range $sorted }}
-  <a href="{{ .url }}">{{ .title }}</a>
-{{ end }}
-```
-
 The `sort` filter is numeric-aware — it compares values as whole numbers when possible, falling back to string comparison otherwise. `{{ collection | sort: "order" }}` correctly sorts `order: 1, 2, 10, 20` (not `1, 10, 2, 20`).
 
 **Numeric detection rules:**
@@ -2075,7 +1869,7 @@ The `pagination` and `as` variables are only present on pages with a `pagination
 ### Abstraction Layer
 
 ```go
-// Engine interface — Liquid is built-in, others plug in
+// Engine interface — Liquid is the only implementation
 type TemplateEngine interface {
     Parse(name string, content []byte) (Template, error)
     AddFilter(name string, fn FilterFunc) error
@@ -2087,85 +1881,35 @@ type Template interface {
 }
 ```
 
-**Tier 1 — Built-in (in-process Go, full speed):**
-- **`liquid`** (default) — Notifuse/liquidgo. Familiar to 11ty/Jekyll/Shopify users.
-- **`go`** — Go's `html/template` from the standard library. Familiar to Hugo users.
+Alloy has one template engine: Liquid, through Notifuse/liquidgo, run in-process. It receives the `map[string]any` context from the data cascade with no transformation. All built-in filters (slugify, date, default, etc.) are registered at startup. Shortcodes are registered internally via `RegisterShortcode`, which adds them as custom Liquid tags (via `AddTag`). The `TemplateEngine` interface stays so tests and mocks can stand in for the engine.
 
-Both Tier 1 engines receive the same `map[string]any` context from the data cascade. No transformation needed. All built-in filters (slugify, date, default, etc.) are registered in both engines at startup. Shortcodes are registered internally via `RegisterShortcode`, which adds them as custom tags in Liquid (via `AddTag`) and as template functions in Go (via `FuncMap`) — a single registration call wires into both engines.
+### Liquid is the only template engine (issue #1285)
 
-**Tier 3 — Plugin engines (Node subprocess, significant performance cost):**
+Go `html/template` support is removed. This is a wholesale removal: no compatibility path and no migration guide. Pre-1.0, so no major version bump.
 
-> **Status: EXPERIMENTAL — NOT IMPLEMENTED, NOT PRIORITIZED.** Nothing in this subsection exists in the codebase: `alloy.engine()` is not part of the plugin API, and unknown `templates.engine` values fall back to Liquid. The design below is kept for reference only and may be dropped entirely.
+- **No engine setting.** There is no `templates` config section. A site config that still has `templates: engine: ...` (any value, including `gotemplate` and values Alloy never supported, such as `jinja`) loads and passes `config.Validate` without error or warning — the key is ignored like any other unknown key — and the site renders with Liquid.
+- **Template files.** Layouts, partials and render hooks are Liquid.
+  - Layouts and partials: Alloy looks for `<name>.liquid` first, then the bare extension (`<name>.html`, `<name>.json`, ...), and reads both as Liquid. A `.html` layout is never treated as a Go template.
+  - Render hooks: `.liquid` only, with no bare-extension fallback. A `layouts/_markup/render-link.html` is not a hook, even when there is no `render-link.liquid`. This is what Liquid sites already get today.
+- **Output.** Liquid prints values as written; `| escape` escapes them. `content`, `summary` and other page values reach Liquid as plain strings.
+- **Removed with Go templates.** These existed only for Go templates and are gone:
+  - the `safeHTML`, `safeCSS`, `safeJS`, `safeURL` and `safeHTMLAttr` filters. Using one gives Liquid's `undefined filter <name>` error, in both the engine and the `RenderTemplate` path, and that error is handled like any other Liquid error at that spot. In layouts and content it fails the build. In virtual-page front-matter interpolation it does not: that step logs a warning and keeps the field as written, for every render error (see "Front Matter Interpolation"). #1285 does not change either behaviour.
+  - the trusted-HTML markers (`TrustedHTML`, `MarkTrustedHTML`, `SetTrustMarkers`).
+  - `{{% name %}}` / `{{% /name %}}` block shortcodes and the `{{%> name %}}` raw marker. In Markdown, a `{{% ... %}}` line gets no block-tag handling: it is not a shortcode, Goldmark wraps it in a paragraph like other text, and lines after `{{%> ... %}}` are Markdown as usual. From there Liquid treats it like any other text that starts with `{{`.
+  - the experimental, never-built plugin engines (`alloy.engine()`), which were selected through `templates.engine`.
+- **Kept, though Go-motivated.** Liquid output depends on these, so they stay; changing any of them is separate work: `html.UnescapeString` in permalink and front-matter interpolation, the ordered-map conversion for pagination items and permalinks, the per-page `Summary` copies, and `plainValue` / `isEmptyString` (minus their `TrustedHTML` handling).
+- **History stays.** `CHANGELOG.md` and the release notes under `docs/content/releases/` keep their Go mentions.
 
-- Any JS-based engine (Nunjucks, EJS, Pug, etc.) can be registered via the Node bridge.
-- Every page render becomes an IPC round-trip. Expect 10-50x slower builds.
-- No data read tracking (same as Tier 1 engines).
-
-```
-[alloy] WARN Template engine "nunjucks" runs via Node bridge.
-        Build times will be significantly slower than built-in engines.
-```
-
-**Example: Nunjucks via Node plugin**
-
-```yaml
-# alloy.config.yaml
-templates:
-  engine: "nunjucks"           # Not built-in — triggers Node bridge
-plugins:
-  node: true
-```
-
-```javascript
-// plugins/nunjucks-engine.js
-import nunjucks from 'nunjucks';
-
-export default function(alloy) {
-  const env = new nunjucks.Environment(
-    new nunjucks.FileSystemLoader('layouts')
-  );
-
-  alloy.engine("nunjucks", {
-    // File extension for this engine's templates
-    ext: ".njk",
-
-    // Parse is a no-op — Nunjucks compiles on render
-    parse(name, content) {
-      return { name, content: content.toString() };
-    },
-
-    // Render a template with the page/site context
-    render(template, context) {
-      return env.renderString(template.content, context);
-    },
-
-    // Register custom filters (called at startup)
-    addFilter(name, fn) {
-      env.addFilter(name, fn);
-    }
-  });
-}
-```
-
-Layouts use the `.njk` extension:
-```
-layouts/
-├── default.njk
-├── post.njk
-└── partials/
-    └── header.njk
-```
-
-Alloy sends each page's template + context to the Node bridge, the plugin renders it with Nunjucks, and returns the HTML. The same `TemplateEngine` contract — `parse`, `render`, `addFilter` — just fulfilled over IPC instead of in-process.
+Tests: `internal/pipeline/liquid_only_test.go`, `internal/template/output_safety_test.go`, the "`{{% %}}` has no special meaning" context in `internal/content/markdown_test.go`, and the `.liquid`-only hook tests under `DiscoverRenderHooks` in `internal/template/liquid_test.go`.
 
 ### Layout Lookup Order
 
 Alloy does not auto-assign layouts based on directory structure or filename. Layout resolution follows an explicit, predictable chain — no `single` vs `list` distinction, no section-type guessing, no filename matching. Both Eleventy and Zola operate the same way — layouts are either explicitly set or use a default fallback.
 
-At each step, the Liquid engine checks for `.liquid` first then bare extension. The Go engine uses bare extension directly.
+At each step, Alloy checks for `.liquid` first, then the bare extension.
 
 **When `layout:` is set** (front matter or `_data.yaml` cascade):
-1. `layouts/<layout-value>.<engine-ext>` — direct path lookup with engine-specific extension (value is a path from `layouts/`, e.g., `layout: "article"` → `layouts/article.liquid` or `layouts/article.html`, `layout: "blog/post"` → `layouts/blog/post.liquid` or `layouts/blog/post.html`). Subdirectories are valid — organize layouts however you want.
+1. `layouts/<layout-value>.liquid`, then `layouts/<layout-value>.html` — direct path lookup (value is a path from `layouts/`, e.g., `layout: "article"` → `layouts/article.liquid` or `layouts/article.html`, `layout: "blog/post"` → `layouts/blog/post.liquid` or `layouts/blog/post.html`). Subdirectories are valid — organize layouts however you want.
 2. Build error if not found
 
 **Blog-like section** (permalink has date tokens, e.g., `blog: "/:year/:month/:day/:slug/"`):
@@ -2192,7 +1936,7 @@ At each step, the Liquid engine checks for `.liquid` first then bare extension. 
 
 The `post.liquid` convention only applies to children of sections with date-based permalink patterns. All other pages resolve through explicit `layout:` or `default.liquid`.
 
-**Format layout chain** — For pages with `outputs: ["html", "json"]` (or any non-HTML format), the format layout chain is the HTML chain above with the format infixed before the engine extension. One algorithm, one lookup order — there is no separate format resolver. At each step, the Liquid engine tries `<name>.<format>.liquid` first, then `<name>.<format>` (bare extension fallback).
+**Format layout chain** — For pages with `outputs: ["html", "json"]` (or any non-HTML format), the format layout chain is the HTML chain above with the format infixed before the `.liquid` extension. One algorithm, one lookup order — there is no separate format resolver. At each step, Alloy tries `<name>.<format>.liquid` first, then `<name>.<format>` (bare extension fallback).
 
 *Blog child (`content/blog/my-post.md`, JSON format, no `layout:` set):*
 1. `layouts/post.json.liquid` (date-based section child)
@@ -2212,8 +1956,6 @@ The `post.liquid` convention only applies to children of sections with date-base
 
 ### Layouts, Partials, Shortcodes
 
-**Liquid engine:**
-
 ```liquid
 <!-- layouts/default.liquid -->
 <!DOCTYPE html>
@@ -2226,23 +1968,6 @@ The `post.liquid` convention only applies to children of sections with date-base
 </body>
 </html>
 ```
-
-**Go engine:**
-
-```html
-<!-- layouts/default.html -->
-<!DOCTYPE html>
-<html>
-<head><title>{{ .page.title }}</title></head>
-<body>
-  {{ include "partials/header" }}
-  {{ .content }}
-  {{ include "partials/footer" }}
-</body>
-</html>
-```
-
-Same layout directory, same lookup order, same data context — different syntax.
 
 **Layout chaining** — Layouts can reference a parent layout via front matter `layout:` directives. The build pipeline renders inside-out: page content → innermost layout → parent layout → ... → root layout. Each level injects `{{ content }}` from the level below. This enables multi-level composition (e.g., `page → has-toc → base`):
 
@@ -2263,49 +1988,8 @@ The pipeline strips layout front matter before rendering (it is not output as li
 
 **Max depth** — Layout chains are capped at 10 levels. If a chain exceeds this depth without reaching a root layout (one with no `layout:` front matter), the build fails with an error identifying the chain. This prevents infinite loops from malformed layouts that escape cycle detection.
 
-**Partials and includes** — both engines resolve partials from the layouts directory:
-- **Liquid:** `{% include "partial" %}` and `{% render "partial" %}` for partials. Resolves from the layouts directory, trying `name.liquid`, then `name.html`. Extensionless files are not resolved — a template file without a recognized extension has no clear use case and is almost certainly a mistake (issue #880). **Plugin-registered filters must work in partials** — the same filter dispatch mechanism that applies to content templates and layouts must also apply to included files. If the engine uses template pre-processing (e.g., rewriting novel filter names for dispatch), that pre-processing must also run on partial source before parsing (issue #376).
-- **Go:** `{{ include "path" }}` function for includes (issues #823, #883). Named `include` for parity with Liquid's `{% include %}`. Resolves from the layouts directory, trying `path.html` only. Extensionless files are not resolved (issue #880). The context argument is optional — defaults to the current template dot (like Liquid's `{% include %}` which shares scope). Explicit context narrows scope: `{{ include "partials/card" (dict "item" . "compact" true) }}`. Returns rendered output as `template.HTML` (usable in variable assignment and pipelines — unlike `{{ template }}` which is an action, not a function). `{{ block "name" . }}` / `{{ define "name" }}` remain available for same-file layout inheritance. Nesting depth is capped at 100 (matching Ruby/Go Liquid's `Block::MAX_DEPTH`); exceeding it is a build error. Missing includes and paths that traverse outside the layouts root are build errors.
-
-**Go templates trust HTML by origin, not by key name (issue #1267).** Go templates escape every value by default. Until #1267, the Go engine made one exception by *name*: any string under a key called `content` or `summary`, at any depth in the context, printed as raw HTML. A data file therefore decided its own trust. Measured on `dab5e93`:
-
-```
-data/reviews.json  {"content": "Great! <script>steal()</script>", "rating": "5 <stars>"}
-{{ .site.data.reviews.rating }}    → 5 &lt;stars&gt;                  escaped
-{{ .site.data.reviews.content }}   → Great! <script>steal()</script>   raw — the script runs
-```
-
-Two fields of the same object behaved differently, so nothing looked broken.
-
-**The rule.** Go templates print raw only HTML that Alloy produced or vouches for, decided where the value is created — never by what its key is called:
-
-| Value | Raw in Go templates? | Why |
-|---|---|---|
-| `{{ .content }}` in a layout — the page's rendered body | yes | Alloy produced it |
-| `{{ .page.content }}` when it is the page's rendered body | yes | Alloy produced it |
-| a `summary` in the page's **own** front matter — `{{ .page.summary }}`, and `.summary` on the page's items in `site.pages`, collections, taxonomy pages and pagination. This includes the per-item summary pagination renders from the page's own summary, and the `frontMatter.summary` of a page a plugin adds with `addPages` | yes | maintainer decision: the author's own page summary is trusted |
-| a `summary` the page **inherits** through the data cascade — a directory `_data.yaml`, global data, including a data file named `summary` | **no** | it is data, not the page's own summary (maintainer decision, #1282 review) |
-| a `content` or `summary` field in a data file or plugin data, at any depth | **no** | it is data, not HTML Alloy produced |
-| a front-matter `content` field that fills `page.content` because the page has no body | **no** | authored text, not the rendered body |
-| everything else | no | unchanged |
-
-`summary` stays trusted as a stated decision, not as a side effect of its name: it is the page's own summary wherever the page appears. A field called `summary` that is not the page's own — in a data file, or inherited through the cascade — is escaped. The cascade merges directory and global data into every page's front matter as defaults, so without this a data file could set every page's "own" summary:
-
-```
-data/summary.yaml        "<script>global()</script>"
-content/blog/_data.yaml  summary: "<script>dir()</script>"
-{{ .page.summary }} on a page with no summary of its own   → escaped
-```
-
-**Filters that compare values compare the text.** A trusted value still equals the plain string it holds, so `site.pages | where: "summary", "<b>sum</b>"` matches that page in both engines. In Go templates this was already broken before #1267 — `summary` was typed as HTML and `where` compared with `==`, so it matched nothing — and it is fixed by the same rule. The same holds for `sort` (number-like text sorts as numbers: summaries `10`, `9`, `9` sort `9, 9, 10`; Go templates used to sort them as text) and for `uniq`, `intersect`, `union` and `complement` (a trusted `9` and a plain `9` are the same value).
-
-**Liquid is unchanged.** Liquid does not escape data at all (see "Output safety (issue #1266)"), so this rule has nothing to change there. Values are marked as trusted **only in Go-template builds**; a Liquid build sees the plain strings it always had (maintainer decision, #1282 review). A marker reaching Liquid changes its output: liquidgo unwraps a value only at the end of a lookup, so `{{ page.summary.size }}` came out empty and `{{ collections.blog | sum: "summary" }}` came out `0`.
-
-**Opting back in.** A data file whose HTML used to print raw because its key was `content` now escapes. The supported way to print it raw is `{{ safeHTML .site.data.x.content }}`. That requires `safeHTML` to work, which is #1266. **#1267 must not ship before #1266's implementation**: narrowing the rule first would leave authors with no working way back. The opt-in test enforces this order.
-
-**This is a visible change for Go-template sites** that print HTML from a data file's `content` or `summary` field: those tags start showing as text. The changeset and docs must say so and point at `safeHTML`.
-
-**What does not change.** Rendered page bodies and a page's own summary print exactly as before, including through `{{ include "x" .page }}`. (An inherited summary is now escaped — see the table.) Escaping of all other fields is unchanged. Hook payloads are not template context and are not affected — the `content` a plugin returns from `onFormatRendered` never reaches a template.
+**Partials and includes** — partials resolve from the layouts directory:
+- `{% include "partial" %}` and `{% render "partial" %}` for partials. Resolves from the layouts directory, trying `name.liquid`, then `name.html`. Extensionless files are not resolved — a template file without a recognized extension has no clear use case and is almost certainly a mistake (issue #880). **Plugin-registered filters must work in partials** — the same filter dispatch mechanism that applies to content templates and layouts must also apply to included files. If the engine uses template pre-processing (e.g., rewriting novel filter names for dispatch), that pre-processing must also run on partial source before parsing (issue #376).
 
 **Content-relative file inlining** — `{% inline "./path" %}` reads a file relative to the current content file's directory and inserts its raw contents into the output. No template processing — the file is inserted verbatim. This is an Alloy-specific tag, not part of the Liquid spec.
 
@@ -2340,9 +2024,8 @@ Binary file types (`.png`, `.jpg`, `.gif`, `.webp`, `.woff2`, `.pdf`, etc.) prod
 
 **Future option:** The allowlist is hardcoded for v1. If users need custom text extensions (e.g., `.glsl`, `.webc`), a config-driven allowlist can be added later:
 ```yaml
-templates:
-  inline:
-    allow: [".svg", ".html", ".glsl", ".webc"]
+inline:
+  allow: [".svg", ".html", ".glsl", ".webc"]
 ```
 
 **Raw insertion** — The inlined content is NOT processed through Markdown or Liquid. No template tag interpretation, no Markdown rendering. The raw file bytes (as UTF-8 text) are inserted at the tag position. This prevents accidental Liquid parsing of content like `{{x}}` in SVG attributes or JavaScript files.
@@ -2363,23 +2046,13 @@ templates:
 {% callout "warning" %}Don't do this in production.{% endcallout %}
 ```
 
-```html
-<!-- Go template — inline shortcode -->
-{{ youtube "dQw4w9WgXcQ" }}
-
-<!-- Go template — block shortcode -->
-{{% callout "warning" %}}
-Don't do this in production.
-{{% /callout %}}
-```
-
 **Shortcode calling convention (issue #981):**
 
-Shortcodes receive arguments as `[]string` and inner content as `string`. The calling convention defines how arguments are extracted and how empty returns are handled — identically across both engines.
+Shortcodes receive arguments as `[]string` and inner content as `string`. The calling convention defines how arguments are extracted and how empty returns are handled.
 
 **Argument resolution:**
-- **Quoted arguments** are literal strings in both engines. `{% youtube "dQw4w9WgXcQ" %}` passes `["dQw4w9WgXcQ"]` regardless of template context.
-- **Unquoted arguments in Liquid** resolve as Liquid expressions against the template context. `{% youtube page.videoId %}` evaluates `page.videoId` from the render context and passes the resolved value. This matches Go template behavior where `{{ youtube .page.videoId }}` naturally resolves `.page.videoId` before calling the function.
+- **Quoted arguments** are literal strings. `{% youtube "dQw4w9WgXcQ" %}` passes `["dQw4w9WgXcQ"]` regardless of template context.
+- **Unquoted arguments** resolve as Liquid expressions against the template context. `{% youtube page.videoId %}` evaluates `page.videoId` from the render context and passes the resolved value.
 - **Fallback to literal:** If an unquoted Liquid argument does not resolve to any context variable, it is passed as a literal string. This preserves backward compatibility — existing shortcodes using unquoted strings that happen not to match any variable continue to work.
 - **Type conversion:** Resolved non-string values (integers, booleans, etc.) are converted to strings via `fmt.Sprint()` before passing to `TagFunc`. The `TagFunc` signature is `func(args []string, content string) string` — all arguments are strings.
 - **Mixed arguments:** `{% card "primary" page.size %}` passes `["primary", "large"]` when `page.size` is `"large"` — quoted args stay literal, unquoted args resolve.
@@ -2391,25 +2064,9 @@ Shortcodes receive arguments as `[]string` and inner content as `string`. The ca
   `parseTagArgs(markup) []string` is preserved as a thin wrapper over `parseTagTokens` for callers that don't need variable resolution (e.g., the `{% inline %}` tag).
 
 **Empty return behavior:**
-- When a `TagFunc` returns `""` (empty string), both engines emit nothing — no output, no wrapper, no placeholder.
-- The Liquid engine must NOT emit `<alloy-shortcode data-tag="name"></alloy-shortcode>` for empty returns. That placeholder was undocumented, leaked internal implementation details into production HTML, and diverged from Go engine behavior. It is removed.
+- When a `TagFunc` returns `""` (empty string), Liquid emits nothing — no output, no wrapper, no placeholder.
+- The Liquid engine must NOT emit `<alloy-shortcode data-tag="name"></alloy-shortcode>` for empty returns. That placeholder was undocumented and leaked internal implementation details into production HTML. It is removed.
 - A shortcode that conditionally returns `""` (e.g., a conditional embed) simply produces no output in the rendered page.
-
-**Go template block shortcodes** use `{{% tag "args" %}}...{{% /tag %}}` syntax. The `{{% %}}` delimiters are distinct from Go's `{{ }}` expression syntax and Liquid's `{% %}` control syntax. The closing tag uses `/tagname` (e.g., `{{% /callout %}}`), not `endtagname`.
-
-**Content between paired `{{% %}}` tags is Markdown-processed.** Goldmark's template tag extension preserves `{{% %}}` delimiters verbatim (same as `{% %}` and `{{ }}`), and content between them is rendered as normal Markdown. A block shortcode preprocessor runs after Goldmark but before Go template rendering — it scans the post-Goldmark HTML for paired `{{% tag %}}...{{% /tag %}}` sequences, extracts the inner HTML, calls `CallShortcode(name, args, innerContent)`, and replaces the block with the plugin's output.
-
-**Pipeline integration**: In `renderPages()`, when the configured engine is `"gotemplate"`, the preprocessor must be called on the post-Goldmark HTML before template parsing. The callback routes through the plugin registry's `CallShortcode`. This step runs after `escapeTemplateTagsInCode` and before `hasTemplateSyntax`/template rendering. Block shortcodes and Go template `{{ }}` expressions coexist in the same page — the preprocessor replaces `{{% %}}` tags first, then the Go template engine evaluates remaining `{{ }}` expressions (including any `{{ }}` expressions that appeared inside block shortcode content). Without this wiring, `ProcessBlockShortcodes` is dead code and users get a Go template parse error (`unexpected "%" in command`) when using `{{% %}}` syntax.
-
-**Nesting** is supported. Block shortcodes can appear inside other block shortcodes' content. The preprocessor resolves from innermost to outermost — inner shortcodes are expanded first, then their rendered output becomes part of the outer shortcode's content. Same-name nesting is handled via depth tracking.
-
-**Escaped quotes in arguments**: Quoted arguments support backslash escaping. `\"` inside a quoted argument produces a literal `"` in the extracted argument value. `\\` produces a literal `\`. For example, `{{% tag "she said \"hello\"" %}}` passes `she said "hello"` as the argument. Arguments without escape sequences are unaffected — existing behavior is preserved.
-
-**Depth guard**: The preprocessor limits total iterations to prevent infinite loops from self-referential shortcode output. If a callback returns output that contains new `{{% %}}` block shortcode pairs, those are processed in subsequent iterations. If the total iteration count exceeds the limit, a build error is returned. This protects against callback output that recursively generates shortcodes (e.g., a shortcode whose output contains another invocation of itself).
-
-**Error handling**: An unclosed `{{% tag %}}` (no matching `{{% /tag %}}`) is a build error. A mismatched closing tag name is a build error. Interleaved tags (`{{% a %}}{{% b %}}{{% /a %}}{{% /b %}}`) are a build error — the error references both the expected and actual tag names. Error messages include the tag name. Plugin callback errors propagate as build errors. When the opening tag of a pair is inside a `<code>` element but the closing tag is outside, the opening tag is treated as literal text and the closing tag produces an "unexpected closing tag" error.
-
-**Passthrough**: The preprocessor only processes `{{% %}}` tags. Liquid-style `{% %}` tags and Go template `{{ }}` expressions are not touched. Delimiters inside `<pre>` and `<code>` elements (code blocks) are treated as literal text, not shortcode invocations. Content without any `{{% %}}` tags passes through unchanged.
 
 #### Raw block shortcode content (issue #1245)
 
@@ -2424,29 +2081,21 @@ A block shortcode invocation may opt its body out of Markdown processing entirel
 {% endhelmet %}
 ```
 
-```html
-<!-- Go template — raw block shortcode -->
-{{%> helmet %}}
-<script type="application/ld+json">
-  { "@context": "https://schema.org", "name": "A -- B" }
-</script>
-{{% /helmet %}}
-```
-
 Without the modifier, Goldmark rewrites that body before the shortcode ever sees it: `--` becomes an en dash, `<` and `&` become entities, indented lines become `<pre><code>`, and under `unsafe: false` the whole `<script>` becomes `<!-- raw HTML omitted -->`.
 
 **The modifier is a property of the call site, not of the shortcode.** The same shortcode is legitimately used raw in one page and Markdown-parsed in another, so the signal cannot live in the shortcode's registration — it lives on the individual invocation.
 
 **Syntax.** The `>` goes immediately after the opening delimiter, on the **open tag only**:
 
-| Engine | Open tag | Close tag |
-| --- | --- | --- |
-| Liquid | `{%> name args %}` | `{% endname %}` (unchanged) |
-| Go template | `{{%> name args %}}` | `{{% /name %}}` (unchanged) |
+| Open tag | Close tag |
+| --- | --- |
+| `{%> name args %}` | `{% endname %}` (unchanged) |
 
-Close tags keep each engine's existing native syntax. Only the open tag carries the raw signal.
+The close tag keeps Liquid's native syntax. Only the open tag carries the raw signal.
 
-This shape is chosen because `{%>` and `{{%>` still satisfy the `{%` / `{{%` prefix checks in the Goldmark tag-line parser, so the open tag is already protected from HTML escaping before any new code runs. Neither engine assigns `>` any meaning in this position, so a `>` that reaches an engine — because the author used it somewhere the translation step does not run — produces a loud, diagnosable native parse error (`unknown tag` in Liquid, `unexpected closing tag` in Go templates) rather than silently corrupted output.
+This shape is chosen because `{%>` still satisfies the `{%` prefix check in the Goldmark tag-line parser, so the open tag is already protected from HTML escaping before any new code runs. Liquid assigns `>` no meaning in this position, so a `>` that reaches Liquid — because the author used it somewhere the translation step does not run — produces a loud, diagnosable `unknown tag` parse error rather than silently corrupted output.
+
+There is no Go-template form: `{{%> name %}}` was removed with Go templates (issue #1285) and is ordinary text.
 
 **Markdown-only feature.** `.html` content files never enter the Goldmark stage, so shortcode bodies in `.html` files already reach the shortcode function unmodified. The `>` modifier is therefore meaningless — not merely unsupported — in `.html` files, and needs no code-level validation or special-casing there: a `{%>` written in an `.html` file reaches the engine verbatim and produces the engine's native parse error. This must be documented as a Markdown-only concept.
 
@@ -2469,15 +2118,15 @@ This rests on the **Markdown-only Goldmark invariant** (issue #1249), specified 
 **Matching close tag (depth counting).** The block ends at the close tag that matches its own open tag, tracked by nesting depth:
 
 - Depth starts at 1 when the raw block opens.
-- A subsequent line that is *exactly* a same-name open tag in the same delimiter family — `{% name %}` or `{%> name %}` for a Liquid raw block, `{{% name %}}` or `{{%> name %}}` for a Go template one — increments depth.
-- A subsequent line that is *exactly* a same-name close tag — `{% endname %}` / `{{% /name %}}` — decrements depth. When depth reaches 0 the block ends; that line is the block's close tag, not part of the body.
+- A subsequent line that is *exactly* a same-name open tag — `{% name %}` or `{%> name %}` — increments depth.
+- A subsequent line that is *exactly* a same-name close tag — `{% endname %}` — decrements depth. When depth reaches 0 the block ends; that line is the block's close tag, not part of the body.
 - Only own-line tags affect depth. A tag sharing its line with other text (`Use {% endhelmet %} to close.`) is body content and is ignored for depth purposes.
-- Delimiter families do not cross: `{{% name %}}` lines inside a Liquid raw block are body text, and vice versa.
+- `{{% name %}}` and `{{% /name %}}` lines are not tags; inside a raw block they are body text.
 - Whitespace-control variants (`{%- name -%}`, `{%- endname -%}`) participate in depth counting like their plain forms.
 
 A balanced same-name pair inside a raw body therefore nests correctly. An *unbalanced* same-name close tag alone on its own line inside a raw body still ends the block early — the same limitation a fenced code block has with its own fence. Authors documenting a close tag in isolation should keep it inline or use a non-raw block.
 
-**Translation (stripping the `>`).** The `>` is an Alloy-level signal and never reaches either template engine. Stripping happens in the Goldmark extension's output for the raw block node — not as a separate pass over the rendered HTML — so that by the time the pipeline hands the page to `ProcessBlockShortcodes` or to the engine, only native syntax is present. Stripping removes the `>` and normalizes to exactly one space between the delimiter and the tag name, so `{%>helmet %}` and `{%> helmet %}` both yield `{% helmet %}`. Everything else about the open tag — arguments, quoting, whitespace-control dashes — is preserved: `{{%> helmet "a b" %}}` yields `{{% helmet "a b" %}}`, which the `ProcessBlockShortcodes` open-tag pattern (which requires whitespace after `{{%`) then matches. The close tag is emitted unchanged.
+**Translation (stripping the `>`).** The `>` is an Alloy-level signal and never reaches Liquid. Stripping happens in the Goldmark extension's output for the raw block node — not as a separate pass over the rendered HTML — so that by the time the pipeline hands the page to Liquid, only native syntax is present. Stripping removes the `>` and normalizes to exactly one space between the delimiter and the tag name, so `{%>helmet %}` and `{%> helmet %}` both yield `{% helmet %}`. Everything else about the open tag — arguments, quoting, whitespace-control dashes — is preserved: `{%> helmet "a b" %}` yields `{% helmet "a b" %}`. The close tag is emitted unchanged.
 
 **Display mode (`goldmark.templateTags: false`).** With template tags disabled, tags are escaped with zero-width spaces and shown to the reader as literal text rather than executed. In this mode the open tag is displayed **as the author typed it, including the `>`** — display mode exists to show template source verbatim, so the characters shown are the characters written. The body is still captured verbatim under this setting; the raw block's parsing behavior does not depend on `templateTags`.
 
@@ -2485,18 +2134,17 @@ A balanced same-name pair inside a raw body therefore nests correctly. An *unbal
 
 ```text
 unterminated raw block shortcode {%> helmet %} opened at line 12: expected {% endhelmet %}
-unterminated raw block shortcode {{%> helmet %}} opened at line 12: expected {{% /helmet %}}
 ```
 
 `renderPages()` already wraps content-transformation failures with the page path, so the build-level message reads `content transformation: blog/post.md: unterminated raw block shortcode ...`. When nested opens are outstanding, the error reports the outermost open tag. This error is raised in display mode as well, since the parser is shared.
 
 The `markdownify` filter renders through `goldmark.Convert` rather than `RenderMarkdown` and keeps its current lenient behavior — it does not surface this error. That path forces `templateTags: false` and operates on values that have already been through template rendering, so an unterminated raw block cannot reach it from normal content.
 
-**What raw does not protect against.** The modifier governs Markdown only. Once the body reaches the template engine it is treated exactly as a normal block shortcode body is treated today — Liquid re-joins the body's tokens verbatim, and the Go template preprocessor passes the inner span through unchanged — but nothing new is done to shield engine-level delimiters, and a shortcode's *output* is still processed by the engine as it is today. Similarly, `escapeTemplateTagsInCode` is unchanged and still applies: because a raw body is never Markdown-converted, Goldmark never generates `<pre>`/`<code>` from it, so only author-written literal `<pre>`/`<code>` inside a raw body is affected. Neither case is special-cased.
+**What raw does not protect against.** The modifier governs Markdown only. Once the body reaches the template engine it is treated exactly as a normal block shortcode body is treated today — Liquid re-joins the body's tokens verbatim — but nothing new is done to shield engine-level delimiters, and a shortcode's *output* is still processed by Liquid as it is today. Similarly, `escapeTemplateTagsInCode` is unchanged and still applies: because a raw body is never Markdown-converted, Goldmark never generates `<pre>`/`<code>` from it, so only author-written literal `<pre>`/`<code>` inside a raw body is affected. Neither case is special-cased.
 
-**Applies to any block tag.** The parser cannot distinguish a shortcode from any other block-shaped tag, so `{%>` is recognized on any block tag. The feature is specified and documented for shortcodes; applying it elsewhere (`{%> if x %}`) is undefined but harmless — the body is passed raw and the engine handles the tag normally.
+**Applies to any block tag.** The parser cannot distinguish a shortcode from any other block-shaped tag, so `{%>` is recognized on any block tag. The feature is specified and documented for shortcodes; applying it elsewhere (`{%> if x %}`) is undefined but harmless — the body is passed raw and Liquid handles the tag normally.
 
-**Documentation** (`docs/content/templates/shortcodes.md`): the raw modifier must be documented alongside block shortcodes, covering the syntax for both engines, that it is a Markdown-only feature (with the explanation that `.html` shortcode bodies are already raw), the `unsafe: false` security note, the depth-counting rule and its unbalanced-close-tag limitation, and that the signal belongs to the call site rather than the shortcode definition.
+**Documentation** (`docs/content/templates/shortcodes.md`): the raw modifier must be documented alongside block shortcodes, covering the syntax, that it is a Markdown-only feature (with the explanation that `.html` shortcode bodies are already raw), the `unsafe: false` security note, the depth-counting rule and its unbalanced-close-tag limitation, and that the signal belongs to the call site rather than the shortcode definition.
 
 **Tier 3 (Node plugin):**
 
@@ -2830,65 +2478,20 @@ Explicitly registering a page scope mode (e.g. `pages: true`) on a pageless hook
 
 ### Tier 1: Go Built-in Filters
 
-Built-in filters covering common SSG needs. Compiled Go functions registered with both Liquid (via liquidgo) and Go templates (via `FuncMap`) — fastest possible execution:
+Built-in filters covering common SSG needs. Compiled Go functions registered with Liquid (via liquidgo) — fastest possible execution:
 
 - **String**: `upcase`, `downcase`, `capitalize`, `slugify`, `truncate`, `truncatewords`, `strip_html`, `escape`, `replace`, `replace_first`, `split`, `join`, `strip`, `append`, `prepend`, `newline_to_br`, `contains`
-- **Date**: `date` (strftime format string, e.g. `{{ page.date | date: "%B %d, %Y" }}`). Powered by `github.com/lestrrat-go/strftime` for full POSIX compliance. Supports all standard directives (`%A` through `%z`, `%%`). Both Liquid and Go template engines use the same `DateFormat` implementation — overrides liquidgo's native `date` filter. Accepts `time.Time` or string input (parsed from ISO 8601, RFC 3339, `YYYY-MM-DD HH:MM:SS`, `YYYY-MM-DD`). Returns input unchanged when no format argument is provided.
+- **Date**: `date` (strftime format string, e.g. `{{ page.date | date: "%B %d, %Y" }}`). Powered by `github.com/lestrrat-go/strftime` for full POSIX compliance. Supports all standard directives (`%A` through `%z`, `%%`). Alloy's `DateFormat` implementation overrides liquidgo's native `date` filter. Accepts `time.Time` or string input (parsed from ISO 8601, RFC 3339, `YYYY-MM-DD HH:MM:SS`, `YYYY-MM-DD`). Returns input unchanged when no format argument is provided.
 - **Array**: `sort`, `reverse`, `first`, `last`, `limit`, `where`, `group_by`, `size`, `map`, `uniq`, `compact`, `concat`
 - **Set operations**: `intersect`, `union`, `complement`
 - **URL**: `url` (resolves path relative to baseURL path prefix), `absolute_url` (prepends full baseURL), `url_encode`, `url_decode`
 - **Math**: `plus`, `minus`, `times`, `divided_by`, `modulo`, `ceil`, `floor`, `round`, `abs`
 - **Content**: `markdownify` — renders a markdown string to HTML using the same goldmark configuration as the main content renderer, driven by the site's `content.markdown` config. Uses a shared goldmark instance, not per-call allocation. Does not run template tag protection (processes already-rendered values). Useful for rendering markdown in front matter fields (`{{ page.description | markdownify }}`), data file values, or any template string containing markdown syntax.
-- **Output safety**: `safeHTML`, `safeCSS`, `safeJS`, `safeURL`, `safeHTMLAttr` — mark trusted content so Go templates do not escape it, one filter per escaping context. See "Output safety (issue #1266)" below.
 - **Regex**: `findRE`, `replaceRE` (regex match and replace)
 - **Data**: `json` (serialize value to JSON), `default` (fallback value if nil/empty)
 - **Assets**: `cachebust` (content-hash cache busting via query string), `get_hash` (file content digest for SRI)
 
-**Output safety (issue #1266).** The two engines escape data in opposite directions, and Alloy keeps it that way.
-
-| Behavior | Liquid | Go templates |
-|---|---|---|
-| Data printed with `{{ }}` | **raw** — printed exactly as written | **escaped** — by `html/template`, according to where it appears |
-| Turn escaping on | `\| escape` | n/a — on by default |
-| Turn escaping off | n/a — off by default | the `safe*` filters below |
-
-Same data, same line: `<b>hi</b>` prints as `<b>hi</b>` in Liquid and as `&lt;b&gt;hi&lt;/b&gt;` in Go templates. Liquid's raw default matches Jekyll and Shopify. Making Liquid escape by default was considered and rejected: every Liquid site that prints HTML from data would start showing `&lt;b&gt;` with no change to its templates. The divergence is documented instead (see "Documentation" below). The risk it documents is a site moving from Go templates to Liquid: values that were escaped start printing raw, with no error and no change in the template source.
-
-**`escape` is Liquid only (issue #1280).** `escape` returns a plain string that already holds entities, and `html/template` escapes a plain string again, so in Go templates it escapes twice: `Tom & Jerry` prints as `Tom &amp;amp; Jerry`, in the page body and in attributes alike. This is documented, not changed: Go template support is planned for removal (#1285), so `escape` keeps its current behavior and stays registered in both engines. The docs must:
-- mark `escape` as Liquid only in the filter table
-- say in the output-safety table not to add it in Go
-- leave it out of every Go example
-
-To show trusted HTML as text in Go (a page's rendered body or own summary), the docs use `printf "%s"`, which turns the trusted value back into a plain string that Go escapes once. Go XML feeds need this for `summary`: printed as is, a summary with `&` or `<` breaks the XML. They also print the `<?xml ?>` declaration with `safeHTML`, since `html/template` escapes it to `&lt;?xml`. Go also escapes for HTML in JSON output, `json` filter included, so `&` comes out as `&amp;` in a JSON string. That is out of scope here and goes to #1285.
-
-**Go templates escape by context, so there is one filter per context.** `html/template` applies a different rule depending on where a value lands, and a plain string never bypasses any of them. Only a value of the matching `html/template` type does:
-
-| Filter | Marks the value as | Unlocks | Without the filter, `html/template`… |
-|---|---|---|---|
-| `safeHTML` | `template.HTML` | HTML body | escapes it: `<b>` → `&lt;b&gt;` |
-| `safeCSS` | `template.CSS` | inside `<style>` and `style="…"` | replaces anything it cannot prove harmless (e.g. `url(…)`) with `ZgotmplZ`; plain declarations like `color: red` pass |
-| `safeJS` | `template.JS` | inside `<script>` | prints it as a quoted string literal |
-| `safeURL` | `template.URL` | URL attributes (`href`, `src`, …) | replaces a non-`http(s)`/`mailto` URL with `#ZgotmplZ` |
-| `safeHTMLAttr` | `template.HTMLAttr` | a whole attribute in attribute position | replaces it with `ZgotmplZ` |
-
-Each name, and the type it returns, matches Hugo's function of the same name. `html/template` has two further types, `JSStr` (inside a JS string literal) and `Srcset` (a `srcset` attribute), and Hugo has a `safeJSStr`; neither is included. They are not needed for the common cases — `safeJS` covers script, `safeURL` covers each URL — and can be added the same way if asked for. Both calling forms work: `{{ safeHTML .page.embed }}` and `{{ .page.embed | safeHTML }}`.
-
-**Trust is narrow, in two ways.**
-
-- *Each filter unlocks only its own context.* `safeHTML` in an `href` is still checked as a URL, so `<a href="{{ safeHTML .link }}">` with a `javascript:` link still prints `#ZgotmplZ`. Use `safeURL` there.
-- *Trust survives a filter only if the filter hands back the exact same value.* A filter that changes the value returns an ordinary string, which is escaped again: `{{ safeHTML .v | upcase }}` prints `&lt;B&gt;HI&lt;/B&gt;`. A filter that returns the value it was given untouched — `default` when its input is present, for example — returns the trusted value itself, so it stays trusted: `{{ default (safeHTML .v) "x" }}` prints `.v` raw. Nothing new becomes trusted this way. Only the exact text the author marked survives; a fallback or any other value a filter returns instead is escaped as normal. An empty trusted value counts as empty: `{{ default (safeHTML .v) .fallback }}` with an empty `.v` returns `.fallback`, escaped.
-
-  Wiping trust after every filter was considered and rejected (#1274 review): Go sites already write `{{ default .page.content "" }}`, where `content` is trusted HTML (`markHTMLSafe`), and that would start printing `&lt;p&gt;`. To be sure a value ends up trusted, put the `safe*` filter last.
-
-`html/template` may still normalize a trusted value to make it well-formed in its position — `safeURL` on `javascript:alert(1)` prints `javascript:alert%281%29`. The scheme and meaning survive; byte-for-byte equality is not promised.
-
-**In Liquid, all five filters are registered and return their input unchanged, as a plain string** — on every path that renders Liquid, including `RenderTemplate`, which renders without the template engine (dev server pages, permalinks). Liquid has no escaping to bypass, so they do nothing — they exist so a template that uses them is portable between engines. They must hand Liquid a plain string, not an `html/template` type: Liquid's own filters treat those named types as non-strings, and `{{ v | safeHTML | size }}` drops from the real length to `0` (measured on a prototype of the naive one-line fix).
-
-**What the `safe*` filters do not protect against.** They are an author's assertion that a value is already safe for that context; Alloy does not check it. Applying one to data an author does not control — a third-party feed, user submissions, a remote data source — re-opens exactly the hole `html/template` closes: `safeJS` and `safeURL` on untrusted data are script injection. Use them on values the site author wrote.
-
-**Out of scope here.** The Go engine already marks two context keys, `content` and `summary`, as `template.HTML` by name (`markHTMLSafe`). Whether a data value that happens to use one of those keys should be trusted is issue #1267 and is not changed by this section.
-
-**Documentation.** The docs must say all of the above in user terms: the per-engine table, the five Go filters with one example each in its own context, the narrow-trust rules, the Go→Liquid switching warning, and the security note. The existing `safeHTML` entry in `docs/content/templates/filters.md` describes the Go behavior but shows only a Liquid example, where the filter does nothing; it must show Go usage.
+**Output safety.** Liquid prints values as written; `| escape` escapes them. There is no automatic escaping and no `safe*` filter family: those existed only for Go templates and were removed with them (issue #1285).
 
 **Filter pipes inside `{% for %}` expressions are not supported.** Standard Liquid's `for` tag parses `limit:` and `offset:` as built-in tag parameters from the raw markup — they are not pipe filters. Writing `{% for x in arr | limit: 5 %}` is silently broken: the template pre-processor rewrites `| limit:` to a `plugin_filter` bridge call, which the `for` tag does not recognize as a `limit:` parameter. The two correct forms are the `for`-tag clause (`{% for x in arr limit: 5 %}`) and the assign-then-loop pattern (`{% assign capped = arr | limit: 5 %}{% for x in capped %}`).
 
@@ -3333,7 +2936,7 @@ Fire **once per build**. Payload is a JSON-serializable representation of the Go
 | Worker pool size | `plugins.workers` | Controls hook worker pool size (before spawn) |
 | Hook timeout | `plugins.timeout` | Controls timeout for subsequent hook calls |
 
-**Not mutable via onConfig:** `title`, `baseURL`, `language`, `templates.engine`, `content`, `data`, `taxonomies`, `pagination`, `sitemap`, `collections`, `watch`, `sources`, `ssr`, `languages`, `structure.plugins` (plugins are already loaded before `onConfig` fires — changing the directory has no effect), `structure.components` (component directory is used by the watcher and incremental builder which are configured before `onConfig` fires). Changes to non-mutable fields are ignored; the pipeline preserves the original values for those fields. Internal fields (`projectRoot`, `verbose`, `quiet`, `refetch`, `includeDrafts`) have `json:"-"` tags and are never visible to plugins.
+**Not mutable via onConfig:** `title`, `baseURL`, `language`, `content`, `data`, `taxonomies`, `pagination`, `sitemap`, `collections`, `watch`, `sources`, `ssr`, `languages`, `structure.plugins` (plugins are already loaded before `onConfig` fires — changing the directory has no effect), `structure.components` (component directory is used by the watcher and incremental builder which are configured before `onConfig` fires). Changes to non-mutable fields are ignored; the pipeline preserves the original values for those fields. Internal fields (`projectRoot`, `verbose`, `quiet`, `refetch`, `includeDrafts`) have `json:"-"` tags and are never visible to plugins.
 
 **Return type enforcement:** `onConfig` must return a JSON object (same shape as the input). Returning a non-object (string, number, array, null) produces a build error identifying `onConfig` as the source. This prevents silent data loss from plugins that forget to return the config.
 
@@ -3567,7 +3170,7 @@ Source File → Front Matter Extract → Format Detect → Markdown Parse → Me
    - `.html` → no Markdown processing (already HTML)
    - `.txt` → wrap in `<pre>` or passthrough based on config
 4. **Content template rendering**: The content body (Markdown-rendered or raw HTML) is rendered through the template engine with page data + site data context, producing a rendered HTML string. Variables assigned in content are scoped to this pass.
-5. **Layout rendering**: The rendered content HTML is injected into the resolved layout as `{{ content }}` (Liquid) or `{{ .content }}` (Go). The layout is then rendered with the same page data + site data context. Content and layout have isolated scopes — no variable leakage between them. Error line numbers map cleanly to their source file.
+5. **Layout rendering**: The rendered content HTML is injected into the resolved layout as `{{ content }}`. The layout is then rendered with the same page data + site data context. Content and layout have isolated scopes — no variable leakage between them. Error line numbers map cleanly to their source file.
 
 **Markdown-only Goldmark invariant (issue #1249).** No pipeline path may hand an `.html` (or `.txt`) content body to Goldmark. Format detection is what decides, and each non-Markdown format has its own contract: Goldmark runs for `.md` only; `.html` bodies reach the template engine exactly as authored; `.txt` bodies go through `RenderText`, which wraps them in `<pre>` and HTML-escapes them. `RenderText` is a transformation, but not a Markdown one — `&` and `<` are escaped there while headings, emphasis, and typographer substitutions are not applied, so `.txt` and `.html` must be asserted separately rather than under one "passes through untouched" claim. This is a whole-pipeline invariant, not a property of one function, because features specified against it inherit its blast radius: the raw block shortcode `>` modifier (§Shortcodes) is defined as meaningless in `.html` precisely because no Goldmark stage exists there to interpret it. A path that violates the invariant silently gives `.html` files Markdown semantics — entity escaping, typographer substitution, `unsafe` filtering, custom-element block parsing, raw-marker stripping, and Markdown-stage build errors — that the rest of the spec says they do not have.
 
@@ -3600,9 +3203,9 @@ Published on {{ page.date | date: "%B %d, %Y" }}.
 
 Two custom goldmark extensions handle template tags in markdown:
 
-**Inline TemplateTags extension** — An inline parser that recognizes `{{ }}`, `{% %}`, and `{{% %}}` patterns and emits them as custom `TemplateTagInline` AST nodes (not `ast.RawHTML` — template tags must be preserved regardless of the `unsafe` setting). A custom renderer outputs the tag text verbatim, bypassing goldmark's HTML sanitization. Works for inline shortcodes (`{% youtube "id" %}`), Go template inline shortcodes (`{{ youtube "id" }}`), Go template block shortcode delimiters (`{{% callout "warning" %}}`), and output tags (`{{ page.title }}`).
+**Inline TemplateTags extension** — An inline parser that recognizes `{{ }}` and `{% %}` patterns and emits them as custom `TemplateTagInline` AST nodes (not `ast.RawHTML` — template tags must be preserved regardless of the `unsafe` setting). A custom renderer outputs the tag text verbatim, bypassing goldmark's HTML sanitization. Works for inline shortcodes (`{% youtube "id" %}`) and output tags (`{{ page.title }}`).
 
-**Block TemplateBlocks extension** — A block parser that treats any `{% ... %}` or `{{% ... %}}` tag occupying a line by itself as a block-level node. Each such line becomes an independent single-line block — the parser does not track open/close pairing. Tag pairing (`{% tagname %}` / `{% endtagname %}` for Liquid, `{{% tagname %}}` / `{{% /tagname %}}` for Go templates) is semantic and resolved by the template engine or block shortcode preprocessor, not by goldmark. The tags are emitted as custom AST block nodes (not `ast.RawHTML` — template tags must be preserved regardless of the `unsafe` setting). A custom renderer outputs the tag text verbatim, bypassing goldmark's HTML sanitization. Content between paired tags is normal markdown (bold, lists, etc. work). This prevents block shortcodes that produce `<div>`, `<section>`, or other block-level HTML from being invalidly nested inside `<p>` tags.
+**Block TemplateBlocks extension** — A block parser that treats any `{% ... %}` tag occupying a line by itself as a block-level node. A `{{% ... %}}` line is not a block tag (the Go-template form was removed in issue #1285). Each such line becomes an independent single-line block — the parser does not track open/close pairing. Tag pairing (`{% tagname %}` / `{% endtagname %}`) is semantic and resolved by Liquid, not by goldmark. The tags are emitted as custom AST block nodes (not `ast.RawHTML` — template tags must be preserved regardless of the `unsafe` setting). A custom renderer outputs the tag text verbatim, bypassing goldmark's HTML sanitization. Content between paired tags is normal markdown (bold, lists, etc. work). This prevents block shortcodes that produce `<div>`, `<section>`, or other block-level HTML from being invalidly nested inside `<p>` tags.
 
 ```markdown
 <!-- Each {% %} line is an independent block node — goldmark doesn't pair them -->
@@ -3623,10 +3226,9 @@ The block extension activates when:
 
 When the tag is embedded in a line with other text, the inline TemplateTags extension handles it instead — the tag stays inline and `<p>` wrapping is correct.
 
-**Escaping:** To show literal `{{ }}` or `{% %}` in prose without template engine processing:
-- **Liquid engine:** wrap in `{% raw %}...{% endraw %}`
-- **Go engine:** use `{{ "{{" }}` to output a literal `{{` (standard Go template escaping)
-- **Both engines:** goldmark's inline code (backticks) and fenced code blocks protect their contents from the auto-detection extension — goldmark's parsers take precedence.
+**Escaping:** To show literal `{{ }}` or `{% %}` in prose without Liquid processing:
+- wrap in `{% raw %}...{% endraw %}`
+- goldmark's inline code (backticks) and fenced code blocks protect their contents from the auto-detection extension — goldmark's parsers take precedence.
 
 ### Custom Element Block Parsing (issue #784)
 
@@ -3661,7 +3263,7 @@ layouts/_markup/
 
 If a render hook template exists, Alloy registers a custom goldmark node renderer that delegates to the template instead of emitting default HTML. If no template exists, default goldmark rendering applies. Render hooks run during Phase 1 (markdown rendering) — before template tag processing and layout rendering. Alloy scans `layouts/_markup/` at startup and registers renderers for any templates found.
 
-**Engine selection** — Render hook templates follow the configured template engine. With `templates.engine: "liquid"` (default), hooks are `.liquid` files. With `templates.engine: "gotemplate"`, hooks are `.html` files (e.g., `render-codeblock.html`). The hook template syntax matches the engine — `{{ markup.language }}` in Liquid, `{{ .markup.language }}` in Go templates.
+**Hook files** — Render hook templates are Liquid `.liquid` files (e.g., `render-codeblock.liquid`). Only `.liquid` files are discovered as hooks; a `render-codeblock.html` is not a hook. Hooks read their context as `{{ markup.language }}`.
 
 **Template context** — Each render hook template receives a `markup` object with element-specific properties:
 
@@ -4487,7 +4089,6 @@ func BenchmarkBuild1000Pages(b *testing.B) {
 - [ ] Markdown rendering (goldmark with template tag auto-detection extension for `{{ }}`/`{% %}` patterns)
 - [ ] Liquid compatibility test suite (verify liquidgo covers needed features: `forloop.parentloop`, whitespace control `{%-`/`-%}`, `{% render %}` scoping, `tablerow`, error modes — low overhead, run early to surface gaps before building on the library)
 - [ ] Basic Liquid template rendering (liquidgo)
-- [ ] Go template rendering (`html/template`)
 - [ ] Output writing to `_site/`
 - [ ] Static file handling (`static/` → `_site/` via file copy)
 - [ ] Pre-build validation (output path conflict detection across all sources)
