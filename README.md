@@ -81,7 +81,7 @@ Content files live in `content/` with YAML, TOML, or JSON front matter. Template
 
 ## Templates
 
-Layouts, partials and render hooks are Liquid templates. Every template gets the same data context and the built-in filters. See [Templates](https://alloyssg.dev/templates/) for details.
+Layouts, partials and render hooks are Liquid templates. Layouts and partials get the page, site and collection data; render hooks get only the element they render, as `markup`, with no `page` or `site`. See [Templates](https://alloyssg.dev/templates/) for details.
 
 ## Data Cascade
 
