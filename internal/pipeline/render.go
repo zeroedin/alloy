@@ -153,6 +153,15 @@ func copyFrontMatter(fm map[string]interface{}) map[string]interface{} {
 	return result
 }
 
+// namesLayout reports whether the page names a layout, using the same test as
+// tmpl.ResolveLayout: a non-empty string in front matter or the _data.yaml
+// cascade. layout: "" names no layout, so like a page with no layout key it
+// falls back to the automatic chain (issue #1296).
+func namesLayout(page *content.Page) bool {
+	name, ok := page.FrontMatter["layout"].(string)
+	return ok && name != ""
+}
+
 // interpolateFrontMatter resolves template tags in string-valued front matter
 // fields for single-item paginated virtual pages. A field that fails to parse
 // or render fails the build (issue #1294). Fields are visited in key order so

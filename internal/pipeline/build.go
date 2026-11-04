@@ -906,7 +906,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			if err != nil {
 				// A layout the page names (front matter or _data.yaml
 				// cascade) that doesn't exist fails the build (issue #1296).
-				if layoutVal, hasLayout := page.FrontMatter["layout"]; hasLayout && layoutVal != nil {
+				if namesLayout(page) {
 					return nil, err
 				}
 				layoutPageIdx++
