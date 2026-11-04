@@ -275,7 +275,7 @@ This is useful for rendering Markdown in front matter fields or data file values
 With no argument, `json` prints the value on one line. An argument indents it, following the rules of the `space` argument of JavaScript's `JSON.stringify`:
 
 - **A number** is that many spaces. It's cut toward zero (`2.9` is 2) and capped at 10. A number below 1 means no indent.
-- **A string** is used as the indent, cut to its first 10 characters. `""` means no indent.
+- **A string** is used as the indent, cut to its first 10 characters. `""` means no indent. Use only spaces or tabs: any other character is inserted as written, so `json: "--"` prints `--"home": "/"`, which isn't valid JSON.
 - **Anything else** is ignored.
 
 ```liquid

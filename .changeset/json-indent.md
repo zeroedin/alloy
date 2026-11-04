@@ -2,7 +2,7 @@
 type: minor
 ---
 
-The `json` filter takes an optional indent, so a nested data file can be read without pasting it into another tool. A number is that many spaces, and a string is used as written:
+The `json` filter takes an optional indent, so a nested data file can be read without pasting it into another tool. A number is that many spaces, and a string of spaces or tabs is used as written:
 
 ```liquid
 <pre>{{ site.data.nav | json: 2 }}</pre>
