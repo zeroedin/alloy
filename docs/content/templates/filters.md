@@ -266,9 +266,30 @@ This is useful for rendering Markdown in front matter fields or data file values
 {% raw %}
 | Filter | Description | Example |
 |---|---|---|
-| `json` | Serialize value to JSON | `{{ site.data.config \| json }}` |
+| `json` | Serialize value to JSON. An optional argument indents the output | `{{ site.data.config \| json }}`, `{{ site.data.config \| json: 2 }}` |
 | `default` | Fallback value if nil or empty | `{{ page.author \| default: "Anonymous" }}` |
 {% endraw %}
+
+### json
+
+With no argument, `json` prints the value on one line. An argument indents it, following the rules of the `space` argument of JavaScript's `JSON.stringify`:
+
+- **A number** is that many spaces. It's cut toward zero (`2.9` is 2) and capped at 10. A number below 1 means no indent.
+- **A string** is used as the indent, cut to its first 10 characters. `""` means no indent. Use only spaces or tabs: any other character is inserted as written, so `json: "--"` prints `--"home": "/"`, which isn't valid JSON.
+- **Anything else** is ignored.
+
+```liquid
+<pre>{{ site.data.nav | json: 2 }}</pre>
+```
+
+```html
+<pre>{
+  "home": "/",
+  "products": "/products/"
+}</pre>
+```
+
+Line breaks only show inside `<pre>` or in a non-HTML output format. Data file objects keep their file order at every level, and `<`, `>` and `&` inside strings stay escaped as `\u003c`, `\u003e` and `\u0026`.
 
 ```liquid
 <script type="application/ld+json">
