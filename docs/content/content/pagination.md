@@ -165,6 +165,13 @@ For a team member `{ name: "Alice", slug: "alice" }`, the virtual page gets:
 - The template context contains only the `as:` variable (e.g., `{ member: item }`). `site.*`, `page.*`, and `collections.*` are not available during front matter interpolation.
 - Skipped fields: `permalink` (already processed), `layout`, `pagination`, and any key starting with `_`.
 - Interpolation only applies when `perPage` is `1`. List pages (`perPage > 1`) do not interpolate front matter because the `as:` variable is an array, not a single item.
+- A field that fails to parse or render fails the build, naming the page and the field. For example, a typo in a filter name (`title: "{{ member.name | upcse }}"`) gives:
+
+  ```text
+  Error: front matter interpolation for team.md field "title": liquid render error in _fm_title: Liquid error: undefined filter upcse
+  ```
+
+  `alloy dev` shows the same error in its error overlay when it rebuilds.
 
 ## Combining with external data
 

@@ -13,8 +13,9 @@ import (
 
 // processPagination detects pages with pagination: front matter, resolves
 // data sources, and generates virtual or paginated pages. Original paginated
-// pages are replaced by their expanded set.
-func processPagination(pages []*content.Page, cfg *config.Config, siteData map[string]interface{}, collectionsCtx map[string]interface{}, engine tmpl.TemplateEngine) []*content.Page {
+// pages are replaced by their expanded set. It returns the first front-matter
+// interpolation error, which fails the build (issue #1294).
+func processPagination(pages []*content.Page, cfg *config.Config, siteData map[string]interface{}, collectionsCtx map[string]interface{}, engine tmpl.TemplateEngine) ([]*content.Page, error) {
 	var result []*content.Page
 	for _, page := range pages {
 		paginationRaw, ok := page.FrontMatter["pagination"]
@@ -112,7 +113,9 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 			if perPage == 1 && len(pctx.Items) == 1 {
 				item := convertOrderedValue(pctx.Items[0])
 				vp.FrontMatter["_paginationData"] = item
-				interpolateFrontMatter(vp, asVar, item, engine)
+				if err := interpolateFrontMatter(vp, asVar, item, engine); err != nil {
+					return nil, err
+				}
 			} else {
 				converted := make([]interface{}, len(pctx.Items))
 				for ci, item := range pctx.Items {
@@ -130,5 +133,5 @@ func processPagination(pages []*content.Page, cfg *config.Config, siteData map[s
 			result = append(result, vp)
 		}
 	}
-	return result
+	return result, nil
 }
