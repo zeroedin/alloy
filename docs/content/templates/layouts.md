@@ -59,6 +59,16 @@ Pages in sections without date-based permalinks resolve through a shorter chain.
 
 Layouts do not match by filename. If you relied on `layouts/getting-started.liquid` being picked up automatically, add `layout: "getting-started"` to the page's front matter or `_data.yaml`.
 
+### A named layout that doesn't exist
+
+If a page names a layout that isn't there, the build fails. That applies to a name in front matter, a name from a `_data.yaml` cascade, and an extension-bearing name like `layout: "missing.html"`:
+
+```text
+Error: layout "nonexistent" not found for page "about.md"
+```
+
+`alloy dev` shows the same error in its error overlay when it rebuilds. `layout: false` names no layout, so it never fails.
+
 ### Taxonomy pages
 
 Auto-generated taxonomy pages check their own path first:

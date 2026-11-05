@@ -660,7 +660,7 @@ For a team member `{name: "Alice", slug: "alice"}`, the virtual page gets:
 - Only string-valued front matter fields are interpolated. Non-string values (numbers, booleans, arrays, maps) are left unchanged.
 - Only fields containing `{{ }}` or `{% %}` markers are rendered through the template engine. Fields without markers skip the renderer entirely — no performance cost.
 - Interpolation uses the same template engine and renderer as permalink processing. Full Liquid syntax is supported, including filters.
-- A field that fails to parse or render (for example, an unknown filter) does not fail the build. Alloy logs `warning: front matter interpolation for <page>.<field>: <error>` and keeps the field's original string.
+- **A field that fails to parse or render fails the build (issue #1294).** For example, an unknown filter (`{{ member.name | upcse }}`) or an unclosed tag (`{{ member.name `). `Build` and `BuildIncremental` return the error, and in `alloy dev` it shows in the error overlay. The error reads `front matter interpolation for <page> field "<field>": <Liquid error>`, where `<page>` is the source content file (e.g., `team.md`). Before #1294, Alloy logged a warning and kept the raw template text, so every generated page shipped with it.
 - The template context contains only the `as:` variable (e.g., `{member: item}`). `site.*`, `page.*`, and `collections.*` are not available during front matter interpolation — this runs at pagination time, before the full template context is built.
 - Skipped fields: `permalink` (already processed), `layout`, `pagination`, and any key starting with `_` (internal transport keys such as `_paginationCtx`, `_paginationAs`, `_paginationData`).
 - Only applies to virtual pages (`perPage: 1`). Paginated list pages (`perPage > 1`) do not interpolate front matter — the `as:` variable is a list, not a single item.
@@ -1893,7 +1893,7 @@ Go `html/template` support is removed. This is a wholesale removal: no compatibi
   - Render hooks: `.liquid` only, with no bare-extension fallback. A `layouts/_markup/render-link.html` is not a hook, even when there is no `render-link.liquid`. This is what Liquid sites already get today.
 - **Output.** Liquid prints values as written; `| escape` escapes them. `content`, `summary` and other page values reach Liquid as plain strings.
 - **Removed with Go templates.** These existed only for Go templates and are gone:
-  - the `safeHTML`, `safeCSS`, `safeJS`, `safeURL` and `safeHTMLAttr` filters. Using one gives Liquid's `undefined filter <name>` error, in both the engine and the `RenderTemplate` path, and that error is handled like any other Liquid error at that spot. In layouts and content it fails the build. In virtual-page front-matter interpolation it does not: that step logs a warning and keeps the field as written, for every render error (see "Front Matter Interpolation"). #1285 does not change either behaviour.
+  - the `safeHTML`, `safeCSS`, `safeJS`, `safeURL` and `safeHTMLAttr` filters. Using one gives Liquid's `undefined filter <name>` error, in both the engine and the `RenderTemplate` path, and that error fails the build like any other Liquid error, including in pagination front-matter interpolation (issue #1294, see "Front Matter Interpolation").
   - the trusted-HTML markers (`TrustedHTML`, `MarkTrustedHTML`, `SetTrustMarkers`).
   - `{{% name %}}` / `{{% /name %}}` block shortcodes and the `{{%> name %}}` raw marker. In Markdown, a `{{% ... %}}` line gets no block-tag handling: it is not a shortcode, Goldmark wraps it in a paragraph like other text, and lines after `{{%> ... %}}` are Markdown as usual. From there Liquid treats it like any other text that starts with `{{`.
   - the experimental, never-built plugin engines (`alloy.engine()`), which were selected through `templates.engine`.
@@ -1911,6 +1911,8 @@ At each step, Alloy checks for `.liquid` first, then the bare extension.
 **When `layout:` is set** (front matter or `_data.yaml` cascade):
 1. `layouts/<layout-value>.liquid`, then `layouts/<layout-value>.html` — direct path lookup (value is a path from `layouts/`, e.g., `layout: "article"` → `layouts/article.liquid` or `layouts/article.html`, `layout: "blog/post"` → `layouts/blog/post.liquid` or `layouts/blog/post.html`). Subdirectories are valid — organize layouts however you want.
 2. Build error if not found
+
+**A named layout that doesn't exist fails the build (issue #1296).** This applies whether the name comes from front matter, a `_data.yaml` cascade, or is extension-bearing (`layout: "missing.html"`). `Build` and `BuildIncremental` return the resolver's error, `layout "<name>" not found for page "<page>"`, and in `alloy dev` it shows in the error overlay. Before #1296, the build logged a warning and wrote the page without its layout (issue #385). `layout: false` names no layout, so it never fails. A page with no `layout:` at all that finds no candidate is outside this rule.
 
 **Blog-like section** (permalink has date tokens, e.g., `blog: "/:year/:month/:day/:slug/"`):
 
