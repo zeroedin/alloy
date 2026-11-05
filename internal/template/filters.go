@@ -735,12 +735,85 @@ func ReplaceRE(input interface{}, args ...interface{}) interface{} {
 
 // --- Data filters ---
 
+// JSONFilter serializes the input to JSON. An optional first argument
+// indents the output, with the rules of the space argument of JavaScript's
+// JSON.stringify (issue #1269). With no indent the output is one line,
+// exactly as it was before the argument existed.
 func JSONFilter(input interface{}, args ...interface{}) interface{} {
-	b, err := jsonCodec.Marshal(input)
+	var b []byte
+	var err error
+	if indent := jsonIndent(args); indent != "" {
+		b, err = jsonCodec.MarshalIndent(input, "", indent)
+	} else {
+		b, err = jsonCodec.Marshal(input)
+	}
 	if err != nil {
 		return "{}"
 	}
 	return string(b)
+}
+
+// maxJSONIndent caps the indent at 10 characters, as JSON.stringify does.
+const maxJSONIndent = 10
+
+// jsonIndent reads the json filter's indent from its first argument:
+//   - a string is the indent, cut to its first 10 characters (runes)
+//   - a number of any Go type is that many spaces, cut toward zero and
+//     capped at 10; below 1, or NaN, means no indent
+//   - anything else, or no argument, means no indent
+//
+// It returns "" for no indent. A number is compared as a float before it is
+// converted to int, because converting an out-of-range float such as 1e20 is
+// undefined in Go.
+func jsonIndent(args []interface{}) string {
+	if len(args) == 0 {
+		return ""
+	}
+	var n float64
+	switch v := args[0].(type) {
+	case string:
+		count := 0
+		for i := range v {
+			if count == maxJSONIndent {
+				return v[:i]
+			}
+			count++
+		}
+		return v
+	case int:
+		n = float64(v)
+	case int8:
+		n = float64(v)
+	case int16:
+		n = float64(v)
+	case int32:
+		n = float64(v)
+	case int64:
+		n = float64(v)
+	case uint:
+		n = float64(v)
+	case uint8:
+		n = float64(v)
+	case uint16:
+		n = float64(v)
+	case uint32:
+		n = float64(v)
+	case uint64:
+		n = float64(v)
+	case float32:
+		n = float64(v)
+	case float64:
+		n = v
+	default:
+		return ""
+	}
+	if math.IsNaN(n) || n < 1 {
+		return ""
+	}
+	if n >= maxJSONIndent {
+		return strings.Repeat(" ", maxJSONIndent)
+	}
+	return strings.Repeat(" ", int(n))
 }
 
 func Default(input interface{}, args ...interface{}) interface{} {
