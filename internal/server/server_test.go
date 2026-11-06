@@ -1042,54 +1042,37 @@ var _ = Describe("Server", func() {
 		})
 	})
 
-	// ── Custom 404 page (issue #109) ─────────────────────────────────
+	// ── No custom 404 page in alloy dev or alloy serve ───────────────
+	// Hosting platforms serve a site's 404.html themselves, so Alloy's
+	// servers don't. A missing page is Go's plain 404, even when the output
+	// has a 404.html. See PLAN.md → "Missing pages".
 
-	Describe("Custom 404 page", func() {
-		It("serves 404.html from output root when it exists", func() {
-			// Create a temp output dir with a 404.html
-			outputDir := GinkgoT().TempDir()
-			err := os.WriteFile(filepath.Join(outputDir, "404.html"),
-				[]byte("<html><body>Custom Not Found</body></html>"), 0644)
-			Expect(err).NotTo(HaveOccurred())
+	Describe("Missing pages", func() {
+		It("returns the plain 404 even when the output has a 404.html", func() {
+			projectRoot := GinkgoT().TempDir()
+			outputDir := filepath.Join(projectRoot, "_site")
+			Expect(os.MkdirAll(outputDir, 0755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(outputDir, "404.html"),
+				[]byte("<html><body>Custom Not Found</body></html>"), 0644)).To(Succeed())
 
-			cfg := &config.Config{Title: "Test Site", Build: config.BuildConfig{Output: outputDir}}
+			cfg := &config.Config{
+				Title:       "Test Site",
+				ProjectRoot: projectRoot,
+				Build:       config.BuildConfig{Output: "_site"},
+			}
 			srv := server.New(cfg)
+			Expect(srv.Start(0)).To(Succeed())
+			defer srv.Stop()
 
-			body, err := srv.Serve404Page(outputDir)
+			resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/missing/", srv.Port()))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(body)).To(ContainSubstring("Custom Not Found"),
-				"must serve the custom 404.html content")
-		})
-
-		It("returns error when no 404.html exists in output root", func() {
-			// Empty output dir — no 404.html
-			outputDir := GinkgoT().TempDir()
-
-			cfg := &config.Config{Title: "Test Site", Build: config.BuildConfig{Output: outputDir}}
-			srv := server.New(cfg)
-
-			_, err := srv.Serve404Page(outputDir)
-			Expect(err).To(HaveOccurred(),
-				"must return error when 404.html does not exist")
-		})
-
-		It("404 page receives WebSocket reload script in dev mode", func() {
-			// Create a temp output dir with a 404.html containing </body>
-			outputDir := GinkgoT().TempDir()
-			err := os.WriteFile(filepath.Join(outputDir, "404.html"),
-				[]byte("<html><body>Not Found</body></html>"), 0644)
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
 			Expect(err).NotTo(HaveOccurred())
 
-			cfg := &config.Config{Title: "Test Site", Build: config.BuildConfig{Output: outputDir}}
-			srv := server.New(cfg)
-
-			body, err := srv.Serve404Page(outputDir)
-			Expect(err).NotTo(HaveOccurred())
-
-			// In dev mode, the served content must include the reload script
-			// (same injection as any other served page)
-			Expect(string(body)).To(ContainSubstring("WebSocket"),
-				"dev mode must inject WebSocket reload script into 404 page")
+			Expect(resp.StatusCode).To(Equal(http.StatusNotFound))
+			Expect(string(body)).NotTo(ContainSubstring("Custom Not Found"),
+				"the servers don't serve a custom 404 page")
 		})
 	})
 })
