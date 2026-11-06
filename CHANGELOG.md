@@ -1,3 +1,216 @@
+## v0.8.0 (2026-11-06)
+
+### Minor Changes
+
+- Running `alloy build`, `alloy dev`, or `alloy serve` from a directory without a config file produces an actionable error instead of falling back to empty defaults. The error includes the directory Alloy searched, the expected file names (`alloy.config.yaml`, `.yml`, `.toml`, `.json`), and a `--config` suggestion for non-standard layouts.
+
+  When `--config` points to a file that does not exist, the error reports the specified path without repeating the `--config` suggestion.
+- **Breaking:** Alloy now refuses to write outside your project. `build.output` must resolve inside the project root, and a passthrough `to` must resolve inside the output directory. Both were unchecked, so a config file could scatter files anywhere on disk while the build reported success.
+
+  ```yaml
+  passthrough:
+    - from: vendor
+      to: "../../somewhere-else"    # wrote outside the project, exit 0
+  ```
+
+  ```text
+  Error: validation error: passthrough[0].to: path "../../somewhere-else" writes outside the output directory
+  Error: validation error: build.output: path "../../elsewhere" writes outside the project root
+  ```
+
+  An absolute `to` is rejected rather than quietly reinterpreted. `to: "/srv/assets"` used to become `_site/srv/assets/…` — a path you never asked for.
+
+  **The most dangerous case this closes is `build.output: "."`.** That made the project its own output directory, and because `build.clean` defaults to true, the build deleted your content, layouts, and config file, then reported success. Any value that resolves to the project root is now rejected, however it is written.
+
+  **Reading from outside the project still works, and is unchanged.** A passthrough `from` may be absolute or use `../` to share assets across projects — that is a deliberate feature. The rule is about direction: Alloy may read from anywhere you point it, but only writes where you'd expect.
+
+  Paths are checked after they are resolved, so `to: "subdir/../dist"` is still fine — it lands inside the output directory. Only escaping the boundary is an error.
+
+  Validation runs before anything is created or cleaned, so a rejected config leaves your files untouched.
+- YAML and TOML data files now keep the key order you wrote them in, the way JSON already did. Renaming a file no longer reorders it:
+
+  ```yaml
+  # data/nav.yaml
+  home: /
+  products: /products/
+  pricing: /pricing/
+  docs: /docs/
+  ```
+
+  ```liquid
+  {% for pair in site.data.nav %}
+    <a href="{{ pair[1] }}">{{ pair[0] }}</a>
+  {% endfor %}
+  ```
+
+  That renders `home, products, pricing, docs`. Previously it rendered `docs, home, pricing, products` — alphabetical — while the identical file saved as `nav.json` rendered in file order. Saving the same content as `.yaml`, `.toml` or `.json` now gives the same result.
+
+  Plugins see the same order. `Object.keys(alloy.data.nav)` returns the keys as written, for every format:
+
+  ```javascript
+  export default function (alloy) {
+    alloy.shortcode("nav", () => Object.keys(alloy.data.nav).join(", "));
+  }
+  ```
+
+  Two things deliberately stay as they are. The `_data.yaml` directory cascade still sorts, because it merges each file into the one above it. CSV keeps its row order and has no column order to preserve.
+
+  Everything else about loading is unchanged: dates still load as dates, numbers as numbers, duplicate keys and merge keys (`<<: *anchor`) behave exactly as before.
+- **Breaking:** `onPageRendered` and `onContentTransformed` hooks must return the page object with `html` as a string. A hook that returns anything else now fails the build, and the error names that plugin and the page:
+
+  ```text
+  Error: plugin hook onPageRendered: plugin "00-seo" returned no "html" for /about/ — return the page object (return page;)
+  ```
+
+  Previously a hook that forgot to return the page didn't fail where the mistake was. It handed the next plugin a page with no `html`, and *that* plugin crashed and took the blame:
+
+  ```text
+  Error: plugin hook onPageRendered: item 0: hook "onPageRendered": TypeError: cannot read property 'includes' of undefined
+      at <anonymous> (01-transforms.js:2:36)
+  ```
+
+  The same plugin running on its own built silently and kept the original HTML, so whether a plugin worked depended on which other plugins happened to be installed. Now it fails the same way wherever it runs.
+
+  The fix is to return the page:
+
+  ```javascript
+  alloy.hook("onPageRendered", {}, (page) => {
+    page.html = page.html.replace("<body>", '<body data-ready="true">');
+    return page;
+  });
+  ```
+
+  Returning the HTML as a bare string is no longer supported on either hook. Set `page.html` and return the page instead:
+
+  ```javascript
+  // before
+  return page.html.replace(...);
+  // after
+  page.html = page.html.replace(...);
+  return page;
+  ```
+
+  An empty string (`page.html = ""`) is still a valid result. On `onContentTransformed`, a hook may return `{ toc }` without `html` when every hook on the site is scoped to fields that leave out `html`, such as `pageFields: ["toc"]`; it must still return an object. In `alloy dev` the error is logged as a warning and the server keeps running, as for any hook error.
+
+  `onFormatRendered` is unchanged.
+- The `json` filter takes an optional indent, so a nested data file can be read without pasting it into another tool. A number is that many spaces, and a string of spaces or tabs is used as written:
+
+  ```liquid
+  <pre>{{ site.data.nav | json: 2 }}</pre>
+  ```
+
+  ```html
+  <pre>{
+    "home": "/",
+    "products": "/products/"
+  }</pre>
+  ```
+
+  The rules follow the `space` argument of JavaScript's `JSON.stringify`. A number is cut toward zero (`2.9` is 2) and capped at 10, and a string is cut to its first 10 characters. A number below 1, an empty string, or any other argument means no indent. Data file objects keep their file order at every level, and `<`, `>` and `&` inside strings stay escaped.
+
+  Previously `json` always printed one line. With no argument it still does, so existing templates print exactly what they did before.
+- **Breaking:** A page that names a layout that doesn't exist now fails the build, whether the name is in front matter, in a `_data.yaml` cascade, or extension-bearing like `layout: "missing.html"`. The error names the layout and the page:
+
+  ```text
+  Error: layout "nonexistent" not found for page "about.md"
+  ```
+
+  Previously the build logged a warning, wrote the page without its layout, and exited 0, so the broken page was easy to miss.
+
+  Fix the name, add the layout, or set `layout: false` to build the page without one. `alloy dev` shows the error in its overlay when it rebuilds.
+- **Breaking:** Two sources writing the same output path is now a build error, whatever kind of file it is. Previously only rendered pages, taxonomy pages, and plugin-registered outputs were checked — files copied from `static/`, `assets/`, a passthrough mapping, or alongside your content were not, so a collision between them quietly resolved by copy order and the last one written won.
+
+  The worst case was silent: a stray `content/about/index.html` sitting next to `content/about.md` replaced your rendered About page, and the build still reported success.
+
+  ```text
+  Error: output path conflict detected:
+    css/styles.css is claimed by:
+      1. static/css/styles.css
+      2. assets/css/styles.css
+      3. passthrough "vendor-css" → "css"
+      4. content/css/styles.css (colocated)
+
+  Resolve by renaming one source, adjusting a passthrough "to" path, or removing one source.
+  ```
+
+  Every claimant is listed, and every conflict is reported — not just the first one, so you can fix them in one pass rather than one build at a time.
+
+  **Sharing a directory is still fine.** Only identical paths collide. `static/css/` and a passthrough writing into `css/` merge exactly as before, as long as the filenames differ.
+
+  A passthrough file that an `exclude` pattern skips is never copied, so it never conflicts with anything.
+
+  `alloy dev` and `alloy serve` check too. Adding a colliding file while the server is running shows the conflict in the browser error overlay and skips that one copy instead of overwriting; the server keeps running, and the next rebuild clears the overlay once you resolve it.
+
+  **You may need to change something.** A site that builds today can start failing — those are the collisions that were already losing a file without telling you. Rename one of the sources, or point the passthrough `to` somewhere else.
+- **Breaking:** On pages generated with `perPage: 1`, a front-matter field that fails to parse or render now fails the build. The error names the page, the field and the Liquid error:
+
+  ```yaml
+  # content/team.md
+  title: "{{ member.name | upcse }}"
+  ```
+
+  ```text
+  Error: front matter interpolation for team.md field "title": liquid render error in _fm_title: Liquid error: undefined filter upcse
+  ```
+
+  Previously the build logged a warning, kept the field as written, and exited 0, so every generated page shipped with the raw `{{ member.name | upcse }}` in its title.
+
+  Fix the filter or the template in that field. `alloy dev` shows the error in its overlay when it rebuilds.
+- Block shortcodes can take their content raw. Add `>` after the opening delimiter and Alloy hands the body to your shortcode exactly as you wrote it, skipping Markdown entirely.
+
+  ```liquid
+  {%> helmet %}
+  <script type="application/ld+json">
+    { "@context": "https://schema.org", "name": "Alloy -- fast & extensible" }
+  </script>
+  {% endhelmet %}
+  ```
+
+  Without the `>`, Markdown rewrites that content before the shortcode ever sees it — `<` and `&` become entities, `--` becomes an en dash, indented lines turn into code blocks, and `unsafe: false` strips the `<script>` altogether.
+
+  Close tags are unchanged: `{% endname %}` as always. Only the open tag takes the `>`, so the same shortcode can take raw content on one page and Markdown-formatted content on another with no change to how it's registered and no plugin API to learn.
+
+  A raw body passes through even when `goldmark.unsafe` is `false`. That is the point — script and structured data are what the feature is for — but it does mean you are opting that one block out of HTML sanitizing, so use it with content you control.
+
+  Raw blocks nest, so a matching `{% name %}` / `{% endname %}` pair inside the body will not close the block early. A block you forget to close fails the build and tells you where to look:
+
+  ```text
+  content transformation: blog/post.md: unterminated raw block shortcode {%> helmet %} opened at line 12: expected {% endhelmet %}
+  ```
+
+  This applies to Markdown files. Shortcode content in `.html` files already reaches your shortcode untouched, so there is nothing to opt out of there.
+- **Breaking:** Go templates are no longer supported. Liquid is the only template engine.
+
+  - The `templates.engine` setting is gone. A `templates:` block left in your config is ignored, whatever its value, and the site builds with Liquid.
+  - Layouts and partials are Liquid. Alloy still looks for `name.liquid` first, then `name.html`, and reads a `.html` file as Liquid.
+  - Render hooks are `.liquid` files only. A `layouts/_markup/render-link.html` is no longer a hook.
+  - The `safeHTML`, `safeCSS`, `safeJS`, `safeURL` and `safeHTMLAttr` filters are removed. A template that still uses one fails the build with `undefined filter safeHTML`. Liquid prints values as written, so the filter isn't needed.
+  - `{{% name %}}` block shortcodes and the `{{%> name %}}` raw marker are removed. Use `{% name %}` … `{% endname %}` and `{%> name %}`. A `{{% name %}}` line in Markdown is no longer a shortcode: Liquid reads it as an output tag and prints nothing.
+
+### Patch Changes
+
+- A build that fails validation no longer deletes your previous output. Alloy used to empty the output directory before it checked the build was valid, so a conflict or a plugin error left you with nothing — the new build refused, and the old one was already gone.
+
+  This is most visible in `alloy dev`. A colliding file added mid-session is handled without a full rebuild, so the site keeps serving. But the next change that triggers a full rebuild — a plugin or component edit, unrelated to the colliding files — used to take every page down until you fixed the conflict:
+
+  ```text
+  _site after the failed rebuild:   empty
+  GET /about/                        404
+  ```
+
+  Now the previous output stays put and the site keeps serving while you fix it:
+
+  ```text
+  _site after the failed rebuild:   all pages intact
+  GET /about/                        200
+  ```
+
+  The error is unchanged — you still get the same message naming what collided.
+
+  This covers failures Alloy catches *before* it starts rendering: output path conflicts, alias and permalink problems, and errors from `onAfterValidation`. A failure while rendering — a broken template, a filter that throws — still happens after the clean, so the output directory is emptied in those cases.
+
+  `build.clean: false` is unchanged and still skips cleaning entirely.
+
 ## v0.7.0 (2026-07-27)
 
 ### Minor Changes
