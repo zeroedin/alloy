@@ -1071,8 +1071,8 @@ var _ = Describe("Server", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(resp.StatusCode).To(Equal(http.StatusNotFound))
-			Expect(string(body)).NotTo(ContainSubstring("Custom Not Found"),
-				"the servers don't serve a custom 404 page")
+			Expect(string(body)).To(Equal("404 page not found\n"),
+				"the servers don't serve a custom 404 page: a missing page is Go's plain 404")
 		})
 	})
 })
