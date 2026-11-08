@@ -26,11 +26,14 @@ import (
 var _ = Describe("A build error shows on 404 pages in alloy dev (issue #1316)", func() {
 	const message = `layout "nonexistent" not found for page "n5.md"`
 
-	// start serves an empty output directory, as after a failed full rebuild.
+	// start serves an output directory with only a home page, as when most
+	// of the site is missing after a failed full rebuild.
 	start := func(mode server.ServerMode, withError bool) *server.Server {
 		GinkgoHelper()
 		root := GinkgoT().TempDir()
 		Expect(os.MkdirAll(filepath.Join(root, "_site"), 0755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(root, "_site", "index.html"),
+			[]byte("<html><body>Home</body></html>"), 0644)).To(Succeed())
 		srv := server.NewWithMode(&config.Config{
 			Title:       "Test Site",
 			ProjectRoot: root,
@@ -74,6 +77,32 @@ var _ = Describe("A build error shows on 404 pages in alloy dev (issue #1316)", 
 
 		Expect(body).To(ContainSubstring("/_alloy/ws"),
 			"the 404 page needs the live-reload script, or it won't reload when the rebuild succeeds")
+	})
+
+	// The watcher sets and clears errors while requests read them. Run with
+	// -race (as CI does): the overlay state must be safe for concurrent use.
+	It("serves pages and 404s while the build errors change", func() {
+		srv := start(server.ModeDev, false)
+		done := make(chan struct{})
+		go func() {
+			defer GinkgoRecover()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					srv.Overlay().SetErrors([]server.BuildError{{Message: message, Stage: "rebuild"}})
+					srv.Overlay().ClearErrors()
+				}
+			}
+		}()
+		for i := 0; i < 50; i++ {
+			resp, _ := get(srv, "/")
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			resp, _ = get(srv, "/missing/")
+			Expect(resp.StatusCode).To(Equal(http.StatusNotFound))
+		}
+		close(done)
 	})
 
 	// Guards: nothing changes when there's no error, or outside alloy dev.
