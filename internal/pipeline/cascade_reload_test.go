@@ -197,6 +197,36 @@ var _ = Describe("alloy dev picks up _data.yaml edits (issue #1306)", func() {
 			"_data.yml is reloaded the same way as _data.yaml")
 	})
 
+	It("works with a content directory that isn't named content", func() {
+		root := GinkgoT().TempDir()
+		s := site{root: root}
+		write(s, "layouts/default.liquid", "DEFAULT "+layoutBody)
+		write(s, "src/blog/_data.yaml", "badge: one\n")
+		write(s, "src/blog/p.md", "---\ntitle: P\n---\npost")
+		s.cfg = &config.Config{
+			Title:       "Cascade Reload",
+			BaseURL:     "https://example.com",
+			ProjectRoot: root,
+			Build:       config.BuildConfig{Output: filepath.Join(root, "_site")},
+			Structure:   config.StructureConfig{Content: "src", Layouts: "layouts"},
+		}
+		config.ApplyDefaults(s.cfg)
+		registry, hooks, _ := pipeline.DiscoverPlugins(s.cfg)
+		DeferCleanup(registry.Close)
+		state, err := pipeline.InitPipelineState(s.cfg, registry, hooks)
+		Expect(err).NotTo(HaveOccurred())
+		s.state = state
+		first := firstBuild(s)
+		Expect(first.RenderedContent["blog/p.md"]).To(ContainSubstring("badge=[one]"))
+
+		write(s, "src/blog/_data.yaml", "badge: two\n")
+		result, err := rebuild(s, first, "src/blog/_data.yaml")
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(result.RenderedContent["blog/p.md"]).To(ContainSubstring("badge=[two]"),
+			"the folder is matched against structure.content, not a hard-coded content/")
+	})
+
 	// The case that surfaced #1306: with #1296, a misspelled cascade layout
 	// fails the build. Fixing the file has to clear the error.
 	It("reports a misspelled cascade layout, then clears it once fixed", func() {
