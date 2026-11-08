@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -95,6 +96,20 @@ var _ = Describe("alloy serve fails like alloy build", func() {
 		r.base = "http://localhost:" + string(port)
 	}
 
+	// "Serving at" prints before the watcher has registered its folders, so
+	// a write right after it can be missed. Touch a harmless static file
+	// until the watcher reports it, then make the change under test.
+	waitWatching := func(r running) {
+		GinkgoHelper()
+		n := 0
+		Eventually(func() bool {
+			n++
+			write(r.root, "static/ping.txt", fmt.Sprint(n))
+			return strings.Contains(string(r.out.Contents()), "rebuilding")
+		}, 15*time.Second, 250*time.Millisecond).Should(BeTrue(),
+			"the watcher must report a change before the test writes its input")
+	}
+
 	status := func(url string) int {
 		resp, err := http.Get(url)
 		if err != nil {
@@ -107,6 +122,7 @@ var _ = Describe("alloy serve fails like alloy build", func() {
 	It("exits 1 when a rebuild fails", func() {
 		r := serve(newSite())
 		waitServing(&r)
+		waitWatching(r)
 
 		write(r.root, "content/about.md", page("About", "nonexistent"))
 
@@ -120,6 +136,7 @@ var _ = Describe("alloy serve fails like alloy build", func() {
 	It("removes its lockfile when a rebuild fails", func() {
 		r := serve(newSite())
 		waitServing(&r)
+		waitWatching(r)
 		Expect(filepath.Join(r.root, ".alloy", "server.lock")).To(BeAnExistingFile(),
 			"sanity: a running alloy serve writes its lockfile")
 
@@ -139,6 +156,7 @@ var _ = Describe("alloy serve fails like alloy build", func() {
 		write(root, "static/about/photo.txt", "x")
 		r := serve(root)
 		waitServing(&r)
+		waitWatching(r)
 
 		write(r.root, "static/about/index.html", "<p>static about</p>")
 
@@ -161,6 +179,7 @@ var _ = Describe("alloy serve fails like alloy build", func() {
 	It("keeps serving after a rebuild that succeeds", func() {
 		r := serve(newSite())
 		waitServing(&r)
+		waitWatching(r)
 
 		write(r.root, "content/about.md", page("About edited", "default"))
 
