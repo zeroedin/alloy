@@ -111,7 +111,9 @@ var _ = Describe("A build error shows on 404 pages in alloy dev (issue #1316)", 
 		resp, body := get(srv, "/about/")
 
 		Expect(resp.StatusCode).To(Equal(http.StatusNotFound))
-		Expect(body).NotTo(ContainSubstring("alloy-error-overlay"))
+		Expect(resp.Header.Get("Content-Type")).To(Equal("text/plain; charset=utf-8"))
+		Expect(body).To(Equal("404 page not found\n"),
+			"with no build error, the 404 is Go's plain one, unchanged")
 	})
 
 	It("keeps the plain 404 in alloy serve", func() {
@@ -119,7 +121,8 @@ var _ = Describe("A build error shows on 404 pages in alloy dev (issue #1316)", 
 		resp, body := get(srv, "/about/")
 
 		Expect(resp.StatusCode).To(Equal(http.StatusNotFound))
-		Expect(body).NotTo(ContainSubstring("alloy-error-overlay"),
+		Expect(resp.Header.Get("Content-Type")).To(Equal("text/plain; charset=utf-8"))
+		Expect(body).To(Equal("404 page not found\n"),
 			"alloy serve never shows the overlay")
 	})
 })

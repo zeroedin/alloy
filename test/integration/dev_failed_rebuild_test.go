@@ -142,6 +142,9 @@ var _ = Describe("alloy dev after a failed full build (issue #1316)", func() {
 		write(r.root, "content/n5.md", page(5, "nonexistent"))
 		Eventually(r.out, 15*time.Second).Should(gbytes.Say(`rebuild failed: layout "nonexistent" not found`),
 			"sanity: the full rebuild fails")
+		Expect(status(r.base+"/n1/")).To(Equal(404),
+			"sanity: the failed rebuild was a full one, which empties _site. An incremental "+
+				"rebuild would have left the site in place and the test would prove nothing")
 
 		// Fix the one broken page with a single edit.
 		write(r.root, "content/n5.md", page(5, "default"))
