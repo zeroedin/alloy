@@ -313,6 +313,12 @@ var _ = Describe("alloy dev picks up _data.yaml edits (issue #1306)", func() {
 		write(s, "content/docs/_data.yaml", "badge: docs\n")
 		fixed, err := rebuild(s, broken, "content/docs/_data.yaml")
 		Expect(err).NotTo(HaveOccurred())
+		for _, page := range []string{"index.md", "blog/p.md", "blog/deep/q.md", "docs/guide.md"} {
+			Expect(fixed.PagesRendered).To(ContainElement(page),
+				"recovery must re-render %s, not only the fixed file's folder", page)
+		}
+		Expect(fixed.RenderedContent["blog/deep/q.md"]).To(ContainSubstring("badge=[two]"),
+			"a subfolder page rendered without folder data must get it back too")
 		Expect(fixed.RenderedContent["blog/p.md"]).To(ContainSubstring("badge=[two]"),
 			"fixing the broken file must also re-render pages outside its folder that were "+
 				"rendered without folder data while the cascade couldn't load")
