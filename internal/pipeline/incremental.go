@@ -213,13 +213,25 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	// renders with the folder data on disk, also after a full Build in
 	// between, which doesn't touch ps. Then re-render every page in the folder
 	// of a changed _data.yaml, and below it, since their own content hash is
-	// unchanged.
+	// unchanged. After a rebuild that couldn't load the cascade, the pages it
+	// rendered had no folder data, so the first rebuild that loads it again
+	// renders every page.
+	cascadeRecovered := false
 	if fsMode && options.PipelineState != nil {
-		reloadCascadeData(cfg, ps)
+		if reloadCascadeData(cfg, ps) {
+			cascadeRecovered = ps.cascadeLoadFailed
+		} else {
+			ps.cascadeLoadFailed = true
+		}
 		if previousCache != nil && !untrackedPartial {
-			var added int
-			pagesToRender, added = addPagesUnderDirs(pagesToRender, allPages, changedCascadeDirs(cfg, changedFiles))
-			skipped -= added
+			if cascadeRecovered {
+				pagesToRender = allPages
+				skipped = 0
+			} else {
+				var added int
+				pagesToRender, added = addPagesUnderDirs(pagesToRender, allPages, changedCascadeDirs(cfg, changedFiles))
+				skipped -= added
+			}
 		}
 	}
 
@@ -798,6 +810,9 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
+	if cascadeRecovered {
+		ps.cascadeLoadFailed = false
+	}
 	return result, nil
 }
 
@@ -872,14 +887,16 @@ func incrementalClaims(cfg *config.Config, pages []*content.Page, contentPassthr
 // reloadCascadeData reads every _data.yaml in the content directory again,
 // the same way InitPipelineState does, so a rebuild renders with the folder
 // data on disk instead of the copy read at startup (issue #1306). A read
-// error is a warning and leaves no folder data, as in a fresh build.
-func reloadCascadeData(cfg *config.Config, ps *PipelineState) {
+// error is a warning and leaves no folder data, as in a fresh build. It
+// reports whether the cascade loaded.
+func reloadCascadeData(cfg *config.Config, ps *PipelineState) bool {
 	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
 	cascadeData, err := cascade.LoadDirectoryCascade(contentDir)
 	if err != nil {
 		log.Printf("warning: loading cascade data: %v", err)
 	}
 	ps.CascadeData = cascadeData
+	return err == nil
 }
 
 // changedCascadeDirs returns the folders, relative to the content directory
