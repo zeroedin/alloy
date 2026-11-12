@@ -154,8 +154,29 @@ var _ = Describe("a recopy conflict is judged when the batch settles (issue #133
 
 		Eventually(func() string { return body(r.base + "/site.css") }, 10*time.Second).Should(Equal("asset{}"),
 			"once the batch settles, the asset is the only owner of site.css, so it must be copied")
-		Expect(body(r.base+"/about/")).NotTo(ContainSubstring(`id="alloy-error-overlay"`),
+		about := body(r.base + "/about/")
+		Expect(about).To(ContainSubstring("<body>"),
+			"sanity: /about/ must be served as HTML, or a missing overlay proves nothing")
+		Expect(about).NotTo(ContainSubstring(`id="alloy-error-overlay"`),
 			"no conflict is left at the end of the batch, so the overlay must not show one")
+	})
+
+	// A file created and deleted in the same batch leaves nothing to copy.
+	// Its conflict is gone with it, even though static/site.css still owns
+	// the path.
+	It("keeps alloy serve running when the new file is deleted in the same batch", func() {
+		r := start("serve", newSite())
+		waitWatching(r)
+		batches := strings.Count(string(r.out.Contents()), "rebuilding")
+
+		write(r.root, "assets/site.css", "asset{}")
+		Expect(os.Remove(filepath.Join(r.root, "assets/site.css"))).To(Succeed())
+
+		Eventually(func() int { return strings.Count(string(r.out.Contents()), "rebuilding") }, 10*time.Second).
+			Should(BeNumerically(">", batches), "sanity: the watcher handles the batch")
+		Consistently(r.session, 2*time.Second).ShouldNot(gexec.Exit(),
+			"assets/site.css is gone at the end of the batch, so no conflict is left")
+		Expect(body(r.base+"/site.css")).To(Equal("static{}"), "the static file still owns /site.css")
 	})
 
 	// Guard: a conflict still there at the end of the batch still counts.
