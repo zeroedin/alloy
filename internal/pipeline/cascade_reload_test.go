@@ -487,4 +487,71 @@ var _ = Describe("alloy dev picks up _data.yaml edits (issue #1306)", func() {
 		Expect(result.PagesRendered).NotTo(ContainElement("blog/p.md"))
 		Expect(result.PagesRendered).NotTo(ContainElement("docs/guide.md"))
 	})
+
+	// Recovery renders every page, and that includes virtual pages from
+	// onPagesReady. A plugin can build one from pages that had no folder
+	// data, so it is re-rendered whatever dependencies it declared
+	// (issue #1327).
+	It("re-renders onPagesReady virtual pages after recovery", func() {
+		s := newSite(map[string]string{
+			"content/index.md":        "---\ntitle: Home\n---\nhome",
+			"content/blog/_data.yaml": "badge: one\n",
+			"content/blog/p.md":       "---\ntitle: P\n---\npost",
+			"content/docs/_data.yaml": "badge: docs\n",
+			"content/docs/guide.md":   "---\ntitle: Guide\n---\nguide",
+			"plugins/virtual.js": `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function() {
+    return { addPages: [{
+      path: '_virtual/v.html',
+      url: '/v/',
+      dependencies: [],
+      frontMatter: { title: 'V', layout: 'default', markdown: false },
+      content: '<p>virtual</p>'
+    }] };
+  });
+}`,
+		})
+		first := firstBuild(s)
+		Expect(first.RenderedContent["_virtual/v.html"]).To(ContainSubstring("virtual"),
+			"sanity: the first build renders the virtual page")
+
+		write(s, "content/docs/_data.yaml", brokenDocs)
+		broken, err := rebuild(s, first, "content/docs/_data.yaml")
+		Expect(err).NotTo(HaveOccurred())
+
+		write(s, "content/docs/_data.yaml", "badge: docs\n")
+		fixed, err := rebuild(s, broken, "content/docs/_data.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fixed.RenderedContent).To(HaveKey("_virtual/v.html"),
+			"recovery must re-render a virtual page, even one with dependencies: []")
+
+		// Guard: once recovered, the virtual page goes back to its declared
+		// dependencies.
+		write(s, "content/index.md", "---\ntitle: Home\n---\nhome edited")
+		next, err := rebuild(s, fixed, "content/index.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(next.RenderedContent).NotTo(HaveKey("_virtual/v.html"),
+			"after recovery, a virtual page with dependencies: [] must not re-render for an unrelated edit")
+	})
+
+	// API callers such as DefaultBuilder call BuildIncremental without a
+	// reused PipelineState. Recovery must still follow the previous cache's
+	// failure flag, and clear it once the cascade loads (issue #1327).
+	It("recovers without a reused PipelineState", func() {
+		s := blogSite()
+		write(s, "content/docs/_data.yaml", brokenDocs)
+		broken := fullBuild(s)
+		Expect(broken.Cache.CascadeLoadFailed()).To(BeTrue(),
+			"sanity: the full build records that the cascade failed to load")
+
+		write(s, "content/docs/_data.yaml", "badge: docs\n")
+		fixed, err := pipeline.BuildIncremental(s.cfg, nil, broken.Cache,
+			[]string{"content/docs/_data.yaml"},
+			pipeline.BuildOptions{CaptureRenderedContent: true})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fixed.RenderedContent["blog/p.md"]).To(ContainSubstring("badge=[one]"),
+			"without a reused state, recovery must still re-render pages outside the fixed folder")
+		Expect(fixed.Cache.CascadeLoadFailed()).To(BeFalse(),
+			"the cascade loaded, so the returned cache must clear the failure flag")
+	})
 })
