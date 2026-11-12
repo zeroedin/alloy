@@ -884,6 +884,17 @@ func incrementalClaims(cfg *config.Config, pages []*content.Page, contentPassthr
 	return entries, origins, nil
 }
 
+// AfterFullBuild records on a reused PipelineState whether the folder data
+// loads after a full Build that succeeded, so the next BuildIncremental
+// knows whether that Build's pages are missing it (issue #1306). The Build
+// rendered every page with the folder data on disk: when it loads, no page
+// is missing it, and when it doesn't, every page is, so the next rebuild
+// that loads it renders them all. alloy dev calls it after each full
+// rebuild, which builds with its own state.
+func (ps *PipelineState) AfterFullBuild(cfg *config.Config) {
+	ps.cascadeLoadFailed = !reloadCascadeData(cfg, ps)
+}
+
 // reloadCascadeData reads every _data.yaml in the content directory again,
 // the same way InitPipelineState does, so a rebuild renders with the folder
 // data on disk instead of the copy read at startup (issue #1306). A read

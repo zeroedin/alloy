@@ -346,6 +346,12 @@ func newDevCommand() *cobra.Command {
 								copyOrigins = map[string]string{}
 							}
 						}
+						// The full Build loaded the folder data itself; record
+						// whether it could, so the next incremental rebuild
+						// re-renders every page once it loads again (#1306).
+						if ps != nil {
+							ps.AfterFullBuild(cfg)
+						}
 						if ps != nil && fullResult != nil && fullResult.SiteData != nil {
 							ps.SiteData = fullResult.SiteData
 							if ps.Registry != nil {
