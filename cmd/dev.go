@@ -346,6 +346,12 @@ func newDevCommand() *cobra.Command {
 								copyOrigins = map[string]string{}
 							}
 						}
+						// The full Build rendered every page; drop any recovery
+						// still pending in the reused state. Whether the Build
+						// itself lacked folder data is in its cache (#1306, #1324).
+						if ps != nil {
+							ps.AfterFullBuild(cfg)
+						}
 						if ps != nil && fullResult != nil && fullResult.SiteData != nil {
 							ps.SiteData = fullResult.SiteData
 							if ps.Registry != nil {
