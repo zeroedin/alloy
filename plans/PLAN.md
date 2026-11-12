@@ -1503,6 +1503,21 @@ In dev mode, after the initial full build, the file watcher triggers incremental
 
 **Shared data changes** — When global data files (`data/`), directory data (`_data.yaml`), or collections change, all pages that could be affected are rebuilt. Per-page content-hash detection still prevents unnecessary work for pages whose own content hasn't changed.
 
+**List and tag pages stay current (issue #1320).** On a site that has a collection or a taxonomy, an incremental rebuild re-renders every page and regenerates the taxonomy pages, as a full build does, when either of these happens:
+
+- a page's front matter changes
+- a page is added or removed
+
+A collection counts whether it's declared in `collections:` config or comes from a section whose permalink has date tokens (`:year`, `:month`, `:day`). A site with no collection and no taxonomy stays incremental: no page can list another, so only the changed page is re-rendered. A body-only edit is always incremental.
+
+Why: a page that lists other pages (a `collections.*` loop, a taxonomy page) reads their front matter. Alloy doesn't record which pages read which data, so it can't re-render just the readers. Before #1320, a list page kept its old list and a new tag got no page until a restart.
+
+Known gaps:
+- A summary taken from the body (no `summary:` in front matter) can still go stale on a list page after a body-only edit.
+- An edit to a section `_data.yaml` changes the front matter of every page under it. It should count as a front matter change once dev picks up `_data.yaml` edits (#1306).
+
+A precise fix records which data each page reads. That's tracked in #1326 (see "Data Read Tracking (TrackedDrop)" under Future Features).
+
 **Data file changes and PipelineState (issue #717)** — In dev mode, `PipelineState` is created once at server startup and reused across all `BuildIncremental` calls. `PipelineState.SiteData` is loaded from `cfg.Structure.Data` at creation time. When data files change on disk during a dev session, `BuildIncremental` must re-load site data from disk and update `PipelineState.SiteData` before `processPagination` runs. Without this, paginated virtual pages that reference `site.data.*` use stale data — new items are invisible, modified values don't appear, and removed items persist as ghost pages. Data file changes must also invalidate all paginated pages whose `pagination.data` references the changed data source, forcing re-rendering even when the source template's content hash is unchanged. **Error resilience (issue #1018)**: when `loadSiteData` returns an error during the data reload (e.g., a missing external data file or an external-vs-directory key collision), `BuildIncremental` logs the error as a warning and preserves the previous `ps.SiteData` — pages continue rendering with stale data rather than crashing or producing empty output.
 
 **Template invalidation** — Template changes invalidate pages that use that specific template (tracked via the layout resolution step), not all pages in a stage.
