@@ -346,9 +346,9 @@ func newDevCommand() *cobra.Command {
 								copyOrigins = map[string]string{}
 							}
 						}
-						// The full Build loaded the folder data itself; record
-						// whether it could, so the next incremental rebuild
-						// re-renders every page once it loads again (#1306).
+						// The full Build rendered every page; drop any recovery
+						// still pending in the reused state. Whether the Build
+						// itself lacked folder data is in its cache (#1306, #1324).
 						if ps != nil {
 							ps.AfterFullBuild(cfg)
 						}
