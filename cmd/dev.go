@@ -88,6 +88,12 @@ func newDevCommand() *cobra.Command {
 				log.Printf("warning: initial build failed: %v", initialBuildErr)
 			}
 			var previousCache *cache.Cache
+			// A full build empties _site before it renders, so after one
+			// fails most of the site is gone. Until a full build succeeds,
+			// every rebuild is a full one, or a small fix would report
+			// success while the rest of the site still returns 404
+			// (issue #1316). The startup build counts too.
+			fullBuildFailed := initialBuildErr != nil
 			// Output path claims from the last full build. The watcher recopies
 			// static, asset, and passthrough files itself — BuildIncremental
 			// copies none of them — so the claim set has to outlive Build() for
@@ -293,6 +299,11 @@ func newDevCommand() *cobra.Command {
 				if len(depInvalidPaths) > 0 {
 					needsRebuild = true
 				}
+				// After a failed full build, any change rebuilds, whatever its
+				// type, so the site comes back (issue #1316).
+				if fullBuildFailed {
+					needsRebuild = true
+				}
 
 				if !needsRebuild {
 					srv.BroadcastReload()
@@ -327,13 +338,15 @@ func newDevCommand() *cobra.Command {
 					}
 				}
 
-				if hasFullRebuildChange || rebuildScope == server.RebuildFull {
+				if fullBuildFailed || hasFullRebuildChange || rebuildScope == server.RebuildFull {
 					if fullResult, err := pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true, Reporter: reporter}); err != nil {
+						fullBuildFailed = true
 						log.Printf("rebuild failed: %v", err)
 						srv.Overlay().SetErrors([]server.BuildError{
 							{Message: err.Error(), Stage: "rebuild"},
 						})
 					} else {
+						fullBuildFailed = false
 						if fullResult != nil && fullResult.Cache != nil {
 							previousCache = fullResult.Cache
 						}
