@@ -24,11 +24,12 @@ type PipelineState struct {
 	ContentDir  string
 	ContentBase string
 
-	// cascadeLoadFailed is set when the _data.yaml cascade couldn't load for
-	// pages that were rendered: at startup, in a full Build, or in an
-	// incremental rebuild (issue #1306). Those pages had no folder data, so
-	// the next incremental rebuild that loads the cascade renders every page.
-	// It is cleared once that rebuild succeeds.
+	// cascadeLoadFailed is set when this state couldn't load the _data.yaml
+	// cascade, at creation or on an incremental reload (issue #1306). Pages
+	// rendered then had no folder data, so the next incremental rebuild that
+	// loads the cascade renders every page. It is cleared once that rebuild
+	// succeeds. A Build records its own failure in its cache instead
+	// (issue #1324).
 	cascadeLoadFailed bool
 
 	// OutputClaims is every output path claimed by the last full build, with
