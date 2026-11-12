@@ -175,7 +175,11 @@ func newServeCommand() *cobra.Command {
 						}
 					}
 				}
-				if len(recopyConflicts) > 0 {
+				// A recopy conflict is checked against the previous build's
+				// claims. When the batch also rebuilds, that build checks the
+				// current files instead, so a page deleted in the same batch
+				// as a static file takes its path doesn't stop the server.
+				if len(recopyConflicts) > 0 && !needsRebuild {
 					msgs := make([]string, len(recopyConflicts))
 					for i, c := range recopyConflicts {
 						msgs[i] = c.Message
