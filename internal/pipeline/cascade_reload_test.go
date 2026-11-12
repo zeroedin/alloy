@@ -388,6 +388,57 @@ var _ = Describe("alloy dev picks up _data.yaml edits (issue #1306)", func() {
 				"so fixing the file re-renders pages outside its folder")
 	})
 
+	// The file can be fixed while a full build is still running, after the
+	// build read the broken cascade but before alloy dev records the result.
+	// The recovery must follow what the build that rendered the pages saw,
+	// not a second read of the files afterwards (issue #1324).
+	It("recovers when the file is fixed while the full rebuild runs", func() {
+		s := blogSite()
+		fullBuild(s)
+
+		write(s, "content/docs/_data.yaml", brokenDocs)
+		broken := fullBuild(s)
+		Expect(broken.RenderedContent["blog/p.md"]).To(ContainSubstring("badge=[]"),
+			"sanity: the full rebuild read the broken cascade")
+
+		// Fixed before alloy dev records the full rebuild's result.
+		write(s, "content/docs/_data.yaml", "badge: docs\n")
+		s.state.AfterFullBuild(s.cfg)
+
+		fixed, err := rebuild(s, broken, "content/docs/_data.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fixed.RenderedContent["blog/p.md"]).To(ContainSubstring("badge=[one]"),
+			"the full rebuild rendered blog/p.md without folder data, so the rebuild "+
+				"for the fix must re-render it, even though a second read now succeeds")
+	})
+
+	It("recovers when the file is fixed between the startup build and the dev state", func() {
+		s := newSite(map[string]string{
+			"content/index.md":        "---\ntitle: Home\n---\nhome",
+			"content/blog/_data.yaml": "badge: one\n",
+			"content/blog/p.md":       "---\ntitle: P\n---\npost",
+			"content/docs/_data.yaml": brokenDocs,
+			"content/docs/guide.md":   "---\ntitle: Guide\n---\nguide",
+		})
+		start := fullBuild(s)
+		Expect(start.RenderedContent["blog/p.md"]).To(ContainSubstring("badge=[]"),
+			"sanity: the startup build read the broken cascade")
+
+		// Fixed after the startup build, before alloy dev creates its state.
+		write(s, "content/docs/_data.yaml", "badge: docs\n")
+		registry, hooks, _ := pipeline.DiscoverPlugins(s.cfg)
+		DeferCleanup(registry.Close)
+		state, err := pipeline.InitPipelineState(s.cfg, registry, hooks)
+		Expect(err).NotTo(HaveOccurred())
+		s.state = state
+
+		fixed, err := rebuild(s, start, "content/docs/_data.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fixed.RenderedContent["blog/p.md"]).To(ContainSubstring("badge=[one]"),
+			"the startup build rendered blog/p.md without folder data, so the rebuild "+
+				"for the fix must re-render it, even though the dev state loaded cleanly")
+	})
+
 	It("keeps rebuilds incremental after a good full rebuild", func() {
 		s := blogSite()
 		full := fullBuild(s)
