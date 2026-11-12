@@ -1407,7 +1407,7 @@ Fix, the same in both commands: after the per-event loop, go back over the recor
 - Otherwise, if the path is no longer claimed by another source (`recopyBlockedBy` / the claim check in `applyRecopy` now says no), copy the file, record its claim, and drop the conflict.
 - Otherwise keep it.
 
-Only the conflicts kept reach `fail` in `alloy serve` or `srv.Overlay().SetErrors` in `alloy dev`. This is per batch: don't clear the `alloy dev` overlay when a later batch has no conflicts. An earlier batch's conflict stays until a rebuild clears it, as today. Retrying once, after the loop, is enough: a remove can only free a path, so a second pass finds nothing new.
+Only the conflicts kept reach `fail` in `alloy serve` or `srv.Overlay().SetErrors` in `alloy dev`. This is per batch: don't clear the `alloy dev` overlay when a later batch has no conflicts. Keep today's behavior otherwise: `SetErrors` replaces the list when a batch reports conflicts, and a rebuild clears it. Retrying once, after the loop, is enough: a remove can only free a path, so a second pass finds nothing new.
 
 Tests: "a recopy conflict is judged when the batch settles (issue #1339)" in `test/integration/recopy_batch_test.go` (3 red, 1 green guard; it runs the real binary). The existing "exits 1 when a changed static file claims a page's output path" in `serve_fails_test.go` must stay green. No docs change: the docs don't describe batches. Changeset: `patch`.
 
