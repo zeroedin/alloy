@@ -10,6 +10,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -128,9 +130,24 @@ func newServeCommand() *cobra.Command {
 				}
 			}
 
+			// alloy serve fails like alloy build (issue #1318): an error that
+			// fails a build stops the server instead of leaving it up over an
+			// emptied _site. The watcher hands the first one to the main
+			// goroutine, which shuts down and returns it, so it exits 1.
+			buildErrCh := make(chan error, 1)
+			var stopping atomic.Bool
+			fail := func(err error) {
+				if stopping.CompareAndSwap(false, true) {
+					buildErrCh <- err
+				}
+			}
+
 			// Set up file watcher for live rebuild
 			var watcher *fsnotify.Watcher
 			watcher = startWatcher(cfg, srv, func(events []server.ChangeEvent, _ server.RebuildScope) {
+				if stopping.Load() {
+					return
+				}
 				if !cfg.Quiet {
 					log.Printf("rebuilding (%d files changed)...", len(events))
 				}
@@ -158,16 +175,23 @@ func newServeCommand() *cobra.Command {
 						}
 					}
 				}
-				if len(recopyConflicts) > 0 {
-					srv.Overlay().SetErrors(recopyConflicts)
+				// A recopy conflict is checked against the previous build's
+				// claims. When the batch also rebuilds, that build checks the
+				// current files instead, so a page deleted in the same batch
+				// as a static file takes its path doesn't stop the server.
+				if len(recopyConflicts) > 0 && !needsRebuild {
+					msgs := make([]string, len(recopyConflicts))
+					for i, c := range recopyConflicts {
+						msgs[i] = c.Message
+					}
+					fail(errors.New(strings.Join(msgs, "\n")))
+					return
 				}
 
 				if needsRebuild {
 					if rebuilt, err := pipeline.Build(cfg, pipeline.BuildOptions{Reporter: reporter}); err != nil {
-						log.Printf("rebuild failed: %v", err)
-						srv.Overlay().SetErrors([]server.BuildError{
-							{Message: err.Error(), Stage: "rebuild"},
-						})
+						fail(fmt.Errorf("rebuild failed: %w", err))
+						return
 					} else {
 						if rebuilt != nil {
 							outputClaims = rebuilt.OutputClaims
@@ -176,7 +200,6 @@ func newServeCommand() *cobra.Command {
 								copyOrigins = rebuilt.CopyOrigins
 							}
 						}
-						srv.Overlay().ClearErrors()
 						if !cfg.Quiet {
 							log.Printf("rebuild complete")
 						}
@@ -191,10 +214,20 @@ func newServeCommand() *cobra.Command {
 
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-			<-sigCh
+			var buildErr error
+			select {
+			case <-sigCh:
+			case buildErr = <-buildErrCh:
+			}
 
 			server.RemoveLockfileIfOwned(cfg.ProjectRoot, os.Getpid())
 
+			if buildErr != nil {
+				if err := srv.Stop(); err != nil {
+					log.Printf("warning: stopping server: %v", err)
+				}
+				return buildErr
+			}
 			if !cfg.Quiet {
 				fmt.Fprintln(cmd.OutOrStdout(), "\nShutting down...")
 			}
@@ -251,8 +284,9 @@ func copyChangedFileToOutput(ev server.ChangeEvent, cfg *config.Config, claims [
 
 // applyRecopy performs one watcher-driven copy or removal, subject to output
 // path claims (issue #1238). A destination another source owns is left alone
-// and reported in the error overlay; a destination this file owns is copied and
-// its claim kept current. It never terminates the server.
+// and added to conflicts, which stop alloy serve as they fail alloy build
+// (issue #1318); a destination this file owns is copied and its claim kept
+// current.
 func applyRecopy(ev server.ChangeEvent, srcPath, destPath, destRel string, cfg *config.Config, claims []validation.OutputPathEntry, origins map[string]string, conflicts *[]server.BuildError) []validation.OutputPathEntry {
 	claimPath := filepath.ToSlash(filepath.Clean(destRel))
 	source := filepath.ToSlash(ev.Path)
@@ -292,9 +326,8 @@ func applyRecopy(ev server.ChangeEvent, srcPath, destPath, destRel string, cfg *
 	}
 
 	if blocked {
-		msg := fmt.Sprintf("output path conflict: %s is claimed by %s and %s — skipping copy",
+		msg := fmt.Sprintf("output path conflict: %s is claimed by %s and %s",
 			claimPath, existing, source)
-		log.Printf("warning: %s", msg)
 		if conflicts != nil {
 			*conflicts = append(*conflicts, server.BuildError{
 				FilePath: source, Message: msg, Stage: "output path conflict",
