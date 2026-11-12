@@ -55,6 +55,8 @@ tags: ["blog"]
 
 Every page under `content/blog/` inherits these values. A page's own front matter can override any of them.
 
+`alloy dev` picks up a `_data.yaml` edit without a restart: adding, changing or deleting one re-renders every page in that folder and its subfolders.
+
 ### Inheritance across directories
 
 Directory data cascades into all descendant directories, not just immediate children. A `_data.yaml` at a parent level applies until a deeper `_data.yaml` overrides it:

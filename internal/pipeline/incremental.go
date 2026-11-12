@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/zeroedin/alloy/internal/cache"
+	"github.com/zeroedin/alloy/internal/cascade"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/ordered"
@@ -202,6 +203,34 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		for _, rt := range ps.Registry.Runtimes() {
 			if err := rt.SetSiteData(ps.SiteData); err != nil {
 				log.Printf("warning: setting site data for plugin: %v", err)
+			}
+		}
+	}
+
+	// Pick up _data.yaml edits (issue #1306). alloy dev keeps one
+	// PipelineState for the whole session, and InitPipelineState reads the
+	// cascade only once. Reading it again on every rebuild means a page always
+	// renders with the folder data on disk, also after a full Build in
+	// between, which doesn't touch ps. Then re-render every page in the folder
+	// of a changed _data.yaml, and below it, since their own content hash is
+	// unchanged. After a rebuild that couldn't load the cascade, the pages it
+	// rendered had no folder data, so the first rebuild that loads it again
+	// renders every page.
+	cascadeRecovered := false
+	if fsMode && options.PipelineState != nil {
+		if reloadCascadeData(cfg, ps) {
+			cascadeRecovered = ps.cascadeLoadFailed
+		} else {
+			ps.cascadeLoadFailed = true
+		}
+		if previousCache != nil && !untrackedPartial {
+			if cascadeRecovered {
+				pagesToRender = allPages
+				skipped = 0
+			} else {
+				var added int
+				pagesToRender, added = addPagesUnderDirs(pagesToRender, allPages, changedCascadeDirs(cfg, changedFiles))
+				skipped -= added
 			}
 		}
 	}
@@ -781,6 +810,9 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
+	if cascadeRecovered {
+		ps.cascadeLoadFailed = false
+	}
 	return result, nil
 }
 
@@ -850,4 +882,84 @@ func incrementalClaims(cfg *config.Config, pages []*content.Page, contentPassthr
 		origins[c.Path] = c.Origin
 	}
 	return entries, origins, nil
+}
+
+// AfterFullBuild records on a reused PipelineState whether the folder data
+// loads after a full Build that succeeded, so the next BuildIncremental
+// knows whether that Build's pages are missing it (issue #1306). The Build
+// rendered every page with the folder data on disk: when it loads, no page
+// is missing it, and when it doesn't, every page is, so the next rebuild
+// that loads it renders them all. alloy dev calls it after each full
+// rebuild, which builds with its own state.
+func (ps *PipelineState) AfterFullBuild(cfg *config.Config) {
+	ps.cascadeLoadFailed = !reloadCascadeData(cfg, ps)
+}
+
+// reloadCascadeData reads every _data.yaml in the content directory again,
+// the same way InitPipelineState does, so a rebuild renders with the folder
+// data on disk instead of the copy read at startup (issue #1306). A read
+// error is a warning and leaves no folder data, as in a fresh build. It
+// reports whether the cascade loaded.
+func reloadCascadeData(cfg *config.Config, ps *PipelineState) bool {
+	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
+	cascadeData, err := cascade.LoadDirectoryCascade(contentDir)
+	if err != nil {
+		log.Printf("warning: loading cascade data: %v", err)
+	}
+	ps.CascadeData = cascadeData
+	return err == nil
+}
+
+// changedCascadeDirs returns the folders, relative to the content directory
+// in slash form, of every _data.yaml or _data.yml in changedFiles. The root
+// of the content directory is ".". A deleted file is a changed path too.
+// Paths are matched against structure.content, so a content directory with
+// any name works (issue #1306).
+func changedCascadeDirs(cfg *config.Config, changedFiles []string) []string {
+	contentDir := filepath.Clean(resolveDir(cfg.ProjectRoot, cfg.Structure.Content))
+	var dirs []string
+	for _, f := range changedFiles {
+		path := filepath.FromSlash(f)
+		if name := filepath.Base(path); name != "_data.yaml" && name != "_data.yml" {
+			continue
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(cfg.ProjectRoot, path)
+		}
+		rel, err := filepath.Rel(contentDir, filepath.Dir(path))
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		dirs = append(dirs, filepath.ToSlash(rel))
+	}
+	return dirs
+}
+
+// addPagesUnderDirs appends to pagesToRender every page in allPages that sits
+// in one of dirs or below it, unless it is already queued. It returns the new
+// list and how many pages it added.
+func addPagesUnderDirs(pagesToRender, allPages []*content.Page, dirs []string) ([]*content.Page, int) {
+	if len(dirs) == 0 {
+		return pagesToRender, 0
+	}
+	queued := make(map[*content.Page]bool, len(pagesToRender))
+	for _, p := range pagesToRender {
+		queued[p] = true
+	}
+	added := 0
+	for _, page := range allPages {
+		if queued[page] {
+			continue
+		}
+		rel := filepath.ToSlash(page.RelPath)
+		for _, dir := range dirs {
+			if dir == "." || strings.HasPrefix(rel, dir+"/") {
+				pagesToRender = append(pagesToRender, page)
+				queued[page] = true
+				added++
+				break
+			}
+		}
+	}
+	return pagesToRender, added
 }

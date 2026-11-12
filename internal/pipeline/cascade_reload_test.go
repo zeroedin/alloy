@@ -272,6 +272,208 @@ var _ = Describe("alloy dev picks up _data.yaml edits (issue #1306)", func() {
 			"the next incremental rebuild must not go back to the startup value")
 	})
 
+	// A root content/_data.yaml applies to every page, so editing it
+	// re-renders the whole site (issue #1322).
+	It("re-renders every page when the root _data.yaml changes", func() {
+		s := newSite(map[string]string{
+			"content/_data.yaml":     "badge: root1\n",
+			"content/index.md":       "---\ntitle: Home\n---\nhome",
+			"content/docs/guide.md":  "---\ntitle: Guide\n---\nguide",
+			"content/blog/deep/q.md": "---\ntitle: Q\n---\ndeep",
+		})
+		first := firstBuild(s)
+		Expect(first.RenderedContent["docs/guide.md"]).To(ContainSubstring("badge=[root1]"),
+			"sanity: the root cascade applies to pages in subfolders")
+
+		write(s, "content/_data.yaml", "badge: root2\n")
+		result, err := rebuild(s, first, "content/_data.yaml")
+		Expect(err).NotTo(HaveOccurred())
+
+		for _, page := range []string{"index.md", "docs/guide.md", "blog/deep/q.md"} {
+			Expect(result.PagesRendered).To(ContainElement(page),
+				"a root _data.yaml change must re-render %s", page)
+			Expect(result.RenderedContent[page]).To(ContainSubstring("badge=[root2]"),
+				"%s must show the edited root value", page)
+		}
+	})
+
+	// While any _data.yaml can't be parsed, the cascade can't load, so pages
+	// rendered in that rebuild get no folder data. Once the broken file is
+	// fixed, the next rebuild renders every page, once (issue #1322).
+	It("renders every page once after a broken _data.yaml is fixed", func() {
+		s := blogSite()
+		first := firstBuild(s)
+
+		write(s, "content/docs/_data.yaml", "badge: [unclosed\n")
+		write(s, "content/blog/_data.yaml", "badge: two\n")
+		broken, err := rebuild(s, first, "content/docs/_data.yaml", "content/blog/_data.yaml")
+		Expect(err).NotTo(HaveOccurred(),
+			"sanity: a _data.yaml that can't be parsed warns, it doesn't fail the rebuild")
+
+		write(s, "content/docs/_data.yaml", "badge: docs\n")
+		fixed, err := rebuild(s, broken, "content/docs/_data.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		for _, page := range []string{"index.md", "blog/p.md", "blog/deep/q.md", "docs/guide.md"} {
+			Expect(fixed.PagesRendered).To(ContainElement(page),
+				"recovery must re-render %s, not only the fixed file's folder", page)
+		}
+		Expect(fixed.RenderedContent["blog/deep/q.md"]).To(ContainSubstring("badge=[two]"),
+			"a subfolder page rendered without folder data must get it back too")
+		Expect(fixed.RenderedContent["blog/p.md"]).To(ContainSubstring("badge=[two]"),
+			"fixing the broken file must also re-render pages outside its folder that were "+
+				"rendered without folder data while the cascade couldn't load")
+
+		write(s, "content/index.md", "---\ntitle: Home\n---\nhome edited")
+		next, err := rebuild(s, fixed, "content/index.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(next.PagesRendered).NotTo(ContainElement("blog/p.md"),
+			"the full render happens only once; the rebuild after it is incremental again")
+	})
+
+	// alloy dev runs a full Build at startup and for some rebuilds, then
+	// incremental rebuilds with its own PipelineState. A cascade that fails
+	// to load in either kind of full build has to be recorded in that state
+	// too, or fixing the file re-renders only its folder (issue #1323).
+	fullBuild := func(s site) *pipeline.BuildResult {
+		GinkgoHelper()
+		result, err := pipeline.Build(s.cfg, pipeline.BuildOptions{CaptureRenderedContent: true})
+		Expect(err).NotTo(HaveOccurred())
+		return result
+	}
+
+	brokenDocs := "badge: [unclosed\n"
+
+	It("recovers from a _data.yaml broken when alloy dev starts", func() {
+		// As alloy dev does: the initial Build, then the state, both while
+		// docs/_data.yaml is broken.
+		s := newSite(map[string]string{
+			"content/index.md":        "---\ntitle: Home\n---\nhome",
+			"content/blog/_data.yaml": "badge: one\n",
+			"content/blog/p.md":       "---\ntitle: P\n---\npost",
+			"content/docs/_data.yaml": brokenDocs,
+			"content/docs/guide.md":   "---\ntitle: Guide\n---\nguide",
+		})
+		start := fullBuild(s)
+		Expect(start.RenderedContent["blog/p.md"]).To(ContainSubstring("badge=[]"),
+			"sanity: with the cascade broken, the startup build has no folder data")
+
+		write(s, "content/docs/_data.yaml", "badge: docs\n")
+		fixed, err := rebuild(s, start, "content/docs/_data.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fixed.RenderedContent["blog/p.md"]).To(ContainSubstring("badge=[one]"),
+			"a page outside the fixed folder must get its folder data back without a restart")
+
+		write(s, "content/index.md", "---\ntitle: Home\n---\nhome edited")
+		next, err := rebuild(s, fixed, "content/index.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(next.PagesRendered).NotTo(ContainElement("blog/p.md"),
+			"the full render happens only once")
+	})
+
+	It("recovers from a _data.yaml broken during a full rebuild", func() {
+		s := blogSite()
+		fullBuild(s)
+
+		write(s, "content/docs/_data.yaml", brokenDocs)
+		broken := fullBuild(s)
+		s.state.AfterFullBuild(s.cfg)
+		Expect(broken.RenderedContent["blog/p.md"]).To(ContainSubstring("badge=[]"),
+			"sanity: with the cascade broken, the full rebuild has no folder data")
+
+		write(s, "content/docs/_data.yaml", "badge: docs\n")
+		fixed, err := rebuild(s, broken, "content/docs/_data.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fixed.RenderedContent["blog/p.md"]).To(ContainSubstring("badge=[one]"),
+			"the full rebuild's failure must reach the dev server's state, "+
+				"so fixing the file re-renders pages outside its folder")
+	})
+
+	// The file can be fixed while a full build is still running, after the
+	// build read the broken cascade but before alloy dev records the result.
+	// The recovery must follow what the build that rendered the pages saw,
+	// not a second read of the files afterwards (issue #1324).
+	It("recovers when the file is fixed while the full rebuild runs", func() {
+		s := blogSite()
+		fullBuild(s)
+
+		write(s, "content/docs/_data.yaml", brokenDocs)
+		broken := fullBuild(s)
+		Expect(broken.RenderedContent["blog/p.md"]).To(ContainSubstring("badge=[]"),
+			"sanity: the full rebuild read the broken cascade")
+
+		// Fixed before alloy dev records the full rebuild's result.
+		write(s, "content/docs/_data.yaml", "badge: docs\n")
+		s.state.AfterFullBuild(s.cfg)
+
+		fixed, err := rebuild(s, broken, "content/docs/_data.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fixed.RenderedContent["blog/p.md"]).To(ContainSubstring("badge=[one]"),
+			"the full rebuild rendered blog/p.md without folder data, so the rebuild "+
+				"for the fix must re-render it, even though a second read now succeeds")
+	})
+
+	It("recovers when the file is fixed between the startup build and the dev state", func() {
+		s := newSite(map[string]string{
+			"content/index.md":        "---\ntitle: Home\n---\nhome",
+			"content/blog/_data.yaml": "badge: one\n",
+			"content/blog/p.md":       "---\ntitle: P\n---\npost",
+			"content/docs/_data.yaml": brokenDocs,
+			"content/docs/guide.md":   "---\ntitle: Guide\n---\nguide",
+		})
+		start := fullBuild(s)
+		Expect(start.RenderedContent["blog/p.md"]).To(ContainSubstring("badge=[]"),
+			"sanity: the startup build read the broken cascade")
+
+		// Fixed after the startup build, before alloy dev creates its state.
+		write(s, "content/docs/_data.yaml", "badge: docs\n")
+		registry, hooks, _ := pipeline.DiscoverPlugins(s.cfg)
+		DeferCleanup(registry.Close)
+		state, err := pipeline.InitPipelineState(s.cfg, registry, hooks)
+		Expect(err).NotTo(HaveOccurred())
+		s.state = state
+
+		fixed, err := rebuild(s, start, "content/docs/_data.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fixed.RenderedContent["blog/p.md"]).To(ContainSubstring("badge=[one]"),
+			"the startup build rendered blog/p.md without folder data, so the rebuild "+
+				"for the fix must re-render it, even though the dev state loaded cleanly")
+	})
+
+	It("keeps rebuilds incremental after a good full rebuild", func() {
+		s := blogSite()
+		full := fullBuild(s)
+		s.state.AfterFullBuild(s.cfg)
+
+		write(s, "content/index.md", "---\ntitle: Home\n---\nhome edited")
+		next, err := rebuild(s, full, "content/index.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(next.PagesRendered).To(ContainElement("index.md"))
+		Expect(next.PagesRendered).NotTo(ContainElement("blog/p.md"),
+			"a good full rebuild leaves no recovery pending")
+	})
+
+	It("clears a pending recovery after a good full rebuild", func() {
+		s := blogSite()
+		first := firstBuild(s)
+
+		// A failed incremental reload leaves a recovery pending.
+		write(s, "content/docs/_data.yaml", brokenDocs)
+		_, err := rebuild(s, first, "content/docs/_data.yaml")
+		Expect(err).NotTo(HaveOccurred())
+
+		// A good full rebuild renders every page with folder data, so the
+		// pending recovery is no longer needed.
+		write(s, "content/docs/_data.yaml", "badge: docs\n")
+		full := fullBuild(s)
+		s.state.AfterFullBuild(s.cfg)
+
+		write(s, "content/index.md", "---\ntitle: Home\n---\nhome edited")
+		next, err := rebuild(s, full, "content/index.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(next.PagesRendered).NotTo(ContainElement("blog/p.md"),
+			"the good full rebuild must clear the pending recovery")
+	})
+
 	// Guard: the fix must not make every rebuild re-render the folder.
 	It("doesn't re-render a folder's pages for an unrelated edit", func() {
 		s := blogSite()

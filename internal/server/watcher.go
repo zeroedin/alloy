@@ -19,7 +19,8 @@ const (
 	ContentChange ChangeType = iota + 1
 	// LayoutChange means a file in layouts/ was modified.
 	LayoutChange
-	// DataChange means a file in data/ or a _data.yaml was modified.
+	// DataChange means a file in data/ was modified. A _data.yaml sits in
+	// the content directory, so it is a ContentChange.
 	DataChange
 	// AssetChange means a file in assets/ was modified.
 	AssetChange
