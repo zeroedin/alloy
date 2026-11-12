@@ -219,15 +219,17 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	// (issue #1324), so a file fixed while it ran still counts as broken.
 	cascadeRecovered := false
 	loadFailed := ps.cascadeLoadFailed // a fresh state's own read
+	pendingInState := false
 	if fsMode && options.PipelineState != nil {
-		prevFailed := previousCache != nil && previousCache.CascadeLoadFailed()
-		if reloadCascadeData(cfg, ps) {
-			cascadeRecovered = ps.cascadeLoadFailed || prevFailed
-			loadFailed = false
-		} else {
+		pendingInState = ps.cascadeLoadFailed
+		loadFailed = !reloadCascadeData(cfg, ps)
+		if loadFailed {
 			ps.cascadeLoadFailed = true
-			loadFailed = true
 		}
+	}
+	if fsMode {
+		prevFailed := previousCache != nil && previousCache.CascadeLoadFailed()
+		cascadeRecovered = !loadFailed && (pendingInState || prevFailed)
 		if previousCache != nil && !untrackedPartial {
 			if cascadeRecovered {
 				pagesToRender = allPages
@@ -385,7 +387,9 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 			renderRelPaths[p.RelPath] = true
 			continue
 		}
-		if untrackedPartial || layoutInvalidated[p.RelPath] {
+		// Cascade recovery renders every page (issue #1306): a plugin may
+		// have built this one from pages that had no folder data.
+		if cascadeRecovered || untrackedPartial || layoutInvalidated[p.RelPath] {
 			renderRelPaths[p.RelPath] = true
 			continue
 		}
