@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -153,6 +154,46 @@ var _ = Describe("alloy dev after a failed full build (issue #1316)", func() {
 		expectWholeSite(r, "the rebuild after a failed full rebuild has to be a full one")
 		Expect(status(r.base+"/extra1.css")).To(Equal(200),
 			"static files added during the failed rebuild must be copied too")
+
+		// Once a full build succeeds, rebuilds go back to incremental
+		// (issue #1330).
+		write(r.root, "content/n7.md", page(7, "default")+"edited\n")
+		Eventually(r.out, 30*time.Second).Should(gbytes.Say(`rebuild complete \(incremental\)`),
+			"after a full build succeeds, a one-page edit must rebuild incrementally again")
+	})
+
+	// A static, asset or passthrough change is normally only recopied and
+	// never runs the pipeline. After a failed full build, it must rebuild,
+	// or an error it fixes never clears (issue #1330).
+	It("rebuilds on a static-only change after a failed full rebuild", func() {
+		root := newSite(0)
+		write(root, "content/n3.md", "---\ntitle: N3\nlayout: default\npermalink: /n3.html\n---\nn3\n")
+		r := dev(root)
+		Eventually(func() int { return status(r.base + "/n3.html") }, 10*time.Second).Should(Equal(200),
+			"sanity: the initial build serves the page at /n3.html")
+		waitWatching(r)
+
+		// More than 10 changes at once make alloy dev run a full rebuild.
+		// static/n3.html claims the same output path as the page, so it fails.
+		for i := 1; i <= 10; i++ {
+			write(r.root, fmt.Sprintf("static/extra%d.css", i), "a{}")
+		}
+		write(r.root, "static/n3.html", "<p>static</p>")
+		Eventually(r.out, 15*time.Second).Should(gbytes.Say(`rebuild failed: .*output path conflict`),
+			"sanity: the full rebuild fails on the output path conflict")
+
+		// Fix it by deleting the static file: a static-only change.
+		Expect(os.Remove(filepath.Join(r.root, "static/n3.html"))).To(Succeed())
+		Eventually(r.out, 30*time.Second).Should(gbytes.Say(`rebuild complete`),
+			"a static-only change after a failed full build must run a rebuild")
+
+		resp, err := http.Get(r.base + "/missing/")
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(body)).NotTo(ContainSubstring(`id="alloy-error-overlay"`),
+			"the rebuild fixed the error, so the overlay must be cleared")
 	})
 
 	It("brings the whole site back after a failed startup build", func() {
