@@ -77,6 +77,7 @@ Key behaviors:
 - **Excludes drafts.** Draft content is hidden, matching production behavior.
 - **Writes to `_site/`.** Output is written to disk and served from there.
 - **Full rebuilds on change.** File changes trigger a complete pipeline rebuild (no incremental mode in serve).
+- **A build error stops the server.** Any error that fails `alloy build` stops `alloy serve` with exit code 1, whether it happens in the startup build, in a rebuild after a change, or as an output path conflict when a changed static, asset or passthrough file is copied. The server prints the error, removes its lockfile and exits. A rebuild that succeeds keeps it running.
 - **Passthrough watching.** Changes to passthrough source directories trigger targeted file recopy, not full rebuilds.
 - **Concurrent process detection.** Alloy writes a lockfile at `.alloy/server.lock` on startup. If another Alloy process is already watching the same directory, a warning prints with the conflicting PID, port, and a `kill` command. Startup continues -- it does not block or fail.
 

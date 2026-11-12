@@ -1199,6 +1199,7 @@ If two or more sources target the same output path, the build fails immediately 
 - A watcher recopy (static, asset, or passthrough change) must not write a file that would collide with an existing claim. The conflict surfaces in the browser error overlay, the same channel used for render errors, and the colliding write is skipped rather than performed.
 - An incremental rebuild must re-check the claims it changes. `BuildIncremental` does not copy static, asset, or passthrough files — the watcher does — so the two paths together must cover the whole claim set.
 - A conflict in dev is not fatal to the server. The overlay shows it, the offending write is skipped, and clearing the conflict clears the overlay on the next rebuild.
+- In `alloy serve`, a conflict is fatal, as it is in `alloy build`: the server prints it and exits 1 (see "Error Handling → `alloy serve`").
 
 **Lifecycle hooks:**
 
@@ -1444,6 +1445,12 @@ Errors are treated differently depending on the mode. The core principle: **`all
         Stage: template rendering
         Build aborted. No output written.
 ```
+
+**`alloy serve` (production preview) — fail like `alloy build`:**
+
+- **Any error that fails `alloy build` stops `alloy serve` with exit code 1.** That covers the startup build, a rebuild after a file change, and an output path conflict found while recopying a changed static, asset or passthrough file (issue #1238). The server prints the error, removes its lockfile, stops listening, and exits. It never keeps serving after a failed build, because the build has already emptied `_site` (see "Output cleaning order"), so every page would be a 404.
+- **A rebuild that succeeds keeps the server running,** as before.
+- Before this change, a failed rebuild left `alloy serve` running over an emptied `_site`, with the error shown only in the terminal, and a conflict was only logged as a warning.
 
 **`alloy dev` (development) — keep running, show errors:**
 
@@ -3633,7 +3640,7 @@ To detect this, both `alloy dev` and `alloy serve` write a server lockfile at `.
 - **Auto-opens browser** (optional)
 - **Colored terminal output** with build timing
 - **Error overlay in browser** on build errors (file path, line number, code snippet). Disappears on next successful build.
-- **Custom 404 page**: When a request doesn't match any file in the output directory, serve `404.html` from the output root (with a 404 status code) if it exists. Falls back to Go's default plain-text response when no `404.html` is present. The build requires no special handling — users create `content/404.md` with `permalink: /404.html` and it renders through a layout into `_site/404.html`. In dev mode, the 404 page receives the WebSocket reload script like any other page. This matches the behavior of GitHub Pages, Netlify, Cloudflare Pages, and every major hosting platform.
+- **Missing pages**: A request that doesn't match a file in the output directory gets Go's plain 404 (`http.NotFound`), in both `alloy dev` and `alloy serve`. The one exception: in `alloy dev`, while a build error is active, the 404 is an HTML page with the error overlay, and the status stays 404 (issue #1316). There is no custom 404 page: a `404.html` in the output is never served for a missing page. Hosting platforms (GitHub Pages, Netlify, Cloudflare Pages) serve a site's `404.html` themselves, and a site can still build one with `content/404.md` and `permalink: /404.html`. Earlier specs called for serving it (issue #109), but the server never did, and the requirement is withdrawn.
 
 ```
 [alloy] 12:34:56 Serving at http://localhost:3000
