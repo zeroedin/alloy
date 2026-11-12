@@ -213,15 +213,20 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	// renders with the folder data on disk, also after a full Build in
 	// between, which doesn't touch ps. Then re-render every page in the folder
 	// of a changed _data.yaml, and below it, since their own content hash is
-	// unchanged. After a rebuild that couldn't load the cascade, the pages it
+	// unchanged. After a build that couldn't load the cascade, the pages it
 	// rendered had no folder data, so the first rebuild that loads it again
-	// renders every page.
+	// renders every page. That build's own result travels in its cache
+	// (issue #1324), so a file fixed while it ran still counts as broken.
 	cascadeRecovered := false
+	loadFailed := ps.cascadeLoadFailed // a fresh state's own read
 	if fsMode && options.PipelineState != nil {
+		prevFailed := previousCache != nil && previousCache.CascadeLoadFailed()
 		if reloadCascadeData(cfg, ps) {
-			cascadeRecovered = ps.cascadeLoadFailed
+			cascadeRecovered = ps.cascadeLoadFailed || prevFailed
+			loadFailed = false
 		} else {
 			ps.cascadeLoadFailed = true
+			loadFailed = true
 		}
 		if previousCache != nil && !untrackedPartial {
 			if cascadeRecovered {
@@ -446,6 +451,10 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	} else {
 		buildCache = cache.New()
 	}
+	// The pages this rebuild renders have folder data only if the cascade
+	// loaded (issue #1324). A full render after recovery leaves no page
+	// without it, and a failed load keeps the recovery pending.
+	buildCache.SetCascadeLoadFailed(loadFailed)
 
 	// Clear content page dependencies only for pages being re-rendered.
 	// Hooks will re-track deps for these pages; skipped pages retain their
@@ -884,13 +893,14 @@ func incrementalClaims(cfg *config.Config, pages []*content.Page, contentPassthr
 	return entries, origins, nil
 }
 
-// AfterFullBuild records on a reused PipelineState whether the folder data
-// loads after a full Build that succeeded, so the next BuildIncremental
-// knows whether that Build's pages are missing it (issue #1306). The Build
-// rendered every page with the folder data on disk: when it loads, no page
-// is missing it, and when it doesn't, every page is, so the next rebuild
-// that loads it renders them all. alloy dev calls it after each full
-// rebuild, which builds with its own state.
+// AfterFullBuild brings a reused PipelineState in line with a full Build
+// that succeeded (issue #1306). That Build rendered every page, so a
+// recovery still pending from an earlier failed incremental reload is no
+// longer needed; the state reloads the folder data and keeps a recovery
+// pending only if it doesn't load. Whether the Build itself rendered pages
+// without folder data travels in its cache (issue #1324), so a file fixed
+// while the Build ran still counts as broken. alloy dev calls it after each
+// full rebuild, which builds with its own state.
 func (ps *PipelineState) AfterFullBuild(cfg *config.Config) {
 	ps.cascadeLoadFailed = !reloadCascadeData(cfg, ps)
 }
