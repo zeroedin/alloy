@@ -3640,7 +3640,7 @@ To detect this, both `alloy dev` and `alloy serve` write a server lockfile at `.
 - **Auto-opens browser** (optional)
 - **Colored terminal output** with build timing
 - **Error overlay in browser** on build errors (file path, line number, code snippet). Disappears on next successful build.
-- **Missing pages**: A request that doesn't match a file in the output directory gets Go's plain 404 (`http.NotFound`), in both `alloy dev` and `alloy serve`. There is no custom 404 page: a `404.html` in the output is never served for a missing page. Hosting platforms (GitHub Pages, Netlify, Cloudflare Pages) serve a site's `404.html` themselves, and a site can still build one with `content/404.md` and `permalink: /404.html`. Earlier specs called for serving it (issue #109), but the server never did, and the requirement is withdrawn.
+- **Missing pages**: A request that doesn't match a file in the output directory gets Go's plain 404 (`http.NotFound`), in both `alloy dev` and `alloy serve`. The one exception: in `alloy dev`, while a build error is active, the 404 is an HTML page with the error overlay, and the status stays 404 (issue #1316). There is no custom 404 page: a `404.html` in the output is never served for a missing page. Hosting platforms (GitHub Pages, Netlify, Cloudflare Pages) serve a site's `404.html` themselves, and a site can still build one with `content/404.md` and `permalink: /404.html`. Earlier specs called for serving it (issue #109), but the server never did, and the requirement is withdrawn.
 
 ```
 [alloy] 12:34:56 Serving at http://localhost:3000
