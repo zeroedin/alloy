@@ -153,16 +153,15 @@ func newServeCommand() *cobra.Command {
 				}
 
 				needsRebuild := false
-				// Conflicts are collected across the whole batch and published
-				// once: SetErrors replaces the overlay list, so publishing per
-				// event would show only the last conflict (issue #1238).
-				var recopyConflicts []server.BuildError
+				// Copies blocked by another source's claim are collected across
+				// the whole batch and judged once it is applied (issue #1339).
+				var blocked []blockedCopy
 				for _, ev := range events {
 					switch ev.ChangeType {
 					case server.ContentChange, server.LayoutChange, server.DataChange, server.ComponentChange, server.PluginChange:
 						needsRebuild = true
 					case server.AssetChange, server.StaticChange:
-						outputClaims = copyChangedFileToOutput(ev, cfg, outputClaims, copyOrigins, &recopyConflicts)
+						outputClaims = copyChangedFileToOutput(ev, cfg, outputClaims, copyOrigins, &blocked)
 					case server.PassthroughChange:
 						if dest, err := server.RecopyPassthroughFile(ev.Path, cfg); err == nil {
 							srcPath := ev.Path
@@ -171,18 +170,24 @@ func newServeCommand() *cobra.Command {
 								srcPath = filepath.Join(cfg.ProjectRoot, ev.Path)
 								dest = filepath.Join(cfg.ProjectRoot, dest)
 							}
-							outputClaims = applyRecopy(ev, srcPath, dest, destRel, cfg, outputClaims, copyOrigins, &recopyConflicts)
+							outputClaims = applyRecopy(ev, srcPath, dest, destRel, cfg, outputClaims, copyOrigins, &blocked)
 						}
 					}
 				}
-				// A recopy conflict is checked against the previous build's
-				// claims. When the batch also rebuilds, that build checks the
-				// current files instead, so a page deleted in the same batch
-				// as a static file takes its path doesn't stop the server.
-				if len(recopyConflicts) > 0 && !needsRebuild {
-					msgs := make([]string, len(recopyConflicts))
-					for i, c := range recopyConflicts {
-						msgs[i] = c.Message
+				// Only the conflicts still there once the whole batch is
+				// applied count, as a build of the final files would see them
+				// (issue #1339). They are checked against the previous build's
+				// claims, so when the batch also rebuilds, that build decides
+				// instead: a page deleted in the same batch as a static file
+				// takes its path doesn't stop the server.
+				var stillBlocked []blockedCopy
+				outputClaims, copyOrigins, stillBlocked = settleBlockedCopies(blocked, outputClaims, copyOrigins, func(src, dest string) bool {
+					return copyFileToPath(src, dest, cfg)
+				})
+				if len(stillBlocked) > 0 && !needsRebuild {
+					msgs := make([]string, len(stillBlocked))
+					for i, b := range stillBlocked {
+						msgs[i] = fmt.Sprintf("output path conflict: %s is claimed by %s and %s", b.claimPath, b.existing, b.source)
 					}
 					fail(errors.New(strings.Join(msgs, "\n")))
 					return
@@ -241,7 +246,7 @@ func newServeCommand() *cobra.Command {
 	return cmd
 }
 
-func copyChangedFileToOutput(ev server.ChangeEvent, cfg *config.Config, claims []validation.OutputPathEntry, origins map[string]string, conflicts *[]server.BuildError) []validation.OutputPathEntry {
+func copyChangedFileToOutput(ev server.ChangeEvent, cfg *config.Config, claims []validation.OutputPathEntry, origins map[string]string, blocked *[]blockedCopy) []validation.OutputPathEntry {
 	relPath := ev.Path
 	outputDir := cfg.Build.Output
 	if outputDir == "" {
@@ -279,24 +284,22 @@ func copyChangedFileToOutput(ev server.ChangeEvent, cfg *config.Config, claims [
 	if cfg.ProjectRoot != "" {
 		destPath = filepath.Join(cfg.ProjectRoot, destPath)
 	}
-	return applyRecopy(ev, srcPath, destPath, destRel, cfg, claims, origins, conflicts)
+	return applyRecopy(ev, srcPath, destPath, destRel, cfg, claims, origins, blocked)
 }
 
 // applyRecopy performs one watcher-driven copy or removal, subject to output
 // path claims (issue #1238). A destination another source owns is left alone
-// and added to conflicts, which stop alloy serve as they fail alloy build
-// (issue #1318); a destination this file owns is copied and its claim kept
-// current.
-func applyRecopy(ev server.ChangeEvent, srcPath, destPath, destRel string, cfg *config.Config, claims []validation.OutputPathEntry, origins map[string]string, conflicts *[]server.BuildError) []validation.OutputPathEntry {
+// and added to blocked, to be judged once the whole batch is applied (issue
+// #1339); a destination this file owns is copied and its claim kept current.
+func applyRecopy(ev server.ChangeEvent, srcPath, destPath, destRel string, cfg *config.Config, claims []validation.OutputPathEntry, origins map[string]string, blocked *[]blockedCopy) []validation.OutputPathEntry {
 	claimPath := filepath.ToSlash(filepath.Clean(destRel))
 	source := filepath.ToSlash(ev.Path)
 
-	blocked := false
-	var existing string
+	isBlocked := false
 	if origin, owned := origins[claimPath]; !owned || origin != source {
 		for _, c := range claims {
 			if c.Path == claimPath {
-				existing, blocked = c.Source, true
+				isBlocked = true
 				break
 			}
 		}
@@ -305,7 +308,7 @@ func applyRecopy(ev server.ChangeEvent, srcPath, destPath, destRel string, cfg *
 	if ev.IsRemove {
 		// A source that lost a conflict never wrote this path, so deleting it
 		// must not remove the owning source's output.
-		if blocked {
+		if isBlocked {
 			return claims
 		}
 		if err := os.Remove(destPath); err != nil && !os.IsNotExist(err) {
@@ -325,13 +328,11 @@ func applyRecopy(ev server.ChangeEvent, srcPath, destPath, destRel string, cfg *
 		return claims
 	}
 
-	if blocked {
-		msg := fmt.Sprintf("output path conflict: %s is claimed by %s and %s",
-			claimPath, existing, source)
-		if conflicts != nil {
-			*conflicts = append(*conflicts, server.BuildError{
-				FilePath: source, Message: msg, Stage: "output path conflict",
-			})
+	// Skip the write for now: a remove later in the batch may free the
+	// path, so the copy is judged once the batch is applied (issue #1339).
+	if isBlocked {
+		if blocked != nil {
+			*blocked = append(*blocked, blockedCopy{srcPath: srcPath, destPath: destPath, claimPath: claimPath, source: source})
 		}
 		return claims
 	}
@@ -344,26 +345,29 @@ func applyRecopy(ev server.ChangeEvent, srcPath, destPath, destRel string, cfg *
 	return claims
 }
 
-func copyFileToPath(src, dest string, cfg *config.Config) {
+// copyFileToPath copies src to dest and reports whether it did.
+func copyFileToPath(src, dest string, cfg *config.Config) bool {
 	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 		log.Printf("warning: creating directory for %s: %v", dest, err)
-		return
+		return false
 	}
 	srcFile, err := os.Open(src)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
 			log.Printf("warning: opening %s: %v", src, err)
 		}
-		return
+		return false
 	}
 	defer srcFile.Close()
 	destFile, err := os.Create(dest)
 	if err != nil {
 		log.Printf("warning: creating %s: %v", dest, err)
-		return
+		return false
 	}
 	defer destFile.Close()
 	if _, err := io.Copy(destFile, srcFile); err != nil {
 		log.Printf("warning: copying %s to %s: %v", src, dest, err)
+		return false
 	}
+	return true
 }

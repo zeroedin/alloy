@@ -196,6 +196,7 @@ func newDevCommand() *cobra.Command {
 					outputDir = filepath.Join(cfg.ProjectRoot, outputDir)
 				}
 				var recopyConflicts []server.BuildError
+				var blocked []blockedCopy
 				for _, ev := range events {
 					if server.RebuildScopeForChangeType(ev.ChangeType) != server.RebuildRecopy {
 						continue
@@ -230,7 +231,7 @@ func newDevCommand() *cobra.Command {
 					if rel, relErr := filepath.Rel(outputDir, destPath); relErr == nil {
 						claimPath = filepath.ToSlash(rel)
 					}
-					existing, clash := recopyBlockedBy(outputClaims, copyOrigins, claimPath, source)
+					_, clash := recopyBlockedBy(outputClaims, copyOrigins, claimPath, source)
 
 					if ev.IsRemove {
 						// Deleting a file that lost a conflict must not remove
@@ -245,18 +246,11 @@ func newDevCommand() *cobra.Command {
 						outputClaims, copyOrigins = releaseClaim(outputClaims, copyOrigins, claimPath, source)
 						continue
 					}
-					// A recopy must not perform a colliding write. Report it in
-					// the overlay and skip the write; the server keeps running
-					// and the next clean rebuild clears the overlay.
+					// A recopy must not perform a colliding write. Skip it for
+					// now: a remove later in this batch may free the path, so
+					// it is judged once the batch is applied (issue #1339).
 					if clash {
-						msg := fmt.Sprintf("output path conflict: %s is claimed by %s and %s — skipping copy",
-							claimPath, existing, source)
-						log.Printf("warning: %s", msg)
-						recopyConflicts = append(recopyConflicts, server.BuildError{
-							FilePath: source,
-							Message:  msg,
-							Stage:    "output path conflict",
-						})
+						blocked = append(blocked, blockedCopy{srcPath: srcPath, destPath: destPath, claimPath: claimPath, source: source})
 						continue
 					}
 					if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
@@ -272,6 +266,34 @@ func newDevCommand() *cobra.Command {
 					// A file copied after the last build claims its path from
 					// now on, so a second source added later collides with it.
 					outputClaims, copyOrigins = recordClaim(outputClaims, copyOrigins, claimPath, source)
+				}
+				// Only the conflicts still there once the whole batch is
+				// applied are reported (issue #1339). They show in the overlay
+				// and the write is skipped; the server keeps running and the
+				// next clean rebuild clears the overlay.
+				var stillBlocked []blockedCopy
+				outputClaims, copyOrigins, stillBlocked = settleBlockedCopies(blocked, outputClaims, copyOrigins, func(src, dest string) bool {
+					if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+						log.Printf("warning: recopy mkdir: %v", err)
+						return false
+					}
+					if err := fileutil.CopyFile(src, dest); err != nil {
+						if !errors.Is(err, fs.ErrNotExist) {
+							log.Printf("warning: recopy %s: %v", src, err)
+						}
+						return false
+					}
+					return true
+				})
+				for _, b := range stillBlocked {
+					msg := fmt.Sprintf("output path conflict: %s is claimed by %s and %s — skipping copy",
+						b.claimPath, b.existing, b.source)
+					log.Printf("warning: %s", msg)
+					recopyConflicts = append(recopyConflicts, server.BuildError{
+						FilePath: b.source,
+						Message:  msg,
+						Stage:    "output path conflict",
+					})
 				}
 				if len(recopyConflicts) > 0 {
 					srv.Overlay().SetErrors(recopyConflicts)
@@ -434,6 +456,45 @@ func newDevCommand() *cobra.Command {
 	cmd.Flags().Bool("refetch", false, "Bypass fetch cache")
 
 	return cmd
+}
+
+// blockedCopy is a watcher recopy that another source's claim blocked when
+// its event was applied. It is judged again once the whole batch is applied
+// (issue #1339).
+type blockedCopy struct {
+	srcPath, destPath, claimPath, source string
+	existing                             string // the claim still blocking it, set by settleBlockedCopies
+}
+
+// settleBlockedCopies judges the copies a batch blocked once the whole batch
+// is applied, as a build of the final files would (issue #1339): a remove
+// later in the batch may have freed a path. A copy whose source file no
+// longer exists is dropped, whoever owns the path. One whose path is now
+// free is written and claimed. The rest are returned, with the claim that
+// still blocks them, as the batch's conflicts. One pass is enough: a remove
+// only frees paths, and the copies written here claim only their own.
+func settleBlockedCopies(blocked []blockedCopy, claims []validation.OutputPathEntry, origins map[string]string, copyFile func(src, dest string) bool) ([]validation.OutputPathEntry, map[string]string, []blockedCopy) {
+	var still []blockedCopy
+	seen := make(map[string]bool, len(blocked))
+	for _, b := range blocked {
+		key := b.source + "\x00" + b.claimPath
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if _, err := os.Stat(b.srcPath); errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if existing, clash := recopyBlockedBy(claims, origins, b.claimPath, b.source); clash {
+			b.existing = existing
+			still = append(still, b)
+			continue
+		}
+		if copyFile(b.srcPath, b.destPath) {
+			claims, origins = recordClaim(claims, origins, b.claimPath, b.source)
+		}
+	}
+	return claims, origins, still
 }
 
 // recopyBlockedBy reports the claim that prevents source from writing relPath,
