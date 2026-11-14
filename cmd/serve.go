@@ -165,7 +165,17 @@ func newServeCommand() *cobra.Command {
 					case server.PassthroughChange:
 						if dest, err := server.RecopyPassthroughFile(ev.Path, cfg); err == nil {
 							srcPath := ev.Path
-							destRel := dest
+							// Claims are keyed by the path inside the output
+							// folder, but dest starts with that folder.
+							outputDir := cfg.Build.Output
+							if outputDir == "" {
+								outputDir = "_site"
+							}
+							destRel, relErr := filepath.Rel(outputDir, dest)
+							if relErr != nil {
+								log.Printf("warning: passthrough recopy: %v", relErr)
+								continue
+							}
 							if cfg.ProjectRoot != "" {
 								srcPath = filepath.Join(cfg.ProjectRoot, ev.Path)
 								dest = filepath.Join(cfg.ProjectRoot, dest)
@@ -316,9 +326,11 @@ func applyRecopy(ev server.ChangeEvent, srcPath, destPath, destRel string, cfg *
 		}
 		if origin, owned := origins[claimPath]; owned && origin == source {
 			delete(origins, claimPath)
+			// Ownership is proved by origin, so the claim is dropped by path:
+			// a passthrough claim is labelled with its mapping, not the file.
 			kept := claims[:0]
 			for _, c := range claims {
-				if c.Path == claimPath && c.Source == source {
+				if c.Path == claimPath {
 					continue
 				}
 				kept = append(kept, c)

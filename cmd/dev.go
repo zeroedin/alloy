@@ -195,7 +195,6 @@ func newDevCommand() *cobra.Command {
 				if !filepath.IsAbs(outputDir) {
 					outputDir = filepath.Join(cfg.ProjectRoot, outputDir)
 				}
-				var recopyConflicts []server.BuildError
 				var blocked []blockedCopy
 				for _, ev := range events {
 					if server.RebuildScopeForChangeType(ev.ChangeType) != server.RebuildRecopy {
@@ -267,12 +266,13 @@ func newDevCommand() *cobra.Command {
 					// now on, so a second source added later collides with it.
 					outputClaims, copyOrigins = recordClaim(outputClaims, copyOrigins, claimPath, source)
 				}
-				// Only the conflicts still there once the whole batch is
-				// applied are reported (issue #1339). They show in the overlay
-				// and the write is skipped; the server keeps running and the
-				// next clean rebuild clears the overlay.
-				var stillBlocked []blockedCopy
-				outputClaims, copyOrigins, stillBlocked = settleBlockedCopies(blocked, outputClaims, copyOrigins, func(src, dest string) bool {
+				// Blocked copies are judged once the whole batch is applied
+				// (issue #1339). Those still blocked are judged again after
+				// the rebuild when the batch has one, since a page it removes
+				// may free the path; otherwise they are reported here. A
+				// conflict shows in the overlay and the write is skipped; the
+				// server keeps running and the next clean rebuild clears it.
+				copyBlocked := func(src, dest string) bool {
 					if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 						log.Printf("warning: recopy mkdir: %v", err)
 						return false
@@ -284,20 +284,9 @@ func newDevCommand() *cobra.Command {
 						return false
 					}
 					return true
-				})
-				for _, b := range stillBlocked {
-					msg := fmt.Sprintf("output path conflict: %s is claimed by %s and %s — skipping copy",
-						b.claimPath, b.existing, b.source)
-					log.Printf("warning: %s", msg)
-					recopyConflicts = append(recopyConflicts, server.BuildError{
-						FilePath: b.source,
-						Message:  msg,
-						Stage:    "output path conflict",
-					})
 				}
-				if len(recopyConflicts) > 0 {
-					srv.Overlay().SetErrors(recopyConflicts)
-				}
+				var stillBlocked []blockedCopy
+				outputClaims, copyOrigins, stillBlocked = settleBlockedCopies(blocked, outputClaims, copyOrigins, copyBlocked)
 
 				needsRebuild := false
 				for _, ev := range events {
@@ -317,6 +306,9 @@ func newDevCommand() *cobra.Command {
 				}
 
 				if !needsRebuild {
+					if conflicts := blockedCopyErrors(stillBlocked); len(conflicts) > 0 {
+						srv.Overlay().SetErrors(conflicts)
+					}
 					srv.BroadcastReload()
 					return
 				}
@@ -422,6 +414,17 @@ func newDevCommand() *cobra.Command {
 								})
 							}
 						}
+						// A page this batch removed may have held the path a
+						// blocked copy needs. The rebuild's claims are those of
+						// the final files, so with no conflict among them the
+						// blocked copies are retried, as a build of those files
+						// would copy them (issue #1339). A conflict that is
+						// still there is in claimErrs, and the copy stays
+						// skipped.
+						if len(claimErrs) == 0 && len(stillBlocked) > 0 {
+							outputClaims, copyOrigins, stillBlocked = settleBlockedCopies(stillBlocked, outputClaims, copyOrigins, copyBlocked)
+							claimErrs = blockedCopyErrors(stillBlocked)
+						}
 						if len(claimErrs) > 0 {
 							srv.Overlay().SetErrors(claimErrs)
 						} else {
@@ -497,6 +500,24 @@ func settleBlockedCopies(blocked []blockedCopy, claims []validation.OutputPathEn
 	return claims, origins, still
 }
 
+// blockedCopyErrors logs each copy still blocked once its batch is settled and
+// returns them as overlay errors. The write stays skipped; the server keeps
+// running and the next clean rebuild clears the overlay.
+func blockedCopyErrors(still []blockedCopy) []server.BuildError {
+	var errs []server.BuildError
+	for _, b := range still {
+		msg := fmt.Sprintf("output path conflict: %s is claimed by %s and %s — skipping copy",
+			b.claimPath, b.existing, b.source)
+		log.Printf("warning: %s", msg)
+		errs = append(errs, server.BuildError{
+			FilePath: b.source,
+			Message:  msg,
+			Stage:    "output path conflict",
+		})
+	}
+	return errs
+}
+
 // recopyBlockedBy reports the claim that prevents source from writing relPath,
 // or ok=false when the write is allowed. A path whose recorded origin is this
 // same source file is the file's own claim, not a collision — origins are
@@ -546,9 +567,12 @@ func releaseClaim(claims []validation.OutputPathEntry, origins map[string]string
 		return claims, origins
 	}
 	delete(origins, relPath)
+	// The origin check proved this source owns the path. Its claim is dropped
+	// by path, because a passthrough claim is labelled with its mapping, not
+	// with the file.
 	kept := claims[:0]
 	for _, c := range claims {
-		if c.Path == relPath && c.Source == source {
+		if c.Path == relPath {
 			continue
 		}
 		kept = append(kept, c)
