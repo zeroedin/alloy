@@ -541,16 +541,23 @@ func claimCount(claims []validation.OutputPathEntry, relPath string) int {
 // same source file is the file's own claim, not a collision — origins are
 // matched rather than display labels, because a passthrough claim is labelled
 // with its mapping ("passthrough \"vendor-css\" → \"css\"") while the watcher
-// reports the individual file that changed.
+// reports the individual file that changed. Its own claim lets it write only
+// while no other source claims the path: after a rebuild that reported a
+// conflict, the origin can name this file while a page claims the path too, and
+// the write would replace the page.
 func recopyBlockedBy(claims []validation.OutputPathEntry, origins map[string]string, relPath, source string) (string, bool) {
 	if relPath == "" {
 		return "", false
 	}
+	own := false
 	if origin, ok := origins[relPath]; ok && origin == source {
-		return "", false
+		if claimCount(claims, relPath) <= 1 {
+			return "", false
+		}
+		own = true
 	}
 	for _, c := range claims {
-		if c.Path == relPath {
+		if c.Path == relPath && !(own && c.Source == source) {
 			return c.Source, true
 		}
 	}
