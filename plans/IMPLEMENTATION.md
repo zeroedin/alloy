@@ -1400,6 +1400,17 @@ Production server command (`alloy serve`). Uses `ModePreview` — same pipeline 
 9. Block until interrupt.
 10. **Remove server lockfile (issue #1094)**: In the shutdown path (after `<-sigCh`), read the lockfile and only remove if the PID matches the current process: `if info, _ := server.ReadLockfile(cfg.ProjectRoot); info != nil && info.PID == os.Getpid() { server.RemoveLockfile(cfg.ProjectRoot) }`. This PID guard prevents Process A from deleting a lockfile that Process B has since overwritten (cascade scenario, issue #1124).
 
+**Recopy conflicts are judged when the batch settles (issue #1339)** — `cmd/serve.go` (`applyRecopy`, called per event from the watcher callback) and `cmd/dev.go` (the recopy loop using `recopyBlockedBy`) check each event against the claims as they stand at that moment, and append a conflict at once. A remove later in the same batch frees the claim, but the earlier conflict stays and the blocked copy is never retried.
+
+Fix, the same in both commands: after the per-event loop, go back over the recorded conflicts. For each:
+- If its source file no longer exists, drop it, whoever still owns the path.
+- Otherwise, if the path is no longer claimed by another source (`recopyBlockedBy` / the claim check in `applyRecopy` now says no), copy the file, record its claim, and drop the conflict.
+- Otherwise keep it.
+
+Only the conflicts kept reach `fail` in `alloy serve` or `srv.Overlay().SetErrors` in `alloy dev`. This is per batch: don't clear the `alloy dev` overlay when a later batch has no conflicts. Keep today's behavior otherwise: `SetErrors` replaces the list when a batch reports conflicts, and a rebuild clears it. Retrying once, after the loop, is enough: a remove can only free a path, so a second pass finds nothing new.
+
+Tests: "a recopy conflict is judged when the batch settles (issue #1339)" in `test/integration/recopy_batch_test.go` (3 red, 1 green guard; it runs the real binary). The existing "exits 1 when a changed static file claims a page's output path" in `serve_fails_test.go` must stay green. No docs change: the docs don't describe batches. Changeset: `patch`.
+
 **`server.RecopyPassthroughFile(changedPath string, cfg *config.Config) (string, error)`** — Finds the matching passthrough mapping by checking which `from:` directory the `changedPath` is under. Computes the relative path within `from:`, constructs the output path as `_site/<to>/<relative-path>`, copies the single file, and returns the output path. Returns error if no matching mapping is found or the copy fails.
 
 **Test note**: The cmd tests verify both `dev` and `serve` commands are registered via `root.Find()` without calling `Execute()`. Server startup behavior is tested directly in `internal/server/server_test.go`.
