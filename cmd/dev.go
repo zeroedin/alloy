@@ -416,14 +416,21 @@ func newDevCommand() *cobra.Command {
 						}
 						// A page this batch removed may have held the path a
 						// blocked copy needs. The rebuild's claims are those of
-						// the final files, so with no conflict among them the
-						// blocked copies are retried, as a build of those files
-						// would copy them (issue #1339). A conflict that is
-						// still there is in claimErrs, and the copy stays
-						// skipped.
-						if len(claimErrs) == 0 && len(stillBlocked) > 0 {
-							outputClaims, copyOrigins, stillBlocked = settleBlockedCopies(stillBlocked, outputClaims, copyOrigins, copyBlocked)
-							claimErrs = blockedCopyErrors(stillBlocked)
+						// the final files, so the blocked copies are retried
+						// against them, as a build of those files would copy
+						// them (issue #1339). A path with more than one claim is
+						// still a conflict: the rebuild reports it in claimErrs
+						// and the copy stays skipped. Without refreshed claims
+						// (claim collection failed) nothing is retried.
+						if incrResult != nil && incrResult.OutputClaims != nil && len(stillBlocked) > 0 {
+							var retry []blockedCopy
+							for _, b := range stillBlocked {
+								if claimCount(outputClaims, b.claimPath) <= 1 {
+									retry = append(retry, b)
+								}
+							}
+							outputClaims, copyOrigins, stillBlocked = settleBlockedCopies(retry, outputClaims, copyOrigins, copyBlocked)
+							claimErrs = append(claimErrs, blockedCopyErrors(stillBlocked)...)
 						}
 						if len(claimErrs) > 0 {
 							srv.Overlay().SetErrors(claimErrs)
@@ -516,6 +523,17 @@ func blockedCopyErrors(still []blockedCopy) []server.BuildError {
 		})
 	}
 	return errs
+}
+
+// claimCount returns how many claims name relPath.
+func claimCount(claims []validation.OutputPathEntry, relPath string) int {
+	n := 0
+	for _, c := range claims {
+		if c.Path == relPath {
+			n++
+		}
+	}
+	return n
 }
 
 // recopyBlockedBy reports the claim that prevents source from writing relPath,
