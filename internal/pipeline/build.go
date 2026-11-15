@@ -376,6 +376,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// by onPagesReady can be identified and recorded in the build cache
 	// for BuildIncremental parity (issue #970).
 	discoveredPaths := make(map[string]bool)
+	// Front matter hashes of every discovered page, taken from the source
+	// before lifecycle filtering and pagination (issue #1320).
+	frontMatterHashes := make(map[string]string)
 	for _, lc := range langContexts {
 		// Content directory: content/<lang>/ for multi-language, content/ for single
 		batchContentDir := contentDir
@@ -400,6 +403,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				page.FrontMatter["lang"] = lc.Code
 				page.RelPath = lc.Code + "/" + page.RelPath
 			}
+		}
+
+		for _, page := range batchPages {
+			frontMatterHashes[page.RelPath] = frontMatterHash(page)
 		}
 
 		// Lifecycle filter
@@ -1119,6 +1126,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	timer.Start("Cache")
 	for _, page := range pages {
 		buildCache.SetHash(page.RelPath, cache.HashContent(page.Content))
+	}
+	for relPath, h := range frontMatterHashes {
+		buildCache.SetFrontMatterHash(relPath, h)
 	}
 	for pagePath, layoutPaths := range templateUsage {
 		for _, layoutPath := range layoutPaths {

@@ -66,6 +66,13 @@ func collectableSections(permalinkCfg map[string]string, collectionNames []strin
 	return sections
 }
 
+// HasCollection reports whether a site has at least one collection: a section
+// named in collectionNames, or one whose permalink pattern has a date token
+// (issue #1320). It applies the same rule as collectableSections.
+func HasCollection(permalinkCfg map[string]string, collectionNames []string) bool {
+	return len(collectableSections(permalinkCfg, collectionNames)) > 0
+}
+
 // isSectionIndex returns true if the page is a section-level index file
 // (e.g., blog/index.md) as opposed to a page bundle index file
 // (e.g., blog/second-post/index.md). Section indexes are containers,

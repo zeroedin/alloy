@@ -15,6 +15,11 @@ type Cache struct {
 	virtualDependencies map[string]map[string]bool // source path → set of virtual page RelPaths (issue #1058)
 	pageDependencies    map[string]map[string]bool // dependency path → set of content page RelPaths (issue #1100)
 
+	// frontMatterHashes holds a hash of each discovered page's front matter
+	// block, so an incremental rebuild can tell a front matter change from a
+	// body-only edit (issue #1320).
+	frontMatterHashes map[string]string
+
 	// cascadeLoadFailed records that the build which produced this cache
 	// couldn't load the _data.yaml cascade, so the pages it rendered have no
 	// folder data (issue #1324).
@@ -30,6 +35,7 @@ func New() *Cache {
 		virtualPages:        make(map[string]bool),
 		virtualDependencies: make(map[string]map[string]bool),
 		pageDependencies:    make(map[string]map[string]bool),
+		frontMatterHashes:   make(map[string]string),
 	}
 }
 
@@ -73,6 +79,7 @@ func (c *Cache) Clear() {
 	c.virtualPages = make(map[string]bool)
 	c.virtualDependencies = make(map[string]map[string]bool)
 	c.pageDependencies = make(map[string]map[string]bool)
+	c.frontMatterHashes = make(map[string]string)
 }
 
 // Clone returns a deep copy of the cache. Used by BuildIncremental to
@@ -113,8 +120,43 @@ func (c *Cache) Clone() *Cache {
 		}
 		cloned.pageDependencies[k] = cp
 	}
+	for k, v := range c.frontMatterHashes {
+		cloned.frontMatterHashes[k] = v
+	}
 	cloned.cascadeLoadFailed = c.cascadeLoadFailed
 	return cloned
+}
+
+// SetFrontMatterHash records the hash of a page's front matter block
+// (issue #1320). Empty keys are discarded, as in SetHash.
+func (c *Cache) SetFrontMatterHash(path, hash string) {
+	if path == "" {
+		return
+	}
+	c.frontMatterHashes[path] = hash
+}
+
+// FrontMatterHashPaths returns the paths that have a front matter hash.
+func (c *Cache) FrontMatterHashPaths() []string {
+	paths := make([]string, 0, len(c.frontMatterHashes))
+	for p := range c.frontMatterHashes {
+		paths = append(paths, p)
+	}
+	return paths
+}
+
+// ClearFrontMatterHashes drops every front matter hash, so a build can record
+// exactly the pages it discovered.
+func (c *Cache) ClearFrontMatterHashes() {
+	c.frontMatterHashes = make(map[string]string)
+}
+
+// FrontMatterHash returns the front matter hash recorded for a page, and
+// whether one was recorded. A cache written before front matter hashes
+// existed has none.
+func (c *Cache) FrontMatterHash(path string) (string, bool) {
+	h, ok := c.frontMatterHashes[path]
+	return h, ok
 }
 
 // SetCascadeLoadFailed records whether the build that produced this cache

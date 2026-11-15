@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/cascade"
+	"github.com/zeroedin/alloy/internal/collection"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
 	"github.com/zeroedin/alloy/internal/ordered"
@@ -98,6 +100,13 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		if err != nil {
 			return nil, fmt.Errorf("content discovery: %w", err)
 		}
+	}
+
+	// Front matter hashes of every discovered page, taken before lifecycle
+	// filtering and pagination change the page list (issue #1320).
+	frontMatterHashes := make(map[string]string, len(allPages))
+	for _, page := range allPages {
+		frontMatterHashes[page.RelPath] = frontMatterHash(page)
 	}
 
 	// Determine which pages need rebuilding
@@ -240,6 +249,20 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				skipped -= added
 			}
 		}
+	}
+
+	// List and tag pages stay current (issue #1320). A page that lists other
+	// pages reads their front matter, and nothing records which pages read
+	// what. So on a site with a collection or a taxonomy, a front matter
+	// change or an added or removed page re-renders every page and
+	// regenerates the taxonomy pages, as a full build does.
+	listsStale := false
+	if fsMode && previousCache != nil && listInputsChanged(previousCache, frontMatterHashes) &&
+		(len(cfg.Collections) > 0 || len(cfg.Taxonomies) > 0 ||
+			collection.HasCollection(buildPermalinkCfg(ps), collectionNames(cfg))) {
+		listsStale = true
+		pagesToRender = allPages
+		skipped = 0
 	}
 
 	// Reload site data when data directory files have changed (issue #717).
@@ -389,7 +412,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 		// Cascade recovery renders every page (issue #1306): a plugin may
 		// have built this one from pages that had no folder data.
-		if cascadeRecovered || untrackedPartial || layoutInvalidated[p.RelPath] {
+		if cascadeRecovered || listsStale || untrackedPartial || layoutInvalidated[p.RelPath] {
 			renderRelPaths[p.RelPath] = true
 			continue
 		}
@@ -459,6 +482,12 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	// loaded (issue #1324). A full render after recovery leaves no page
 	// without it, and a failed load keeps the recovery pending.
 	buildCache.SetCascadeLoadFailed(loadFailed)
+	// Record exactly the pages discovered now, so the next rebuild sees a
+	// page added or removed since (issue #1320).
+	buildCache.ClearFrontMatterHashes()
+	for relPath, h := range frontMatterHashes {
+		buildCache.SetFrontMatterHash(relPath, h)
+	}
 
 	// Clear content page dependencies only for pages being re-rendered.
 	// Hooks will re-track deps for these pages; skipped pages retain their
@@ -575,6 +604,16 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		if err := renderPageFormats(page, layoutsDir, rc); err != nil {
 			return nil, err
 		}
+	}
+
+	// Regenerate the taxonomy pages when list pages are stale (issue #1320),
+	// as Build does after rendering. They are written with the other pages.
+	if listsStale && bc.Taxonomies != nil && ps.Engine != nil {
+		taxPages, err := generateTaxonomyPages(bc.Taxonomies, layoutsDir, rc, nil)
+		if err != nil {
+			return nil, err
+		}
+		pagesToRender = append(pagesToRender, taxPages...)
 	}
 
 	// Dispatch onPageRendered, onFormatRendered, and single-format writeback.
@@ -976,4 +1015,34 @@ func addPagesUnderDirs(pagesToRender, allPages []*content.Page, dirs []string) (
 		}
 	}
 	return pagesToRender, added
+}
+
+// frontMatterHash hashes a discovered page's front matter block: the source
+// bytes before its body (issue #1320). It reads the source, not the parsed
+// map, and runs before pagination, which changes a paginated source page.
+func frontMatterHash(page *content.Page) string {
+	raw := page.Content
+	if len(page.Body) <= len(raw) && bytes.HasSuffix(raw, page.Body) {
+		raw = raw[:len(raw)-len(page.Body)]
+	}
+	return cache.HashContent(raw)
+}
+
+// listInputsChanged reports whether what a list page reads has changed since
+// the previous build (issue #1320): a page's front matter differs, a page has
+// no recorded hash (it is new, or the cache predates front matter hashes), or
+// a page with a recorded hash is gone.
+func listInputsChanged(previous *cache.Cache, current map[string]string) bool {
+	for relPath, h := range current {
+		prev, ok := previous.FrontMatterHash(relPath)
+		if !ok || prev != h {
+			return true
+		}
+	}
+	for _, relPath := range previous.FrontMatterHashPaths() {
+		if _, ok := current[relPath]; !ok {
+			return true
+		}
+	}
+	return false
 }
