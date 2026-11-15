@@ -24,6 +24,14 @@ type PipelineState struct {
 	ContentDir  string
 	ContentBase string
 
+	// cascadeLoadFailed is set when this state couldn't load the _data.yaml
+	// cascade, at creation or on an incremental reload (issue #1306). Pages
+	// rendered then had no folder data, so the next incremental rebuild that
+	// loads the cascade renders every page. It is cleared once that rebuild
+	// succeeds. A Build records its own failure in its cache instead
+	// (issue #1324).
+	cascadeLoadFailed bool
+
 	// OutputClaims is every output path claimed by the last full build, with
 	// the source that claimed it. It outlives Build() so the dev server's
 	// recopy path can check a destination before writing it (issue #1238) —
@@ -106,6 +114,10 @@ func InitPipelineState(cfg *config.Config, registry *plugin.Registry, hooks *plu
 		SiteData:    siteData,
 		ContentDir:  contentDir,
 		ContentBase: filepath.Base(contentDir),
+		// alloy dev creates its state right after the initial Build, which
+		// read the same files, so a load error here means that build
+		// rendered every page without folder data (issue #1306).
+		cascadeLoadFailed: cascadeErr != nil,
 	}, nil
 }
 
