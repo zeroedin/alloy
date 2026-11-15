@@ -146,6 +146,39 @@ var _ = Describe("alloy dev keeps list and tag pages current (issue #1320)", fun
 			"a deleted page must drop off the list without a restart")
 	})
 
+	// HTML is a content format by default, so its pages are in the
+	// collection too.
+	It("drops a deleted HTML page from the list", func() {
+		s := newSite(func(s *site) {
+			write(*s, "content/blog/three.html", post("Three", "a", "<p>third</p>"))
+		})
+		first := firstBuild(s)
+		Expect(page(s, "index.html")).To(ContainSubstring("[Three]"), "sanity: the HTML page is listed")
+
+		Expect(os.Remove(filepath.Join(s.root, "content/blog/three.html"))).To(Succeed())
+		rebuild(s, first, "content/blog/three.html")
+
+		Expect(page(s, "index.html")).NotTo(ContainSubstring("[Three]"),
+			"a deleted HTML page must drop off the list without a restart")
+	})
+
+	// The rebuild after a delete must forget the page, or a later rebuild
+	// that brings back the same file sees nothing new.
+	It("lists a page again when it is deleted and then recreated", func() {
+		s := newSite()
+		first := firstBuild(s)
+
+		Expect(os.Remove(filepath.Join(s.root, "content/blog/two.md"))).To(Succeed())
+		deleted := rebuild(s, first, "content/blog/two.md")
+		Expect(page(s, "index.html")).NotTo(ContainSubstring("[Two]"), "sanity: the deleted page is dropped")
+
+		write(s, "content/blog/two.md", post("Two", "a", "second"))
+		rebuild(s, deleted, "content/blog/two.md")
+
+		Expect(page(s, "index.html")).To(ContainSubstring("[Two]"),
+			"a page recreated with the same content is a new page and must appear on the list again")
+	})
+
 	It("moves a page to its new tag page", func() {
 		s := newSite()
 		first := firstBuild(s)
@@ -237,11 +270,12 @@ var _ = Describe("alloy dev keeps list and tag pages current (issue #1320)", fun
 			old.SetHash(rel, cache.HashContent(b))
 		}
 
-		write(s, "content/blog/one.md", post("One edited", "a", "first"))
+		// A body-only edit: only the missing front matter hash can make
+		// this rebuild re-render the list page.
+		write(s, "content/blog/one.md", post("One", "a", "first, edited body"))
 		upgraded := rebuild(s, &pipeline.BuildResult{Cache: old}, "content/blog/one.md")
 		Expect(upgraded.PagesRendered).To(ContainElement("index.md"),
 			"without a previous front matter hash, the change can't be ruled out, so list pages must re-render")
-		Expect(page(s, "index.html")).To(ContainSubstring("[One edited]"))
 
 		// The re-render wrote front matter hashes, so the next body-only
 		// edit is incremental again.
