@@ -7,6 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/pipeline"
 )
@@ -219,5 +220,34 @@ var _ = Describe("alloy dev keeps list and tag pages current (issue #1320)", fun
 			"with no collection or taxonomy, other pages must not re-render")
 		Expect(result.PagesRendered).NotTo(ContainElement("blog/two.md"),
 			"with no collection or taxonomy, other pages must not re-render")
+	})
+
+	// A cache written before front matter hashes existed has only content
+	// hashes. Its front matter can't be compared, so it counts as changed:
+	// one full re-render, then rebuilds are incremental again.
+	It("re-renders list pages once from a cache with no front matter hashes", func() {
+		s := newSite()
+		firstBuild(s)
+
+		// The old cache format: a content hash per page, nothing else.
+		old := cache.New()
+		for _, rel := range []string{"index.md", "blog/one.md", "blog/two.md"} {
+			b, err := os.ReadFile(filepath.Join(s.root, "content", rel))
+			Expect(err).NotTo(HaveOccurred())
+			old.SetHash(rel, cache.HashContent(b))
+		}
+
+		write(s, "content/blog/one.md", post("One edited", "a", "first"))
+		upgraded := rebuild(s, &pipeline.BuildResult{Cache: old}, "content/blog/one.md")
+		Expect(upgraded.PagesRendered).To(ContainElement("index.md"),
+			"without a previous front matter hash, the change can't be ruled out, so list pages must re-render")
+		Expect(page(s, "index.html")).To(ContainSubstring("[One edited]"))
+
+		// The re-render wrote front matter hashes, so the next body-only
+		// edit is incremental again.
+		write(s, "content/blog/two.md", post("Two", "a", "second, edited body"))
+		next := rebuild(s, upgraded, "content/blog/two.md")
+		Expect(next.PagesRendered).NotTo(ContainElement("index.md"),
+			"after one full re-render, a body-only edit must be incremental again")
 	})
 })
