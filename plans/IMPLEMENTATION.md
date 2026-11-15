@@ -1398,8 +1398,20 @@ Production server command (`alloy serve`). Uses `ModePreview` — same pipeline 
    - `PassthroughChange` → `server.RecopyPassthroughFile(changedPath, cfg)` — copies only the changed file to `_site/<to>/<relative-path>`
    - `ComponentChange` → full rebuild (SSR re-render)
    - All types → `srv.BroadcastReload()` after rebuild/recopy
+   - **A failed build stops the server (PLAN.md → "Error Handling → `alloy serve`")**: when the watcher's `pipeline.Build` returns an error, or a recopy finds an output path conflict, don't set the overlay. Hand the error to the command's main goroutine (for example, over a buffered channel it selects on alongside `sigCh`). Then remove the lockfile (`server.RemoveLockfileIfOwned`), call `srv.Stop()`, and return the error from `RunE`, so `alloy serve` prints it and exits 1. Tests: "alloy serve fails like alloy build" in `test/integration/serve_fails_test.go` (3 red, 2 green guards; it runs the real binary). Docs: in `docs/content/cli/index.md` under `alloy serve`, say a build error stops the server with exit code 1, like `alloy build`. The docs don't mention a custom 404 page, so nothing to remove there. Changeset: `minor`, because a failed rebuild now stops the server.
 9. Block until interrupt.
 10. **Remove server lockfile (issue #1094)**: In the shutdown path (after `<-sigCh`), read the lockfile and only remove if the PID matches the current process: `if info, _ := server.ReadLockfile(cfg.ProjectRoot); info != nil && info.PID == os.Getpid() { server.RemoveLockfile(cfg.ProjectRoot) }`. This PID guard prevents Process A from deleting a lockfile that Process B has since overwritten (cascade scenario, issue #1124).
+
+**Recopy conflicts are judged when the batch settles (issue #1339)** — `cmd/serve.go` (`applyRecopy`, called per event from the watcher callback) and `cmd/dev.go` (the recopy loop using `recopyBlockedBy`) check each event against the claims as they stand at that moment, and append a conflict at once. A remove later in the same batch frees the claim, but the earlier conflict stays and the blocked copy is never retried.
+
+Fix, the same in both commands: after the per-event loop, go back over the recorded conflicts. For each:
+- If its source file no longer exists, drop it, whoever still owns the path.
+- Otherwise, if the path is no longer claimed by another source (`recopyBlockedBy` / the claim check in `applyRecopy` now says no), copy the file, record its claim, and drop the conflict.
+- Otherwise keep it.
+
+Only the conflicts kept reach `fail` in `alloy serve` or `srv.Overlay().SetErrors` in `alloy dev`. This is per batch: don't clear the `alloy dev` overlay when a later batch has no conflicts. Keep today's behavior otherwise: `SetErrors` replaces the list when a batch reports conflicts, and a rebuild clears it. Retrying once, after the loop, is enough: a remove can only free a path, so a second pass finds nothing new.
+
+Tests: "a recopy conflict is judged when the batch settles (issue #1339)" in `test/integration/recopy_batch_test.go` (3 red, 1 green guard; it runs the real binary). The existing "exits 1 when a changed static file claims a page's output path" in `serve_fails_test.go` must stay green. No docs change: the docs don't describe batches. Changeset: `patch`.
 
 **`server.RecopyPassthroughFile(changedPath string, cfg *config.Config) (string, error)`** — Finds the matching passthrough mapping by checking which `from:` directory the `changedPath` is under. Computes the relative path within `from:`, constructs the output path as `_site/<to>/<relative-path>`, copies the single file, and returns the output path. Returns error if no matching mapping is found or the copy fails.
 
@@ -1550,7 +1562,7 @@ if reporter != nil { reporter.Summary(result.PageCount, result.Duration, result.
 - `DetermineRebuildAction(changedFiles []string) RebuildScope`: Classify file changes as incremental or full rebuild. Many simultaneous changes trigger a full rebuild.
 - `StartWithPortFallback(preferredPort, maxAttempts int) (int, error)`: Try `net.Listen("tcp", ":port")` starting at `preferredPort`. On `EADDRINUSE`, increment port and retry up to `maxAttempts` times. Return the actual port on success. After exhausting all attempts, return error containing `"no available port"` and the range tried. Log a warning when skipping an occupied port. Store the actual port on the Server struct.
 - `Port() int`: Return the actual port the server is listening on. Returns 0 before the server has started.
-- `Serve404Page(outputDir string) ([]byte, error)`: Check for `404.html` at the output root. If found, return its contents (for the HTTP handler to serve with a 404 status code). If not found, return an error so the caller can fall back to Go's default `http.NotFound()`. In dev mode, the 404 page must receive the WebSocket reload script injection like any other served page (issue #109).
+- **No custom 404 page**: delete `Serve404Page` from `internal/server/server.go`. Nothing calls it, and a missing page stays `http.NotFound` (PLAN.md → "Missing pages"). Its 3 tests are already removed. The guard "Missing pages" in `internal/server/server_test.go` checks a `404.html` in the output isn't served.
 
 **Test hygiene (issue #59)**: All server tests that call `Start()` must use port 0 (OS-assigned) to avoid collisions when `go test ./...` runs packages in parallel. Every successful `Start()` or `StartWithPortFallback()` must be paired with `defer srv.Stop()` to release the port promptly.
 
