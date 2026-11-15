@@ -48,6 +48,8 @@ Key behaviors:
 
 - **Drafts are visible by default.** Pages with `draft: true` appear in the dev server so authors can preview work in progress. Use `--no-drafts` to hide them.
 - **Incremental rebuilds.** After the initial build, file changes trigger incremental rebuilds -- only changed and invalidated pages are re-rendered. Template changes invalidate pages that use that specific template, not all pages.
+- **Build errors show in the browser.** After a failed rebuild, the error shows on every page, including pages that are missing because the build failed. Those still return 404, and every page reloads once the error is fixed.
+- **A failed full rebuild is followed by a full one.** A full rebuild (the startup build, 10 or more changed files, or a plugin or component change) empties `_site` before it renders, so when it fails most of the site is gone. The next rebuild is full too, whatever changed, so when it reports `rebuild complete` the whole site is back.
 - **Port auto-increment.** If the default port (3000) is occupied, Alloy tries up to 10 consecutive ports before failing.
 - **Concurrent process detection.** Alloy writes a lockfile at `.alloy/server.lock` on startup. If another Alloy process is already watching the same directory, a warning prints with the conflicting PID, port, and a `kill` command. Startup continues -- it does not block or fail.
 
@@ -77,6 +79,7 @@ Key behaviors:
 - **Excludes drafts.** Draft content is hidden, matching production behavior.
 - **Writes to `_site/`.** Output is written to disk and served from there.
 - **Full rebuilds on change.** File changes trigger a complete pipeline rebuild (no incremental mode in serve).
+- **A build error stops the server.** Any error that fails `alloy build` stops `alloy serve` with exit code 1, whether it happens in the startup build, in a rebuild after a change, or as an output path conflict when a changed static, asset or passthrough file is copied. The server prints the error, removes its lockfile and exits. A rebuild that succeeds keeps it running.
 - **Passthrough watching.** Changes to passthrough source directories trigger targeted file recopy, not full rebuilds.
 - **Concurrent process detection.** Alloy writes a lockfile at `.alloy/server.lock` on startup. If another Alloy process is already watching the same directory, a warning prints with the conflicting PID, port, and a `kill` command. Startup continues -- it does not block or fail.
 

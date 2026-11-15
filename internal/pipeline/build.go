@@ -873,6 +873,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// Create cache early so dependency tracking hooks can populate it.
 	// Hashes and template tracking are added after rendering (Stage 9).
 	buildCache := cache.New()
+	// Record whether this build's own read of the cascade failed, so the
+	// next incremental rebuild knows its pages have no folder data
+	// (issue #1324).
+	buildCache.SetCascadeLoadFailed(ps.cascadeLoadFailed)
 
 	if err := fireContentTransformedHooks(pages, ps.Hooks, buildCache); err != nil {
 		return nil, err

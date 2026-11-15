@@ -14,6 +14,11 @@ type Cache struct {
 	virtualPages        map[string]bool            // RelPaths of pages injected by onPagesReady (issue #970)
 	virtualDependencies map[string]map[string]bool // source path → set of virtual page RelPaths (issue #1058)
 	pageDependencies    map[string]map[string]bool // dependency path → set of content page RelPaths (issue #1100)
+
+	// cascadeLoadFailed records that the build which produced this cache
+	// couldn't load the _data.yaml cascade, so the pages it rendered have no
+	// folder data (issue #1324).
+	cascadeLoadFailed bool
 }
 
 // New creates an empty cache with no entries.
@@ -108,7 +113,21 @@ func (c *Cache) Clone() *Cache {
 		}
 		cloned.pageDependencies[k] = cp
 	}
+	cloned.cascadeLoadFailed = c.cascadeLoadFailed
 	return cloned
+}
+
+// SetCascadeLoadFailed records whether the build that produced this cache
+// rendered its pages without folder data, because the _data.yaml cascade
+// couldn't load (issue #1324). The next incremental rebuild that loads the
+// cascade then renders every page.
+func (c *Cache) SetCascadeLoadFailed(failed bool) {
+	c.cascadeLoadFailed = failed
+}
+
+// CascadeLoadFailed reports what SetCascadeLoadFailed recorded.
+func (c *Cache) CascadeLoadFailed() bool {
+	return c.cascadeLoadFailed
 }
 
 // HashContent computes a SHA-256 hex digest of the given content bytes.
