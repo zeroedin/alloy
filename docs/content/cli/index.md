@@ -48,6 +48,8 @@ Key behaviors:
 
 - **Drafts are visible by default.** Pages with `draft: true` appear in the dev server so authors can preview work in progress. Use `--no-drafts` to hide them.
 - **Incremental rebuilds.** After the initial build, file changes trigger incremental rebuilds -- only changed and invalidated pages are re-rendered. Template changes invalidate pages that use that specific template, not all pages.
+- **Build errors show in the browser.** After a failed rebuild, the error shows on every page, including pages that are missing because the build failed. Those still return 404, and every page reloads once the error is fixed.
+- **A failed full rebuild is followed by a full one.** A full rebuild (the startup build, 10 or more changed files, or a plugin or component change) empties `_site` before it renders, so when it fails most of the site is gone. The next rebuild is full too, whatever changed, so when it reports `rebuild complete` the whole site is back.
 - **Port auto-increment.** If the default port (3000) is occupied, Alloy tries up to 10 consecutive ports before failing.
 - **Concurrent process detection.** Alloy writes a lockfile at `.alloy/server.lock` on startup. If another Alloy process is already watching the same directory, a warning prints with the conflicting PID, port, and a `kill` command. Startup continues -- it does not block or fail.
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"strings"
+	"sync"
 )
 
 // BuildError represents a structured error from the build pipeline,
@@ -18,7 +19,10 @@ type BuildError struct {
 
 // OverlayState tracks active build errors for the dev server error overlay.
 // Errors are accumulated during a failed rebuild and cleared on success.
+// It is safe for concurrent use: the watcher sets and clears errors while
+// HTTP requests read them (issue #1316).
 type OverlayState struct {
+	mu       sync.RWMutex
 	errors   []BuildError
 	warnings []string
 }
@@ -30,32 +34,51 @@ func NewOverlayState() *OverlayState {
 
 // SetErrors records build errors from a failed rebuild.
 func (s *OverlayState) SetErrors(errs []BuildError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.errors = errs
 }
 
 // ClearErrors removes all active errors after a successful rebuild.
 func (s *OverlayState) ClearErrors() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.errors = nil
 }
 
 // HasErrors returns true if there are active build errors.
 func (s *OverlayState) HasErrors() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return len(s.errors) > 0
 }
 
-// Errors returns the active build errors.
+// Errors returns a copy of the active build errors. Take one snapshot per
+// response: a second call can see a different set.
 func (s *OverlayState) Errors() []BuildError {
-	return s.errors
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.errors) == 0 {
+		return nil
+	}
+	return append([]BuildError(nil), s.errors...)
 }
 
 // SetWarnings records persistent warnings (e.g., unreachable data sources).
 func (s *OverlayState) SetWarnings(warnings []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.warnings = warnings
 }
 
-// Warnings returns the active warnings.
+// Warnings returns a copy of the active warnings.
 func (s *OverlayState) Warnings() []string {
-	return s.warnings
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.warnings) == 0 {
+		return nil
+	}
+	return append([]string(nil), s.warnings...)
 }
 
 // RenderOverlay produces an HTML string for the browser error overlay,

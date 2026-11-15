@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"mime"
 	"net"
@@ -205,7 +206,7 @@ func (s *Server) startOnAddr(addr string) error {
 			return
 		}
 
-		http.NotFound(w, r)
+		s.notFound(w, r)
 	})
 
 	ln, err := net.Listen("tcp", addr)
@@ -228,6 +229,25 @@ func (s *Server) startOnAddr(addr string) error {
 	return nil
 }
 
+// notFound answers a request for a file that isn't in the output. In
+// alloy dev with an active build error, it is an HTML page with the error
+// overlay and the live-reload script, still with status 404: a failed full
+// rebuild empties the output, so the browser has to show the error on
+// missing pages and reload once it's fixed (issue #1316). Otherwise it is
+// Go's plain 404.
+func (s *Server) notFound(w http.ResponseWriter, r *http.Request) {
+	if s.mode == ModeDev {
+		if errs := s.overlay.Errors(); len(errs) > 0 {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusNotFound)
+			io.WriteString(w, "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>Build error</title></head><body>"+
+				RenderOverlay(errs)+liveReloadScript+"</body></html>\n")
+			return
+		}
+	}
+	http.NotFound(w, r)
+}
+
 // serveFileWithReload serves a file, injecting the live-reload script into
 // HTML responses when running in dev mode. Non-HTML files and preview mode
 // use http.ServeFile (with ETag/Last-Modified caching). Dev mode HTML is
@@ -248,9 +268,10 @@ func (s *Server) serveFileWithReload(w http.ResponseWriter, r *http.Request, fil
 
 	htmlStr := string(data)
 
-	// Inject error overlay if there are active build errors
-	if s.overlay.HasErrors() {
-		overlayHTML := RenderOverlay(s.overlay.Errors())
+	// Inject error overlay if there are active build errors. One snapshot,
+	// since the watcher can change the errors between two calls.
+	if errs := s.overlay.Errors(); len(errs) > 0 {
+		overlayHTML := RenderOverlay(errs)
 		if idx := strings.LastIndex(htmlStr, "</body>"); idx >= 0 {
 			htmlStr = htmlStr[:idx] + overlayHTML + htmlStr[idx:]
 		}
@@ -456,10 +477,11 @@ func (s *Server) Serve404Page(outputDir string) ([]byte, error) {
 // InjectOverlay wraps the response HTML with the error overlay when there are
 // active build errors. Only applies in dev mode.
 func (s *Server) InjectOverlay(html []byte, overlay *OverlayState) ([]byte, error) {
-	if !overlay.HasErrors() {
+	errs := overlay.Errors()
+	if len(errs) == 0 {
 		return html, nil
 	}
-	overlayHTML := RenderOverlay(overlay.Errors())
+	overlayHTML := RenderOverlay(errs)
 	injected := strings.Replace(string(html), "</body>", overlayHTML+"</body>", 1)
 	return []byte(injected), nil
 }
