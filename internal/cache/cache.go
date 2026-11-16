@@ -20,6 +20,11 @@ type Cache struct {
 	// body-only edit (issue #1320).
 	frontMatterHashes map[string]string
 
+	// taxonomyOutputs holds the output paths of the taxonomy pages the last
+	// build wrote, so a rebuild can delete a term page no page uses any more
+	// (issue #1347).
+	taxonomyOutputs []string
+
 	// cascadeLoadFailed records that the build which produced this cache
 	// couldn't load the _data.yaml cascade, so the pages it rendered have no
 	// folder data (issue #1324).
@@ -80,6 +85,7 @@ func (c *Cache) Clear() {
 	c.virtualDependencies = make(map[string]map[string]bool)
 	c.pageDependencies = make(map[string]map[string]bool)
 	c.frontMatterHashes = make(map[string]string)
+	c.taxonomyOutputs = nil
 }
 
 // Clone returns a deep copy of the cache. Used by BuildIncremental to
@@ -123,6 +129,7 @@ func (c *Cache) Clone() *Cache {
 	for k, v := range c.frontMatterHashes {
 		cloned.frontMatterHashes[k] = v
 	}
+	cloned.taxonomyOutputs = append([]string(nil), c.taxonomyOutputs...)
 	cloned.cascadeLoadFailed = c.cascadeLoadFailed
 	return cloned
 }
@@ -157,6 +164,17 @@ func (c *Cache) ClearFrontMatterHashes() {
 func (c *Cache) FrontMatterHash(path string) (string, bool) {
 	h, ok := c.frontMatterHashes[path]
 	return h, ok
+}
+
+// SetTaxonomyOutputs records the output paths of the taxonomy pages a build
+// wrote (issue #1347).
+func (c *Cache) SetTaxonomyOutputs(paths []string) {
+	c.taxonomyOutputs = append([]string(nil), paths...)
+}
+
+// TaxonomyOutputs returns what SetTaxonomyOutputs recorded.
+func (c *Cache) TaxonomyOutputs() []string {
+	return append([]string(nil), c.taxonomyOutputs...)
 }
 
 // SetCascadeLoadFailed records whether the build that produced this cache

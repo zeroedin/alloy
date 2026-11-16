@@ -1003,6 +1003,11 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
+	// Taxonomy output paths, recorded in the cache so a rebuild can delete a
+	// term page no page uses any more (issue #1347). Taken before writing,
+	// which releases the format bodies.
+	taxOutputs := taxonomyOutputPaths(pages)
+
 	// Stage 6: Output writing
 	timer.Start("Output writing")
 	reportStartStage(reporter, "Writing", len(pages))
@@ -1107,6 +1112,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	for relPath, h := range frontMatterHashes {
 		buildCache.SetFrontMatterHash(relPath, h)
 	}
+	buildCache.SetTaxonomyOutputs(taxOutputs)
 	for pagePath, layoutPaths := range templateUsage {
 		for _, layoutPath := range layoutPaths {
 			buildCache.TrackTemplateUsage(pagePath, layoutPath)
@@ -1270,6 +1276,26 @@ func resolvePagePermalink(page *content.Page, ps *PipelineState, renderer permal
 	}
 	pageCascade := cascade.FindCascadeData(ps.CascadeData, ps.ContentBase, lookupPath)
 	return permalink.ResolveFromCascade(page, pageCascade, renderer)
+}
+
+// taxonomyOutputPaths returns the output paths, each format included, of the
+// generated taxonomy pages among pages (issue #1347).
+func taxonomyOutputPaths(pages []*content.Page) []string {
+	var paths []string
+	for _, page := range pages {
+		if page.RelPath != "" || (page.Kind != "taxonomy" && page.Kind != "taxonomy_term") {
+			continue
+		}
+		if !output.ShouldWrite(page.URL) {
+			continue
+		}
+		outPath := output.ComputeOutputPath(page.URL)
+		paths = append(paths, outPath)
+		for format := range page.FormatBodies {
+			paths = append(paths, formatOutputPath(outPath, format))
+		}
+	}
+	return paths
 }
 
 // taxonomyClaims returns an output path claim for every taxonomy page one

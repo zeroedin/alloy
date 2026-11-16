@@ -622,14 +622,18 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	// With no previous cache every page renders, so the taxonomy pages are
 	// generated too, as in a full build.
 	noCache := fsMode && previousCache == nil
+	var regeneratedTaxonomies []*content.Page
+	taxonomiesRegenerated := false
 	if (listsStale || cascadeRecovered || noCache) && bc.Taxonomies != nil && ps.Engine != nil {
+		taxonomiesRegenerated = true
 		for _, lt := range langTaxonomies {
 			taxPages, err := generateTaxonomyPages(lt.taxonomies, layoutsDir, rc, lt.ctx)
 			if err != nil {
 				return nil, err
 			}
-			pagesToRender = append(pagesToRender, taxPages...)
+			regeneratedTaxonomies = append(regeneratedTaxonomies, taxPages...)
 		}
+		pagesToRender = append(pagesToRender, regeneratedTaxonomies...)
 	}
 
 	// Dispatch onPageRendered, onFormatRendered, and single-format writeback.
@@ -789,6 +793,11 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		return nil, err
 	}
 	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
+	// Taken before writing, which releases the format bodies (issue #1347).
+	var taxOutputs []string
+	if taxonomiesRegenerated {
+		taxOutputs = taxonomyOutputPaths(regeneratedTaxonomies)
+	}
 	dirCache := output.NewDirectoryCache()
 	for _, page := range pagesToRender {
 		if !output.ShouldWrite(page.URL) {
@@ -852,6 +861,18 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		claimEntries = append(claimEntries, taxonomyClaims(cfg, lt.taxonomies, lt.urlPrefix)...)
 	}
 	var claimConflicts []error
+	// A term that lost its last page gets no page from the regeneration,
+	// but its old output is still there, listing the page that left. A full
+	// build empties the output folder first, so delete it here (issue #1347),
+	// unless something this build claims now writes that path.
+	if taxonomiesRegenerated {
+		// Without this build's claims (claim collection failed), what is
+		// still claimed is unknown, so nothing is deleted.
+		if previousCache != nil && claimErr == nil {
+			removeStaleTaxonomyOutputs(outputDir, previousCache.TaxonomyOutputs(), taxOutputs, claimEntries)
+		}
+		buildCache.SetTaxonomyOutputs(taxOutputs)
+	}
 	if claimErr != nil {
 		claimConflicts = append(claimConflicts, claimErr)
 	} else if conflicts, _ := validation.DetectConflicts(claimEntries); len(conflicts) > 0 {
@@ -1122,4 +1143,30 @@ func taxonomiesByLanguage(cfg *config.Config, pages []*content.Page, combined ma
 		})
 	}
 	return result, nil
+}
+
+// removeStaleTaxonomyOutputs deletes each taxonomy output path the previous
+// build wrote that this rebuild didn't generate, and its folder if that leaves
+// it empty (issue #1347). A path another claim now holds is left alone.
+func removeStaleTaxonomyOutputs(outputDir string, previous, current []string, claims []validation.OutputPathEntry) {
+	keep := make(map[string]bool, len(current)+len(claims))
+	for _, p := range current {
+		keep[p] = true
+	}
+	for _, c := range claims {
+		keep[c.Path] = true
+	}
+	for _, rel := range previous {
+		if keep[rel] {
+			continue
+		}
+		path := filepath.Join(outputDir, filepath.FromSlash(rel))
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			log.Printf("warning: removing stale taxonomy page %s: %v", rel, err)
+			continue
+		}
+		if dir := filepath.Dir(path); dir != filepath.Clean(outputDir) {
+			_ = os.Remove(dir) // only succeeds when the folder is now empty
+		}
+	}
 }
