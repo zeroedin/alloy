@@ -204,6 +204,70 @@ var _ = Describe("alloy dev keeps list and tag pages current (issue #1320)", fun
 			"a tag used for the first time must get its page without a restart")
 	})
 
+	// A tag page whose last page leaves is deleted, as a full build (which
+	// empties the output folder first) would leave it out.
+	It("deletes a tag page once no page has that tag", func() {
+		s := newSite(func(s *site) {
+			write(*s, "content/blog/two.md", post("Two", "z", "second"))
+		})
+		first := firstBuild(s)
+		Expect(page(s, "tags/z/index.html")).To(ContainSubstring("TAG z:[Two]"), "sanity: the tag page exists")
+
+		write(s, "content/blog/two.md", post("Two", "a", "second"))
+		rebuild(s, first, "content/blog/two.md")
+
+		_, err := os.Stat(filepath.Join(s.root, "_site", "tags/z/index.html"))
+		Expect(os.IsNotExist(err)).To(BeTrue(),
+			"no page has tag z any more, so its tag page must be deleted, not left listing a page that moved")
+		Expect(page(s, "tags/a/index.html")).To(ContainSubstring("[Two]"))
+	})
+
+	// A plugin can build a virtual page from other pages' front matter, so
+	// when the rule fires, onPagesReady virtual pages re-render too.
+	It("re-renders a virtual page that lists the collection", func() {
+		s := newSite(func(s *site) {
+			write(*s, "plugins/virtual.js", `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function() {
+    return { addPages: [{
+      path: '_virtual/v.html',
+      url: '/v/',
+      dependencies: [],
+      frontMatter: { title: 'V', layout: 'default', markdown: false },
+      content: 'V:{% for p in collections.blog %}[{{ p.title }}]{% endfor %}'
+    }] };
+  });
+}`)
+		})
+		first := firstBuild(s)
+		Expect(page(s, "v/index.html")).To(ContainSubstring("[One]"), "sanity: the virtual page lists the collection")
+
+		write(s, "content/blog/one.md", post("One edited", "a", "first"))
+		rebuild(s, first, "content/blog/one.md")
+
+		Expect(page(s, "v/index.html")).To(ContainSubstring("[One edited]"),
+			"a virtual page that lists the collection must show the new title")
+	})
+
+	// Guard: a draft left out of the build (alloy dev --no-drafts) has no
+	// output, but it is still a page Alloy has seen. It must not count as
+	// new on every rebuild.
+	It("keeps a body-only edit incremental when a draft is left out", func() {
+		s := newSite(func(s *site) {
+			write(*s, "content/blog/draft.md",
+				"---\ntitle: Draft\ndate: 2026-01-01\ndraft: true\ntags: [\"a\"]\n---\ndraft")
+			s.cfg.IncludeDrafts = false
+		})
+		first := firstBuild(s)
+		Expect(page(s, "index.html")).NotTo(ContainSubstring("[Draft]"), "sanity: the draft is left out")
+
+		write(s, "content/blog/one.md", post("One", "a", "first, edited body"))
+		result := rebuild(s, first, "content/blog/one.md")
+
+		Expect(result.PagesRendered).To(ContainElement("blog/one.md"))
+		Expect(result.PagesRendered).NotTo(ContainElement("index.md"),
+			"a draft that is left out must not make every rebuild re-render the site")
+	})
+
 	// Guard: the rule must not make every edit a full re-render.
 	It("keeps a body-only edit incremental", func() {
 		s := newSite()
