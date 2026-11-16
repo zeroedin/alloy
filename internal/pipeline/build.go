@@ -520,30 +520,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 	for _, batch := range batches {
 		urlPrefix := i18n.OutputPrefix(batch.ctx.Code, batch.ctx.Root)
-		for taxName, tc := range batch.taxonomies {
-			taxCfg := cfg.Taxonomies[taxName]
-			if taxCfg == nil {
-				continue
-			}
-			taxPages := collection.GenerateTaxonomyPages(tc, taxCfg)
-			for _, tp := range taxPages {
-				taxURL := tp.URL
-				if urlPrefix != "" {
-					taxURL = "/" + urlPrefix + strings.TrimPrefix(taxURL, "/")
-				}
-				outPath := output.ComputeOutputPath(taxURL)
-				source := "taxonomy:" + taxName
-				if tp.Kind == "taxonomy_term" {
-					if t, ok := tp.FrontMatter["title"].(string); ok {
-						source += "/" + t
-					}
-				}
-				outputEntries = append(outputEntries, validation.OutputPathEntry{
-					Path:   outPath,
-					Source: source,
-				})
-			}
-		}
+		outputEntries = append(outputEntries, taxonomyClaims(cfg, batch.taxonomies, urlPrefix)...)
 	}
 	// Fire onBeforeValidation — plugins can register additional output paths
 	// (e.g., _redirects for Netlify). Payload: { outputPaths: [...] }.
@@ -1293,6 +1270,37 @@ func resolvePagePermalink(page *content.Page, ps *PipelineState, renderer permal
 	}
 	pageCascade := cascade.FindCascadeData(ps.CascadeData, ps.ContentBase, lookupPath)
 	return permalink.ResolveFromCascade(page, pageCascade, renderer)
+}
+
+// taxonomyClaims returns an output path claim for every taxonomy page one
+// language batch generates. urlPrefix is that language's output prefix.
+func taxonomyClaims(cfg *config.Config, taxonomies map[string]*collection.TaxonomyCollection, urlPrefix string) []validation.OutputPathEntry {
+	var entries []validation.OutputPathEntry
+	for taxName, tc := range taxonomies {
+		taxCfg := cfg.Taxonomies[taxName]
+		if taxCfg == nil {
+			continue
+		}
+		taxPages := collection.GenerateTaxonomyPages(tc, taxCfg)
+		for _, tp := range taxPages {
+			taxURL := tp.URL
+			if urlPrefix != "" {
+				taxURL = "/" + urlPrefix + strings.TrimPrefix(taxURL, "/")
+			}
+			outPath := output.ComputeOutputPath(taxURL)
+			source := "taxonomy:" + taxName
+			if tp.Kind == "taxonomy_term" {
+				if t, ok := tp.FrontMatter["title"].(string); ok {
+					source += "/" + t
+				}
+			}
+			entries = append(entries, validation.OutputPathEntry{
+				Path:   outPath,
+				Source: source,
+			})
+		}
+	}
+	return entries
 }
 
 // buildPermalinkCfg builds a section-to-pattern permalink map by extracting

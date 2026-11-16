@@ -14,6 +14,7 @@ import (
 	"github.com/zeroedin/alloy/internal/collection"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
+	"github.com/zeroedin/alloy/internal/i18n"
 	"github.com/zeroedin/alloy/internal/ordered"
 	"github.com/zeroedin/alloy/internal/output"
 	"github.com/zeroedin/alloy/internal/permalink"
@@ -372,6 +373,12 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	if err != nil {
 		return nil, err
 	}
+	// Taxonomies per language, as Build groups them (issue #1320). They
+	// come from the same pages as bc.Taxonomies, before pagination.
+	langTaxonomies, err := taxonomiesByLanguage(cfg, allPages, bc.Taxonomies)
+	if err != nil {
+		return nil, err
+	}
 
 	// Track which RelPaths need rendering before pagination expands them
 	renderRelPaths := make(map[string]bool, len(pagesToRender))
@@ -607,13 +614,17 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	}
 
 	// Regenerate the taxonomy pages when list pages are stale (issue #1320),
-	// as Build does after rendering. They are written with the other pages.
-	if listsStale && bc.Taxonomies != nil && ps.Engine != nil {
-		taxPages, err := generateTaxonomyPages(bc.Taxonomies, layoutsDir, rc, nil)
-		if err != nil {
-			return nil, err
+	// or when every page re-renders after a cascade recovery, as Build does
+	// after rendering: per language, with that language's URL prefix. They
+	// are written with the other pages.
+	if (listsStale || cascadeRecovered) && bc.Taxonomies != nil && ps.Engine != nil {
+		for _, lt := range langTaxonomies {
+			taxPages, err := generateTaxonomyPages(lt.taxonomies, layoutsDir, rc, lt.ctx)
+			if err != nil {
+				return nil, err
+			}
+			pagesToRender = append(pagesToRender, taxPages...)
 		}
-		pagesToRender = append(pagesToRender, taxPages...)
 	}
 
 	// Dispatch onPageRendered, onFormatRendered, and single-format writeback.
@@ -825,6 +836,11 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	// not fatal — the dev server surfaces it in the overlay and keeps serving,
 	// per PLAN.md's dev-mode rules.
 	claimEntries, claimOrigins, claimErr := incrementalClaims(cfg, allPages, incrementalPassthroughs)
+	// Taxonomy pages claim their paths too, as in Build: a content page on a
+	// term's URL is a conflict, whether or not this rebuild wrote the term.
+	for _, lt := range langTaxonomies {
+		claimEntries = append(claimEntries, taxonomyClaims(cfg, lt.taxonomies, lt.urlPrefix)...)
+	}
 	var claimConflicts []error
 	if claimErr != nil {
 		claimConflicts = append(claimConflicts, claimErr)
@@ -1045,4 +1061,48 @@ func listInputsChanged(previous *cache.Cache, current map[string]string) bool {
 		}
 	}
 	return false
+}
+
+// languageTaxonomies is one language's taxonomies, with the context and URL
+// prefix Build uses for them.
+type languageTaxonomies struct {
+	ctx        *i18n.LanguageContext
+	urlPrefix  string
+	taxonomies map[string]*collection.TaxonomyCollection
+}
+
+// taxonomiesByLanguage splits the taxonomies by language, as Build's
+// per-language batches do (issue #1320). A site with one root language keeps
+// the combined set, with no language context, as Build does.
+func taxonomiesByLanguage(cfg *config.Config, pages []*content.Page, combined map[string]*collection.TaxonomyCollection) ([]languageTaxonomies, error) {
+	if combined == nil {
+		return nil, nil
+	}
+	if len(cfg.Languages) == 0 {
+		return []languageTaxonomies{{taxonomies: combined}}, nil
+	}
+	langContexts, err := i18n.BuildLanguageContexts(cfg.Languages)
+	if err != nil {
+		return nil, fmt.Errorf("i18n setup: %w", err)
+	}
+	if len(langContexts) == 1 && langContexts[0].Root {
+		return []languageTaxonomies{{taxonomies: combined}}, nil
+	}
+	result := make([]languageTaxonomies, 0, len(langContexts))
+	for i := range langContexts {
+		lc := &langContexts[i]
+		prefix := lc.Code + "/"
+		var langPages []*content.Page
+		for _, p := range pages {
+			if strings.HasPrefix(p.RelPath, prefix) {
+				langPages = append(langPages, p)
+			}
+		}
+		result = append(result, languageTaxonomies{
+			ctx:        lc,
+			urlPrefix:  i18n.OutputPrefix(lc.Code, lc.Root),
+			taxonomies: collection.BuildTaxonomies(langPages, cfg.Taxonomies),
+		})
+	}
+	return result, nil
 }
