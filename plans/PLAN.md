@@ -1519,7 +1519,7 @@ In dev mode, after the initial full build, the file watcher triggers incremental
 **List and tag pages stay current (issue #1320).** On a site that has a collection or a taxonomy, an incremental rebuild re-renders every page and regenerates the taxonomy pages, as a full build does, when either of these happens:
 
 - a page's front matter changes
-- a page is added or removed
+- a page is added or removed, in any content format (`.md` or `.html` by default). A page that is removed and later added back counts as added.
 
 A collection counts whether it's declared in `collections:` config or comes from a section whose permalink has date tokens (`:year`, `:month`, `:day`). A site with no collection and no taxonomy stays incremental: no page can list another, so only the changed page is re-rendered. A body-only edit is always incremental.
 
