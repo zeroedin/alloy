@@ -2,7 +2,9 @@ package pipeline
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -614,10 +616,13 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	}
 
 	// Regenerate the taxonomy pages when list pages are stale (issue #1320),
-	// or when every page re-renders after a cascade recovery, as Build does
+	// or when every page re-renders (cascade recovery, no cache), as Build does
 	// after rendering: per language, with that language's URL prefix. They
 	// are written with the other pages.
-	if (listsStale || cascadeRecovered) && bc.Taxonomies != nil && ps.Engine != nil {
+	// With no previous cache every page renders, so the taxonomy pages are
+	// generated too, as in a full build.
+	noCache := fsMode && previousCache == nil
+	if (listsStale || cascadeRecovered || noCache) && bc.Taxonomies != nil && ps.Engine != nil {
 		for _, lt := range langTaxonomies {
 			taxPages, err := generateTaxonomyPages(lt.taxonomies, layoutsDir, rc, lt.ctx)
 			if err != nil {
@@ -672,9 +677,14 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		ssrHTML := make(map[string]string)
 		for _, page := range pagesToRender {
 			var rawContent string
-			if fsMode {
+			switch {
+			case page.RelPath == "" && len(page.Content) == 0:
+				// A generated taxonomy page has no source, so scan what its
+				// layout rendered (issue #1320).
+				rawContent = renderedContent[renderedContentKey(page)]
+			case fsMode:
 				rawContent = string(page.Content)
-			} else {
+			default:
 				rawContent = contentMap[filepath.ToSlash(filepath.Join(contentPrefix, page.RelPath))]
 			}
 			if tags := ssr.ScanComponents(rawContent); len(tags) > 0 {
@@ -1072,8 +1082,9 @@ type languageTaxonomies struct {
 }
 
 // taxonomiesByLanguage splits the taxonomies by language, as Build's
-// per-language batches do (issue #1320). A site with one root language keeps
-// the combined set, with no language context, as Build does.
+// per-language batches do (issue #1320): one batch per language whose content
+// directory exists. A site with one root language keeps the combined set, with
+// no language context, as Build does.
 func taxonomiesByLanguage(cfg *config.Config, pages []*content.Page, combined map[string]*collection.TaxonomyCollection) ([]languageTaxonomies, error) {
 	if combined == nil {
 		return nil, nil
@@ -1088,9 +1099,15 @@ func taxonomiesByLanguage(cfg *config.Config, pages []*content.Page, combined ma
 	if len(langContexts) == 1 && langContexts[0].Root {
 		return []languageTaxonomies{{taxonomies: combined}}, nil
 	}
+	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
 	result := make([]languageTaxonomies, 0, len(langContexts))
 	for i := range langContexts {
 		lc := &langContexts[i]
+		// Build skips a language with no content directory, so it gets no
+		// taxonomy pages or claims. An existing empty directory still does.
+		if _, statErr := os.Stat(filepath.Join(contentDir, lc.Code)); errors.Is(statErr, fs.ErrNotExist) {
+			continue
+		}
 		prefix := lc.Code + "/"
 		var langPages []*content.Page
 		for _, p := range pages {
