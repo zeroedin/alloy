@@ -1388,7 +1388,7 @@ Dev server command (`alloy dev`). Uses `ModeDev` — Phase 1 only, in-memory, dr
    - `PassthroughChange` → **recopy changed file to `_site/<to>/<relative-path>` (issue #737)**. Use `server.RecopyPassthroughFile(changedPath, cfg)` for targeted single-file copy, or `static.CopyPassthroughWithValidation(...)` for full passthrough recopy.
    - `ComponentChange` → full rebuild via `pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})`.
    - All types → `srv.BroadcastReload()` after rebuild.
-   - **Bulk change protection**: If the debouncer sees more than 10 file events in one batch (it counts events, so one file saved twice counts twice) (e.g., `git checkout`), always do a full rebuild. Cache is re-persisted by `Build()` Stage 9.
+   - **Bulk change protection**: If the debouncer sees more than 10 file events in one batch (e.g., `git checkout`; it counts events, so one file saved twice counts twice) and the batch needs a rebuild, do a full rebuild. A batch needs a rebuild when an event is anything other than a static, asset or passthrough file, or `onFileChanged` invalidated a dependency. A batch of only static, asset and passthrough files is recopied, whatever its size. Cache is re-persisted by `Build()` Stage 9.
 9. Block until interrupt.
 10. **Remove server lockfile (issue #1094)**: In the shutdown path (after `<-sigCh`), read the lockfile and only remove if the PID matches the current process: `if info, _ := server.ReadLockfile(cfg.ProjectRoot); info != nil && info.PID == os.Getpid() { server.RemoveLockfile(cfg.ProjectRoot) }`. This PID guard prevents Process A from deleting a lockfile that Process B has since overwritten (cascade scenario, issue #1124).
 
