@@ -867,11 +867,18 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	// unless something this build claims now writes that path.
 	if taxonomiesRegenerated {
 		// Without this build's claims (claim collection failed), what is
-		// still claimed is unknown, so nothing is deleted.
-		if previousCache != nil && claimErr == nil {
-			removeStaleTaxonomyOutputs(outputDir, previousCache.TaxonomyOutputs(), taxOutputs, claimEntries)
+		// still claimed is unknown, so nothing is deleted. A stale path that
+		// isn't deleted stays recorded, so a later rebuild retries it.
+		var pending []string
+		if previousCache != nil {
+			stale := staleTaxonomyOutputs(previousCache.TaxonomyOutputs(), taxOutputs)
+			if claimErr == nil {
+				pending = removeStaleTaxonomyOutputs(outputDir, stale, claimEntries)
+			} else {
+				pending = stale
+			}
 		}
-		buildCache.SetTaxonomyOutputs(taxOutputs)
+		buildCache.SetTaxonomyOutputs(append(taxOutputs, pending...))
 	}
 	if claimErr != nil {
 		claimConflicts = append(claimConflicts, claimErr)
@@ -1145,28 +1152,45 @@ func taxonomiesByLanguage(cfg *config.Config, pages []*content.Page, combined ma
 	return result, nil
 }
 
-// removeStaleTaxonomyOutputs deletes each taxonomy output path the previous
-// build wrote that this rebuild didn't generate, and its folder if that leaves
-// it empty (issue #1347). A path another claim now holds is left alone.
-func removeStaleTaxonomyOutputs(outputDir string, previous, current []string, claims []validation.OutputPathEntry) {
-	keep := make(map[string]bool, len(current)+len(claims))
+// staleTaxonomyOutputs returns the taxonomy output paths the previous build
+// wrote that this rebuild didn't generate (issue #1347).
+func staleTaxonomyOutputs(previous, current []string) []string {
+	generated := make(map[string]bool, len(current))
 	for _, p := range current {
-		keep[p] = true
+		generated[p] = true
 	}
+	var stale []string
+	for _, p := range previous {
+		if !generated[p] {
+			stale = append(stale, p)
+		}
+	}
+	return stale
+}
+
+// removeStaleTaxonomyOutputs deletes each stale taxonomy output path, and its
+// folder if that leaves it empty (issue #1347). A path another claim now holds
+// is left alone and forgotten: it isn't a taxonomy page's output any more. It
+// returns the paths it couldn't delete, to retry on a later rebuild.
+func removeStaleTaxonomyOutputs(outputDir string, stale []string, claims []validation.OutputPathEntry) []string {
+	claimed := make(map[string]bool, len(claims))
 	for _, c := range claims {
-		keep[c.Path] = true
+		claimed[c.Path] = true
 	}
-	for _, rel := range previous {
-		if keep[rel] {
+	var pending []string
+	for _, rel := range stale {
+		if claimed[rel] {
 			continue
 		}
 		path := filepath.Join(outputDir, filepath.FromSlash(rel))
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			log.Printf("warning: removing stale taxonomy page %s: %v", rel, err)
+			pending = append(pending, rel)
 			continue
 		}
 		if dir := filepath.Dir(path); dir != filepath.Clean(outputDir) {
 			_ = os.Remove(dir) // only succeeds when the folder is now empty
 		}
 	}
+	return pending
 }
