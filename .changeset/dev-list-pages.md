@@ -11,10 +11,12 @@ tags: [fresh]       # was: [a]
 ```
 
 ```text
-GET /             LIST:[One edited]
-GET /tags/fresh/  200  TAG fresh:[One edited]
+GET /             <li>One edited</li> <li>Two</li>
+GET /tags/fresh/  200  <li>One edited</li>
 ```
 
 Previously only the edited page was re-rendered. A page that lists others through `collections` or a taxonomy kept the old list, and a new tag got no page (`/tags/fresh/` returned 404) until you restarted `alloy dev`.
 
-An edit that changes only a page's body still re-renders just that page, and a site with no collection or taxonomy stays incremental. A tag page whose last page leaves is deleted, as a full build would leave it out.
+An edit that changes only a page's body still re-renders just that page, plus any page that declared it as a dependency. A tag page whose last page leaves is deleted, as a full build would leave it out.
+
+A site with no collection or taxonomy stays incremental: only the edited page re-renders, plus any page that declared it as a dependency. On such a site, a page that lists others through `site.pages`, such as a nav menu, keeps the old values until that page is re-rendered (when you edit it, for example) or the next full rebuild, such as a restart of `alloy dev`.

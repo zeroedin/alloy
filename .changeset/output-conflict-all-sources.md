@@ -23,6 +23,13 @@ Every claimant is listed, and every conflict is reported — not just the first 
 
 A passthrough file that an `exclude` pattern skips is never copied, so it never conflicts with anything.
 
-`alloy dev` and `alloy serve` check too. Adding a colliding file while the server is running shows the conflict in the browser error overlay and skips that one copy instead of overwriting; the server keeps running, and the next rebuild clears the overlay once you resolve it.
+`alloy dev` and `alloy serve` check too, when a static, asset or passthrough file changes while the server is running. The check waits until the whole batch of file changes is applied, as a build of the final files would. A batch is the changes that arrive less than 50 ms apart, so replacing a file in one go (adding the new one and deleting the old, as a `git checkout` can) is not a conflict:
+
+```text
+assets/site.css created, then static/site.css deleted
+GET /site.css   200  (the asset)
+```
+
+If the add and the delete land in separate batches, the add is checked while the old file is still there, so it is a conflict. A conflict still there at the end of the batch is handled the way each command handles a build error. `alloy serve` stops with exit code 1, as `alloy build` would. `alloy dev` skips that one copy instead of overwriting, shows the conflict in the browser error overlay and keeps running; the next rebuild clears the overlay once you resolve it.
 
 **You may need to change something.** A site that builds today can start failing — those are the collisions that were already losing a file without telling you. Rename one of the sources, or point the passthrough `to` somewhere else.
