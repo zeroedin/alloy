@@ -149,6 +149,10 @@ Collections interact with [content lifecycle](/content/) rules:
 
 Lifecycle filtering happens before pagination. A paginated list of 47 articles with 3 drafts produces pages based on 44 items in build mode, but may differ in dev mode where drafts are included.
 
+## In `alloy dev`
+
+When a site has a collection or a taxonomy, changing a page's front matter, or adding or removing a page, re-renders the whole site, so list pages and tag pages show the change without a restart. An edit that changes only a page's body re-renders just that page.
+
 ## Accessing All Pages
 
 All published pages are available as `site.pages` regardless of whether they belong to a collection:

@@ -376,6 +376,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// by onPagesReady can be identified and recorded in the build cache
 	// for BuildIncremental parity (issue #970).
 	discoveredPaths := make(map[string]bool)
+	// Front matter hashes of every discovered page, taken from the source
+	// before lifecycle filtering and pagination (issue #1320).
+	frontMatterHashes := make(map[string]string)
 	for _, lc := range langContexts {
 		// Content directory: content/<lang>/ for multi-language, content/ for single
 		batchContentDir := contentDir
@@ -400,6 +403,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				page.FrontMatter["lang"] = lc.Code
 				page.RelPath = lc.Code + "/" + page.RelPath
 			}
+		}
+
+		for _, page := range batchPages {
+			frontMatterHashes[page.RelPath] = frontMatterHash(page)
 		}
 
 		// Lifecycle filter
@@ -513,30 +520,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	}
 	for _, batch := range batches {
 		urlPrefix := i18n.OutputPrefix(batch.ctx.Code, batch.ctx.Root)
-		for taxName, tc := range batch.taxonomies {
-			taxCfg := cfg.Taxonomies[taxName]
-			if taxCfg == nil {
-				continue
-			}
-			taxPages := collection.GenerateTaxonomyPages(tc, taxCfg)
-			for _, tp := range taxPages {
-				taxURL := tp.URL
-				if urlPrefix != "" {
-					taxURL = "/" + urlPrefix + strings.TrimPrefix(taxURL, "/")
-				}
-				outPath := output.ComputeOutputPath(taxURL)
-				source := "taxonomy:" + taxName
-				if tp.Kind == "taxonomy_term" {
-					if t, ok := tp.FrontMatter["title"].(string); ok {
-						source += "/" + t
-					}
-				}
-				outputEntries = append(outputEntries, validation.OutputPathEntry{
-					Path:   outPath,
-					Source: source,
-				})
-			}
-		}
+		outputEntries = append(outputEntries, taxonomyClaims(cfg, batch.taxonomies, urlPrefix)...)
 	}
 	// Fire onBeforeValidation — plugins can register additional output paths
 	// (e.g., _redirects for Netlify). Payload: { outputPaths: [...] }.
@@ -1019,6 +1003,11 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		}
 	}
 
+	// Taxonomy output paths, recorded in the cache so a rebuild can delete a
+	// term page no page uses any more (issue #1347). Taken before writing,
+	// which releases the format bodies.
+	taxOutputs := taxonomyOutputPaths(pages)
+
 	// Stage 6: Output writing
 	timer.Start("Output writing")
 	reportStartStage(reporter, "Writing", len(pages))
@@ -1120,6 +1109,10 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	for _, page := range pages {
 		buildCache.SetHash(page.RelPath, cache.HashContent(page.Content))
 	}
+	for relPath, h := range frontMatterHashes {
+		buildCache.SetFrontMatterHash(relPath, h)
+	}
+	buildCache.SetTaxonomyOutputs(taxOutputs)
 	for pagePath, layoutPaths := range templateUsage {
 		for _, layoutPath := range layoutPaths {
 			buildCache.TrackTemplateUsage(pagePath, layoutPath)
@@ -1283,6 +1276,57 @@ func resolvePagePermalink(page *content.Page, ps *PipelineState, renderer permal
 	}
 	pageCascade := cascade.FindCascadeData(ps.CascadeData, ps.ContentBase, lookupPath)
 	return permalink.ResolveFromCascade(page, pageCascade, renderer)
+}
+
+// taxonomyOutputPaths returns the output paths, each format included, of the
+// generated taxonomy pages among pages (issue #1347).
+func taxonomyOutputPaths(pages []*content.Page) []string {
+	var paths []string
+	for _, page := range pages {
+		if page.RelPath != "" || (page.Kind != "taxonomy" && page.Kind != "taxonomy_term") {
+			continue
+		}
+		if !output.ShouldWrite(page.URL) {
+			continue
+		}
+		outPath := output.ComputeOutputPath(page.URL)
+		paths = append(paths, outPath)
+		for format := range page.FormatBodies {
+			paths = append(paths, formatOutputPath(outPath, format))
+		}
+	}
+	return paths
+}
+
+// taxonomyClaims returns an output path claim for every taxonomy page one
+// language batch generates. urlPrefix is that language's output prefix.
+func taxonomyClaims(cfg *config.Config, taxonomies map[string]*collection.TaxonomyCollection, urlPrefix string) []validation.OutputPathEntry {
+	var entries []validation.OutputPathEntry
+	for taxName, tc := range taxonomies {
+		taxCfg := cfg.Taxonomies[taxName]
+		if taxCfg == nil {
+			continue
+		}
+		taxPages := collection.GenerateTaxonomyPages(tc, taxCfg)
+		for _, tp := range taxPages {
+			taxURL := tp.URL
+			if urlPrefix != "" {
+				taxURL = "/" + urlPrefix + strings.TrimPrefix(taxURL, "/")
+			}
+			outPath := output.ComputeOutputPath(taxURL)
+			source := "taxonomy:" + taxName
+			if tp.Kind == "taxonomy_term" {
+				if t, ok := tp.FrontMatter["title"].(string); ok {
+					source += "/" + t
+				}
+			}
+			entries = append(entries, validation.OutputPathEntry{
+				Path:   outPath,
+				Source: source,
+			})
+		}
+	}
+	return entries
 }
 
 // buildPermalinkCfg builds a section-to-pattern permalink map by extracting

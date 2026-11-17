@@ -1,7 +1,10 @@
 package pipeline
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -10,8 +13,10 @@ import (
 
 	"github.com/zeroedin/alloy/internal/cache"
 	"github.com/zeroedin/alloy/internal/cascade"
+	"github.com/zeroedin/alloy/internal/collection"
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/content"
+	"github.com/zeroedin/alloy/internal/i18n"
 	"github.com/zeroedin/alloy/internal/ordered"
 	"github.com/zeroedin/alloy/internal/output"
 	"github.com/zeroedin/alloy/internal/permalink"
@@ -98,6 +103,13 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		if err != nil {
 			return nil, fmt.Errorf("content discovery: %w", err)
 		}
+	}
+
+	// Front matter hashes of every discovered page, taken before lifecycle
+	// filtering and pagination change the page list (issue #1320).
+	frontMatterHashes := make(map[string]string, len(allPages))
+	for _, page := range allPages {
+		frontMatterHashes[page.RelPath] = frontMatterHash(page)
 	}
 
 	// Determine which pages need rebuilding
@@ -242,6 +254,20 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
+	// List and tag pages stay current (issue #1320). A page that lists other
+	// pages reads their front matter, and nothing records which pages read
+	// what. So on a site with a collection or a taxonomy, a front matter
+	// change or an added or removed page re-renders every page and
+	// regenerates the taxonomy pages, as a full build does.
+	listsStale := false
+	if fsMode && previousCache != nil && listInputsChanged(previousCache, frontMatterHashes) &&
+		(len(cfg.Collections) > 0 || len(cfg.Taxonomies) > 0 ||
+			collection.HasCollection(buildPermalinkCfg(ps), collectionNames(cfg))) {
+		listsStale = true
+		pagesToRender = allPages
+		skipped = 0
+	}
+
 	// Reload site data when data directory files have changed (issue #717).
 	// The full Build() path loads data anew each invocation; the incremental
 	// path reuses PipelineState from server startup, so data edits are
@@ -349,6 +375,12 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	if err != nil {
 		return nil, err
 	}
+	// Taxonomies per language, as Build groups them (issue #1320). They
+	// come from the same pages as bc.Taxonomies, before pagination.
+	langTaxonomies, err := taxonomiesByLanguage(cfg, allPages, bc.Taxonomies)
+	if err != nil {
+		return nil, err
+	}
 
 	// Track which RelPaths need rendering before pagination expands them
 	renderRelPaths := make(map[string]bool, len(pagesToRender))
@@ -389,7 +421,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 		// Cascade recovery renders every page (issue #1306): a plugin may
 		// have built this one from pages that had no folder data.
-		if cascadeRecovered || untrackedPartial || layoutInvalidated[p.RelPath] {
+		if cascadeRecovered || listsStale || untrackedPartial || layoutInvalidated[p.RelPath] {
 			renderRelPaths[p.RelPath] = true
 			continue
 		}
@@ -459,6 +491,12 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	// loaded (issue #1324). A full render after recovery leaves no page
 	// without it, and a failed load keeps the recovery pending.
 	buildCache.SetCascadeLoadFailed(loadFailed)
+	// Record exactly the pages discovered now, so the next rebuild sees a
+	// page added or removed since (issue #1320).
+	buildCache.ClearFrontMatterHashes()
+	for relPath, h := range frontMatterHashes {
+		buildCache.SetFrontMatterHash(relPath, h)
+	}
 
 	// Clear content page dependencies only for pages being re-rendered.
 	// Hooks will re-track deps for these pages; skipped pages retain their
@@ -577,6 +615,27 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
+	// Regenerate the taxonomy pages when list pages are stale (issue #1320),
+	// or when every page re-renders (cascade recovery, no cache), as Build does
+	// after rendering: per language, with that language's URL prefix. They
+	// are written with the other pages.
+	// With no previous cache every page renders, so the taxonomy pages are
+	// generated too, as in a full build.
+	noCache := fsMode && previousCache == nil
+	var regeneratedTaxonomies []*content.Page
+	taxonomiesRegenerated := false
+	if (listsStale || cascadeRecovered || noCache) && bc.Taxonomies != nil && ps.Engine != nil {
+		taxonomiesRegenerated = true
+		for _, lt := range langTaxonomies {
+			taxPages, err := generateTaxonomyPages(lt.taxonomies, layoutsDir, rc, lt.ctx)
+			if err != nil {
+				return nil, err
+			}
+			regeneratedTaxonomies = append(regeneratedTaxonomies, taxPages...)
+		}
+		pagesToRender = append(pagesToRender, regeneratedTaxonomies...)
+	}
+
 	// Dispatch onPageRendered, onFormatRendered, and single-format writeback.
 	// Incremental builds log warnings instead of returning fatal errors.
 	_ = dispatchPostRenderHooks(pagesToRender, ps.Hooks, buildCache, nil, func(err error) error {
@@ -622,9 +681,14 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		ssrHTML := make(map[string]string)
 		for _, page := range pagesToRender {
 			var rawContent string
-			if fsMode {
+			switch {
+			case page.RelPath == "" && len(page.Content) == 0:
+				// A generated taxonomy page has no source, so scan what its
+				// layout rendered (issue #1320).
+				rawContent = renderedContent[renderedContentKey(page)]
+			case fsMode:
 				rawContent = string(page.Content)
-			} else {
+			default:
 				rawContent = contentMap[filepath.ToSlash(filepath.Join(contentPrefix, page.RelPath))]
 			}
 			if tags := ssr.ScanComponents(rawContent); len(tags) > 0 {
@@ -729,6 +793,11 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		return nil, err
 	}
 	outputDir := resolveDir(cfg.ProjectRoot, cfg.Build.Output)
+	// Taken before writing, which releases the format bodies (issue #1347).
+	var taxOutputs []string
+	if taxonomiesRegenerated {
+		taxOutputs = taxonomyOutputPaths(regeneratedTaxonomies)
+	}
 	dirCache := output.NewDirectoryCache()
 	for _, page := range pagesToRender {
 		if !output.ShouldWrite(page.URL) {
@@ -786,7 +855,31 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	// not fatal — the dev server surfaces it in the overlay and keeps serving,
 	// per PLAN.md's dev-mode rules.
 	claimEntries, claimOrigins, claimErr := incrementalClaims(cfg, allPages, incrementalPassthroughs)
+	// Taxonomy pages claim their paths too, as in Build: a content page on a
+	// term's URL is a conflict, whether or not this rebuild wrote the term.
+	for _, lt := range langTaxonomies {
+		claimEntries = append(claimEntries, taxonomyClaims(cfg, lt.taxonomies, lt.urlPrefix)...)
+	}
 	var claimConflicts []error
+	// A term that lost its last page gets no page from the regeneration,
+	// but its old output is still there, listing the page that left. A full
+	// build empties the output folder first, so delete it here (issue #1347),
+	// unless something this build claims now writes that path.
+	if taxonomiesRegenerated {
+		// Without this build's claims (claim collection failed), what is
+		// still claimed is unknown, so nothing is deleted. A stale path that
+		// isn't deleted stays recorded, so a later rebuild retries it.
+		var pending []string
+		if previousCache != nil {
+			stale := staleTaxonomyOutputs(previousCache.TaxonomyOutputs(), taxOutputs)
+			if claimErr == nil {
+				pending = removeStaleTaxonomyOutputs(outputDir, stale, claimEntries)
+			} else {
+				pending = stale
+			}
+		}
+		buildCache.SetTaxonomyOutputs(append(taxOutputs, pending...))
+	}
 	if claimErr != nil {
 		claimConflicts = append(claimConflicts, claimErr)
 	} else if conflicts, _ := validation.DetectConflicts(claimEntries); len(conflicts) > 0 {
@@ -976,4 +1069,128 @@ func addPagesUnderDirs(pagesToRender, allPages []*content.Page, dirs []string) (
 		}
 	}
 	return pagesToRender, added
+}
+
+// frontMatterHash hashes a discovered page's front matter block: the source
+// bytes before its body (issue #1320). It reads the source, not the parsed
+// map, and runs before pagination, which changes a paginated source page.
+func frontMatterHash(page *content.Page) string {
+	raw := page.Content
+	if len(page.Body) <= len(raw) && bytes.HasSuffix(raw, page.Body) {
+		raw = raw[:len(raw)-len(page.Body)]
+	}
+	return cache.HashContent(raw)
+}
+
+// listInputsChanged reports whether what a list page reads has changed since
+// the previous build (issue #1320): a page's front matter differs, a page has
+// no recorded hash (it is new, or the cache predates front matter hashes), or
+// a page with a recorded hash is gone.
+func listInputsChanged(previous *cache.Cache, current map[string]string) bool {
+	for relPath, h := range current {
+		prev, ok := previous.FrontMatterHash(relPath)
+		if !ok || prev != h {
+			return true
+		}
+	}
+	for _, relPath := range previous.FrontMatterHashPaths() {
+		if _, ok := current[relPath]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+// languageTaxonomies is one language's taxonomies, with the context and URL
+// prefix Build uses for them.
+type languageTaxonomies struct {
+	ctx        *i18n.LanguageContext
+	urlPrefix  string
+	taxonomies map[string]*collection.TaxonomyCollection
+}
+
+// taxonomiesByLanguage splits the taxonomies by language, as Build's
+// per-language batches do (issue #1320): one batch per language whose content
+// directory exists. A site with one root language keeps the combined set, with
+// no language context, as Build does.
+func taxonomiesByLanguage(cfg *config.Config, pages []*content.Page, combined map[string]*collection.TaxonomyCollection) ([]languageTaxonomies, error) {
+	if combined == nil {
+		return nil, nil
+	}
+	if len(cfg.Languages) == 0 {
+		return []languageTaxonomies{{taxonomies: combined}}, nil
+	}
+	langContexts, err := i18n.BuildLanguageContexts(cfg.Languages)
+	if err != nil {
+		return nil, fmt.Errorf("i18n setup: %w", err)
+	}
+	if len(langContexts) == 1 && langContexts[0].Root {
+		return []languageTaxonomies{{taxonomies: combined}}, nil
+	}
+	contentDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Content)
+	result := make([]languageTaxonomies, 0, len(langContexts))
+	for i := range langContexts {
+		lc := &langContexts[i]
+		// Build skips a language with no content directory, so it gets no
+		// taxonomy pages or claims. An existing empty directory still does.
+		if _, statErr := os.Stat(filepath.Join(contentDir, lc.Code)); errors.Is(statErr, fs.ErrNotExist) {
+			continue
+		}
+		prefix := lc.Code + "/"
+		var langPages []*content.Page
+		for _, p := range pages {
+			if strings.HasPrefix(p.RelPath, prefix) {
+				langPages = append(langPages, p)
+			}
+		}
+		result = append(result, languageTaxonomies{
+			ctx:        lc,
+			urlPrefix:  i18n.OutputPrefix(lc.Code, lc.Root),
+			taxonomies: collection.BuildTaxonomies(langPages, cfg.Taxonomies),
+		})
+	}
+	return result, nil
+}
+
+// staleTaxonomyOutputs returns the taxonomy output paths the previous build
+// wrote that this rebuild didn't generate (issue #1347).
+func staleTaxonomyOutputs(previous, current []string) []string {
+	generated := make(map[string]bool, len(current))
+	for _, p := range current {
+		generated[p] = true
+	}
+	var stale []string
+	for _, p := range previous {
+		if !generated[p] {
+			stale = append(stale, p)
+		}
+	}
+	return stale
+}
+
+// removeStaleTaxonomyOutputs deletes each stale taxonomy output path, and its
+// folder if that leaves it empty (issue #1347). A path another claim now holds
+// is left alone and forgotten: it isn't a taxonomy page's output any more. It
+// returns the paths it couldn't delete, to retry on a later rebuild.
+func removeStaleTaxonomyOutputs(outputDir string, stale []string, claims []validation.OutputPathEntry) []string {
+	claimed := make(map[string]bool, len(claims))
+	for _, c := range claims {
+		claimed[c.Path] = true
+	}
+	var pending []string
+	for _, rel := range stale {
+		if claimed[rel] {
+			continue
+		}
+		path := filepath.Join(outputDir, filepath.FromSlash(rel))
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			log.Printf("warning: removing stale taxonomy page %s: %v", rel, err)
+			pending = append(pending, rel)
+			continue
+		}
+		if dir := filepath.Dir(path); dir != filepath.Clean(outputDir) {
+			_ = os.Remove(dir) // only succeeds when the folder is now empty
+		}
+	}
+	return pending
 }

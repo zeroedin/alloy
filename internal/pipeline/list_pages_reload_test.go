@@ -1,6 +1,7 @@
 package pipeline_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -204,6 +205,100 @@ var _ = Describe("alloy dev keeps list and tag pages current (issue #1320)", fun
 			"a tag used for the first time must get its page without a restart")
 	})
 
+	// A tag page whose last page leaves is deleted, as a full build (which
+	// empties the output folder first) would leave it out.
+	It("deletes a tag page once no page has that tag", func() {
+		s := newSite(func(s *site) {
+			write(*s, "content/blog/two.md", post("Two", "z", "second"))
+		})
+		first := firstBuild(s)
+		Expect(page(s, "tags/z/index.html")).To(ContainSubstring("TAG z:[Two]"), "sanity: the tag page exists")
+
+		write(s, "content/blog/two.md", post("Two", "a", "second"))
+		rebuild(s, first, "content/blog/two.md")
+
+		_, err := os.Stat(filepath.Join(s.root, "_site", "tags/z/index.html"))
+		Expect(os.IsNotExist(err)).To(BeTrue(),
+			"no page has tag z any more, so its tag page must be deleted, not left listing a page that moved")
+		Expect(page(s, "tags/a/index.html")).To(ContainSubstring("[Two]"))
+	})
+
+	// A stale tag page that can't be deleted is tried again on a later
+	// rebuild, instead of being forgotten.
+	It("tries again to delete a stale tag page whose delete failed", func() {
+		s := newSite(func(s *site) {
+			write(*s, "content/blog/two.md", post("Two", "z", "second"))
+		})
+		first := firstBuild(s)
+		stale := filepath.Join(s.root, "_site", "tags/z/index.html")
+
+		// Make the delete fail: a folder with a file in it can't be removed
+		// as a single path.
+		Expect(os.Remove(stale)).To(Succeed())
+		Expect(os.MkdirAll(stale, 0755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(stale, "keep"), []byte("x"), 0644)).To(Succeed())
+
+		write(s, "content/blog/two.md", post("Two", "a", "second"))
+		failed := rebuild(s, first, "content/blog/two.md")
+		Expect(stale).To(BeADirectory(), "sanity: the delete failed")
+
+		// Now the path can be deleted. A later front matter edit must try again.
+		Expect(os.RemoveAll(stale)).To(Succeed())
+		Expect(os.WriteFile(stale, []byte("stale"), 0644)).To(Succeed())
+		write(s, "content/blog/one.md", post("One edited", "a", "first"))
+		rebuild(s, failed, "content/blog/one.md")
+
+		_, err := os.Stat(stale)
+		Expect(os.IsNotExist(err)).To(BeTrue(),
+			"a stale tag page whose delete failed must be deleted on a later rebuild")
+	})
+
+	// A plugin can build a virtual page from other pages' front matter, so
+	// when the rule fires, onPagesReady virtual pages re-render too.
+	It("re-renders a virtual page that lists the collection", func() {
+		s := newSite(func(s *site) {
+			write(*s, "plugins/virtual.js", `export default function(alloy) {
+  alloy.hook('onPagesReady', { pages: false }, function() {
+    return { addPages: [{
+      path: '_virtual/v.html',
+      url: '/v/',
+      dependencies: [],
+      frontMatter: { title: 'V', layout: 'default', markdown: false },
+      content: 'V:{% for p in collections.blog %}[{{ p.title }}]{% endfor %}'
+    }] };
+  });
+}`)
+		})
+		first := firstBuild(s)
+		Expect(page(s, "v/index.html")).To(ContainSubstring("[One]"), "sanity: the virtual page lists the collection")
+
+		write(s, "content/blog/one.md", post("One edited", "a", "first"))
+		rebuild(s, first, "content/blog/one.md")
+
+		Expect(page(s, "v/index.html")).To(ContainSubstring("[One edited]"),
+			"a virtual page that lists the collection must show the new title")
+	})
+
+	// Guard: a draft left out of the build (alloy dev --no-drafts) has no
+	// output, but it is still a page Alloy has seen. It must not count as
+	// new on every rebuild.
+	It("keeps a body-only edit incremental when a draft is left out", func() {
+		s := newSite(func(s *site) {
+			write(*s, "content/blog/draft.md",
+				"---\ntitle: Draft\ndate: 2026-01-01\ndraft: true\ntags: [\"a\"]\n---\ndraft")
+			s.cfg.IncludeDrafts = false
+		})
+		first := firstBuild(s)
+		Expect(page(s, "index.html")).NotTo(ContainSubstring("[Draft]"), "sanity: the draft is left out")
+
+		write(s, "content/blog/one.md", post("One", "a", "first, edited body"))
+		result := rebuild(s, first, "content/blog/one.md")
+
+		Expect(result.PagesRendered).To(ContainElement("blog/one.md"))
+		Expect(result.PagesRendered).NotTo(ContainElement("index.md"),
+			"a draft that is left out must not make every rebuild re-render the site")
+	})
+
 	// Guard: the rule must not make every edit a full re-render.
 	It("keeps a body-only edit incremental", func() {
 		s := newSite()
@@ -283,5 +378,133 @@ var _ = Describe("alloy dev keeps list and tag pages current (issue #1320)", fun
 		next := rebuild(s, upgraded, "content/blog/two.md")
 		Expect(next.PagesRendered).NotTo(ContainElement("index.md"),
 			"after one full re-render, a body-only edit must be incremental again")
+	})
+
+	// ── Tag pages in other cases (issue #1348) ───────────────────────────
+	// Each case below was found in review of the #1320 code and checked
+	// only by hand. These tests keep it fixed.
+
+	// A tag page is regenerated when a broken _data.yaml is fixed, even if
+	// no front matter changed in that rebuild: the pages lost their folder
+	// data while it was broken, so the tag pages built then were wrong.
+	It("regenerates tag pages when a broken _data.yaml is fixed", func() {
+		s := newSite(func(s *site) {
+			// The posts get their tag from the folder, not front matter.
+			write(*s, "content/blog/_data.yaml", "tags: [\"a\"]\n")
+			write(*s, "content/blog/one.md", "---\ntitle: One\ndate: 2026-01-01\n---\nfirst")
+			write(*s, "content/blog/two.md", "---\ntitle: Two\ndate: 2026-01-01\n---\nsecond")
+		})
+		first := firstBuild(s)
+
+		// One rebuild breaks the folder data and edits a title.
+		write(s, "content/blog/_data.yaml", "tags: [\"a\"\n")
+		write(s, "content/blog/one.md", "---\ntitle: One edited\ndate: 2026-01-01\n---\nfirst")
+		broken := rebuild(s, first, "content/blog/_data.yaml", "content/blog/one.md")
+
+		// The next rebuild only fixes the folder data.
+		write(s, "content/blog/_data.yaml", "tags: [\"a\"]\n")
+		rebuild(s, broken, "content/blog/_data.yaml")
+
+		Expect(page(s, "tags/a/index.html")).To(ContainSubstring("[One edited]"),
+			"once the folder data loads again, the tag page must be rebuilt with the pages' current titles")
+	})
+
+	// A content page on a tag page's URL is a conflict, as in a full build.
+	It("reports a page whose URL is a tag page's URL", func() {
+		s := newSite()
+		first := firstBuild(s)
+
+		write(s, "content/clash.md", "---\ntitle: Clash\npermalink: /tags/a/\n---\nclash")
+		result := rebuild(s, first, "content/clash.md")
+
+		Expect(fmt.Sprint(result.Errors)).To(ContainSubstring("output path conflict"),
+			"the page and the tag page write the same path, so the rebuild must report it")
+	})
+
+	// With no previous cache, every page renders, so the tag pages must be
+	// written too.
+	It("writes tag pages when there is no previous cache", func() {
+		s := newSite()
+
+		_, err := pipeline.BuildIncremental(s.cfg, nil, nil, nil, pipeline.BuildOptions{PipelineState: s.state})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(page(s, "tags/a/index.html")).To(ContainSubstring("TAG a:"),
+			"a rebuild with no cache renders everything, as a full build does, tag pages included")
+	})
+
+	// newLangSite builds a site with English at the root and Spanish under
+	// /es/. With withSpanish false, Spanish is configured but has no
+	// content folder.
+	newLangSite := func(withSpanish bool) site {
+		GinkgoHelper()
+		root := GinkgoT().TempDir()
+		s := site{root: root}
+		write(s, "layouts/default.liquid", "{{ content }}")
+		write(s, "layouts/tags.liquid",
+			"{% if taxonomy.term %}TAG {{ taxonomy.term }}:{% for p in taxonomy.pages %}[{{ p.title }}]{% endfor %}{% endif %}")
+		write(s, "content/en/index.md", "---\ntitle: Home\n---\nhome")
+		write(s, "content/en/blog/one.md", post("One", "a", "first"))
+		if withSpanish {
+			write(s, "content/es/blog/uno.md", post("Uno", "a", "primero"))
+		}
+		s.cfg = &config.Config{
+			Title:       "Languages",
+			BaseURL:     "https://example.com",
+			ProjectRoot: root,
+			Build:       config.BuildConfig{Output: filepath.Join(root, "_site")},
+			Structure:   config.StructureConfig{Content: "content", Layouts: "layouts"},
+			Taxonomies:  map[string]*config.TaxonomyConfig{"tags": {}},
+			Languages: map[string]*config.LanguageConfig{
+				"en": {Root: true, Weight: 1},
+				"es": {Weight: 2},
+			},
+		}
+		config.ApplyDefaults(s.cfg)
+		registry, hooks, _ := pipeline.DiscoverPlugins(s.cfg)
+		DeferCleanup(registry.Close)
+		state, err := pipeline.InitPipelineState(s.cfg, registry, hooks)
+		Expect(err).NotTo(HaveOccurred())
+		s.state = state
+		return s
+	}
+
+	langBuild := func(s site) *pipeline.BuildResult {
+		GinkgoHelper()
+		result, err := pipeline.Build(s.cfg)
+		Expect(err).NotTo(HaveOccurred())
+		return result
+	}
+
+	// Each language has its own tag pages, as in a full build.
+	It("keeps each language's tag pages separate", func() {
+		s := newLangSite(true)
+		first := langBuild(s)
+		Expect(page(s, "es/tags/a/index.html")).To(ContainSubstring("[Uno]"), "sanity: Spanish has its own tag page")
+
+		write(s, "content/es/blog/uno.md", post("Uno editado", "a", "primero"))
+		rebuild(s, first, "content/es/blog/uno.md")
+
+		Expect(page(s, "es/tags/a/index.html")).To(ContainSubstring("[Uno editado]"),
+			"the Spanish tag page must show the edited Spanish page")
+		Expect(page(s, "tags/a/index.html")).To(ContainSubstring("[One]"))
+		Expect(page(s, "tags/a/index.html")).NotTo(ContainSubstring("Uno"),
+			"the English tag page must list only English pages")
+	})
+
+	// A language with no content folder gets no tag pages, as in a full
+	// build.
+	It("writes no tag pages for a language with no content folder", func() {
+		s := newLangSite(false)
+		first := langBuild(s)
+		Expect(filepath.Join(s.root, "_site", "es", "tags")).NotTo(BeADirectory(),
+			"sanity: a full build writes no Spanish tag pages")
+
+		write(s, "content/en/blog/one.md", post("One edited", "a", "first"))
+		rebuild(s, first, "content/en/blog/one.md")
+
+		Expect(page(s, "tags/a/index.html")).To(ContainSubstring("[One edited]"))
+		Expect(filepath.Join(s.root, "_site", "es", "tags")).NotTo(BeADirectory(),
+			"Spanish has no content folder, so the rebuild must not write Spanish tag pages")
 	})
 })
