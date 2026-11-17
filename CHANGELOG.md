@@ -1,3 +1,7 @@
+## v0.9.0 (2026-11-17)
+
+- Building Alloy from source with `go install` now requires Go 1.26 or later. Go 1.25 no longer gets security fixes, and the newest Go 1.25 release has 12 known vulnerabilities in standard library code that Alloy calls, in `net/http`, `crypto/tls`, `crypto/x509`, and `net/textproto`. Release binaries are now built with the newest Go 1.26 patch, which fixes all of them.
+
 ## v0.8.0 (2026-11-17)
 
 ### Minor Changes
