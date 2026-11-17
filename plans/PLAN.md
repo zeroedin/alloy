@@ -3763,7 +3763,7 @@ Starts the development server with live reload. Phase 1 only, in-memory, drafts 
 1. Load config via `loadRequiredConfig` (same error behavior as build — issue #1239).
 2. Run initial build via `pipeline.Build(cfg, pipeline.BuildOptions{SkipSSR: true})` with `cfg.IncludeDrafts = true` (unless `--no-drafts`). Build persists cache to disk for subsequent incremental rebuilds.
 3. Start HTTP server on `--port` (default 3000). If the port is occupied, auto-increment up to 10 consecutive ports. If all 10 are occupied, exit 1 with an error listing the range tried.
-4. Start file watcher for live reload. On file changes, rebuild incrementally — only re-render changed/invalidated pages using the persisted build cache. Falls back to full rebuild for bulk changes (more than 10 file events in one batch that needs a rebuild; static, asset and passthrough files alone are only recopied, unless a plugin's `onFileChanged` reports a dependency or the last full build failed) or component changes. Always passes `SkipSSR: true`.
+4. Start file watcher for live reload. On file changes, rebuild incrementally — only re-render changed/invalidated pages using the persisted build cache. Falls back to full rebuild for bulk changes (more than 10 file events in one batch that needs a rebuild; static, asset and passthrough files alone are only recopied, unless a plugin's `onFileChanged` returns `invalidateByDependency` paths or the last full build failed) or component changes. Always passes `SkipSSR: true`.
 5. Print startup message: `Serving at http://localhost:<actual-port>` (always shows the actual port, which may differ from `--port` if auto-increment kicked in).
 6. Block until interrupted (Ctrl+C).
 
