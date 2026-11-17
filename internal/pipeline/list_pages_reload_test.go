@@ -1,6 +1,7 @@
 package pipeline_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -347,5 +348,133 @@ var _ = Describe("alloy dev keeps list and tag pages current (issue #1320)", fun
 		next := rebuild(s, upgraded, "content/blog/two.md")
 		Expect(next.PagesRendered).NotTo(ContainElement("index.md"),
 			"after one full re-render, a body-only edit must be incremental again")
+	})
+
+	// ── Tag pages in other cases (issue #1348) ───────────────────────────
+	// Each case below was found in review of the #1320 code and checked
+	// only by hand. These tests keep it fixed.
+
+	// A tag page is regenerated when a broken _data.yaml is fixed, even if
+	// no front matter changed in that rebuild: the pages lost their folder
+	// data while it was broken, so the tag pages built then were wrong.
+	It("regenerates tag pages when a broken _data.yaml is fixed", func() {
+		s := newSite(func(s *site) {
+			// The posts get their tag from the folder, not front matter.
+			write(*s, "content/blog/_data.yaml", "tags: [\"a\"]\n")
+			write(*s, "content/blog/one.md", "---\ntitle: One\ndate: 2026-01-01\n---\nfirst")
+			write(*s, "content/blog/two.md", "---\ntitle: Two\ndate: 2026-01-01\n---\nsecond")
+		})
+		first := firstBuild(s)
+
+		// One rebuild breaks the folder data and edits a title.
+		write(s, "content/blog/_data.yaml", "tags: [\"a\"\n")
+		write(s, "content/blog/one.md", "---\ntitle: One edited\ndate: 2026-01-01\n---\nfirst")
+		broken := rebuild(s, first, "content/blog/_data.yaml", "content/blog/one.md")
+
+		// The next rebuild only fixes the folder data.
+		write(s, "content/blog/_data.yaml", "tags: [\"a\"]\n")
+		rebuild(s, broken, "content/blog/_data.yaml")
+
+		Expect(page(s, "tags/a/index.html")).To(ContainSubstring("[One edited]"),
+			"once the folder data loads again, the tag page must be rebuilt with the pages' current titles")
+	})
+
+	// A content page on a tag page's URL is a conflict, as in a full build.
+	It("reports a page whose URL is a tag page's URL", func() {
+		s := newSite()
+		first := firstBuild(s)
+
+		write(s, "content/clash.md", "---\ntitle: Clash\npermalink: /tags/a/\n---\nclash")
+		result := rebuild(s, first, "content/clash.md")
+
+		Expect(fmt.Sprint(result.Errors)).To(ContainSubstring("output path conflict"),
+			"the page and the tag page write the same path, so the rebuild must report it")
+	})
+
+	// With no previous cache, every page renders, so the tag pages must be
+	// written too.
+	It("writes tag pages when there is no previous cache", func() {
+		s := newSite()
+
+		_, err := pipeline.BuildIncremental(s.cfg, nil, nil, nil, pipeline.BuildOptions{PipelineState: s.state})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(page(s, "tags/a/index.html")).To(ContainSubstring("TAG a:"),
+			"a rebuild with no cache renders everything, as a full build does, tag pages included")
+	})
+
+	// newLangSite builds a site with English at the root and Spanish under
+	// /es/. With withSpanish false, Spanish is configured but has no
+	// content folder.
+	newLangSite := func(withSpanish bool) site {
+		GinkgoHelper()
+		root := GinkgoT().TempDir()
+		s := site{root: root}
+		write(s, "layouts/default.liquid", "{{ content }}")
+		write(s, "layouts/tags.liquid",
+			"{% if taxonomy.term %}TAG {{ taxonomy.term }}:{% for p in taxonomy.pages %}[{{ p.title }}]{% endfor %}{% endif %}")
+		write(s, "content/en/index.md", "---\ntitle: Home\n---\nhome")
+		write(s, "content/en/blog/one.md", post("One", "a", "first"))
+		if withSpanish {
+			write(s, "content/es/blog/uno.md", post("Uno", "a", "primero"))
+		}
+		s.cfg = &config.Config{
+			Title:       "Languages",
+			BaseURL:     "https://example.com",
+			ProjectRoot: root,
+			Build:       config.BuildConfig{Output: filepath.Join(root, "_site")},
+			Structure:   config.StructureConfig{Content: "content", Layouts: "layouts"},
+			Taxonomies:  map[string]*config.TaxonomyConfig{"tags": {}},
+			Languages: map[string]*config.LanguageConfig{
+				"en": {Root: true, Weight: 1},
+				"es": {Weight: 2},
+			},
+		}
+		config.ApplyDefaults(s.cfg)
+		registry, hooks, _ := pipeline.DiscoverPlugins(s.cfg)
+		DeferCleanup(registry.Close)
+		state, err := pipeline.InitPipelineState(s.cfg, registry, hooks)
+		Expect(err).NotTo(HaveOccurred())
+		s.state = state
+		return s
+	}
+
+	langBuild := func(s site) *pipeline.BuildResult {
+		GinkgoHelper()
+		result, err := pipeline.Build(s.cfg)
+		Expect(err).NotTo(HaveOccurred())
+		return result
+	}
+
+	// Each language has its own tag pages, as in a full build.
+	It("keeps each language's tag pages separate", func() {
+		s := newLangSite(true)
+		first := langBuild(s)
+		Expect(page(s, "es/tags/a/index.html")).To(ContainSubstring("[Uno]"), "sanity: Spanish has its own tag page")
+
+		write(s, "content/es/blog/uno.md", post("Uno editado", "a", "primero"))
+		rebuild(s, first, "content/es/blog/uno.md")
+
+		Expect(page(s, "es/tags/a/index.html")).To(ContainSubstring("[Uno editado]"),
+			"the Spanish tag page must show the edited Spanish page")
+		Expect(page(s, "tags/a/index.html")).To(ContainSubstring("[One]"))
+		Expect(page(s, "tags/a/index.html")).NotTo(ContainSubstring("Uno"),
+			"the English tag page must list only English pages")
+	})
+
+	// A language with no content folder gets no tag pages, as in a full
+	// build.
+	It("writes no tag pages for a language with no content folder", func() {
+		s := newLangSite(false)
+		first := langBuild(s)
+		Expect(filepath.Join(s.root, "_site", "es", "tags")).NotTo(BeADirectory(),
+			"sanity: a full build writes no Spanish tag pages")
+
+		write(s, "content/en/blog/one.md", post("One edited", "a", "first"))
+		rebuild(s, first, "content/en/blog/one.md")
+
+		Expect(page(s, "tags/a/index.html")).To(ContainSubstring("[One edited]"))
+		Expect(filepath.Join(s.root, "_site", "es", "tags")).NotTo(BeADirectory(),
+			"Spanish has no content folder, so the rebuild must not write Spanish tag pages")
 	})
 })
