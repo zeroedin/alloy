@@ -86,6 +86,8 @@ Both use the same layout template. The `taxonomy` object in the template context
 {% endif %}
 ```
 
+In `alloy dev`, changing a page's front matter, or adding or removing a page, re-renders the whole site and regenerates the taxonomy pages, so a new or changed term shows up without a restart. An edit that changes only a page's body re-renders just that page.
+
 ### Layout Lookup Order
 
 For a taxonomy named `tags` with the default layout:
