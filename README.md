@@ -31,7 +31,7 @@ Static site generators tend to make you choose between speed and extensibility. 
 brew tap zeroedin/alloy-ssg
 brew install alloy-ssg
 
-# Go install (from source, requires Go 1.25+)
+# Go install (from source, requires Go 1.26+)
 go install github.com/zeroedin/alloy@latest
 ```
 
@@ -137,7 +137,7 @@ See [CLI Reference](https://alloyssg.dev/cli/) for all flags and build modes.
 
 ### Prerequisites
 
-- **Go 1.25+** — `go version`
+- **Go 1.26+** — `go version`
 - **Node.js** (optional) — only needed for Tier 3 plugins. Not required to build or test Alloy itself.
 
 ### Build
