@@ -1892,6 +1892,37 @@ Paginated pages additionally receive:
 
 The `pagination` and `as` variables are only present on pages with a `pagination` front matter block. Non-paginated pages do not receive them. The `as` variable name is user-defined (e.g., `as: articles` → `{{ articles }}`) and provides a convenient top-level alias for `pagination.items`.
 
+### `site.pages` is built only when a template reads it (issue #1360)
+
+Building `site.pages` means making one template map for every page. Alloy does that only when a template reads `site.pages`:
+
+1. A render that doesn't read `site.pages` does no per-page work for it.
+2. When templates do read it, the list is built at most once per render pass, not once per page. The passes are page bodies, layouts, extra output formats, and taxonomy pages.
+3. The list is built again after any step that can change a page's front matter or computed fields. Today those are the plugin hooks that run between the body pass and the layout pass (`onContentLoaded`, `onDataCascadeReady`, `onContentTransformed`). So a layout sees front matter a hook added, and a page body doesn't, as before.
+4. Templates get the same output as before from `site` and `site.pages`:
+   - loops, `size`, `first`, `last`, an index, and `assign`
+   - filters such as `where`, `sort` and `map`
+   - the other `site` keys (`title`, `baseURL`, `data`, `language`, `collections`)
+   - `site` passed whole to a filter (`{{ site | json }}`), and a loop over `site`'s keys
+   - in a multilingual build, the pages of every language
+
+This applies to `alloy build`, `alloy dev` and `alloy serve`. The full build and the incremental rebuild share the code that builds the template context.
+
+Why: before, every render built the list, whether or not the template read it, once per layout in the chain. The work for one page grew with the number of pages, so a build grew with the square of the page count. In a profile of a 1,000-page build, 83% of the build's own time went to these copies. Measured with a throwaway fix on a plain blog with a two-layout chain (rough numbers, about ±30%):
+
+| | Before | With the fix |
+|---|---|---|
+| Full build, 1,000 pages | 1.7–2.6s | 0.7–0.9s |
+| Title edit in `alloy dev`, 1,000 pages | 1.5s | 0.2s |
+| Full build, 4,000 pages | 24.5s | about 4s |
+| Full build, 1,000 pages and 20 data files | about 4.5s | 0.9s |
+
+Every output file was identical with and without the fix, except `sitemap.xml`, which differs between any two builds.
+
+Not part of this rule:
+- `collections.*` and `taxonomies.*` items are already built once per build.
+- A page's front matter still holds a copy of every global data key (see "Performance: Layered Lookup, Not Deep Copy").
+
 ---
 
 ## 4. Template Engine Architecture
@@ -3952,6 +3983,7 @@ Design constraints:
 - **Pipeline stages**: Each stage uses channels to pass work to the next
 - **Template caching**: Parse templates once at startup, reuse compiled templates for every page render (liquidgo's parse-once/render-many)
 - **Data caching**: Global and directory data loaded once, shared across all page renders (read-only after assembly)
+- **Template context**: building one page's template context costs the same whatever the size of the site. `site.pages` is built on first read, at most once per render pass (issue #1360, see "`site.pages` is built only when a template reads it")
 
 ### Caching Strategy
 - `.alloy/` directory stores build cache
