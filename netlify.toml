@@ -3,7 +3,7 @@
   publish = "_site"
 
 [build.environment]
-  GO_VERSION = "1.25.4"
+  GO_VERSION = "1.26.11"
 
 [context.deploy-preview]
   command = "npm ci && npm run build:elements && go build -o alloy . && ./alloy build"

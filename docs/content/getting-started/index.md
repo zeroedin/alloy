@@ -38,7 +38,7 @@ If you already have a Go toolchain, you can install from source:
 go install github.com/zeroedin/alloy@latest
 ```
 
-This compiles and installs the `alloy` binary to your `$GOPATH/bin` directory. Requires Go 1.25 or later.
+This compiles and installs the `alloy` binary to your `$GOPATH/bin` directory. Requires Go 1.26 or later.
 
 ## Build from source
 
