@@ -223,6 +223,36 @@ var _ = Describe("alloy dev keeps list and tag pages current (issue #1320)", fun
 		Expect(page(s, "tags/a/index.html")).To(ContainSubstring("[Two]"))
 	})
 
+	// A stale tag page that can't be deleted is tried again on a later
+	// rebuild, instead of being forgotten.
+	It("tries again to delete a stale tag page whose delete failed", func() {
+		s := newSite(func(s *site) {
+			write(*s, "content/blog/two.md", post("Two", "z", "second"))
+		})
+		first := firstBuild(s)
+		stale := filepath.Join(s.root, "_site", "tags/z/index.html")
+
+		// Make the delete fail: a folder with a file in it can't be removed
+		// as a single path.
+		Expect(os.Remove(stale)).To(Succeed())
+		Expect(os.MkdirAll(stale, 0755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(stale, "keep"), []byte("x"), 0644)).To(Succeed())
+
+		write(s, "content/blog/two.md", post("Two", "a", "second"))
+		failed := rebuild(s, first, "content/blog/two.md")
+		Expect(stale).To(BeADirectory(), "sanity: the delete failed")
+
+		// Now the path can be deleted. A later front matter edit must try again.
+		Expect(os.RemoveAll(stale)).To(Succeed())
+		Expect(os.WriteFile(stale, []byte("stale"), 0644)).To(Succeed())
+		write(s, "content/blog/one.md", post("One edited", "a", "first"))
+		rebuild(s, failed, "content/blog/one.md")
+
+		_, err := os.Stat(stale)
+		Expect(os.IsNotExist(err)).To(BeTrue(),
+			"a stale tag page whose delete failed must be deleted on a later rebuild")
+	})
+
 	// A plugin can build a virtual page from other pages' front matter, so
 	// when the rule fires, onPagesReady virtual pages re-render too.
 	It("re-renders a virtual page that lists the collection", func() {
