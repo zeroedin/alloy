@@ -169,6 +169,16 @@ go test ./... -v
 
 Tests use [Ginkgo](https://onsi.github.io/ginkgo/) + [Gomega](https://onsi.github.io/gomega/). Tests are spec-derived and immutable — they define expected behavior. If a test fails, the implementation must change, not the test.
 
+### Vulnerability check
+
+```bash
+go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+```
+
+[`govulncheck`](https://go.dev/doc/security/vuln/) reports known vulnerabilities in code Alloy calls, in its Go modules and in the Go standard library. CI runs it on every pull request, on pushes to `main`, and weekly. The release workflow runs it before it builds, so a finding blocks the release.
+
+Standard library fixes ship in Go patch releases, so the result depends on your Go version. CI and the release both use the newest Go 1.26 patch. To change the Go or `govulncheck` version, update `.github/workflows/ci.yml` and `.github/workflows/release.yml` together. `netlify.toml` sets the exact Go version that builds the docs site.
+
 ### Project Layout
 
 ```
