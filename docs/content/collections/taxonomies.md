@@ -86,7 +86,7 @@ Both use the same layout template. The `taxonomy` object in the template context
 {% endif %}
 ```
 
-In `alloy dev`, changing a page's front matter, or adding or removing a page, re-renders the whole site and regenerates the taxonomy pages, so a new or changed term shows up without a restart. An edit that changes only a page's body re-renders just that page.
+In `alloy dev`, changing a page's front matter, or adding or removing a page, re-renders the whole site and regenerates the taxonomy pages, so a new or changed term shows up without a restart. An edit that changes only a page's body re-renders just that page. On a site with no collection or taxonomy, only the edited page re-renders, so a page that lists others through `site.pages` keeps the old values until the next full rebuild, such as a restart of `alloy dev`.
 
 ### Layout Lookup Order
 

@@ -151,7 +151,7 @@ Lifecycle filtering happens before pagination. A paginated list of 47 articles w
 
 ## In `alloy dev`
 
-When a site has a collection or a taxonomy, changing a page's front matter, or adding or removing a page, re-renders the whole site, so list pages and tag pages show the change without a restart. An edit that changes only a page's body re-renders just that page.
+When a site has a collection or a taxonomy, changing a page's front matter, or adding or removing a page, re-renders the whole site, so list pages and tag pages show the change without a restart. An edit that changes only a page's body re-renders just that page. On a site with neither, only the edited page re-renders, so a page that lists others through `site.pages` (a nav menu, for example) keeps the old values until the next full rebuild, such as a restart of `alloy dev`.
 
 ## Accessing All Pages
 
