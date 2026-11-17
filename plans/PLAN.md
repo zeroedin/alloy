@@ -1523,7 +1523,7 @@ In dev mode, after the initial full build, the file watcher triggers incremental
 
 A tag page whose last page leaves is deleted, as a full build would leave it out. Virtual pages from plugins re-render too, since a plugin can build one from other pages' front matter. A draft or expired page that the build leaves out is still a page Alloy has seen, so it doesn't count as added on every rebuild.
 
-A collection counts whether it's declared in `collections:` config or comes from a section whose permalink has date tokens (`:year`, `:month`, `:day`). A site with no collection and no taxonomy stays incremental: no page can list another, so only the changed page is re-rendered. A body-only edit is always incremental.
+A collection counts whether it's declared in `collections:` config or comes from a section whose permalink has date tokens (`:year`, `:month`, `:day`). A site with no collection and no taxonomy stays incremental: only the changed page is re-rendered. **Known gap:** on such a site a page can still list others through `site.pages` (a nav menu, for example), and it keeps the old values until a restart or a full build. Fixing this needs Alloy to know which pages read which data, which is the data graph explored in #1326. A body-only edit is always incremental.
 
 Why: a page that lists other pages (a `collections.*` loop, a taxonomy page) reads their front matter. Alloy doesn't record which pages read which data, so it can't re-render just the readers. Before #1320, a list page kept its old list and a new tag got no page until a restart.
 

@@ -223,6 +223,22 @@ var _ = Describe("alloy dev keeps list and tag pages current (issue #1320)", fun
 		Expect(page(s, "tags/a/index.html")).To(ContainSubstring("[Two]"))
 	})
 
+	// A page that takes over a stale tag page's URL in the same rebuild
+	// keeps its output: the stale-page cleanup must not delete it.
+	It("keeps a new page that takes over a stale tag page's URL", func() {
+		s := newSite(func(s *site) {
+			write(*s, "content/blog/two.md", post("Two", "z", "second"))
+		})
+		first := firstBuild(s)
+
+		write(s, "content/blog/two.md", post("Two", "a", "second"))
+		write(s, "content/z.md", "---\ntitle: Z\npermalink: /tags/z/\n---\nnow a page")
+		rebuild(s, first, "content/blog/two.md", "content/z.md")
+
+		Expect(page(s, "tags/z/index.html")).To(ContainSubstring("now a page"),
+			"the new page owns /tags/z/ now, so the stale tag page cleanup must leave its output")
+	})
+
 	// A stale tag page that can't be deleted is tried again on a later
 	// rebuild, instead of being forgotten.
 	It("tries again to delete a stale tag page whose delete failed", func() {
