@@ -3877,7 +3877,7 @@ Incremental rebuilds via `BuildIncremental()` (used by `alloy dev`) are typicall
 
 The timestamp prefix is added by the reporter's serve-mode `Summary` implementation, not by the pipeline.
 
-Full rebuilds triggered by config changes or bulk file changes (10+ files) go through `Build()`, not `BuildIncremental()`, and show the full multi-stage progress bar.
+Full rebuilds triggered by config changes or bulk file changes (more than 10 files) go through `Build()`, not `BuildIncremental()`, and show the full multi-stage progress bar.
 
 #### `--root` flag behavior
 
