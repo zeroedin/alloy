@@ -84,6 +84,9 @@ var _ = Describe("A build error shows on 404 pages in alloy dev (issue #1316)", 
 	It("serves pages and 404s while the build errors change", func() {
 		srv := start(server.ModeDev, false)
 		done := make(chan struct{})
+		// Stop the worker even when an Expect below fails and ends the spec
+		// early (issue #1338).
+		defer close(done)
 		go func() {
 			defer GinkgoRecover()
 			for {
@@ -102,7 +105,6 @@ var _ = Describe("A build error shows on 404 pages in alloy dev (issue #1316)", 
 			resp, _ = get(srv, "/missing/")
 			Expect(resp.StatusCode).To(Equal(http.StatusNotFound))
 		}
-		close(done)
 	})
 
 	// Guards: nothing changes when there's no error, or outside alloy dev.
