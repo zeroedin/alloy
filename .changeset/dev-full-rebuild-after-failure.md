@@ -12,4 +12,4 @@ GET /n1/  /n12/  /site.css  /sitemap.xml   200
 
 Previously a full rebuild that failed left `_site` empty, and the edit that fixed it ran a small rebuild that rendered only the changed page. It reported `rebuild complete (incremental)` and cleared the error while every other page, the static files and `sitemap.xml` still returned 404 until you restarted `alloy dev`. The same happened when the startup build failed.
 
-No change is needed on your side. A full rebuild is the startup build, a plugin or component change, or a batch of more than 10 file changes (an editor can report one save as more than one change) that includes anything other than static, asset and passthrough files. Those on their own are only copied, however many there are.
+No change is needed on your side. A full rebuild is the startup build, a plugin or component change, or a batch of more than 10 file changes (an editor can report one save as more than one change) that includes anything other than static, asset and passthrough files. Those on their own are only copied, however many there are, unless a plugin reports that a page depends on one of them, or the last full rebuild failed.
