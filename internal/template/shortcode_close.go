@@ -3,6 +3,8 @@ package template
 import (
 	"regexp"
 	"strings"
+
+	"github.com/Notifuse/liquidgo/v5/liquid"
 )
 
 // tagName reads a Liquid tag's name: {% name ... %}, after any "-"
@@ -10,12 +12,24 @@ import (
 // pattern has it.
 var tagName = regexp.MustCompile(`^\{%-?\s*([A-Za-z_]\w*)`)
 
-// textRegions are the Liquid tags whose body is not markup, with the
-// pattern of their end tag: {% raw %}, {% comment %} and {% doc %}.
-var textRegions = map[string]*regexp.Regexp{
-	"raw":     regexp.MustCompile(`\{%-?\s*endraw\s*-?%\}`),
-	"comment": regexp.MustCompile(`\{%-?\s*endcomment\s*-?%\}`),
-	"doc":     regexp.MustCompile(`\{%-?\s*enddoc\s*-?%\}`),
+// textRegions are the Liquid tags whose body is not markup, {% raw %},
+// {% comment %} and {% doc %}, with how liquidgo finds their end tag: the
+// first token of the body that is that tag, by name, whatever follows the
+// name ({% endraw ignored %} ends a raw body).
+var textRegions = map[string]textRegion{
+	"raw":     {end: "endraw", lastTag: true},
+	"comment": {end: "endcomment"},
+	"doc":     {end: "enddoc", lastTag: true},
+}
+
+// textRegion is how a {% raw %}, {% comment %} or {% doc %} body ends.
+type textRegion struct {
+	end string // the end tag's name
+	// lastTag: the token's last tag names it, with any text before that
+	// tag ({% oops {% endraw %}), as liquidgo's raw and doc tags read it.
+	// Otherwise the token must start with the tag, as its comment tag reads
+	// it.
+	lastTag bool
 }
 
 // sourceTag is one tag of a template's source.
@@ -39,9 +53,10 @@ type sourceTag struct {
 //     and doesn't count.
 //   - Otherwise the use is inline, and gets an {% endname %} right after it.
 //   - Outside a block, a {% raw %}, {% comment %} or {% doc %} region is
-//     text, and is left as it is. It runs to the first end tag of its kind
-//     in the text, as liquidgo finds it, even after unfinished tag text
-//     ({% raw %}{% oops {% endraw %}).
+//     text, and is left as it is. It runs to the first end tag of its kind,
+//     as liquidgo's tokenizer and tag find it: by name, whatever follows the
+//     name ({% endraw ignored %}), and for raw and doc even after unfinished
+//     tag text ({% raw %}{% oops {% endraw %}).
 func closeInlineShortcodes(src string, names map[string]bool) string {
 	if len(names) == 0 {
 		return src
@@ -62,12 +77,13 @@ func closeInlineShortcodes(src string, names map[string]bool) string {
 		}
 		after[tags[i].name] = i
 	}
+	ends := regionEnds(src, tags)
 
 	var inserts []sourceTag // inline uses, each closed right after its tag
 	for i := 0; i < len(tags); {
 		t := tags[i]
 		if names[t.name] {
-			if closing := nextEnd[i]; closing < len(tags) && !useBetween(src, tags, i, closing) {
+			if closing := nextEnd[i]; closing < len(tags) && !useBetween(tags, ends, i, closing) {
 				// A block: its body, up to the end tag, is raw text.
 				i = closing + 1
 				continue
@@ -76,7 +92,7 @@ func closeInlineShortcodes(src string, names map[string]bool) string {
 			i++
 			continue
 		}
-		if stop, ok := regionEnd(src, t, len(src)); ok {
+		if stop := ends[i]; stop >= 0 {
 			i = firstTagFrom(tags, i+1, stop)
 			continue
 		}
@@ -101,12 +117,12 @@ func closeInlineShortcodes(src string, names map[string]bool) string {
 // useBetween reports whether another use of tags[i]'s shortcode comes
 // between it and tags[closing], outside the {% raw %}, {% comment %} and
 // {% doc %} regions that end before tags[closing].
-func useBetween(src string, tags []sourceTag, i, closing int) bool {
+func useBetween(tags []sourceTag, ends []int, i, closing int) bool {
 	for k := i + 1; k < closing; {
 		if tags[k].name == tags[i].name {
 			return true
 		}
-		if stop, ok := regionEnd(src, tags[k], tags[closing].start); ok {
+		if stop := ends[k]; stop >= 0 && stop <= tags[closing].start {
 			k = firstTagFrom(tags, k+1, stop)
 			continue
 		}
@@ -115,19 +131,69 @@ func useBetween(src string, tags []sourceTag, i, closing int) bool {
 	return false
 }
 
-// regionEnd returns the index just after the end tag of the {% raw %},
-// {% comment %} or {% doc %} region t opens, when that end tag ends by
-// limit.
-func regionEnd(src string, t sourceTag, limit int) (int, bool) {
-	endTag, ok := textRegions[t.name]
-	if !ok || t.end > limit {
-		return 0, false
+// regionEnds returns, for each of tags, the index just after the end tag
+// of the {% raw %}, {% comment %} or {% doc %} region it opens, or -1 when
+// it opens none or the region has no end tag. It reads src with liquidgo's
+// tokenizer, as the parser does, so a region ends where liquidgo ends it.
+func regionEnds(src string, tags []sourceTag) []int {
+	ends := make([]int, len(tags))
+	var tokens []string
+	var starts map[int]int // a token's index by its offset in src
+	for i, t := range tags {
+		ends[i] = -1
+		region, ok := textRegions[t.name]
+		if !ok {
+			continue
+		}
+		if tokens == nil {
+			tokens, starts = tokenize(src)
+		}
+		// A tag that doesn't start a token, inside {{ ... {% raw %},
+		// opens no region for liquidgo either.
+		k, ok := starts[t.start]
+		if !ok {
+			continue
+		}
+		pos := t.start
+		for _, token := range tokens[k:] {
+			pos += len(token)
+			if pos > t.end && region.endsWith(token) {
+				ends[i] = pos
+				break
+			}
+		}
 	}
-	loc := endTag.FindStringIndex(src[t.end:limit])
-	if loc == nil {
-		return 0, false
+	return ends
+}
+
+// endsWith reports whether token is the end tag of the region, as liquidgo
+// reads it.
+func (r textRegion) endsWith(token string) bool {
+	if r.lastTag {
+		_, name, ok := liquid.MatchTagPossiblyInvalid(token)
+		return ok && name == r.end
 	}
-	return t.end + loc[1], true
+	if !strings.HasSuffix(token, "%}") {
+		return false
+	}
+	m := tagName.FindStringSubmatch(token)
+	return m != nil && m[1] == r.end
+}
+
+// tokenize splits src into liquidgo's tokens, and returns them with each
+// one's index by its offset in src.
+func tokenize(src string) ([]string, map[int]int) {
+	tokenizer := liquid.NewTokenizer(src, nil, false, nil, false)
+	var tokens []string
+	starts := make(map[int]int)
+	pos := 0
+	for !tokenizer.Exhausted() {
+		token := tokenizer.Shift()
+		starts[pos] = len(tokens)
+		tokens = append(tokens, token)
+		pos += len(token)
+	}
+	return tokens, starts
 }
 
 // firstTagFrom returns the index of the first tag at or after from that
