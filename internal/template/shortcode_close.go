@@ -10,12 +10,13 @@ import (
 // pattern has it.
 var tagName = regexp.MustCompile(`^\{%-?\s*([A-Za-z_]\w*)`)
 
-// skippedRegions are the Liquid tags whose body is not markup: a shortcode
-// written inside them is text, and stays as it is.
-var skippedRegions = map[string]string{
-	"raw":     "endraw",
-	"comment": "endcomment",
-	"doc":     "enddoc",
+// skippedRegions are the Liquid tags whose body is not markup, with the
+// pattern of their end tag: a shortcode written inside them is text, and
+// stays as it is.
+var skippedRegions = map[string]*regexp.Regexp{
+	"raw":     regexp.MustCompile(`\{%-?\s*endraw\s*-?%\}`),
+	"comment": regexp.MustCompile(`\{%-?\s*endcomment\s*-?%\}`),
+	"doc":     regexp.MustCompile(`\{%-?\s*enddoc\s*-?%\}`),
 }
 
 // sourceTag is one tag of a template's source.
@@ -39,7 +40,7 @@ func closeInlineShortcodes(src string, names map[string]bool) string {
 	if len(names) == 0 {
 		return src
 	}
-	tags := liveTags(scanTags(src))
+	tags := scanTags(src)
 	if len(tags) == 0 {
 		return src
 	}
@@ -85,10 +86,15 @@ func closeInlineShortcodes(src string, names map[string]bool) string {
 	return string(out)
 }
 
-// scanTags returns the tags of src in order. A tag ends at the first "%}"
-// after its "{%". When another "{%" comes first, the text before it isn't a
-// tag, and scanning starts again there, as liquidgo's raw tag finds its
-// {% endraw %} after unfinished tag text.
+// scanTags returns the tags of src in order, outside {% raw %},
+// {% comment %} and {% doc %} regions.
+//
+// A tag runs from "{%" to the first "%}" after it. A region runs from its
+// tag to the first end tag of its kind in the text, as liquidgo finds it,
+// even after unfinished tag text ({% raw %}{% oops {% endraw %}). A region
+// tag with no end tag after it is kept as an ordinary tag: inside a
+// shortcode's body, {% raw %} alone is text, and the body still ends at the
+// shortcode's end tag.
 func scanTags(src string) []sourceTag {
 	var tags []sourceTag
 	pos := 0
@@ -103,34 +109,19 @@ func scanTags(src string) []sourceTag {
 			return tags
 		}
 		end := start + 2 + closeAt + 2
-		if inner := strings.Index(src[start+2:end-2], "{%"); inner >= 0 {
-			pos = start + 2 + inner
-			continue
-		}
-		if m := tagName.FindStringSubmatch(src[start:end]); m != nil {
-			tags = append(tags, sourceTag{end: end, name: m[1]})
-		}
 		pos = end
-	}
-}
-
-// liveTags returns the tags outside {% raw %}, {% comment %} and {% doc %}
-// regions, with the tags that open and close those regions.
-func liveTags(all []sourceTag) []sourceTag {
-	live := make([]sourceTag, 0, len(all))
-	for i := 0; i < len(all); i++ {
-		live = append(live, all[i])
-		endName, ok := skippedRegions[all[i].name]
-		if !ok {
+		m := tagName.FindStringSubmatch(src[start:end])
+		if m == nil {
 			continue
 		}
-		for i++; i < len(all) && all[i].name != endName; i++ {
+		if endTag, ok := skippedRegions[m[1]]; ok {
+			if loc := endTag.FindStringIndex(src[end:]); loc != nil {
+				pos = end + loc[1]
+				continue
+			}
 		}
-		if i < len(all) {
-			live = append(live, all[i])
-		}
+		tags = append(tags, sourceTag{end: end, name: m[1]})
 	}
-	return live
 }
 
 func indexOr(m map[string]int, key string, def int) int {
