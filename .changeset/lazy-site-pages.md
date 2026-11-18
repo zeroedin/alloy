@@ -12,9 +12,12 @@ On a plain blog with a two-layout chain, with the same output:
 | 4,000 | 11.3s | 0.37s |
 | 4,000, with a layout that reads `site.pages` | 11.0s | 0.64s |
 
-Templates read `site` and `site.pages` as before, with two exceptions that count or test the keys of `site` itself:
+Templates read `site` and `site.pages` as before, with three exceptions that count or test the keys of `site` itself:
 
 | Template | Before | Now |
 |---|---|---|
 | `{{ site \| size }}` | `5` | `0` |
-| `{% if site contains "pages" %}` | true | false |
+| `{% if site contains "title" %}`, or any other key | true | false |
+| `{{ site["size"] }}` | nothing | `5` |
+
+`{{ site.size }}` still gives `5`.

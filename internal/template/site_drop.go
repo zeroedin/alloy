@@ -29,16 +29,22 @@ func NewSitePages() *SitePages {
 }
 
 // templateMaps returns the template map of each of pages, built once for
-// the same list of pages.
+// the same list of pages. A list that starts with the pages of the last one,
+// as when a language's taxonomy pages are added to it, reuses their maps.
 func (s *SitePages) templateMaps(pages []*content.Page) []interface{} {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.list != nil && samePages(s.pages, pages) {
 		return s.list
 	}
+	reused := 0
+	if s.list != nil && startsWith(pages, s.pages) {
+		reused = len(s.pages)
+	}
 	list := make([]interface{}, len(pages))
-	for i, p := range pages {
-		list[i] = p.ToTemplateMap()
+	copy(list, s.list[:reused])
+	for i := reused; i < len(pages); i++ {
+		list[i] = pages[i].ToTemplateMap()
 	}
 	s.pages, s.list = pages, list
 	return list
@@ -48,6 +54,19 @@ func (s *SitePages) templateMaps(pages []*content.Page) []interface{} {
 // same backing array.
 func samePages(a, b []*content.Page) bool {
 	return len(a) == len(b) && (len(a) == 0 || &a[0] == &b[0])
+}
+
+// startsWith reports whether pages begins with the pages of prefix.
+func startsWith(pages, prefix []*content.Page) bool {
+	if len(pages) < len(prefix) {
+		return false
+	}
+	for i, p := range prefix {
+		if pages[i] != p {
+			return false
+		}
+	}
+	return true
 }
 
 // siteDrop is site in a template's context. It gives the same keys as the
@@ -76,6 +95,27 @@ func (d *siteDrop) LiquidGet(_ *liquid.Context, key string) (interface{}, bool, 
 	return nil, false, nil
 }
 
+// keys returns site's keys in key order, pages among them.
+func (d *siteDrop) keys() []string {
+	keys := make([]string, 0, d.size())
+	for k := range d.values {
+		keys = append(keys, k)
+	}
+	if d.hasPages {
+		keys = append(keys, "pages")
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// value returns the value of site's key k, building site.pages for pages.
+func (d *siteDrop) value(k string) interface{} {
+	if k == "pages" && d.hasPages {
+		return d.built.templateMaps(d.pages)
+	}
+	return d.values[k]
+}
+
 // size returns the number of site's keys.
 func (d *siteDrop) size() int {
 	if d.hasPages {
@@ -99,15 +139,25 @@ func (d *siteDrop) toMap() map[string]interface{} {
 // Each gives site's keys and values as [key, value] pairs, in key order, as
 // liquidgo loops over a map: {% for pair in site %}.
 func (d *siteDrop) Each(fn func(interface{})) {
-	m := d.toMap()
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+	for _, k := range d.keys() {
+		fn([]interface{}{k, d.value(k)})
 	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		fn([]interface{}{k, m[k]})
+}
+
+// LoadSlice gives the pairs from index from up to to, as Each does, for a
+// loop with limit or offset. site.pages is built only when its pair is one
+// of them.
+func (d *siteDrop) LoadSlice(from int, to *int) []interface{} {
+	var pairs []interface{}
+	for i, k := range d.keys() {
+		if to != nil && i >= *to {
+			break
+		}
+		if i >= from {
+			pairs = append(pairs, []interface{}{k, d.value(k)})
+		}
 	}
+	return pairs
 }
 
 // MarshalJSON writes site as the map it replaces: {{ site | json }}.
