@@ -1,6 +1,7 @@
 package template_test
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 
@@ -147,5 +148,44 @@ var _ = Describe("Alloy runs on liquidgo v5 (issue #1363)", func() {
 			Expect(string(out)).To(Equal("<box [c]></box> after"),
 				"parsing a block use must not turn later inline uses into blocks")
 		})
+
+		// RenderTemplate parses its source as written, so liquidgo must
+		// know these filters by name (bridgeFilterDefs). A change during
+		// the port dropped them, and no test failed (issue #1373).
+		It("runs findRE and replaceRE through RenderTemplate", func() {
+			out, err := template.RenderTemplate(`{{ "abc123def45" | findRE: "[0-9]+" }}`, "find.liquid", map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(Equal("12345"))
+
+			out, err = template.RenderTemplate(`{{ "abc123" | replaceRE: "[0-9]", "#" }}`, "replace.liquid", map[string]interface{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(Equal("abc###"))
+		})
+
+		// A failing plugin filter or shortcode panics with a
+		// PluginCallError, as pipeline/state.go does. liquidgo must treat
+		// it as a Liquid error, and the render must report the plugin's
+		// own message. Treated as any other panic, it ends the render with
+		// a *liquid.PanicError: "liquid: panic during render: ..."
+		// (issue #1373).
+		DescribeTable("reports a failing plugin call with its own message",
+			func(src, want string) {
+				engine := newEngine()
+				Expect(engine.AddFilter("boom", func(interface{}, ...interface{}) interface{} {
+					panic(template.NewPluginCallError("filter", "boom", errors.New("kaput")))
+				})).To(Succeed())
+				Expect(engine.AddTag("bang", func([]string, string) string {
+					panic(template.NewPluginCallError("shortcode", "bang", errors.New("kaput")))
+				})).To(Succeed())
+
+				tpl, err := engine.Parse("page", []byte(src))
+				Expect(err).NotTo(HaveOccurred())
+				_, err = tpl.Render(map[string]interface{}{})
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(Equal("liquid render error in page: " + want))
+			},
+			Entry("a filter", `a{{ "x" | boom }}b`, `filter "boom": kaput`),
+			Entry("a shortcode", `a{% bang "x" %}b`, `shortcode "bang": kaput`),
+		)
 	})
 })
