@@ -113,24 +113,25 @@ var _ = Describe("Shortcodes next to raw, comment and doc (issue #1373)", func()
 			return time.Since(start)
 		}
 
-		// The small and large templates are parsed in pairs, one right
-		// after the other, so that a busy moment on the machine slows both
-		// parses of a pair, not only the large one. The lowest ratio of five
-		// pairs counts: parse time that grows with the square of the number
-		// of tags gives a high ratio in every pair.
+		// The small and large templates are parsed in turn, five times each,
+		// so that a busy stretch on the machine falls on both sizes, not
+		// only one. The fastest parse of each size counts, so one slow parse
+		// of either size is dropped: it can neither fail parse time that
+		// grows in step with the tags nor hide parse time that grows with
+		// the square.
 		DescribeTable("a template with 4 times the tags takes at most 8 times as long",
 			func(build func(n int) string) {
 				small, large := build(size), build(4*size)
-				best := 0.0
 				var bestSmall, bestLarge time.Duration
 				for range 5 {
-					s := parseTime(small)
-					l := parseTime(large)
-					if ratio := float64(l) / float64(s); best == 0 || ratio < best {
-						best, bestSmall, bestLarge = ratio, s, l
+					if d := parseTime(small); bestSmall == 0 || d < bestSmall {
+						bestSmall = d
+					}
+					if d := parseTime(large); bestLarge == 0 || d < bestLarge {
+						bestLarge = d
 					}
 				}
-				Expect(best).To(BeNumerically("<", maxGrowth),
+				Expect(float64(bestLarge)/float64(bestSmall)).To(BeNumerically("<", maxGrowth),
 					"%d tags: %v, %d tags: %v. A higher ratio means parse time grows "+
 						"with the square of the number of tags", size, bestSmall, 4*size, bestLarge)
 			},
