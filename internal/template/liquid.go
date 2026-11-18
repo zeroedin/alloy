@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 
@@ -18,21 +17,21 @@ import (
 // liquidEngine adapts Notifuse/liquidgo (v5) to the TemplateEngine interface.
 //
 // A liquidgo v5 environment is built once from its config and can't change
-// (issue #1363), so the engine collects tags and builds environments when
-// templates are parsed. Filters need no rebuild: the environment's filter
-// functions read the bridge's funcs map when they run.
+// (issue #1363), so the engine collects tags and builds the environment when
+// the first template is parsed. Filters need no rebuild: the environment's
+// filter functions read the bridge's funcs map when they run.
 type liquidEngine struct {
 	filters        *alloyFilterBridge
 	includesDir    string                    // layouts directory for resolving {% include %} / {% render %}
 	filterPatterns map[string]*regexp.Regexp // compiled regexes for dynamic filters, keyed by filter name
-	deferredTags   []deferredTagEntry        // tags registered via AddTag, made inline or block per template
-	extraTags      map[string]liquid.TagConstructor
 
-	// envs holds one environment per set of shortcodes a template uses as
-	// blocks, keyed by their sorted names. AddTag and RegisterInlineTag
-	// clear it.
-	envMu sync.Mutex
-	envs  map[string]*liquid.Environment
+	// envMu guards the tags and the environment built from them. AddTag
+	// and RegisterInlineTag drop the environment, and the next Parse
+	// builds it again.
+	envMu        sync.Mutex
+	deferredTags []deferredTagEntry // shortcodes registered via AddTag
+	extraTags    map[string]liquid.TagConstructor
+	env          *liquid.Environment
 }
 
 // deferredTagEntry stores a tag registration for deferred liquidgo registration.
@@ -63,78 +62,59 @@ func newLiquidEngine() *liquidEngine {
 		},
 		filterPatterns: make(map[string]*regexp.Regexp),
 		extraTags:      make(map[string]liquid.TagConstructor),
-		envs:           make(map[string]*liquid.Environment),
 	}
 }
 
-// addTagConstructor adds a tag every environment of the engine has, such as
-// {% inline %}, and drops the environments built without it.
+// addTagConstructor adds a tag the engine's environment has, such as
+// {% inline %}, and drops the environment built without it.
 func (e *liquidEngine) addTagConstructor(name string, ctor liquid.TagConstructor) {
 	e.envMu.Lock()
 	defer e.envMu.Unlock()
 	e.extraTags[name] = ctor
-	e.envs = make(map[string]*liquid.Environment)
+	e.env = nil
 }
 
-// envFor returns the environment for the template source src. A shortcode
-// is a block in src when src has its {% endXxx %}, and inline otherwise:
-// this decides whether the tag consumes body tokens or returns
-// immediately. The same shortcode can be inline in one template and a block
-// in another, and an environment can't change once built, so one is built
-// and kept for each set of block shortcodes.
-func (e *liquidEngine) envFor(src string) (*liquid.Environment, error) {
+// environment returns the engine's environment, built on first use, and
+// the names of its shortcodes.
+//
+// Every shortcode is a block tag (issue #1367). Whether a use is inline or
+// a block is decided per template, partials included, by
+// closeInlineShortcodes, which adds an {% endname %} after each inline use
+// before the template is parsed. So one environment serves every template.
+func (e *liquidEngine) environment() (*liquid.Environment, map[string]bool, error) {
 	e.envMu.Lock()
 	defer e.envMu.Unlock()
 
-	var blockNames []string
+	names := make(map[string]bool, len(e.deferredTags))
 	for _, dt := range e.deferredTags {
-		if strings.Contains(src, "{% "+dt.endTag) || strings.Contains(src, "{%- "+dt.endTag) {
-			blockNames = append(blockNames, dt.name)
-		}
+		names[dt.name] = true
 	}
-	sort.Strings(blockNames)
-	key := strings.Join(blockNames, "\x00")
-	if env, ok := e.envs[key]; ok {
-		return env, nil
+	if e.env != nil {
+		return e.env, names, nil
 	}
 
-	isBlock := make(map[string]bool, len(blockNames))
-	for _, n := range blockNames {
-		isBlock[n] = true
-	}
 	tagMap := tags.Standard()
 	for name, ctor := range e.extraTags {
 		tagMap[name] = ctor
 	}
 	for _, dt := range e.deferredTags {
-		fn := dt.fn
-		if isBlock[dt.name] {
-			endTag := dt.endTag
-			tagMap[dt.name] = func(tagName, markup string, parseContext liquid.ParseContextInterface) (liquid.Node, error) {
-				return &alloyBlockTag{
-					Tag:    liquid.NewTag(tagName, markup, parseContext),
-					fn:     fn,
-					markup: markup,
-					endTag: endTag,
-				}, nil
-			}
-		} else {
-			tagMap[dt.name] = func(tagName, markup string, parseContext liquid.ParseContextInterface) (liquid.Node, error) {
-				return &alloyInlineTag{
-					Tag:    liquid.NewTag(tagName, markup, parseContext),
-					fn:     fn,
-					markup: markup,
-				}, nil
-			}
+		fn, endTag := dt.fn, dt.endTag
+		tagMap[dt.name] = func(tagName, markup string, parseContext liquid.ParseContextInterface) (liquid.Node, error) {
+			return &alloyBlockTag{
+				Tag:    liquid.NewTag(tagName, markup, parseContext),
+				fn:     fn,
+				markup: markup,
+				endTag: endTag,
+			}, nil
 		}
 	}
 
 	env, err := newAlloyEnvironment(tagMap, e.filters)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	e.envs[key] = env
-	return env, nil
+	e.env = env
+	return env, names, nil
 }
 
 // newAlloyEnvironment builds a liquidgo environment with Alloy's filters, in
@@ -159,6 +139,7 @@ type liquidTemplate struct {
 	name           string
 	includesDir    string
 	filterPatterns map[string]*regexp.Regexp
+	shortcodes     map[string]bool // the engine's shortcodes, for partials
 }
 
 func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
@@ -172,10 +153,11 @@ func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
 		}
 	}
 
-	env, err := e.envFor(src)
+	env, shortcodes, err := e.environment()
 	if err != nil {
 		return nil, fmt.Errorf("liquid environment for %s: %w", name, err)
 	}
+	src = closeInlineShortcodes(src, shortcodes)
 
 	tpl, err := liquid.ParseTemplate(src, &liquid.TemplateOptions{Environment: env})
 	if err != nil {
@@ -189,7 +171,8 @@ func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
 	for k, v := range e.filterPatterns {
 		patternSnapshot[k] = v
 	}
-	return &liquidTemplate{tpl: tpl, name: name, includesDir: e.includesDir, filterPatterns: patternSnapshot}, nil
+	return &liquidTemplate{tpl: tpl, name: name, includesDir: e.includesDir,
+		filterPatterns: patternSnapshot, shortcodes: shortcodes}, nil
 }
 
 func compileFilterPattern(filterName string) *regexp.Regexp {
@@ -261,7 +244,7 @@ func (e *liquidEngine) AddTag(name string, fn TagFunc) error {
 		endTag: "end" + name,
 		fn:     fn,
 	})
-	e.envs = make(map[string]*liquid.Environment)
+	e.env = nil
 	return nil
 }
 
@@ -269,7 +252,7 @@ func (t *liquidTemplate) Render(ctx map[string]interface{}) ([]byte, error) {
 	opts := []liquid.RenderOption{liquid.WithStrictFilters()}
 	if t.includesDir != "" {
 		opts = append(opts, liquid.WithFileSystem(
-			&alloyFileSystem{root: t.includesDir, filterPatterns: t.filterPatterns}))
+			&alloyFileSystem{root: t.includesDir, filterPatterns: t.filterPatterns, shortcodes: t.shortcodes}))
 	}
 	res, err := t.tpl.Render(gocontext.Background(), ctx, opts...)
 	if err != nil {
@@ -335,6 +318,7 @@ func RenderTemplate(source string, sourcePath string, ctx map[string]interface{}
 type alloyFileSystem struct {
 	root           string
 	filterPatterns map[string]*regexp.Regexp
+	shortcodes     map[string]bool
 }
 
 func (fs *alloyFileSystem) ReadTemplateFile(templatePath string) (string, error) {
@@ -363,7 +347,9 @@ func (fs *alloyFileSystem) ReadTemplateFile(templatePath string) (string, error)
 					src = rewriteFilterToPlugin(src, filterName, pattern)
 				}
 			}
-			return src, nil
+			// A partial decides for itself whether each shortcode use is
+			// inline or a block (issue #1367).
+			return closeInlineShortcodes(src, fs.shortcodes), nil
 		}
 	}
 	return "", liquid.NewFileSystemError(fmt.Sprintf("no such template %q", templatePath))
@@ -586,29 +572,11 @@ func (e *PluginCallError) GetError() *liquid.Error {
 }
 
 // ---------------------------------------------------------------------------
-// alloyInlineTag handles inline shortcodes ({% tag "args" %}).
-// Parse returns immediately — no token consumption.
+// alloyBlockTag handles shortcodes ({% tag %}body{% endtag %}). Parse
+// consumes tokens until the matching end tag. An inline use
+// ({% tag "args" %}) is a block with an empty body: closeInlineShortcodes
+// adds its end tag before the template is parsed (issue #1367).
 // ---------------------------------------------------------------------------
-
-type alloyInlineTag struct {
-	*liquid.Tag
-	fn     TagFunc
-	markup string
-}
-
-func (t *alloyInlineTag) Parse(tokenizer *liquid.Tokenizer) error { return nil }
-
-func (t *alloyInlineTag) Render(context liquid.TagContext) string {
-	args := resolveTagArgs(parseTagTokens(t.markup), context)
-	return t.fn(args, "")
-}
-
-func (t *alloyInlineTag) RenderToOutput(context liquid.TagContext, output *liquid.OutputBuffer) {
-	output.WriteString(t.Render(context))
-}
-
-// alloyBlockTag handles block shortcodes ({% tag %}body{% endtag %}).
-// Parse consumes tokens until the matching end tag.
 type alloyBlockTag struct {
 	*liquid.Tag
 	fn       TagFunc
