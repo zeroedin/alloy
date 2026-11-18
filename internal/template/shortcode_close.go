@@ -12,25 +12,9 @@ import (
 // pattern has it.
 var tagName = regexp.MustCompile(`^\{%-?\s*([A-Za-z_]\w*)`)
 
-// textRegions are the Liquid tags whose body is not markup, {% raw %},
-// {% comment %} and {% doc %}, with how liquidgo finds their end tag: the
-// first token of the body that is that tag, by name, whatever follows the
-// name ({% endraw ignored %} ends a raw body).
-var textRegions = map[string]textRegion{
-	"raw":     {end: "endraw", lastTag: true},
-	"comment": {end: "endcomment"},
-	"doc":     {end: "enddoc", lastTag: true},
-}
-
-// textRegion is how a {% raw %}, {% comment %} or {% doc %} body ends.
-type textRegion struct {
-	end string // the end tag's name
-	// lastTag: the token's last tag names it, with any text before that
-	// tag ({% oops {% endraw %}), as liquidgo's raw and doc tags read it.
-	// Otherwise the token must start with the tag, as its comment tag reads
-	// it.
-	lastTag bool
-}
+// rawEnds are the end tags of {% raw %} and {% doc %}, the regions that end
+// at their first end tag. A {% comment %} counts the comments nested in it.
+var rawEnds = map[string]string{"raw": "endraw", "doc": "enddoc"}
 
 // sourceTag is one tag of a template's source.
 type sourceTag struct {
@@ -53,10 +37,10 @@ type sourceTag struct {
 //     and doesn't count.
 //   - Otherwise the use is inline, and gets an {% endname %} right after it.
 //   - Outside a block, a {% raw %}, {% comment %} or {% doc %} region is
-//     text, and is left as it is. It runs to the first end tag of its kind,
-//     as liquidgo's tokenizer and tag find it: by name, whatever follows the
-//     name ({% endraw ignored %}), and for raw and doc even after unfinished
-//     tag text ({% raw %}{% oops {% endraw %}).
+//     text, and is left as it is. It runs to its end tag as liquidgo's tag
+//     finds it (see regionEnds): by name, whatever follows the name
+//     ({% endraw ignored %}), and for a comment, the endcomment that
+//     matches it, past the comments nested in it.
 func closeInlineShortcodes(src string, names map[string]bool) string {
 	if len(names) == 0 {
 		return src
@@ -134,66 +118,133 @@ func useBetween(tags []sourceTag, ends []int, i, closing int) bool {
 // regionEnds returns, for each of tags, the index just after the end tag
 // of the {% raw %}, {% comment %} or {% doc %} region it opens, or -1 when
 // it opens none or the region has no end tag. It reads src with liquidgo's
-// tokenizer, as the parser does, so a region ends where liquidgo ends it.
+// tokenizer, and ends each region as liquidgo's tag does:
+//   - raw and doc at the first token whose last tag is named endraw or
+//     enddoc, whatever follows the name ({% endraw ignored %}) or comes
+//     before the tag ({% oops {% endraw %});
+//   - comment at the endcomment that matches it, counting the comments
+//     nested in it and skipping the body of a raw in it, as liquidgo's
+//     comment tag reads the tags at the start of its tokens.
 func regionEnds(src string, tags []sourceTag) []int {
 	ends := make([]int, len(tags))
-	var tokens []string
-	var starts map[int]int // a token's index by its offset in src
+	var tz *tokenList
 	for i, t := range tags {
 		ends[i] = -1
-		region, ok := textRegions[t.name]
-		if !ok {
+		if t.name != "comment" && rawEnds[t.name] == "" {
 			continue
 		}
-		if tokens == nil {
-			tokens, starts = tokenize(src)
+		if tz == nil {
+			tz = newTokenList(src)
 		}
 		// A tag that doesn't start a token, inside {{ ... {% raw %},
 		// opens no region for liquidgo either.
-		k, ok := starts[t.start]
+		k, ok := tz.at[t.start]
 		if !ok {
 			continue
 		}
-		pos := t.start
-		for _, token := range tokens[k:] {
-			pos += len(token)
-			if pos > t.end && region.endsWith(token) {
-				ends[i] = pos
-				break
-			}
+		var j int
+		if t.name == "comment" {
+			j = tz.commentEnd(k)
+		} else {
+			j = tz.next(rawEnds[t.name])[k+1]
+		}
+		if j < len(tz.tokens) {
+			ends[i] = tz.offset[j] + len(tz.tokens[j])
 		}
 	}
 	return ends
 }
 
-// endsWith reports whether token is the end tag of the region, as liquidgo
-// reads it.
-func (r textRegion) endsWith(token string) bool {
-	if r.lastTag {
-		_, name, ok := liquid.MatchTagPossiblyInvalid(token)
-		return ok && name == r.end
-	}
-	if !strings.HasSuffix(token, "%}") {
-		return false
-	}
-	m := tagName.FindStringSubmatch(token)
-	return m != nil && m[1] == r.end
+// tokenList is src split into liquidgo's tokens, with what regionEnds
+// needs to find each region's end once.
+type tokenList struct {
+	tokens []string
+	offset []int       // each token's offset in src
+	at     map[int]int // a token's index by its offset
+	// nexts["endraw"][k] is the index of the first token at or after k
+	// whose last tag is endraw, or len(tokens): see next.
+	nexts map[string][]int
+	// comments[k] is the index of the endcomment that closes the comment
+	// opened by token k, or len(tokens): see commentEnd.
+	comments map[int]int
 }
 
-// tokenize splits src into liquidgo's tokens, and returns them with each
-// one's index by its offset in src.
-func tokenize(src string) ([]string, map[int]int) {
+func newTokenList(src string) *tokenList {
+	tz := &tokenList{
+		at:       make(map[int]int),
+		nexts:    make(map[string][]int),
+		comments: make(map[int]int),
+	}
 	tokenizer := liquid.NewTokenizer(src, nil, false, nil, false)
-	var tokens []string
-	starts := make(map[int]int)
 	pos := 0
 	for !tokenizer.Exhausted() {
 		token := tokenizer.Shift()
-		starts[pos] = len(tokens)
-		tokens = append(tokens, token)
+		tz.at[pos] = len(tz.tokens)
+		tz.tokens = append(tz.tokens, token)
+		tz.offset = append(tz.offset, pos)
 		pos += len(token)
 	}
-	return tokens, starts
+	return tz
+}
+
+// next returns, for each token index k, the index of the first token at or
+// after k whose last tag is named end, as liquidgo's raw and doc tags find
+// their end tag, or len(tokens). Index len(tokens) is there too.
+func (tz *tokenList) next(end string) []int {
+	if n, ok := tz.nexts[end]; ok {
+		return n
+	}
+	n := make([]int, len(tz.tokens)+1)
+	n[len(tz.tokens)] = len(tz.tokens)
+	for k := len(tz.tokens) - 1; k >= 0; k-- {
+		n[k] = n[k+1]
+		if _, name, ok := liquid.MatchTagPossiblyInvalid(tz.tokens[k]); ok && name == end {
+			n[k] = k
+		}
+	}
+	tz.nexts[end] = n
+	return n
+}
+
+// commentEnd returns the index of the endcomment token that closes the
+// comment token k opens, or len(tokens). It reads the tokens after k as
+// liquidgo's comment tag does, and records the end of each comment nested
+// in it on the way, since a nested comment's own reading is the rest of
+// this one.
+func (tz *tokenList) commentEnd(k int) int {
+	if j, ok := tz.comments[k]; ok {
+		return j
+	}
+	open := []int{k}
+	for j := k + 1; j < len(tz.tokens) && len(open) > 0; j++ {
+		switch commentTagName(tz.tokens[j]) {
+		case "raw":
+			j = tz.next("endraw")[j+1]
+		case "comment":
+			open = append(open, j)
+		case "endcomment":
+			tz.comments[open[len(open)-1]] = j
+			open = open[:len(open)-1]
+		}
+	}
+	// Comments still open at the end of src, or at a raw in them that never
+	// ends, are never closed.
+	for _, o := range open {
+		tz.comments[o] = len(tz.tokens)
+	}
+	return tz.comments[k]
+}
+
+// commentTagName returns the name of the tag token starts with, as
+// liquidgo's comment tag reads the tokens of its body, or "".
+func commentTagName(token string) string {
+	if !strings.HasSuffix(token, "%}") {
+		return ""
+	}
+	if m := tagName.FindStringSubmatch(token); m != nil {
+		return m[1]
+	}
+	return ""
 }
 
 // firstTagFrom returns the index of the first tag at or after from that
