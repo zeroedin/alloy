@@ -1545,7 +1545,7 @@ Cost: rendering every page's body takes about 14ms for 1,000 pages. A hook takes
 
 This matters most on a body-only edit, and on a site with no collection and no taxonomy: on a site that has one, a front matter change already re-renders every page (issue #1320), so every page already went through the hooks.
 
-Not part of this rule: `collections.*` items don't carry what these hooks add, in a full build either, since collections are built before the hooks run.
+Not part of this rule: `collections.*` items don't carry what these hooks add, in a full build either, since collections are built before the hooks run (issue #1385).
 
 Tests: `internal/pipeline/incremental_hooks_all_pages_test.go`.
 
