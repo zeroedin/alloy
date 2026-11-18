@@ -5,7 +5,6 @@ go 1.26.0
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/Masterminds/semver/v3 v3.4.0
-	github.com/Notifuse/liquidgo v0.0.0-20260131093335-c0b2d83983a7
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/bytedance/sonic v1.15.1
 	github.com/fastschema/qjs v0.0.6
@@ -22,9 +21,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-replace github.com/Notifuse/liquidgo => github.com/zeroedin/liquidgo v0.0.0-20260512043442-13cfbb81b595
-
 require (
+	github.com/Notifuse/liquidgo/v5 v5.14.5
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic/loader v0.5.1 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
@@ -50,3 +48,5 @@ require (
 	golang.org/x/tools v0.41.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 )
+
+replace github.com/Notifuse/liquidgo/v5 => github.com/zeroedin/liquidgo/v5 v5.0.0-20261118023100-954f7614f098

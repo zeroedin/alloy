@@ -6,8 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Notifuse/liquidgo/liquid"
-	"github.com/Notifuse/liquidgo/liquid/tags"
+	"github.com/Notifuse/liquidgo/v5/liquid"
 )
 
 var allowedExtensions = map[string]bool{
@@ -33,14 +32,14 @@ func RegisterInlineTag(engine TemplateEngine) {
 	if !ok {
 		return
 	}
-	le.env.RegisterTag("inline", tags.TagConstructor(
-		func(tagName, markup string, parseContext liquid.ParseContextInterface) (interface{}, error) {
+	le.addTagConstructor("inline",
+		func(tagName, markup string, parseContext liquid.ParseContextInterface) (liquid.Node, error) {
 			return &inlineTag{
 				Tag:    liquid.NewTag(tagName, markup, parseContext),
 				markup: markup,
 			}, nil
 		},
-	))
+	)
 }
 
 type inlineTag struct {
@@ -59,8 +58,8 @@ func (t *inlineTag) Render(context liquid.TagContext) string {
 	return result
 }
 
-func (t *inlineTag) RenderToOutputBuffer(context liquid.TagContext, output *string) {
-	*output += t.Render(context)
+func (t *inlineTag) RenderToOutput(context liquid.TagContext, output *liquid.OutputBuffer) {
+	output.WriteString(t.Render(context))
 }
 
 func (t *inlineTag) resolve(context liquid.TagContext) (string, error) {
