@@ -326,8 +326,9 @@ var _ = Describe("site.pages is built only when a template reads it (issue #1360
 			second, err := pipeline.BuildIncremental(cfg, nil, first.Cache, []string{"content/index.md"},
 				pipeline.BuildOptions{PipelineState: state, CaptureRenderedContent: true})
 			Expect(err).NotTo(HaveOccurred())
-			// Only the re-rendered page goes through the hook in an incremental
-			// rebuild, so only its entry (Home, listed last) carries the field.
+			// This checks the re-rendered page's entry (Home, listed last). The
+			// other pages' entries are checked in
+			// incremental_hooks_all_pages_test.go (issue #1377).
 			out := second.RenderedContent["index.md"]
 			Expect(out).To(ContainSubstring("EDITED"))
 			Expect(out).To(ContainSubstring("hooked|]"),
