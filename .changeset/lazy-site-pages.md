@@ -16,8 +16,8 @@ Templates read `site` and `site.pages` as before, with three exceptions that cou
 
 | Template | Before | Now |
 |---|---|---|
-| `{{ site \| size }}` | `5` | `0` |
+| `{{ site \| size }}` | the number of keys in `site` | `0` |
 | `{% if site contains "title" %}`, or any other key | true | false |
-| `{{ site["size"] }}` | nothing | `5` |
+| `{{ site["size"] }}` | nothing | the number of keys in `site` |
 
-`{{ site.size }}` still gives `5`.
+`{{ site.size }}` still gives the number of keys in `site`.
