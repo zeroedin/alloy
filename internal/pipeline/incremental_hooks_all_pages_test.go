@@ -28,14 +28,19 @@ import (
 //
 // See PLAN.md → "Hooks see every page in an incremental rebuild (issue #1377)".
 var _ = Describe("Hooks see every page in an incremental rebuild (issue #1377)", Ordered, ContinueOnFailure, func() {
-	// The hooks add four fields to every page:
-	//   loaded   - "L", from onContentLoaded
-	//   cascaded - "D", from onDataCascadeReady
+	// onContentLoaded adds four fields to every page:
+	//   loaded   - "L"
 	//   words    - the number of words in the page's rendered body, so an
 	//              empty body shows as 0
+	//   rendered - "Y" if the body it got is rendered HTML (has a <p>), "N"
+	//              if it is the Markdown source
 	//   lead     - the number of words in page A's body, the page the test
 	//              edits. Every page reads it, so a value kept from an earlier
 	//              build shows as the old count.
+	// onDataCascadeReady adds two:
+	//   cascaded - "D"
+	//   clead    - the lead the page has when this hook runs, so a value kept
+	//              from an earlier build shows as the old count
 	const plugin = `const words = (p) => (p.html || '').replace(/<[^>]*>/g, ' ').split(/\s+/).filter(Boolean).length;
 export default function(alloy) {
   alloy.hook('onContentLoaded', { pages: true }, (pages) => {
@@ -43,12 +48,13 @@ export default function(alloy) {
     return pages.map(p => {
       p.frontMatter.loaded = 'L';
       p.frontMatter.words = words(p);
+      p.frontMatter.rendered = /<p>/.test(p.html || '') ? 'Y' : 'N';
       p.frontMatter.lead = a ? words(a) : -1;
       return p;
     });
   });
   alloy.hook('onDataCascadeReady', { pages: true }, (pages) =>
-    pages.map(p => { p.data = Object.assign({}, p.data, { cascaded: 'D' }); return p; }));
+    pages.map(p => { p.data = Object.assign({}, p.data, { cascaded: 'D', clead: p.data.lead }); return p; }));
 }
 `
 
@@ -90,6 +96,8 @@ export default function(alloy) {
 			field("LOADED", "loaded")+" "+
 			field("CASCADED", "cascaded")+" "+
 			field("LEAD", "lead")+" "+
+			field("CLEAD", "clead")+" "+
+			field("RENDERED", "rendered")+" "+
 			field("WORDS", "words"))
 		// 2, 3 and 4 words.
 		write("content/blog/a.md", post("A", "alpha one"))
@@ -128,13 +136,19 @@ export default function(alloy) {
 	It("keeps what onDataCascadeReady added on pages the rebuild didn't re-render", func() {
 		Expect(rebuiltOut).To(ContainSubstring("CASCADED[D;D;D;]"))
 	})
-	It("asks the hook again for every page, with every page in its input", func() {
+	It("asks onContentLoaded again for every page, with every page in its input", func() {
 		Expect(rebuiltOut).To(ContainSubstring("LEAD[3;3;3;]"),
 			"every page reads the edited page's new word count, 3: a 2 is a value kept from the first build")
 	})
-	It("gives the hook every page's rendered body", func() {
+	It("asks onDataCascadeReady again for every page", func() {
+		Expect(rebuiltOut).To(ContainSubstring("CLEAD[3;3;3;]"),
+			"every page's cascade field copies the new word count, 3: a 2 is a value kept from the first build")
+	})
+	It("gives onContentLoaded every page's rendered body", func() {
 		Expect(rebuiltOut).To(ContainSubstring("WORDS[3;3;4;]"),
 			"each page's word count comes from its rendered body: a 0 means the hook got an empty body")
+		Expect(rebuiltOut).To(ContainSubstring("RENDERED[Y;Y;Y;]"),
+			"each page's body is rendered HTML: an N means the hook got the Markdown source")
 	})
 
 	// Guards: these work today and must keep working.
@@ -145,7 +159,9 @@ export default function(alloy) {
 		Expect(fullOut).To(ContainSubstring("LOADED[L;L;L;]"))
 		Expect(fullOut).To(ContainSubstring("CASCADED[D;D;D;]"))
 		Expect(fullOut).To(ContainSubstring("LEAD[2;2;2;]"))
+		Expect(fullOut).To(ContainSubstring("CLEAD[2;2;2;]"))
 		Expect(fullOut).To(ContainSubstring("WORDS[2;3;4;]"))
+		Expect(fullOut).To(ContainSubstring("RENDERED[Y;Y;Y;]"))
 	})
 	It("shows the edited page's new body in the rebuild (guard)", func() {
 		Expect(rebuiltOut).To(ContainSubstring("alpha one again"))
