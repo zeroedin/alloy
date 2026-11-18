@@ -10,10 +10,9 @@ import (
 // pattern has it.
 var tagName = regexp.MustCompile(`^\{%-?\s*([A-Za-z_]\w*)`)
 
-// skippedRegions are the Liquid tags whose body is not markup, with the
-// pattern of their end tag: a shortcode written inside them is text, and
-// stays as it is.
-var skippedRegions = map[string]*regexp.Regexp{
+// textRegions are the Liquid tags whose body is not markup, with the
+// pattern of their end tag: {% raw %}, {% comment %} and {% doc %}.
+var textRegions = map[string]*regexp.Regexp{
 	"raw":     regexp.MustCompile(`\{%-?\s*endraw\s*-?%\}`),
 	"comment": regexp.MustCompile(`\{%-?\s*endcomment\s*-?%\}`),
 	"doc":     regexp.MustCompile(`\{%-?\s*enddoc\s*-?%\}`),
@@ -21,8 +20,8 @@ var skippedRegions = map[string]*regexp.Regexp{
 
 // sourceTag is one tag of a template's source.
 type sourceTag struct {
-	end  int // the index just after the tag's %}
-	name string
+	start, end int // the indexes of its "{%" and just after its "%}"
+	name       string
 }
 
 // closeInlineShortcodes returns src with an {% endname %} added after each
@@ -30,12 +29,19 @@ type sourceTag struct {
 // be parsed as a block (issue #1367). Each template decides for itself,
 // partials included.
 //
-// An {% endname %} closes the nearest open use of the same name before it,
-// as the block tag parses: a block's body runs to the first {% endname %}
-// after it, and reaches the shortcode as raw text, so it is left as written.
-// A use with another use of the same name before that end tag is inline.
-// Shortcodes in {% raw %}, {% comment %} and {% doc %} are text: they are
-// left as they are, and take no part in pairing.
+// It reads the tags in order, as liquidgo parses them:
+//   - A use is a block when an {% endname %} follows it with no other use of
+//     the same name before that end tag: an {% endname %} closes the nearest
+//     open use of the same name before it. The block's body runs to that end
+//     tag and reaches the shortcode as raw text, so it is left as written,
+//     {% raw %} included. A use of the same name inside a {% raw %},
+//     {% comment %} or {% doc %} region that ends within the body is text,
+//     and doesn't count.
+//   - Otherwise the use is inline, and gets an {% endname %} right after it.
+//   - Outside a block, a {% raw %}, {% comment %} or {% doc %} region is
+//     text, and is left as it is. It runs to the first end tag of its kind
+//     in the text, as liquidgo finds it, even after unfinished tag text
+//     ({% raw %}{% oops {% endraw %}).
 func closeInlineShortcodes(src string, names map[string]bool) string {
 	if len(names) == 0 {
 		return src
@@ -45,30 +51,36 @@ func closeInlineShortcodes(src string, names map[string]bool) string {
 		return src
 	}
 
-	// next[i] is the index of the next tag named like tags[i], and
-	// nextEnd[i] the index of the next "end"+name tag; len(tags) if none.
-	next := make([]int, len(tags))
+	// nextEnd[i] is the index of the next "end"+tags[i].name tag, or
+	// len(tags) if there is none.
 	nextEnd := make([]int, len(tags))
 	after := make(map[string]int)
 	for i := len(tags) - 1; i >= 0; i-- {
-		name := tags[i].name
-		next[i] = indexOr(after, name, len(tags))
-		nextEnd[i] = indexOr(after, "end"+name, len(tags))
-		after[name] = i
+		nextEnd[i] = len(tags)
+		if j, ok := after["end"+tags[i].name]; ok {
+			nextEnd[i] = j
+		}
+		after[tags[i].name] = i
 	}
 
 	var inserts []sourceTag // inline uses, each closed right after its tag
-	for i := 0; i < len(tags); i++ {
+	for i := 0; i < len(tags); {
 		t := tags[i]
-		if !names[t.name] {
+		if names[t.name] {
+			if closing := nextEnd[i]; closing < len(tags) && !useBetween(src, tags, i, closing) {
+				// A block: its body, up to the end tag, is raw text.
+				i = closing + 1
+				continue
+			}
+			inserts = append(inserts, t)
+			i++
 			continue
 		}
-		if closing := nextEnd[i]; closing < len(tags) && next[i] > closing {
-			// A block: its body, up to the end tag, is raw text.
-			i = closing
+		if stop, ok := regionEnd(src, t, len(src)); ok {
+			i = firstTagFrom(tags, i+1, stop)
 			continue
 		}
-		inserts = append(inserts, t)
+		i++
 	}
 	if len(inserts) == 0 {
 		return src
@@ -86,15 +98,49 @@ func closeInlineShortcodes(src string, names map[string]bool) string {
 	return string(out)
 }
 
-// scanTags returns the tags of src in order, outside {% raw %},
-// {% comment %} and {% doc %} regions.
-//
-// A tag runs from "{%" to the first "%}" after it. A region runs from its
-// tag to the first end tag of its kind in the text, as liquidgo finds it,
-// even after unfinished tag text ({% raw %}{% oops {% endraw %}). A region
-// tag with no end tag after it is kept as an ordinary tag: inside a
-// shortcode's body, {% raw %} alone is text, and the body still ends at the
-// shortcode's end tag.
+// useBetween reports whether another use of tags[i]'s shortcode comes
+// between it and tags[closing], outside the {% raw %}, {% comment %} and
+// {% doc %} regions that end before tags[closing].
+func useBetween(src string, tags []sourceTag, i, closing int) bool {
+	for k := i + 1; k < closing; {
+		if tags[k].name == tags[i].name {
+			return true
+		}
+		if stop, ok := regionEnd(src, tags[k], tags[closing].start); ok {
+			k = firstTagFrom(tags, k+1, stop)
+			continue
+		}
+		k++
+	}
+	return false
+}
+
+// regionEnd returns the index just after the end tag of the {% raw %},
+// {% comment %} or {% doc %} region t opens, when that end tag ends by
+// limit.
+func regionEnd(src string, t sourceTag, limit int) (int, bool) {
+	endTag, ok := textRegions[t.name]
+	if !ok || t.end > limit {
+		return 0, false
+	}
+	loc := endTag.FindStringIndex(src[t.end:limit])
+	if loc == nil {
+		return 0, false
+	}
+	return t.end + loc[1], true
+}
+
+// firstTagFrom returns the index of the first tag at or after from that
+// starts at or after pos.
+func firstTagFrom(tags []sourceTag, from, pos int) int {
+	for from < len(tags) && tags[from].start < pos {
+		from++
+	}
+	return from
+}
+
+// scanTags returns the tags of src in order. A tag runs from "{%" to the
+// first "%}" after it.
 func scanTags(src string) []sourceTag {
 	var tags []sourceTag
 	pos := 0
@@ -110,23 +156,8 @@ func scanTags(src string) []sourceTag {
 		}
 		end := start + 2 + closeAt + 2
 		pos = end
-		m := tagName.FindStringSubmatch(src[start:end])
-		if m == nil {
-			continue
+		if m := tagName.FindStringSubmatch(src[start:end]); m != nil {
+			tags = append(tags, sourceTag{start: start, end: end, name: m[1]})
 		}
-		if endTag, ok := skippedRegions[m[1]]; ok {
-			if loc := endTag.FindStringIndex(src[end:]); loc != nil {
-				pos = end + loc[1]
-				continue
-			}
-		}
-		tags = append(tags, sourceTag{end: end, name: m[1]})
 	}
-}
-
-func indexOr(m map[string]int, key string, def int) int {
-	if v, ok := m[key]; ok {
-		return v
-	}
-	return def
 }
