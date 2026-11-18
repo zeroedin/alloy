@@ -164,16 +164,16 @@ type tokenList struct {
 	// nexts["endraw"][k] is the index of the first token at or after k
 	// whose last tag is endraw, or len(tokens): see next.
 	nexts map[string][]int
-	// comments[k] is the index of the endcomment that closes the comment
-	// opened by token k, or len(tokens): see commentEnd.
-	comments map[int]int
+	// bodyEnds[j]-1 is the index of the endcomment that ends a comment
+	// body starting at token j, or len(tokens); 0 when not worked out yet:
+	// see commentEnd.
+	bodyEnds []int
 }
 
 func newTokenList(src string) *tokenList {
 	tz := &tokenList{
-		at:       make(map[int]int),
-		nexts:    make(map[string][]int),
-		comments: make(map[int]int),
+		at:    make(map[int]int),
+		nexts: make(map[string][]int),
 	}
 	tokenizer := liquid.NewTokenizer(src, nil, false, nil, false)
 	pos := 0
@@ -184,6 +184,7 @@ func newTokenList(src string) *tokenList {
 		tz.offset = append(tz.offset, pos)
 		pos += len(token)
 	}
+	tz.bodyEnds = make([]int, len(tz.tokens))
 	return tz
 }
 
@@ -207,32 +208,50 @@ func (tz *tokenList) next(end string) []int {
 }
 
 // commentEnd returns the index of the endcomment token that closes the
-// comment token k opens, or len(tokens). It reads the tokens after k as
-// liquidgo's comment tag does, and records the end of each comment nested
-// in it on the way, since a nested comment's own reading is the rest of
-// this one.
+// comment token k opens, or len(tokens), reading the tokens after k as
+// liquidgo's comment tag does: a nested comment is read to its own end, and
+// the body of a raw to its endraw.
+//
+// Where a comment body starting at a token ends depends only on that token,
+// so each token's answer is recorded and worked out once, whichever comment
+// reaches it: the tokens read on the way share the answer of the token they
+// lead to.
 func (tz *tokenList) commentEnd(k int) int {
-	if j, ok := tz.comments[k]; ok {
-		return j
-	}
-	open := []int{k}
-	for j := k + 1; j < len(tz.tokens) && len(open) > 0; j++ {
+	n := len(tz.tokens)
+	var path []int    // tokens whose body end is the one j leads to
+	var outer [][]int // the paths of enclosing bodies, each waiting for a nested comment's end
+	for j := k + 1; ; {
+		if j >= n || tz.bodyEnds[j] != 0 {
+			end := n
+			if j < n {
+				end = tz.bodyEnds[j] - 1
+			}
+			for _, p := range path {
+				tz.bodyEnds[p] = end + 1
+			}
+			if len(outer) == 0 {
+				return end
+			}
+			// A nested comment ended: its enclosing body goes on after it.
+			path, outer = outer[len(outer)-1], outer[:len(outer)-1]
+			j = end + 1
+			continue
+		}
 		switch commentTagName(tz.tokens[j]) {
-		case "raw":
-			j = tz.next("endraw")[j+1]
-		case "comment":
-			open = append(open, j)
 		case "endcomment":
-			tz.comments[open[len(open)-1]] = j
-			open = open[:len(open)-1]
+			tz.bodyEnds[j] = j + 1
+		case "comment":
+			outer = append(outer, append(path, j))
+			path = nil
+			j++
+		case "raw":
+			path = append(path, j)
+			j = tz.next("endraw")[j+1] + 1
+		default:
+			path = append(path, j)
+			j++
 		}
 	}
-	// Comments still open at the end of src, or at a raw in them that never
-	// ends, are never closed.
-	for _, o := range open {
-		tz.comments[o] = len(tz.tokens)
-	}
-	return tz.comments[k]
 }
 
 // commentTagName returns the name of the tag token starts with, as
