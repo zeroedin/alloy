@@ -2646,7 +2646,7 @@ Now `{{ page.content | wordCount }}` and `{% youtube "dQw4w9WgXcQ" %}` work in t
 - **Result:** a returned array comes back to the template as a list, and a returned object as an object the template can read by key and loop over. A returned object's own keys win: if it has a `size` or `first` key, `{{ o.size }}` and `{{ o.first }}` give those values, as on Node, not the key count or first pair that a data file object gives. On QuickJS a returned object keeps its key order. A string, number or boolean comes back as it is.
 - In both directions a value crosses as JSON does, as for Node filters and filter arguments: a function or `undefined` is dropped from an object, and becomes `null` in an array.
 
-So `alloy.filter("keys", (o) => Object.keys(o))` makes `{{ site.data.nav | keys | join: ", " }}` give the keys in file order, on either runtime. Before #1366 a QuickJS filter received anything but a string, number or boolean as Go's debug text, and an array or object it returned came back as text. Tests: `internal/pipeline/filter_values_test.go`.
+So `alloy.filter("keys", (o) => Object.keys(o))` makes `{{ site.data.nav | keys | join: ", " }}` give the keys in file order (array-index-like keys first, as above), on either runtime. Before #1366 a QuickJS filter received anything but a string, number or boolean as Go's debug text, and an array or object it returned came back as text. Tests: `internal/pipeline/filter_values_test.go`.
 
 **Site data access** — Plugins can access global data from `data/` files via `alloy.data`:
 
