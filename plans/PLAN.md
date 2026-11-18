@@ -2640,6 +2640,14 @@ export default function(alloy) {
 
 Now `{{ page.content | wordCount }}` and `{% youtube "dQw4w9WgXcQ" %}` work in templates. No compilation, no config.
 
+**Plugin filters receive and return values (issue #1366).** A plugin filter gets its input, and gives back its result, as JavaScript values, on QuickJS exactly as on Node:
+
+- **Input:** a string, number or boolean arrives as it is. A list arrives as an array, and a map, a data file object or front matter object as an object. Values inside them are converted the same way. A date arrives as text in RFC 3339 form (`2024-01-02T00:00:00Z`). A data file object's keys keep their file order.
+- **Result:** a returned array comes back to the template as a list, and a returned object as an object the template can read by key and loop over. On QuickJS a returned object keeps its key order. A string, number or boolean comes back as it is.
+- In both directions a value crosses as JSON does, so what JSON can't hold (a function, `undefined` inside an object) is dropped, as it is for Node filters and for filter arguments.
+
+So `alloy.filter("keys", (o) => Object.keys(o))` makes `{{ site.data.nav | keys | join: ", " }}` give the keys in file order, on either runtime. Before #1366 a QuickJS filter received anything but a string, number or boolean as Go's debug text, and an array or object it returned came back as text. Tests: `internal/pipeline/filter_values_test.go`.
+
 **Site data access** — Plugins can access global data from `data/` files via `alloy.data`:
 
 ```javascript
