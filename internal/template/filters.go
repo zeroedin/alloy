@@ -1078,5 +1078,10 @@ func getMapValue(item interface{}, key string) interface{} {
 	if m, ok := item.(*ordered.Map); ok {
 		return m.Get(key)
 	}
+	// site, in a list such as {{ site | compact | map: "title" }}, gives
+	// its keys as the map it replaces did (issue #1360).
+	if d, ok := item.(*siteDrop); ok {
+		return d.value(key)
+	}
 	return nil
 }

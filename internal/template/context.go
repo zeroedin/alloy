@@ -24,6 +24,10 @@ type SiteContext struct {
 	LanguageData map[string]interface{} // structured language data (code, title, root, strings)
 	Data         map[string]interface{}
 	Pages        []*content.Page
+	// PagesBuilt shares the site.pages list between the renders that set
+	// it, built on first read (issue #1360). With nil, each ToMap builds
+	// its own, on first read.
+	PagesBuilt *SitePages
 }
 
 // PageContext holds per-page data available as {{ page.* }}.
@@ -165,20 +169,24 @@ func (tc *TemplateContext) ToMap() map[string]interface{} {
 	} else {
 		site["data"] = make(map[string]interface{})
 	}
-	if tc.Site.Pages != nil {
-		pagesList := make([]interface{}, len(tc.Site.Pages))
-		for i, p := range tc.Site.Pages {
-			pagesList[i] = p.ToTemplateMap()
-		}
-		site["pages"] = pagesList
-	}
 	if tc.Collections != nil {
 		site["collections"] = tc.Collections
+	}
+	// site.pages is built when a template reads it, not here (issue #1360).
+	built := tc.Site.PagesBuilt
+	if built == nil {
+		built = NewSitePages()
+	}
+	siteValue := &siteDrop{
+		values:   site,
+		pages:    tc.Site.Pages,
+		hasPages: tc.Site.Pages != nil,
+		built:    built,
 	}
 
 	ctx := map[string]interface{}{
 		"page": pageCtx,
-		"site": site,
+		"site": siteValue,
 	}
 	if tc.Collections != nil {
 		ctx["collections"] = tc.Collections
