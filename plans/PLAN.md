@@ -1911,7 +1911,7 @@ type Template interface {
 }
 ```
 
-Alloy has one template engine: Liquid, through Notifuse/liquidgo, run in-process. It receives the `map[string]any` context from the data cascade with no transformation. All built-in filters (slugify, date, default, etc.) are registered at startup. Shortcodes are registered internally via `RegisterShortcode`, which adds them as custom Liquid tags (via `AddTag`). The `TemplateEngine` interface stays so tests and mocks can stand in for the engine.
+Alloy has one template engine: Liquid, through Notifuse/liquidgo v5 (see "Liquid library: liquidgo v5"), run in-process. It receives the `map[string]any` context from the data cascade with no transformation. All built-in filters (slugify, date, default, etc.) are registered at startup. Shortcodes are registered internally via `RegisterShortcode`, which adds them as custom Liquid tags (via `AddTag`). The `TemplateEngine` interface stays so tests and mocks can stand in for the engine.
 
 ### Liquid is the only template engine (issue #1285)
 
@@ -1931,6 +1931,44 @@ Go `html/template` support is removed. This is a wholesale removal: no compatibi
 - **History stays.** `CHANGELOG.md` and the release notes under `docs/content/releases/` keep their Go mentions.
 
 Tests: `internal/pipeline/liquid_only_test.go`, `internal/template/output_safety_test.go`, the "`{{% %}}` has no special meaning" context in `internal/content/markdown_test.go`, and the `.liquid`-only hook tests under `DiscoverRenderHooks` in `internal/template/liquid_test.go`.
+
+### Liquid library: liquidgo v5 (issue #1363)
+
+Alloy uses liquidgo v5 (`github.com/Notifuse/liquidgo/v5`, v5.14.5 or later), which ports Shopify Liquid 5.14. It comes through the `zeroedin/liquidgo` fork, which carries one patch: an `{% assign %}` doesn't score its value when no assign limit is set.
+
+1. **Strict parsing.** Templates are parsed in the library's strict mode. Markup that doesn't parse, such as `{{ | broken_syntax }}`, fails the build, as it did before. The library's default mode (lax) would render it as nothing.
+2. **Results follow Shopify's Liquid**, as the library ports it. These results changed from the old fork, and all are corrections:
+   - `{{ 0.1 | plus: 0.2 }}` is `0.3`, not `0.30000000000000004`
+   - `{{ 14 | divided_by: 3 }}` is `4`: two integers give an integer
+   - `{{ "héllo" | size }}` is `5`: `size`, `truncate`, `truncatewords`, `slice` and `capitalize` count characters, not bytes
+   - a number from JSON equals the same integer (`{% if n == 100 %}`)
+   - `join` with no separator uses a space
+   - `contains` on a list compares whole elements
+   - `.size` on an object with no `size` key gives its number of keys
+   - `case` renders every `when` that matches
+   - `date` follows Ruby's `strftime`
+   - a tag or an output can span several lines
+3. **A `for` loop costs in step with its output.** The library writes output to a buffer. The old fork joined it with `+=`, which copied everything written so far on every addition.
+4. **What stays the same:**
+   - A plugin shortcode can be used inline in one template and as a block in another.
+   - A data file object keeps its file order, and answers `.size`, `.first` and key lookups.
+   - A plugin filter or shortcode that fails still fails the build with the plugin's error.
+   - Alloy's own filters still take the place of the library's where both define one.
+   - `{% include %}` and `{% render %}` still read partials from the layouts directory.
+
+Why keep a fork: without the assign patch, a layout that assigns a large value (`{% assign posts = collections.blog %}`) is about three times slower. Upstream counts the score on purpose, as Ruby does, so the patch can't simply go upstream.
+
+Measured with a throwaway port, on 1,000-page test sites with the #1360 fix applied. Times are for a title edit, which re-renders every page (rough numbers):
+
+| Site | Old fork | liquidgo v5 |
+|---|---|---|
+| Plain blog | about 0.2s | about 0.2s |
+| A nav that lists every page, in every layout | 15.7s | about 0.5s |
+| A layout that assigns a whole collection | 0.22s | 0.59s without the patch, 0.18s with it |
+
+With that port Alloy's whole test suite passed, and Alloy's docs site came out identical, all 61 files.
+
+Tests: `internal/template/liquidgo_v5_test.go`.
 
 ### Layout Lookup Order
 
@@ -4224,7 +4262,7 @@ After each phase, verify by:
 
 | Dependency | Purpose | License |
 |---|---|---|
-| `github.com/Notifuse/liquidgo` | Liquid template engine | MIT |
+| `github.com/Notifuse/liquidgo/v5` (through the `zeroedin/liquidgo` fork) | Liquid template engine | MIT |
 | `github.com/yuin/goldmark` | Markdown → HTML | MIT |
 | `github.com/fsnotify/fsnotify` | File watching (dev server) | BSD-3 |
 | `github.com/spf13/cobra` | CLI framework | Apache-2.0 |
