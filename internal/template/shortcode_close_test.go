@@ -104,29 +104,35 @@ var _ = Describe("Shortcodes next to raw, comment and doc (issue #1373)", func()
 			maxGrowth = 8.0
 		)
 
-		// parseTime returns the shortest of five parses of src. Some of
-		// these templates don't parse: only the time matters.
+		// parseTime returns how long one parse of src takes. Some of these
+		// templates don't parse: only the time matters.
 		parseTime := func(src string) time.Duration {
-			GinkgoHelper()
-			var best time.Duration
-			for range 5 {
-				engine := newEngine()
-				start := time.Now()
-				_, _ = engine.Parse("page", []byte(src))
-				if d := time.Since(start); best == 0 || d < best {
-					best = d
-				}
-			}
-			return best
+			engine := newEngine()
+			start := time.Now()
+			_, _ = engine.Parse("page", []byte(src))
+			return time.Since(start)
 		}
 
+		// The small and large templates are parsed in pairs, one right
+		// after the other, so that a busy moment on the machine slows both
+		// parses of a pair, not only the large one. The lowest ratio of five
+		// pairs counts: parse time that grows with the square of the number
+		// of tags gives a high ratio in every pair.
 		DescribeTable("a template with 4 times the tags takes at most 8 times as long",
 			func(build func(n int) string) {
-				small := parseTime(build(size))
-				large := parseTime(build(4 * size))
-				Expect(float64(large)/float64(small)).To(BeNumerically("<", maxGrowth),
+				small, large := build(size), build(4*size)
+				best := 0.0
+				var bestSmall, bestLarge time.Duration
+				for range 5 {
+					s := parseTime(small)
+					l := parseTime(large)
+					if ratio := float64(l) / float64(s); best == 0 || ratio < best {
+						best, bestSmall, bestLarge = ratio, s, l
+					}
+				}
+				Expect(best).To(BeNumerically("<", maxGrowth),
 					"%d tags: %v, %d tags: %v. A higher ratio means parse time grows "+
-						"with the square of the number of tags", size, small, 4*size, large)
+						"with the square of the number of tags", size, bestSmall, 4*size, bestLarge)
 			},
 			Entry("raw tags, then one endraw", func(n int) string {
 				return strings.Repeat("{% raw %}", n) + `{% endraw %}{% box "a" %}`
