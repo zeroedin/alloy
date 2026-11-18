@@ -2738,6 +2738,18 @@ Runtimes that collect non-fatal warnings during plugin evaluation (duplicate hoo
 
 When hook payloads pass through the plugin serialization boundary (QuickJS VM or Node subprocess), JSON round-trip strips Go-specific types. In particular, `*ordered.Map` values (from JSON data files) become `map[string]interface{}`, losing insertion-order iteration (`Each()`) and property access (`LiquidMethodMissing()`). The host must deserialize hook return values through `ordered.UnmarshalJSONValue` (not standard `json.Unmarshal`) so JSON objects are restored as `*ordered.Map`. This applies to all runtimes (QuickJS, Node, WASM) at their respective deserialization points. Without this, any hook that returns structured data (e.g., `onDataFetched` returning the full `siteData`) silently destroys ordered map types for all keys — even those the plugin did not modify.
 
+**Node keeps key order too (issue #1374).** Every object a Node plugin gives back keeps its keys in the order JavaScript gives them, at every level, as on QuickJS:
+
+- **Hooks**, called one at a time (`CallHook`) or in parallel on the worker pool (`BatchCallHook`). The result is an `*ordered.Map`. Data that passes through a hook unchanged keeps file order, and an object the hook builds, under an existing key or a new one, keeps the order the hook set its keys in.
+- **Data sources** (`alloy.source`). An object, and each object in a returned list, is an `*ordered.Map`, as data file objects are, so `site.data.<as>` loops in the order the source returned.
+- **Filters.** A returned object keeps its order. Its own keys still win: if it has a `size` or `first` key, `{{ o.size }}` and `{{ o.first }}` give those values, as for any plugin filter result (issue #1366).
+
+Only these results change. The other replies from the Node bridge, such as the reply to loading a plugin, which lists its filters, sources and hook options, are read as they are today.
+
+Before, each of these results was decoded into a Go map, which has no order: hooks and sources gave a random order, different on each build, and filters gave sorted order.
+
+Tests: `internal/plugin/node_key_order_test.go` (hooks, including the worker pool), `internal/pipeline/node_key_order_test.go` (what templates see, with guards on QuickJS and on a filter result's own keys), and "CallSource invokes the registered source handler" in `internal/plugin/node_test.go`, which now expects `*ordered.Map` objects.
+
 ### Tier 3: Node Subprocess (opt-in)
 
 For plugins that need Node-specific capabilities:
