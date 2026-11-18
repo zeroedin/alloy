@@ -418,23 +418,11 @@ func bridgeFilterDefs(f *alloyFilterBridge) []liquid.FilterDef {
 	return defs
 }
 
-// wrapBridgeMethod adapts a bridge method to liquidgo's filter signature. A
-// plugin filter that fails panics with a *PluginCallError (see
-// pipeline/state.go); liquidgo v5 would end the render with a
-// *liquid.PanicError and its stack, so the error is returned instead, and
-// the render reports the plugin's error. Any other panic is a bug and
-// stays a panic.
+// wrapBridgeMethod adapts a bridge method to liquidgo's filter signature.
+// A plugin filter that fails panics with a *PluginCallError (see
+// pipeline/state.go), which liquidgo records as a raised Liquid error.
 func wrapBridgeMethod(fn bridgeMethod) liquid.FilterFunc {
-	return func(_ *liquid.Context, input interface{}, args ...interface{}) (out interface{}, err error) {
-		defer func() {
-			if r := recover(); r != nil {
-				pce, ok := r.(*PluginCallError)
-				if !ok {
-					panic(r)
-				}
-				out, err = nil, pce
-			}
-		}()
+	return func(_ *liquid.Context, input interface{}, args ...interface{}) (interface{}, error) {
 		return fn(input, args...), nil
 	}
 }
@@ -554,9 +542,10 @@ func (f *alloyFilterBridge) URL(input interface{}, args ...interface{}) interfac
 // ---------------------------------------------------------------------------
 // PluginCallError wraps a plugin runtime error (filter or shortcode call
 // failure) for propagation through the template rendering pipeline via panic.
-// The filter wrapper and the shortcode tags recover it, and hand it to
-// liquidgo as an error. It implements liquid.LiquidError, so liquidgo keeps
-// its message instead of replacing it with a generic "internal" string.
+// It implements liquid.LiquidError, so liquidgo treats the panic as a raised
+// Liquid error, as liquid.Raise does: the render records it with its own
+// message. Without that, liquidgo v5 would end the render with a
+// *liquid.PanicError, or record the generic message "internal".
 // ---------------------------------------------------------------------------
 
 type PluginCallError struct {
@@ -599,28 +588,11 @@ func (t *alloyInlineTag) Parse(tokenizer *liquid.Tokenizer) error { return nil }
 
 func (t *alloyInlineTag) Render(context liquid.TagContext) string {
 	args := resolveTagArgs(parseTagTokens(t.markup), context)
-	return callShortcode(func() string { return t.fn(args, "") })
+	return t.fn(args, "")
 }
 
 func (t *alloyInlineTag) RenderToOutput(context liquid.TagContext, output *liquid.OutputBuffer) {
 	output.WriteString(t.Render(context))
-}
-
-// callShortcode runs a shortcode's function. A plugin shortcode that fails
-// panics with a *PluginCallError (see pipeline/state.go); liquidgo v5 would
-// end the render with a *liquid.PanicError and its stack, so it is raised as
-// a Liquid error instead, which the render records with the plugin's
-// message. Any other panic is a bug and stays a panic.
-func callShortcode(fn func() string) string {
-	defer func() {
-		if r := recover(); r != nil {
-			if pce, ok := r.(*PluginCallError); ok {
-				liquid.Raise(pce)
-			}
-			panic(r)
-		}
-	}()
-	return fn()
 }
 
 // alloyBlockTag handles block shortcodes ({% tag %}body{% endtag %}).
@@ -656,7 +628,7 @@ func (t *alloyBlockTag) Parse(tokenizer *liquid.Tokenizer) error {
 
 func (t *alloyBlockTag) Render(context liquid.TagContext) string {
 	args := resolveTagArgs(parseTagTokens(t.markup), context)
-	return callShortcode(func() string { return t.fn(args, t.bodyText) })
+	return t.fn(args, t.bodyText)
 }
 
 func (t *alloyBlockTag) RenderToOutput(context liquid.TagContext, output *liquid.OutputBuffer) {
