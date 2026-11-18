@@ -2078,6 +2078,8 @@ inline:
 {% callout "warning" %}Don't do this in production.{% endcallout %}
 ```
 
+**Inline or block is decided where the shortcode is used (issue #1368).** A use is a block when the same template closes it with `{% endname %}`, and inline otherwise. Each template decides for itself, and that includes a partial loaded with `{% render %}` or `{% include %}`: a partial doesn't follow the page that includes it. So a page can use `{% box %}` inline and include a partial that uses `{% box %}…{% endbox %}`, or the other way round, and a partial can use a shortcode the page doesn't use at all. Tests: `internal/template/shortcode_partials_test.go`.
+
 **Shortcode calling convention (issue #981):**
 
 Shortcodes receive arguments as `[]string` and inner content as `string`. The calling convention defines how arguments are extracted and how empty returns are handled.
