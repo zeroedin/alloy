@@ -26,7 +26,9 @@ import (
 //  3. The list is built again after any step that can change a page, such
 //     as the plugin hooks that run between passes.
 //  4. Everything a template can do with site and site.pages gives the same
-//     output as before.
+//     output as before, except three uses of site itself that work only on
+//     a map: site | size, contains on site, and site["size"]. PLAN.md lists
+//     them. site.size is unchanged.
 //
 // See PLAN.md → "site.pages is built only when a template reads it
 // (issue #1360)".
@@ -40,12 +42,19 @@ var _ = Describe("site.pages is built only when a template reads it (issue #1360
 	// times as much, because each page's render allocated a copy of every
 	// page.
 
-	buildAllocations := func(pages int, layout string) float64 {
+	// buildAllocationsWith counts the allocations of a build of a site of
+	// pages pages, each with layout. The first page's body is firstBody
+	// when it isn't empty.
+	buildAllocationsWith := func(pages int, layout, firstBody string) float64 {
 		GinkgoHelper()
 		files := map[string]string{"layouts/default.liquid": layout}
 		for i := 0; i < pages; i++ {
+			body := fmt.Sprintf("Body %d", i)
+			if i == 0 && firstBody != "" {
+				body = firstBody
+			}
 			files[fmt.Sprintf("content/p%04d.md", i)] =
-				fmt.Sprintf("---\ntitle: Page %d\nlayout: default\n---\nBody %d", i, i)
+				fmt.Sprintf("---\ntitle: Page %d\nlayout: default\n---\n%s", i, body)
 		}
 		return testing.AllocsPerRun(2, func() {
 			result, err := pipeline.BuildWithContent(&config.Config{
@@ -56,6 +65,10 @@ var _ = Describe("site.pages is built only when a template reads it (issue #1360
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.PageCount).To(Equal(pages), "sanity: every page is built")
 		})
+	}
+	buildAllocations := func(pages int, layout string) float64 {
+		GinkgoHelper()
+		return buildAllocationsWith(pages, layout, "")
 	}
 
 	const (
@@ -91,6 +104,30 @@ var _ = Describe("site.pages is built only when a template reads it (issue #1360
 					"ratio means site.pages is built again for every page that "+
 					"reads it, not once per render pass",
 				smallSite, small, largeSite, large)
+		})
+
+		// Rule 1. Building site.pages once per pass keeps the ratios above
+		// in line, so they can't tell "built once" from "never built". So
+		// compare two builds of the same site that differ in one word: one
+		// page's body reads site.title in one, site.pages in the other.
+		// Building the list costs at least one allocation per page, so the
+		// second build must allocate that much more.
+		//
+		// Both builds have the tag, because a body with any Liquid in it
+		// costs over a thousand allocations more than one without. The read
+		// is in one body, not in the layout, because each read of site.pages
+		// costs an allocation of its own: a read on every page would cost
+		// one per page with no list built.
+		It("builds no list when no template reads site.pages", func() {
+			const layout = "<h1>{{ page.title }}</h1>{{ content }}"
+			unread := buildAllocationsWith(largeSite, layout, "{% if site.title %}x{% endif %}")
+			read := buildAllocationsWith(largeSite, layout, "{% if site.pages %}x{% endif %}")
+
+			Expect(read-unread).To(BeNumerically(">=", float64(largeSite)),
+				"reading site.pages once must cost at least one allocation per page "+
+					"more than reading site.title (%d pages: %.0f allocations unread, %.0f read). "+
+					"A smaller gap means the list is built even when no template reads it",
+				largeSite, unread, read)
 		})
 	})
 
@@ -176,7 +213,8 @@ var _ = Describe("site.pages is built only when a template reads it (issue #1360
 
 		It("passes site whole to a filter and loops over its keys", func() {
 			write("layouts/probe.liquid",
-				"JSON[{{ site | json }}] KEYS[{% for pair in site %}{{ pair[0] }};{% endfor %}]")
+				"JSON[{{ site | json }}] KEYS[{% for pair in site %}{{ pair[0] }};{% endfor %}] "+
+					"SIZE[{{ site.size }}]")
 
 			out := build(newConfig()).RenderedContent["index.md"]
 			Expect(out).To(ContainSubstring(`"baseURL":"https://example.com"`))
@@ -185,6 +223,7 @@ var _ = Describe("site.pages is built only when a template reads it (issue #1360
 				"site | json must still include the list of pages")
 			Expect(out).To(ContainSubstring("KEYS[baseURL;collections;data;pages;title;]"),
 				"looping over site must still give its keys, pages among them")
+			Expect(out).To(ContainSubstring("SIZE[5]"), "site.size is the number of site keys")
 		})
 
 		It("reads site.pages in a tag page and in another output format", func() {
@@ -258,6 +297,42 @@ var _ = Describe("site.pages is built only when a template reads it (issue #1360
 			Expect(err).NotTo(HaveOccurred())
 			Expect(second.RenderedContent["index.md"]).To(ContainSubstring("LIST[A,B,Home,]"))
 			Expect(second.RenderedContent["index.md"]).To(ContainSubstring("home edited"))
+		})
+
+		// Rule 3 in an incremental rebuild. Its page bodies and layouts
+		// render in two passes with the hooks between them, as in a full
+		// build. A list kept from the body pass would miss what the hook added.
+		It("shows front matter a hook added, in an incremental rebuild", func() {
+			write("plugins/badge.js", `export default function(alloy) {
+  alloy.hook('onContentLoaded', { pages: true, pageFields: ["*"] }, function(pages) {
+    for (var i = 0; i < pages.length; i++) { pages[i].frontMatter.badge = 'hooked'; }
+    return pages;
+  });
+}`)
+			write("layouts/probe.liquid",
+				"LAYOUT[{% for p in site.pages %}{{ p.badge }}|{% endfor %}] {{ content }}")
+			write("content/index.md",
+				"---\ntitle: Home\nlayout: probe\n---\nBODY[{% for p in site.pages %}{{ p.badge }}|{% endfor %}]")
+			cfg := newConfig()
+			config.ApplyDefaults(cfg)
+			registry, hooks, _ := pipeline.DiscoverPlugins(cfg)
+			DeferCleanup(registry.Close)
+			state, err := pipeline.InitPipelineState(cfg, registry, hooks)
+			Expect(err).NotTo(HaveOccurred())
+			first := build(cfg)
+
+			write("content/index.md",
+				"---\ntitle: Home\nlayout: probe\n---\nEDITED BODY[{% for p in site.pages %}{{ p.badge }}|{% endfor %}]")
+			second, err := pipeline.BuildIncremental(cfg, nil, first.Cache, []string{"content/index.md"},
+				pipeline.BuildOptions{PipelineState: state, CaptureRenderedContent: true})
+			Expect(err).NotTo(HaveOccurred())
+			// Only the re-rendered page goes through the hook in an incremental
+			// rebuild, so only its entry (Home, listed last) carries the field.
+			out := second.RenderedContent["index.md"]
+			Expect(out).To(ContainSubstring("EDITED"))
+			Expect(out).To(ContainSubstring("hooked|]"),
+				"the layout pass renders after onContentLoaded, so the re-rendered "+
+					"page's entry in site.pages must show the field the hook added")
 		})
 	})
 })
