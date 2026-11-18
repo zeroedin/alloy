@@ -586,6 +586,12 @@ type alloyBlockTag struct {
 }
 
 func (t *alloyBlockTag) Parse(tokenizer *liquid.Tokenizer) error {
+	// Inside {% liquid %}, a shortcode is a statement on its own line, with
+	// no {% %} for closeInlineShortcodes to close: it stays inline, as
+	// before issue #1367.
+	if tokenizer.ForLiquidTag() {
+		return nil
+	}
 	var body strings.Builder
 	for {
 		token := tokenizer.Shift()
