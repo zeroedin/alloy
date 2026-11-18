@@ -1906,6 +1906,16 @@ Building `site.pages` means making one template map for every page. Alloy does t
    - `site` passed whole to a filter (`{{ site | json }}`), and a loop over `site`'s keys
    - in a multilingual build, the pages of every language
 
+   Three uses of `site` itself change. `site` is no longer a map, so the parts of Liquid that work only on a map see it differently. These are accepted:
+
+   | Template | Before | Now |
+   |---|---|---|
+   | `{{ site \| size }}` | the number of `site` keys | `0` |
+   | `{% if site contains "title" %}` | true | false, for any key |
+   | `{{ site["size"] }}` | nothing (`site` has no `size` key) | the number of `site` keys |
+
+   `{{ site.size }}` still gives the number of `site` keys.
+
 This applies to `alloy build`, `alloy dev` and `alloy serve`. The full build and the incremental rebuild share the code that builds the template context.
 
 Why: before, every render built the list, whether or not the template read it, once per layout in the chain. The work for one page grew with the number of pages, so a build grew with the square of the page count. In a profile of a 1,000-page build, 83% of the build's own time went to these copies. Measured with a throwaway fix on a plain blog with a two-layout chain (rough numbers, about ±30%):
