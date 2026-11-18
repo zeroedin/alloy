@@ -1,24 +1,38 @@
 package template
 
 import (
+	gocontext "context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 
-	"github.com/Notifuse/liquidgo/liquid"
-	"github.com/Notifuse/liquidgo/liquid/tags"
+	"github.com/Notifuse/liquidgo/v5/liquid"
+	"github.com/Notifuse/liquidgo/v5/liquid/tags"
 )
 
-// liquidEngine adapts Notifuse/liquidgo to the TemplateEngine interface.
+// liquidEngine adapts Notifuse/liquidgo (v5) to the TemplateEngine interface.
+//
+// A liquidgo v5 environment is built once from its config and can't change
+// (issue #1363), so the engine collects tags and builds environments when
+// templates are parsed. Filters need no rebuild: the environment's filter
+// functions read the bridge's funcs map when they run.
 type liquidEngine struct {
-	env            *liquid.Environment
 	filters        *alloyFilterBridge
 	includesDir    string                    // layouts directory for resolving {% include %} / {% render %}
 	filterPatterns map[string]*regexp.Regexp // compiled regexes for dynamic filters, keyed by filter name
-	deferredTags   []deferredTagEntry        // tags registered via AddTag, applied per-Parse
+	deferredTags   []deferredTagEntry        // tags registered via AddTag, made inline or block per template
+	extraTags      map[string]liquid.TagConstructor
+
+	// envs holds one environment per set of shortcodes a template uses as
+	// blocks, keyed by their sorted names. AddTag and RegisterInlineTag
+	// clear it.
+	envMu sync.Mutex
+	envs  map[string]*liquid.Environment
 }
 
 // deferredTagEntry stores a tag registration for deferred liquidgo registration.
@@ -43,19 +57,95 @@ func NewLiquidEngineWithIncludes(includesDir string) TemplateEngine {
 }
 
 func newLiquidEngine() *liquidEngine {
-	env := liquid.NewEnvironment()
-	tags.RegisterStandardTags(env)
-
-	bridge := &alloyFilterBridge{
-		funcs: make(map[string]FilterFunc),
-	}
-	env.RegisterFilter(bridge)
-
 	return &liquidEngine{
-		env:            env,
-		filters:        bridge,
+		filters: &alloyFilterBridge{
+			funcs: make(map[string]FilterFunc),
+		},
 		filterPatterns: make(map[string]*regexp.Regexp),
+		extraTags:      make(map[string]liquid.TagConstructor),
+		envs:           make(map[string]*liquid.Environment),
 	}
+}
+
+// addTagConstructor adds a tag every environment of the engine has, such as
+// {% inline %}, and drops the environments built without it.
+func (e *liquidEngine) addTagConstructor(name string, ctor liquid.TagConstructor) {
+	e.envMu.Lock()
+	defer e.envMu.Unlock()
+	e.extraTags[name] = ctor
+	e.envs = make(map[string]*liquid.Environment)
+}
+
+// envFor returns the environment for the template source src. A shortcode
+// is a block in src when src has its {% endXxx %}, and inline otherwise:
+// this decides whether the tag consumes body tokens or returns
+// immediately. The same shortcode can be inline in one template and a block
+// in another, and an environment can't change once built, so one is built
+// and kept for each set of block shortcodes.
+func (e *liquidEngine) envFor(src string) (*liquid.Environment, error) {
+	e.envMu.Lock()
+	defer e.envMu.Unlock()
+
+	var blockNames []string
+	for _, dt := range e.deferredTags {
+		if strings.Contains(src, "{% "+dt.endTag) || strings.Contains(src, "{%- "+dt.endTag) {
+			blockNames = append(blockNames, dt.name)
+		}
+	}
+	sort.Strings(blockNames)
+	key := strings.Join(blockNames, "\x00")
+	if env, ok := e.envs[key]; ok {
+		return env, nil
+	}
+
+	isBlock := make(map[string]bool, len(blockNames))
+	for _, n := range blockNames {
+		isBlock[n] = true
+	}
+	tagMap := tags.Standard()
+	for name, ctor := range e.extraTags {
+		tagMap[name] = ctor
+	}
+	for _, dt := range e.deferredTags {
+		fn := dt.fn
+		if isBlock[dt.name] {
+			endTag := dt.endTag
+			tagMap[dt.name] = func(tagName, markup string, parseContext liquid.ParseContextInterface) (liquid.Node, error) {
+				return &alloyBlockTag{
+					Tag:    liquid.NewTag(tagName, markup, parseContext),
+					fn:     fn,
+					markup: markup,
+					endTag: endTag,
+				}, nil
+			}
+		} else {
+			tagMap[dt.name] = func(tagName, markup string, parseContext liquid.ParseContextInterface) (liquid.Node, error) {
+				return &alloyInlineTag{
+					Tag:    liquid.NewTag(tagName, markup, parseContext),
+					fn:     fn,
+					markup: markup,
+				}, nil
+			}
+		}
+	}
+
+	env, err := newAlloyEnvironment(tagMap, e.filters)
+	if err != nil {
+		return nil, err
+	}
+	e.envs[key] = env
+	return env, nil
+}
+
+// newAlloyEnvironment builds a liquidgo environment with Alloy's filters, in
+// strict mode: markup that doesn't parse fails the build instead of
+// rendering as nothing, as it did before v5 (issue #1363).
+func newAlloyEnvironment(tagMap map[string]liquid.TagConstructor, bridge *alloyFilterBridge) (*liquid.Environment, error) {
+	return liquid.NewEnvironment(liquid.EnvironmentConfig{
+		ErrorMode: liquid.ErrorModeStrict,
+		Tags:      tagMap,
+		Filters:   bridgeFilterDefs(bridge),
+	})
 }
 
 // SetIncludesDir sets the directory used to resolve {% include %} and {% render %} tags.
@@ -82,43 +172,12 @@ func (e *liquidEngine) Parse(name string, content []byte) (Template, error) {
 		}
 	}
 
-	// Register deferred tags — detect inline vs block by scanning the
-	// template source for {% endXxx %}. This determines whether Parse
-	// should consume body tokens or return immediately.
-	for _, dt := range e.deferredTags {
-		isBlock := strings.Contains(src, "{% "+dt.endTag) || strings.Contains(src, "{%- "+dt.endTag)
-		if isBlock {
-			endTag := dt.endTag
-			fn := dt.fn
-			e.env.RegisterTag(dt.name, tags.TagConstructor(
-				func(tagName, markup string, parseContext liquid.ParseContextInterface) (interface{}, error) {
-					return &alloyBlockTag{
-						Tag:    liquid.NewTag(tagName, markup, parseContext),
-						fn:     fn,
-						markup: markup,
-						endTag: endTag,
-					}, nil
-				},
-			))
-		} else {
-			fn := dt.fn
-			e.env.RegisterTag(dt.name, tags.TagConstructor(
-				func(tagName, markup string, parseContext liquid.ParseContextInterface) (interface{}, error) {
-					return &alloyInlineTag{
-						Tag:    liquid.NewTag(tagName, markup, parseContext),
-						fn:     fn,
-						markup: markup,
-					}, nil
-				},
-			))
-		}
+	env, err := e.envFor(src)
+	if err != nil {
+		return nil, fmt.Errorf("liquid environment for %s: %w", name, err)
 	}
 
-	opts := &liquid.TemplateOptions{
-		Environment:   e.env,
-		StrictFilters: true,
-	}
-	tpl, err := liquid.ParseTemplate(src, opts)
+	tpl, err := liquid.ParseTemplate(src, &liquid.TemplateOptions{Environment: env})
 	if err != nil {
 		errMsg := err.Error()
 		// Replace liquidgo's unresolved i18n key with a readable message
@@ -195,31 +254,35 @@ func (e *liquidEngine) AddFilter(name string, fn FilterFunc) error {
 }
 
 func (e *liquidEngine) AddTag(name string, fn TagFunc) error {
+	e.envMu.Lock()
+	defer e.envMu.Unlock()
 	e.deferredTags = append(e.deferredTags, deferredTagEntry{
 		name:   name,
 		endTag: "end" + name,
 		fn:     fn,
 	})
+	e.envs = make(map[string]*liquid.Environment)
 	return nil
 }
 
 func (t *liquidTemplate) Render(ctx map[string]interface{}) ([]byte, error) {
-	opts := &liquid.RenderOptions{
-		StrictFilters: true,
-	}
+	opts := []liquid.RenderOption{liquid.WithStrictFilters()}
 	if t.includesDir != "" {
-		opts.Registers = map[string]interface{}{
-			"file_system": &alloyFileSystem{root: t.includesDir, filterPatterns: t.filterPatterns},
-		}
+		opts = append(opts, liquid.WithFileSystem(
+			&alloyFileSystem{root: t.includesDir, filterPatterns: t.filterPatterns}))
 	}
-	result := t.tpl.Render(ctx, opts)
-	for _, err := range t.tpl.Errors() {
-		if _, ok := err.(*liquid.FileSystemError); ok && t.includesDir == "" {
+	res, err := t.tpl.Render(gocontext.Background(), ctx, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("liquid render error in %s: %s", t.name, err.Error())
+	}
+	for _, err := range res.Errors {
+		var fsErr *liquid.FileSystemError
+		if errors.As(err, &fsErr) && t.includesDir == "" {
 			continue
 		}
 		return nil, fmt.Errorf("liquid render error in %s: %s", t.name, err.Error())
 	}
-	return []byte(result), nil
+	return []byte(res.Output), nil
 }
 
 var (
@@ -229,15 +292,18 @@ var (
 
 func getDefaultEnv() *liquid.Environment {
 	defaultEnvOnce.Do(func() {
-		defaultEnv = liquid.NewEnvironment()
-		tags.RegisterStandardTags(defaultEnv)
 		bridge := &alloyFilterBridge{
 			funcs: make(map[string]FilterFunc, len(builtinFilters)),
 		}
 		for name, fn := range builtinFilters {
 			bridge.funcs[name] = fn
 		}
-		defaultEnv.RegisterFilter(bridge)
+		env, err := newAlloyEnvironment(tags.Standard(), bridge)
+		if err != nil {
+			// The config is fixed in code: an error is a bug, not input.
+			panic(fmt.Sprintf("alloy: building the default Liquid environment: %v", err))
+		}
+		defaultEnv = env
 	})
 	return defaultEnv
 }
@@ -245,24 +311,20 @@ func getDefaultEnv() *liquid.Environment {
 // RenderTemplate renders a template string with the given context.
 // Returns an error that includes the source file path on failure.
 func RenderTemplate(source string, sourcePath string, ctx map[string]interface{}) (string, error) {
-	opts := &liquid.TemplateOptions{
-		Environment:   getDefaultEnv(),
-		StrictFilters: true,
-	}
-	tpl, err := liquid.ParseTemplate(source, opts)
+	tpl, err := liquid.ParseTemplate(source, &liquid.TemplateOptions{Environment: getDefaultEnv()})
 	if err != nil {
 		errMsg := strings.ReplaceAll(err.Error(), "errors.syntax.unknown_tag", "unknown tag")
 		return "", fmt.Errorf("%s: %s", sourcePath, errMsg)
 	}
 	tpl.SetName(sourcePath)
-	renderOpts := &liquid.RenderOptions{
-		StrictFilters: true,
+	res, err := tpl.Render(gocontext.Background(), ctx, liquid.WithStrictFilters())
+	if err != nil {
+		return "", fmt.Errorf("%s: %s", sourcePath, err.Error())
 	}
-	result := tpl.Render(ctx, renderOpts)
-	if errs := tpl.Errors(); len(errs) > 0 {
-		return "", fmt.Errorf("%s: %s", sourcePath, errs[0].Error())
+	if len(res.Errors) > 0 {
+		return "", fmt.Errorf("%s: %s", sourcePath, res.Errors[0].Error())
 	}
-	return result, nil
+	return res.Output, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -308,22 +370,71 @@ func (fs *alloyFileSystem) ReadTemplateFile(templatePath string) (string, error)
 }
 
 // ---------------------------------------------------------------------------
-// alloyFilterBridge — exposes Alloy-specific filters to liquidgo's
-// reflection-based filter dispatch. liquidgo discovers exported methods on
-// registered filter structs and maps snake_case filter names to CamelCase
-// method names. Filters already in liquidgo's StandardFilters (upcase,
-// downcase, etc.) are not duplicated here.
+// alloyFilterBridge — exposes Alloy-specific filters to liquidgo. liquidgo v5
+// doesn't find filters by method name: bridgeFilterDefs declares each one.
+// Declared filters take precedence over liquidgo's standard filters of the
+// same name (where, sort, map, reverse...). Filters only in liquidgo's
+// standard set (upcase, downcase, etc.) are not duplicated here.
 // ---------------------------------------------------------------------------
 
 type alloyFilterBridge struct {
 	funcs map[string]FilterFunc
 }
 
-// The methods below are discovered by liquidgo via reflection. Each proxies
-// to the corresponding FilterFunc stored in the funcs map (populated by
-// AddFilter / RegisterBuiltinFilters). If the func hasn't been registered
-// yet (e.g. the method is called before AddFilter), the method falls back
-// to the package-level function directly.
+// bridgeMethod is the signature of the bridge's filter methods.
+type bridgeMethod func(input interface{}, args ...interface{}) interface{}
+
+// bridgeFilterDefs declares the bridge's filters to liquidgo, by the names
+// templates write. plugin_filter dispatches every filter a template
+// pre-processing step rewrote to it (see rewriteFilterToPlugin).
+func bridgeFilterDefs(f *alloyFilterBridge) []liquid.FilterDef {
+	methods := []struct {
+		name string
+		fn   bridgeMethod
+	}{
+		{"plugin_filter", f.PluginFilter},
+		{"reverse", f.Reverse},
+		{"slugify", f.Slugify},
+		{"contains", f.Contains},
+		{"group_by", f.GroupBy},
+		{"where", f.Where},
+		{"sort", f.Sort},
+		{"map", f.Map},
+		{"flatten", f.Flatten},
+		{"intersect", f.Intersect},
+		{"union", f.Union},
+		{"complement", f.Complement},
+		{"absolute_url", f.AbsoluteURL},
+		{"markdownify", f.Markdownify},
+		// Parse rewrites findRE and replaceRE to plugin_filter once they
+		// are registered, but RenderTemplate parses its source unchanged.
+		{"findRE", f.FindRE},
+		{"replaceRE", f.ReplaceRE},
+		{"json", f.JSON},
+		{"cachebust", f.Cachebust},
+		{"get_hash", f.GetHash},
+		{"url", f.URL},
+	}
+	defs := make([]liquid.FilterDef, len(methods))
+	for i, m := range methods {
+		defs[i] = liquid.Filter(m.name, wrapBridgeMethod(m.fn))
+	}
+	return defs
+}
+
+// wrapBridgeMethod adapts a bridge method to liquidgo's filter signature.
+// A plugin filter that fails panics with a *PluginCallError (see
+// pipeline/state.go), which liquidgo records as a raised Liquid error.
+func wrapBridgeMethod(fn bridgeMethod) liquid.FilterFunc {
+	return func(_ *liquid.Context, input interface{}, args ...interface{}) (interface{}, error) {
+		return fn(input, args...), nil
+	}
+}
+
+// The methods below are declared to liquidgo by bridgeFilterDefs. Each
+// proxies to the corresponding FilterFunc stored in the funcs map
+// (populated by AddFilter / RegisterBuiltinFilters). If the func hasn't
+// been registered, the input passes through unchanged.
 
 func (f *alloyFilterBridge) call(name string, input interface{}, args ...interface{}) interface{} {
 	if fn, ok := f.funcs[name]; ok {
@@ -333,9 +444,9 @@ func (f *alloyFilterBridge) call(name string, input interface{}, args ...interfa
 }
 
 // PluginFilter dispatches novel/plugin filters that don't have their own
-// exported method on the bridge. Template pre-processing rewrites
+// declared name on the bridge. Template pre-processing rewrites
 // {{ x | myFilter }} → {{ x | plugin_filter: "myFilter" }} so liquidgo
-// routes here via reflection. The first arg is the filter name.
+// routes here. The first arg is the filter name.
 func (f *alloyFilterBridge) PluginFilter(input interface{}, args ...interface{}) interface{} {
 	if len(args) >= 1 {
 		if name, ok := args[0].(string); ok {
@@ -436,12 +547,6 @@ func (f *alloyFilterBridge) GetHash(input interface{}, args ...interface{}) inte
 	return f.call("get_hash", input, args...)
 }
 
-// Url is the Go-exported name for the "url" filter.
-// liquidgo converts "url" → "URL" via its acronym map, so we provide both.
-func (f *alloyFilterBridge) Url(input interface{}, args ...interface{}) interface{} {
-	return f.call("url", input, args...)
-}
-
 func (f *alloyFilterBridge) URL(input interface{}, args ...interface{}) interface{} {
 	return f.call("url", input, args...)
 }
@@ -449,8 +554,10 @@ func (f *alloyFilterBridge) URL(input interface{}, args ...interface{}) interfac
 // ---------------------------------------------------------------------------
 // PluginCallError wraps a plugin runtime error (filter or shortcode call
 // failure) for propagation through the template rendering pipeline via panic.
-// Implements liquid.LiquidError so liquidgo's internal recover preserves
-// the error message instead of replacing it with a generic "internal" string.
+// It implements liquid.LiquidError, so liquidgo treats the panic as a raised
+// Liquid error, as liquid.Raise does: the render records it with its own
+// message. Without that, liquidgo v5 would end the render with a
+// *liquid.PanicError, or record the generic message "internal".
 // ---------------------------------------------------------------------------
 
 type PluginCallError struct {
@@ -496,8 +603,8 @@ func (t *alloyInlineTag) Render(context liquid.TagContext) string {
 	return t.fn(args, "")
 }
 
-func (t *alloyInlineTag) RenderToOutputBuffer(context liquid.TagContext, output *string) {
-	*output += t.Render(context)
+func (t *alloyInlineTag) RenderToOutput(context liquid.TagContext, output *liquid.OutputBuffer) {
+	output.WriteString(t.Render(context))
 }
 
 // alloyBlockTag handles block shortcodes ({% tag %}body{% endtag %}).
@@ -536,8 +643,8 @@ func (t *alloyBlockTag) Render(context liquid.TagContext) string {
 	return t.fn(args, t.bodyText)
 }
 
-func (t *alloyBlockTag) RenderToOutputBuffer(context liquid.TagContext, output *string) {
-	*output += t.Render(context)
+func (t *alloyBlockTag) RenderToOutput(context liquid.TagContext, output *liquid.OutputBuffer) {
+	output.WriteString(t.Render(context))
 }
 
 // parsedArg represents a single argument token from tag markup.
