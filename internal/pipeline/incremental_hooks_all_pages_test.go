@@ -13,7 +13,8 @@ import (
 
 // ── Hooks see every page in an incremental rebuild (issue #1377) ────────
 // In an alloy dev rebuild, onContentLoaded and onDataCascadeReady run on
-// every page, as in a full build, with every page's rendered body. A hook
+// every page, as in a full build. onContentLoaded gets every page's
+// rendered body; onDataCascadeReady gets path and data only. A hook
 // is asked again on every rebuild, not answered from a previous one. Only
 // the pages the rebuild already re-renders go through their layout and get
 // written.

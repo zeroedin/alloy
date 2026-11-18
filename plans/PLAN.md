@@ -1535,7 +1535,7 @@ A precise fix records which data each page reads. That's tracked in #1326 (see "
 
 **Hooks see every page in an incremental rebuild (issue #1377).** `onContentLoaded` and `onDataCascadeReady` run on every page in an incremental rebuild, as in a full build, not only on the pages it re-renders. So what they add to a page's front matter is on every page that a re-rendered page lists through `site.pages`, as in a full build.
 
-- **Same input as a full build.** Each hook gets every page, in the same order and with the same fields as in a full build. That includes each page's rendered body (`html`), so every page's body is rendered too. A hook is asked again on every rebuild, not answered from a previous one, so a hook whose result changes between builds, such as one that reads the time or another page, gives its new result.
+- **Same input as a full build.** Each hook gets every page, in the same order and with the same fields as in a full build. For `onContentLoaded` that includes each page's rendered body (`html`), so every page's body is rendered too. `onDataCascadeReady` gets each page's `path` and `data`, as in a full build, with no `html`. A hook is asked again on every rebuild, not answered from a previous one, so a hook whose result changes between builds, such as one that reads the time or another page, gives its new result.
 - **Only the pages that need it are re-rendered.** Running the hooks on every page doesn't change which pages go through their layout and get written: only the pages an incremental rebuild already re-renders.
 - **`onContentTransformed` is unchanged.** It changes only a page's own HTML and table of contents, which only that page's output shows, so it still runs only on the pages that are re-rendered.
 
