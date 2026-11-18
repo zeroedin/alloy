@@ -406,6 +406,10 @@ func bridgeFilterDefs(f *alloyFilterBridge) []liquid.FilterDef {
 		{"complement", f.Complement},
 		{"absolute_url", f.AbsoluteURL},
 		{"markdownify", f.Markdownify},
+		// Parse rewrites findRE and replaceRE to plugin_filter once they
+		// are registered, but RenderTemplate parses its source unchanged.
+		{"findRE", f.FindRE},
+		{"replaceRE", f.ReplaceRE},
 		{"json", f.JSON},
 		{"cachebust", f.Cachebust},
 		{"get_hash", f.GetHash},
@@ -521,6 +525,14 @@ func (f *alloyFilterBridge) AbsoluteURL(input interface{}, args ...interface{}) 
 
 func (f *alloyFilterBridge) Markdownify(input interface{}, args ...interface{}) interface{} {
 	return f.call("markdownify", input, args...)
+}
+
+func (f *alloyFilterBridge) FindRE(input interface{}, args ...interface{}) interface{} {
+	return f.call("findRE", input, args...)
+}
+
+func (f *alloyFilterBridge) ReplaceRE(input interface{}, args ...interface{}) interface{} {
+	return f.call("replaceRE", input, args...)
 }
 
 func (f *alloyFilterBridge) JSON(input interface{}, args ...interface{}) interface{} {
