@@ -472,6 +472,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		LayoutCache:    make(map[string]tmpl.Template),
 		PermalinkCfg:   permalinkCfg,
 		Registry:       ps.Registry,
+		SitePages:      tmpl.NewSitePages(),
 	}
 	rendered, renderErr := renderPages(pagesToRender, rc, nil)
 	if renderErr != nil {
@@ -592,7 +593,10 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
-	// Pass 2: layout resolution + rendering (issue #628)
+	// Pass 2: layout resolution + rendering (issue #628). A new site.pages
+	// list for this pass: the hooks above may have changed pages
+	// (issue #1360).
+	rc.SitePages = tmpl.NewSitePages()
 	layoutsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts)
 	for _, page := range pagesToRender {
 		layoutPath, err := tmpl.ResolveLayout(page, layoutsDir, permalinkCfg)
