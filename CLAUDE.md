@@ -1,5 +1,15 @@
 # Working on Alloy
 
+## Commands
+- Build: `go build -o alloy .`
+- All tests, as CI runs them: `go test -race ./...`
+- One package: `go test ./internal/pipeline/`
+- One spec: `go test ./internal/pipeline/ -args -ginkgo.focus="issue #1366"`
+- Vet and format: `go vet ./...` and `gofmt -l .`, which prints nothing when clean
+- Known vulnerabilities, as CI checks them: `go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...`
+- The docs site: the repo root is an Alloy project, so `./alloy build` builds it into `_site/`.
+- Node.js is optional. Tests that need it skip without it.
+
 ## Conventional Commits
 Commit messages and PR titles follow [Conventional Commits](https://www.conventionalcommits.org/):
 `type(scope): summary (#issue)`, with the summary in lowercase and the imperative mood.
