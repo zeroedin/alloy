@@ -177,7 +177,7 @@ var _ = Describe("Markdown-only Goldmark invariant (issue #1249)", func() {
 			Expect(err).To(HaveOccurred(),
 				"the > marker must survive an .html file and reach the engine — "+
 					"the engine's native error is the specified safety net")
-			Expect(err.Error()).To(ContainSubstring("unknown tag"),
+			Expect(err.Error()).To(MatchRegexp("(?i)unknown tag"),
 				"liquidgo must be the thing that rejects it, proving no Goldmark "+
 					"stage stripped the marker first")
 			Expect(err.Error()).To(ContainSubstring("page.html"))
@@ -193,7 +193,7 @@ var _ = Describe("Markdown-only Goldmark invariant (issue #1249)", func() {
 			Expect(err.Error()).NotTo(ContainSubstring("unterminated raw block shortcode"),
 				"the Markdown-stage unterminated-block error must never fire for an "+
 					".html file — reaching it proves Goldmark parsed an .html body")
-			Expect(err.Error()).To(ContainSubstring("unknown tag"),
+			Expect(err.Error()).To(MatchRegexp("(?i)unknown tag"),
 				"the engine's own error is the only failure mode here")
 		})
 	})

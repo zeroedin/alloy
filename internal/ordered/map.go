@@ -5,6 +5,8 @@ import (
 	stdjson "encoding/json"
 	"fmt"
 	"io"
+
+	"github.com/Notifuse/liquidgo/v5/liquid"
 )
 
 type Map struct {
@@ -178,10 +180,27 @@ func (m *Map) Each(fn func(interface{})) {
 	}
 }
 
-// LiquidMethodMissing enables property access from Liquid templates.
-// {{ site.data.team.alice }} calls LiquidMethodMissing("alice").
+// LiquidMethodMissing returns the value for key, or nil when there is none.
+// The old liquidgo called it for {{ site.data.team.alice }}; liquidgo v5
+// calls LiquidGet.
 func (m *Map) LiquidMethodMissing(key string) interface{} {
 	return m.values[key]
+}
+
+// LiquidGet is how liquidgo v5 reads a key of the map in a template
+// (issue #1363): {{ site.data.team.alice }}, .size and .first. As with the
+// old library, which found the Size and First methods before the keys,
+// size and first win over a key of the same name. A missing key reads as
+// nothing.
+func (m *Map) LiquidGet(_ *liquid.Context, key string) (interface{}, bool, error) {
+	switch key {
+	case "size":
+		return m.Size(), true, nil
+	case "first":
+		return m.First(), true, nil
+	}
+	v, ok := m.values[key]
+	return v, ok, nil
 }
 
 // Size returns the number of entries (accessed as .size in Liquid).
