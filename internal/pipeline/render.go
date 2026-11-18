@@ -22,6 +22,14 @@ import (
 // When engine is non-nil, it is used for template rendering (with custom filters).
 // When engine is nil (incremental/SSR-on-demand paths), the standalone
 // RenderTemplate is used with strict filters.
+// templateContext builds page's template context. Its site.pages is built
+// on first read, once for the renders that share rc.SitePages (issue #1360).
+func (rc *RenderContext) templateContext(page *content.Page) *tmpl.TemplateContext {
+	tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "")
+	tc.Site.PagesBuilt = rc.SitePages
+	return tc
+}
+
 func renderPages(pages []*content.Page, rc *RenderContext, reporter ProgressReporter) ([]string, error) {
 	cfg := rc.Cfg
 	mdOpts := content.MarkdownOptions{
@@ -93,7 +101,7 @@ func renderPages(pages []*content.Page, rc *RenderContext, reporter ProgressRepo
 		}
 
 		if hasTemplateSyntax(html) {
-			tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "")
+			tc := rc.templateContext(page)
 			tc.Content = string(html)
 			ctx := tc.ToMap()
 			if page.SourcePath != "" {
@@ -288,7 +296,7 @@ func renderPageFormats(page *content.Page, layoutsDir string, rc *RenderContext)
 		if err != nil {
 			return fmt.Errorf("format layout: %w", err)
 		}
-		fmtCtx := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "").ToMap()
+		fmtCtx := rc.templateContext(page).ToMap()
 		fmtCtx["content"] = page.HTML()
 		fmtResult, err := fmtTpl.Render(fmtCtx)
 		if err != nil {
@@ -324,8 +332,7 @@ func renderPageThroughLayouts(page *content.Page, layoutPath, layoutsDir string,
 			return err
 		}
 
-		tc := tmpl.BuildTemplateContext(page, combinedSiteDataForPage(rc.Cfg, rc.SiteData, rc.LangContexts, page), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "")
-		ctx := tc.ToMap()
+		ctx := rc.templateContext(page).ToMap()
 		ctx["content"] = page.HTML()
 		layoutResult, err := tpl.Render(ctx)
 		if err != nil {

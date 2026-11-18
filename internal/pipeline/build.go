@@ -125,6 +125,10 @@ type RenderContext struct {
 	Goldmark       goldmark.Markdown
 	PermalinkCfg   map[string]string
 	Registry       *plugin.Registry
+	// SitePages builds site.pages once for the renders of a pass, on first
+	// read (issue #1360). Each pass gets a new one, so a page a hook changed
+	// between passes is listed as it is now.
+	SitePages *tmpl.SitePages
 }
 
 // Build runs the complete build pipeline (Phase 0 through Phase 3).
@@ -692,6 +696,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// and options are identical across batches since they come from the
 	// same config and engine.
 	var sharedGoldmark goldmark.Markdown
+	contentSitePages := tmpl.NewSitePages()
 	for i := range batches {
 		rc := &RenderContext{
 			Cfg:            cfg,
@@ -705,6 +710,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			Goldmark:       sharedGoldmark,
 			PermalinkCfg:   permalinkCfg,
 			Registry:       registry,
+			SitePages:      contentSitePages,
 		}
 		batchRendered, renderErr := renderPages(batches[i].pages, rc, reporter)
 		if renderErr != nil {
@@ -871,6 +877,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	reportStartStage(reporter, "Layouts", len(pages))
 	layoutPageIdx := 0
 	layoutCache := make(map[string]tmpl.Template)
+	// A new list for this pass: the hooks above may have changed pages.
+	layoutSitePages := tmpl.NewSitePages()
 	for _, batch := range batches {
 		rc := &RenderContext{
 			Cfg:            cfg,
@@ -884,6 +892,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			LayoutCache:    layoutCache,
 			PermalinkCfg:   permalinkCfg,
 			Registry:       registry,
+			SitePages:      layoutSitePages,
 		}
 		for _, page := range batch.pages {
 			var pageStart time.Time
