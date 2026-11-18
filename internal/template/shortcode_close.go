@@ -4,8 +4,8 @@ import "regexp"
 
 // tagPattern finds a Liquid tag and its name: {% name ... %}, with any
 // spacing and "-" whitespace control on either side. Group 1 is the name,
-// group 2 the "-" of a closing "-%}".
-var tagPattern = regexp.MustCompile(`(?s)\{%-?\s*([A-Za-z_]\w*).*?(-?)%\}`)
+// a word, as Liquid's own tag pattern has it.
+var tagPattern = regexp.MustCompile(`(?s)\{%-?\s*([A-Za-z_]\w*).*?%\}`)
 
 // skippedRegions are the Liquid tags whose body is not markup: a shortcode
 // written inside them is text, and stays as it is.
@@ -17,9 +17,8 @@ var skippedRegions = map[string]string{
 
 // sourceTag is one tag of a template's source.
 type sourceTag struct {
-	start, end int
-	name       string
-	trimRight  bool // the tag ends with "-%}"
+	end  int // the index just after the tag's %}
+	name string
 }
 
 // closeInlineShortcodes returns src with an {% endname %} added after each
@@ -68,14 +67,9 @@ func closeInlineShortcodes(src string, names map[string]bool) string {
 	out := make([]byte, 0, len(src)+len(inserts)*16)
 	last := 0
 	for _, t := range inserts {
+		// A use's "-%}" still trims the text after the added end tag.
 		out = append(out, src[last:t.end]...)
-		// The use's "-%}" trims the text after it; the added end tag
-		// carries it, so the text after the end tag is still trimmed.
-		if t.trimRight {
-			out = append(out, "{% end"+t.name+" -%}"...)
-		} else {
-			out = append(out, "{% end"+t.name+" %}"...)
-		}
+		out = append(out, "{% end"+t.name+" %}"...)
 		last = t.end
 	}
 	out = append(out, src[last:]...)
@@ -87,12 +81,7 @@ func scanTags(src string) []sourceTag {
 	matches := tagPattern.FindAllStringSubmatchIndex(src, -1)
 	tags := make([]sourceTag, len(matches))
 	for i, m := range matches {
-		tags[i] = sourceTag{
-			start:     m[0],
-			end:       m[1],
-			name:      src[m[2]:m[3]],
-			trimRight: m[5] > m[4],
-		}
+		tags[i] = sourceTag{end: m[1], name: src[m[2]:m[3]]}
 	}
 	return tags
 }
