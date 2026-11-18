@@ -6,6 +6,7 @@ import (
 
 	"github.com/zeroedin/alloy/internal/config"
 	"github.com/zeroedin/alloy/internal/pipeline"
+	"github.com/zeroedin/alloy/internal/plugin"
 )
 
 // ── Plugin filters pass lists and objects as values (issue #1366) ──────
@@ -28,13 +29,15 @@ var _ = Describe("Plugin filters pass lists and objects as values (issue #1366)"
 	// The probe filters, written once for both runtimes:
 	//   seen  - shows the type and JSON of what the filter received
 	//   keys  - the object's keys, as an array
-	//   pair  - an object with two keys, a then b
+	//   pair  - an object with two keys, b then a (not sorted order)
+	//   meta  - an object with its own size and first keys
 	//   items - an array
 	//   dbl   - a number times two
 	const filters = `export default function(alloy) {
   alloy.filter("seen", (v) => typeof v + ":" + JSON.stringify(v));
   alloy.filter("keys", (o) => Object.keys(o ?? {}));
-  alloy.filter("pair", (s) => ({ a: s + "1", b: s + "2" }));
+  alloy.filter("pair", (s) => ({ b: s + "2", a: s + "1" }));
+  alloy.filter("meta", (s) => ({ size: "large", first: "primary" }));
   alloy.filter("items", (s) => [s, s + s, 3]);
   alloy.filter("dbl", (n) => n * 2);
 }`
@@ -46,12 +49,14 @@ var _ = Describe("Plugin filters pass lists and objects as values (issue #1366)"
 		`IN-FRONTMATTER[{{ page.tags | seen }}]` +
 		`IN-STRING[{{ "hi" | seen }}]` +
 		`IN-NUMBER[{{ 7 | seen }}]` +
+		`IN-BIG-NUMBER[{{ 3000000000 | seen }}]` +
 		`IN-DATE[{{ page.date | seen }}]` +
 		`KEYS[{{ site.data.nav | keys | join: "," }}]` +
 		`KEYS-SIZE[{{ site.data.nav | keys | size }}]` +
 		`KEYS-FIRST[{{ site.data.nav | keys | first }}]` +
 		`{% assign o = "x" | pair %}OUT-OBJECT[{{ o.a }}|{{ o.b }}]` +
 		`OUT-OBJECT-LOOP[{% for kv in o %}{{ kv[0] }};{% endfor %}]` +
+		`{% assign m = "x" | meta %}OUT-OWN-KEYS[{{ m.size }}|{{ m.first }}]` +
 		`{% assign l = "y" | items %}OUT-LIST[{{ l.size }}|{{ l.first }}|{{ l | join: "," }}]` +
 		`OUT-NUMBER[{{ 3 | dbl }}]`
 
@@ -82,7 +87,13 @@ var _ = Describe("Plugin filters pass lists and objects as values (issue #1366)"
 		rt := rt
 		Describe("on "+rt.name, Ordered, ContinueOnFailure, func() {
 			var out string
-			BeforeAll(func() { out = build(rt.line) })
+			BeforeAll(func() {
+				// Node is optional for running the tests (README).
+				if rt.line != "" && plugin.CheckNodeAvailable() != nil {
+					Skip("node is not installed")
+				}
+				out = build(rt.line)
+			})
 
 			It("receives a data file object as an object, keys in file order", func() {
 				Expect(out).To(ContainSubstring(`IN-OBJECT[object:{"zebra":"z","apple":"a","middle":"m"}]`))
@@ -105,6 +116,12 @@ var _ = Describe("Plugin filters pass lists and objects as values (issue #1366)"
 			It("returns an object the template can read by key", func() {
 				Expect(out).To(ContainSubstring(`OUT-OBJECT[x1|x2]`))
 			})
+			It("returns an object whose own size and first keys win", func() {
+				Expect(out).To(ContainSubstring(`OUT-OWN-KEYS[large|primary]`))
+			})
+			It("receives an integer too big for 32 bits as it is", func() {
+				Expect(out).To(ContainSubstring(`IN-BIG-NUMBER[number:3000000000]`))
+			})
 
 			// Guards: these work on both runtimes today.
 			It("still receives strings and numbers as they are (guard)", func() {
@@ -117,7 +134,8 @@ var _ = Describe("Plugin filters pass lists and objects as values (issue #1366)"
 
 	// Key order of a returned object is QuickJS's alone for now: a Node
 	// filter's result is decoded into a Go map, which has no order (#1374).
+	// The filter writes b before a, so a sorted decoder fails this.
 	It("returns an object whose keys keep their order on QuickJS", func() {
-		Expect(build("")).To(ContainSubstring(`OUT-OBJECT-LOOP[a;b;]`))
+		Expect(build("")).To(ContainSubstring(`OUT-OBJECT-LOOP[b;a;]`))
 	})
 })
