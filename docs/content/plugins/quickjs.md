@@ -65,7 +65,7 @@ Use in templates:
 {{ page.score | percentage: page.maxScore }}
 ```
 
-Filter arguments are passed as additional parameters after the input value.
+Filter arguments are passed as additional parameters after the input value. Lists and objects arrive as arrays and objects, and an array or object a filter returns comes back as a list or object: see [What a filter receives and returns](/plugins/#what-a-filter-receives-and-returns).
 
 ## Registering Shortcodes
 
