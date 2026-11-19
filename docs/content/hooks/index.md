@@ -350,13 +350,15 @@ alloy.hook("onContentLoaded", {
 
 Changes to `html` are applied via `SetRenderedBody` — the modified HTML replaces the rendered content before layout rendering.
 
-The return array must be the same length and order as the input. Virtual page injection is not supported here — use `onPagesReady` instead.
+The return array must be the same length as the input. Virtual page injection is not supported here — use `onPagesReady` instead.
+
+Alloy applies each returned entry to the page with its `path` and `url`, so the order of the entries doesn't matter. A paginated file makes several pages with one `path`, so each entry needs its page's `url`. A hook that changes the pages it gets, or builds its entries with `{ ...page }`, keeps it. If an entry has no `url`, or a `url` no page has, it's matched by `path` alone when only one page has that path. When several pages share the path, `alloy build` fails with an error naming the hook and the path, and an `alloy dev` rebuild logs it as a warning and applies none of that hook's changes.
 
 In `alloy dev`, each rebuild runs this hook again on every page, with every page's rendered `html`, not only on the pages the rebuild re-renders. So what it adds stays on every page, for example in a layout that loops over `site.pages`.
 
 ### onDataCascadeReady
 
-Fires once with the full pages array after the data cascade is resolved. Each entry has `path` and `data`.
+Fires once with the full pages array after the data cascade is resolved. Each entry has `path`, `url` and `data`. Only changes to `data` are applied back, to the page with the entry's `path` and `url`, as for [`onContentLoaded`](#oncontentloaded).
 
 ```javascript
 alloy.hook("onDataCascadeReady", { pages: true }, (pages) => {

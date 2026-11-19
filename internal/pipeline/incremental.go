@@ -532,33 +532,16 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				if len(returnedPages) != len(contentPayload) {
 					log.Printf("warning: plugin hook onContentLoaded: returned %d pages but input had %d; ignoring mutations", len(returnedPages), len(contentPayload))
 				} else {
-					scopedPaths := make(map[string]bool, len(contentPayload))
-					for _, cp := range contentPayload {
-						scopedPaths[cp.Path] = true
-					}
-					pathToIdx := make(map[string]int, len(hookPages))
-					for i, page := range hookPages {
-						pathToIdx[page.RelPath] = i
-					}
-					for _, rp := range returnedPages {
-						if pageMap, ok := toGoMap(rp); ok {
-							returnedPath, _ := pageMap["path"].(string)
-							if !scopedPaths[returnedPath] {
-								continue
-							}
-							origIdx, found := pathToIdx[returnedPath]
-							if !found {
-								continue
-							}
-							if fm, ok := toGoMap(pageMap["frontMatter"]); ok {
-								for k, v := range fm {
-									hookPages[origIdx].FrontMatter[k] = v
-								}
-							}
-							if htmlVal, ok := pageMap["html"]; ok {
-								if htmlStr, ok := htmlVal.(string); ok {
-									hookPages[origIdx].SetRenderedBody([]byte(htmlStr))
-								}
+					// Each entry goes to the page with its path and url
+					// (issue #1391). An entry that can't be placed drops
+					// all of this hook's changes, as a count mismatch does.
+					matches, matchErr := matchHookEntries(hookPages, pagePayloadKeys(contentPayload), returnedPages)
+					if matchErr != nil {
+						log.Printf("warning: plugin hook onContentLoaded: %v; ignoring mutations", matchErr)
+					} else {
+						for n, rp := range returnedPages {
+							if matches[n] >= 0 {
+								applyContentLoadedEntry(hookPages[matches[n]], rp)
 							}
 						}
 					}
@@ -575,26 +558,16 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 				if len(returnedPages) != len(cascadePayload) {
 					log.Printf("warning: plugin hook onDataCascadeReady: returned %d pages but input had %d; ignoring mutations", len(returnedPages), len(cascadePayload))
 				} else {
-					scopedPaths := make(map[string]bool, len(cascadePayload))
-					for _, cp := range cascadePayload {
-						scopedPaths[cp.Path] = true
-					}
-					pathToIdx := make(map[string]int, len(hookPages))
-					for i, page := range hookPages {
-						pathToIdx[page.RelPath] = i
-					}
-					for _, rp := range returnedPages {
-						if pageMap, ok := toGoMap(rp); ok {
-							if data, ok := toGoMap(pageMap["data"]); ok {
-								returnedPath, _ := pageMap["path"].(string)
-								if !scopedPaths[returnedPath] {
-									continue
-								}
-								if origIdx, ok := pathToIdx[returnedPath]; ok {
-									for k, v := range data {
-										hookPages[origIdx].FrontMatter[k] = v
-									}
-								}
+					// Each entry goes to the page with its path and url
+					// (issue #1391). An entry that can't be placed drops
+					// all of this hook's changes, as a count mismatch does.
+					matches, matchErr := matchHookEntries(hookPages, cascadePayloadKeys(cascadePayload), returnedPages)
+					if matchErr != nil {
+						log.Printf("warning: plugin hook onDataCascadeReady: %v; ignoring mutations", matchErr)
+					} else {
+						for n, rp := range returnedPages {
+							if matches[n] >= 0 {
+								applyCascadeEntry(hookPages[matches[n]], rp)
 							}
 						}
 					}

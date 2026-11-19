@@ -780,34 +780,14 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			if len(returnedPages) < inputLen {
 				return nil, fmt.Errorf("plugin hook onContentLoaded: returned %d pages but input had %d — plugins must not remove pages", len(returnedPages), inputLen)
 			}
-			scopedPaths := make(map[string]bool, len(contentPayload))
-			for _, cp := range contentPayload {
-				scopedPaths[cp.Path] = true
+			// Each entry goes to the page with its path and url (issue #1391).
+			matches, err := matchHookEntries(pages, pagePayloadKeys(contentPayload), returnedPages)
+			if err != nil {
+				return nil, fmt.Errorf("plugin hook onContentLoaded: %w", err)
 			}
-			pathToIdx := make(map[string]int, len(pages))
-			for i, page := range pages {
-				pathToIdx[page.RelPath] = i
-			}
-			for _, rp := range returnedPages {
-				if pageMap, ok := toGoMap(rp); ok {
-					returnedPath, _ := pageMap["path"].(string)
-					if !scopedPaths[returnedPath] {
-						continue
-					}
-					origIdx, found := pathToIdx[returnedPath]
-					if !found {
-						continue
-					}
-					if fm, ok := toGoMap(pageMap["frontMatter"]); ok {
-						for k, v := range fm {
-							pages[origIdx].FrontMatter[k] = v
-						}
-					}
-					if htmlVal, ok := pageMap["html"]; ok {
-						if htmlStr, ok := htmlVal.(string); ok {
-							pages[origIdx].SetRenderedBody([]byte(htmlStr))
-						}
-					}
+			for n, rp := range returnedPages {
+				if matches[n] >= 0 {
+					applyContentLoadedEntry(pages[matches[n]], rp)
 				}
 			}
 		}
@@ -827,27 +807,14 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			if len(returnedPages) < inputLen {
 				return nil, fmt.Errorf("plugin hook onDataCascadeReady: returned %d pages but input had %d — plugins must not remove pages", len(returnedPages), inputLen)
 			}
-			scopedPaths := make(map[string]bool, len(cascadePayload))
-			for _, cp := range cascadePayload {
-				scopedPaths[cp.Path] = true
+			// Each entry goes to the page with its path and url (issue #1391).
+			matches, err := matchHookEntries(pages, cascadePayloadKeys(cascadePayload), returnedPages)
+			if err != nil {
+				return nil, fmt.Errorf("plugin hook onDataCascadeReady: %w", err)
 			}
-			pathToIdx := make(map[string]int, len(pages))
-			for i, page := range pages {
-				pathToIdx[page.RelPath] = i
-			}
-			for _, rp := range returnedPages {
-				if pageMap, ok := toGoMap(rp); ok {
-					if data, ok := toGoMap(pageMap["data"]); ok {
-						returnedPath, _ := pageMap["path"].(string)
-						if !scopedPaths[returnedPath] {
-							continue
-						}
-						if origIdx, ok := pathToIdx[returnedPath]; ok {
-							for k, v := range data {
-								pages[origIdx].FrontMatter[k] = v
-							}
-						}
-					}
+			for n, rp := range returnedPages {
+				if matches[n] >= 0 {
+					applyCascadeEntry(pages[matches[n]], rp)
 				}
 			}
 		}

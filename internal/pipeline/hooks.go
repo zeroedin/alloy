@@ -228,10 +228,122 @@ func serializePagesForCascadeHook(pages []*content.Page, scope *plugin.HookScope
 		}
 		result = append(result, plugin.HookCascadePayload{
 			Path: page.RelPath,
+			URL:  page.URL,
 			Data: convertedFrontMatter(page),
 		})
 	}
 	return result
+}
+
+// hookPageKey is a page's path and URL, which together name one page: a
+// paginated source file makes several pages with one path (issue #1391).
+type hookPageKey struct {
+	path string
+	url  string
+}
+
+// matchHookEntries finds the page each entry a page hook returned belongs
+// to, among the pages sent to it (sent). It returns one index into pages
+// per entry, or -1 for an entry to skip: one that isn't an object, or
+// whose path no page sent has. An entry is matched by its path and url.
+// With no url, or a url no page sent has, it is matched by path alone when
+// only one page sent has that path, and otherwise it is an error naming
+// the path: nothing is guessed (issue #1391). Every entry is checked
+// before any is applied, so an error leaves every page as it was.
+func matchHookEntries(pages []*content.Page, sent []hookPageKey, returned []interface{}) ([]int, error) {
+	sentKeys := make(map[hookPageKey]bool, len(sent))
+	for _, k := range sent {
+		sentKeys[k] = true
+	}
+	byKey := make(map[hookPageKey]int, len(sent))
+	byPath := make(map[string][]int, len(sent))
+	for i, page := range pages {
+		k := hookPageKey{path: page.RelPath, url: page.URL}
+		if !sentKeys[k] {
+			continue
+		}
+		byKey[k] = i
+		byPath[k.path] = append(byPath[k.path], i)
+	}
+
+	matches := make([]int, len(returned))
+	for n, entry := range returned {
+		matches[n] = -1
+		m, ok := toGoMap(entry)
+		if !ok {
+			continue
+		}
+		path, _ := m["path"].(string)
+		candidates := byPath[path]
+		if len(candidates) == 0 {
+			continue
+		}
+		url, _ := m["url"].(string)
+		if i, ok := byKey[hookPageKey{path: path, url: url}]; ok {
+			matches[n] = i
+			continue
+		}
+		if len(candidates) == 1 {
+			matches[n] = candidates[0]
+			continue
+		}
+		if url == "" {
+			return nil, fmt.Errorf("an entry for %s has no url, and %d pages have that path: give each entry the url of the page it is for", path, len(candidates))
+		}
+		return nil, fmt.Errorf("an entry for %s has url %s, which no page with that path has, and %d pages have that path: give each entry the url of the page it is for", path, url, len(candidates))
+	}
+	return matches, nil
+}
+
+// pagePayloadKeys returns the path and url of each page in an
+// onContentLoaded payload.
+func pagePayloadKeys(payload []plugin.HookPagePayload) []hookPageKey {
+	keys := make([]hookPageKey, len(payload))
+	for i, p := range payload {
+		keys[i] = hookPageKey{path: p.Path, url: p.URL}
+	}
+	return keys
+}
+
+// cascadePayloadKeys returns the path and url of each page in an
+// onDataCascadeReady payload.
+func cascadePayloadKeys(payload []plugin.HookCascadePayload) []hookPageKey {
+	keys := make([]hookPageKey, len(payload))
+	for i, p := range payload {
+		keys[i] = hookPageKey{path: p.Path, url: p.URL}
+	}
+	return keys
+}
+
+// applyContentLoadedEntry applies one onContentLoaded entry to its page:
+// its front matter, merged in, and its html.
+func applyContentLoadedEntry(page *content.Page, entry interface{}) {
+	m, ok := toGoMap(entry)
+	if !ok {
+		return
+	}
+	if fm, ok := toGoMap(m["frontMatter"]); ok {
+		for k, v := range fm {
+			page.FrontMatter[k] = v
+		}
+	}
+	if htmlStr, ok := m["html"].(string); ok {
+		page.SetRenderedBody([]byte(htmlStr))
+	}
+}
+
+// applyCascadeEntry applies one onDataCascadeReady entry to its page: its
+// data, merged into the page's front matter.
+func applyCascadeEntry(page *content.Page, entry interface{}) {
+	m, ok := toGoMap(entry)
+	if !ok {
+		return
+	}
+	if data, ok := toGoMap(m["data"]); ok {
+		for k, v := range data {
+			page.FrontMatter[k] = v
+		}
+	}
 }
 
 // virtualPageFromMap creates a Page from a plugin-returned map with path, url, frontMatter,
