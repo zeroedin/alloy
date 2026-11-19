@@ -28,7 +28,7 @@ Commit messages and PR titles follow [Conventional Commits](https://www.conventi
 - `go vet` and `gofmt` are clean before a push.
 
 ## GitHub
-- Every change has an issue. Its PR says `Closes #N`.
+- Every bug fix and feature has an issue. Its PR says `Closes #N`.
 - A PR does one thing.
 - Merge with a merge commit; don't rewrite history on a shared branch.
 - Read the whole review before replying, including findings outside the diff.
