@@ -22,4 +22,4 @@ With `data/nav.json` holding `{"home": "/", "blog": "/blog/", "docs": "/docs/", 
 
 This covers objects at every level, from hooks (including those run in parallel), data sources (`alloy.source`) and filters. A filter result's own `size` and `first` keys still win.
 
-One exception: when a page hook receives or returns a non-empty `html` or `content` string, that field still comes last among the object's keys.
+One exception: when a Node hook receives or returns an object with a non-empty `html` or `content` string, that field still comes last among the object's keys.

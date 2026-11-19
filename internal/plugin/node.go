@@ -555,7 +555,9 @@ func (r *NodeRuntime) CallSource(name string, config map[string]interface{}) (in
 		if res.err != nil {
 			return nil, fmt.Errorf("node source %q: %w", name, res.err)
 		}
-		return res.resp.Result, nil
+		// The source's own size and first keys win, as they did when its
+		// result was a plain map, and as for a filter's result.
+		return ordered.OwnKeysFirst(res.resp.Result), nil
 	case <-time.After(timeout):
 		return nil, fmt.Errorf("node source %q: context deadline exceeded", name)
 	}
