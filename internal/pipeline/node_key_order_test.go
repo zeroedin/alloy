@@ -184,4 +184,34 @@ var _ = Describe("Node plugins keep the key order of objects (issue #1374)", fun
 			Expect(out).To(ContainSubstring("OWN[own,mine]"))
 		})
 	})
+
+	// A page hook that gives back a non-empty html is sent in split-body
+	// form: the bridge sends html apart from the rest of the reply, then
+	// adds it back into the result. Now that the result is an ordered
+	// object, the other fields it carries must survive that step (issue
+	// #1387). Here a Node onContentTransformed hook replaces the page's
+	// table of contents and returns the page, html included.
+	Describe("from a Node page hook whose result carries html (issue #1387)", func() {
+		It("keeps the other fields the hook returned", func() {
+			if plugin.CheckNodeAvailable() != nil {
+				Skip("node is not installed")
+			}
+			cfg := newConfig()
+			files := map[string]string{
+				"plugins/toc.js": node + "export default function(alloy) {\n" +
+					"  alloy.hook('onContentTransformed', {}, (page) => {\n" +
+					"    page.toc = [{ level: 2, id: 'from-hook', text: 'From the hook' }];\n" +
+					"    return page;\n" +
+					"  });\n" +
+					"}\n",
+				"layouts/default.liquid": "TOC[{% for t in page.toc %}{{ t.text }};{% endfor %}] {{ content }}",
+			}
+			files["content/index.md"] = "---\ntitle: Home\nlayout: default\n---\n## Original heading\n\nhi"
+			result, err := pipeline.BuildWithContent(cfg, files, pipeline.BuildOptions{CaptureRenderedContent: true})
+			Expect(err).NotTo(HaveOccurred())
+			out := result.RenderedContent["index.md"]
+			Expect(out).To(ContainSubstring("TOC[From the hook;]"))
+			Expect(out).To(ContainSubstring("Original heading"), "the page's html came back too")
+		})
+	})
 })

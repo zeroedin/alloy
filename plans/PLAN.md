@@ -2800,7 +2800,7 @@ Only these results change. The other replies from the Node bridge, such as the r
 
 Before, each of these results was decoded into a Go map, which has no order: hooks and sources gave a random order, different on each build, and filters gave sorted order.
 
-Tests: `internal/plugin/node_key_order_test.go` (hooks, including the worker pool), `internal/pipeline/node_key_order_test.go` (what templates see, with guards on QuickJS and on a filter result's own keys), and "CallSource invokes the registered source handler" in `internal/plugin/node_test.go`, which now expects `*ordered.Map` objects.
+Tests: `internal/plugin/node_key_order_test.go` (hooks, including the worker pool), `internal/pipeline/node_key_order_test.go` (what templates see, with guards on QuickJS and on a filter result's own keys, and a page hook result that carries `html` keeping its other fields, issue #1387), and "CallSource invokes the registered source handler" in `internal/plugin/node_test.go`, which now expects `*ordered.Map` objects.
 
 ### Tier 3: Node Subprocess (opt-in)
 
