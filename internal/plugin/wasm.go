@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -312,20 +313,6 @@ func (r *QuickJSRuntime) CallFilter(name string, input interface{}, args ...inte
 		return input, nil
 	}
 
-	// Set the input as a global variable accessible from JS
-	switch v := input.(type) {
-	case string:
-		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(v))
-	case int:
-		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewInt32(int32(v)))
-	case float64:
-		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewFloat64(v))
-	case bool:
-		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewBool(v))
-	default:
-		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(fmt.Sprint(v)))
-	}
-
 	// Set the filter name as a global to avoid JS injection from names
 	// containing special characters (e.g., quotes).
 	r.ctx.Global().SetPropertyStr("__callFilterName", r.ctx.NewString(name))
@@ -333,10 +320,40 @@ func (r *QuickJSRuntime) CallFilter(name string, input interface{}, args ...inte
 	// Clean up all globals on exit, including early-return error paths
 	defer func() {
 		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewUndefined())
+		r.ctx.Global().SetPropertyStr("__callInputJSON", r.ctx.NewUndefined())
 		r.ctx.Global().SetPropertyStr("__callFilterName", r.ctx.NewUndefined())
 		r.ctx.Global().SetPropertyStr("__callArgsJSON", r.ctx.NewUndefined())
+		r.ctx.Global().SetPropertyStr("__callResultJSON", r.ctx.NewUndefined())
 		r.ctx.Eval("args-cleanup.js", qjs.Code(`__callArgs = undefined;`))
 	}()
+
+	// The input reaches the filter as a JavaScript value, as on Node
+	// (issue #1366): a string, number or boolean as it is, and anything
+	// else as JSON makes it, so a list is an array and a map or data file
+	// object an object, in key order.
+	switch v := input.(type) {
+	case string:
+		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewString(v))
+	case int:
+		if v >= math.MinInt32 && v <= math.MaxInt32 {
+			r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewInt32(int32(v)))
+		} else {
+			r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewFloat64(float64(v)))
+		}
+	case float64:
+		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewFloat64(v))
+	case bool:
+		r.ctx.Global().SetPropertyStr("__callInput", r.ctx.NewBool(v))
+	default:
+		inputJSON, err := jsonCodec.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("filter %q: marshaling input: %w", name, err)
+		}
+		r.ctx.Global().SetPropertyStr("__callInputJSON", r.ctx.NewString(string(inputJSON)))
+		if _, err := r.ctx.Eval("input-parse.js", qjs.Code(`var __callInput = JSON.parse(__callInputJSON);`)); err != nil {
+			return nil, fmt.Errorf("filter %q: parsing input: %w", name, err)
+		}
+	}
 
 	// Serialize args as a JS array so the filter function receives them
 	if len(args) > 0 {
@@ -356,14 +373,31 @@ func (r *QuickJSRuntime) CallFilter(name string, input interface{}, args ...inte
 		}
 	}
 
-	// Invoke the filter function stored in __filters, spreading additional args
+	// Invoke the filter function stored in __filters, spreading additional
+	// args. An array or object it returns stays in the VM and comes out as
+	// JSON in __callResultJSON (issue #1366); anything else is returned.
 	result, err := r.ctx.Eval("filter-call.js", qjs.Code(
-		`__filters[__callFilterName](__callInput, ...__callArgs)`))
+		`(function() { globalThis.__callResultJSON = undefined; `+
+			`var r = __filters[__callFilterName](__callInput, ...__callArgs); `+
+			`if (typeof r === 'object' && r !== null) { globalThis.__callResultJSON = JSON.stringify(r); return null; } `+
+			`return r; })()`))
 
 	if err != nil {
 		return nil, fmt.Errorf("filter %q: %w", name, err)
 	}
 	defer result.Free()
+
+	resultJSON := r.ctx.Global().GetPropertyStr("__callResultJSON")
+	defer resultJSON.Free()
+	if resultJSON.IsString() {
+		value, err := ordered.UnmarshalJSONValue([]byte(resultJSON.String()))
+		if err != nil {
+			return nil, fmt.Errorf("filter %q: reading result: %w", name, err)
+		}
+		// The result's own keys win over size and first, as for a Node
+		// filter's result.
+		return ordered.OwnKeysFirst(value), nil
+	}
 
 	return jsValueToGo(result), nil
 }

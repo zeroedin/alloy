@@ -82,6 +82,42 @@ After registration, use your filter and shortcode in templates:
 {% youtube "dQw4w9WgXcQ" %}
 ```
 
+### What a filter receives and returns
+
+A filter receives its input as a JavaScript value, on QuickJS and Node alike:
+
+| In the template | The filter receives |
+|---|---|
+| Text, a number, `true` or `false` | a string, number or boolean |
+| A list, such as `page.tags` or a data file list | an array |
+| An object, such as a data file object | an object, keys in file order |
+| A date | text in RFC 3339 form: `"2024-01-02T00:00:00Z"` |
+| Nothing | `null` |
+
+What a filter returns comes back the same way: an array as a list the template can loop over, count and join, and an object as one it can read by key and loop over. A returned object's own keys win, so `{{ result.size }}` gives its `size` key when it has one. On QuickJS a returned object keeps its key order.
+
+Values cross the way JSON does: a function or `undefined` is dropped from an object and becomes `null` in an array. JavaScript lists keys that look like array indexes (`"2"`, `"10"`) before any other key.
+
+```javascript
+// plugins/filters.js
+export default function(alloy) {
+  alloy.filter("keys", (obj) => Object.keys(obj));
+  alloy.filter("summary", (tags) => ({ count: tags.length, first: tags[0] }));
+}
+```
+
+With `data/nav.json` holding `{"home": "/", "blog": "/blog/", "about": "/about/"}`, and `tags: [go, liquid]` in a page's front matter:
+
+```liquid
+{{ site.data.nav | keys | join: ", " }}
+{% assign s = page.tags | summary %}{{ s.count }} tags, first {{ s.first }}
+```
+
+```text
+home, blog, about
+2 tags, first go
+```
+
 ## Site Data Access
 
 Plugins can access global data files via `alloy.data`:

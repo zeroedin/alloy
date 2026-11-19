@@ -2681,6 +2681,15 @@ export default function(alloy) {
 
 Now `{{ page.content | wordCount }}` and `{% youtube "dQw4w9WgXcQ" %}` work in templates. No compilation, no config.
 
+**Plugin filters receive and return values (issue #1366).** A plugin filter gets its input, and gives back its result, as JavaScript values, on QuickJS exactly as on Node:
+
+- **Input:** a string, number or boolean arrives as it is. An integer too big for 32 bits keeps its value, up to 2^53 (`9007199254740992`) either way: past that, a JavaScript number can't hold every integer, so a larger one is rounded to the nearest it can hold (`9007199254740993` arrives as `9007199254740992`), on both runtimes, whether it is passed alone or inside a list or map. A list arrives as an array, and a map, a data file object or front matter object as an object. Values inside them are converted the same way. A date arrives as text in RFC 3339 form (`2024-01-02T00:00:00Z`). A data file object's keys keep their file order, except keys that look like array indexes (`"2"`, `"10"`): JavaScript always lists those first, in numeric order, on both runtimes.
+- **Result:** a returned array comes back to the template as a list, and a returned object as an object the template can read by key and loop over. A returned object's own keys win: if it has a `size` or `first` key, `{{ o.size }}` and `{{ o.first }}` give those values, as on Node, not the key count or first pair that a data file object gives. On QuickJS a returned object keeps its key order. A string, number or boolean comes back as it is.
+- In both directions a value crosses as JSON does, as for Node filters and filter arguments: a function or `undefined` is dropped from an object, and becomes `null` in an array. A value with a `toJSON` method crosses as what that method returns, so the object and array rules above apply to what JSON makes of a result, not to its JavaScript type: a returned `Date` comes back as text (`1970-01-01T00:00:00.000Z`), and an object whose `toJSON` returns `5` comes back as `5`, on both runtimes.
+- **Every call, the first included.** This holds for every call a runtime makes, including its first, and each call's result is its own: a filter that returns text after one that returned an object gives its text (issue #1382).
+
+So `alloy.filter("keys", (o) => Object.keys(o))` makes `{{ site.data.nav | keys | join: ", " }}` give the keys in file order (array-index-like keys first, as above), on either runtime. Before #1366 a QuickJS filter received anything but a string, number or boolean as Go's debug text, and an array or object it returned came back as text. Tests: `internal/pipeline/filter_values_test.go`.
+
 **Site data access** — Plugins can access global data from `data/` files via `alloy.data`:
 
 ```javascript
