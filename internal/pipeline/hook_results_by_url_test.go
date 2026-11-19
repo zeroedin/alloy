@@ -233,6 +233,20 @@ var _ = Describe("Hook results are matched to pages by path and URL (issue #1391
 				"onDataCascadeReady", "pages.map(p => p.url === '/team/bob/' ? { ...pages.find(q => q.url === '/team/ann/') } : p)"),
 		)
 
+		// An entry that isn't an object, such as null, leaves some page with
+		// no entry, though the hook gave back as many entries as it got
+		// (issue #1399).
+		DescribeTable("fails the build for an entry that isn't an object, naming the hook",
+			func(hook string) {
+				cfg := site("export default function(alloy) {\n  alloy.hook('" + hook + "', { pages: true }, (pages) =>\n    pages.map(p => p.url === '/team/bob/' ? null : p));\n}\n")
+				_, err := pipeline.Build(cfg, pipeline.BuildOptions{PipelineState: state(cfg)})
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring(hook))
+			},
+			Entry("onContentLoaded", "onContentLoaded"),
+			Entry("onDataCascadeReady", "onDataCascadeReady"),
+		)
+
 		// An entry whose path no page sent to the hook has can't be placed
 		// either: the hook gave back as many entries as it got, so some page
 		// would get none.
