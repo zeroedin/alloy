@@ -244,12 +244,12 @@ type hookPageKey struct {
 
 // matchHookEntries finds the page each entry a page hook returned belongs
 // to, among the pages sent to it (sent). It returns one index into pages
-// per entry, or -1 for an entry that isn't an object. An entry is matched
-// by its path and url. With no url, or a url no page sent has, it is
+// per entry. An entry is matched by its path and url. With no url, or a url no page sent has, it is
 // matched by path alone when only one page sent has that path. Every page
 // sent gets at most one entry. An entry that can't be placed on exactly one
-// page with no entry yet is an error naming its path: nothing is guessed
-// (issue #1391). Every entry is checked before any is applied, so an error
+// page with no entry yet is an error naming its path, and an entry that
+// isn't an object is an error too: nothing is guessed (issues #1391,
+// #1399). Every entry is checked before any is applied, so an error
 // leaves every page as it was.
 func matchHookEntries(pages []*content.Page, sent []hookPageKey, returned []interface{}) ([]int, error) {
 	sentKeys := make(map[hookPageKey]bool, len(sent))
@@ -270,10 +270,9 @@ func matchHookEntries(pages []*content.Page, sent []hookPageKey, returned []inte
 	matches := make([]int, len(returned))
 	taken := make(map[int]bool, len(returned))
 	for n, entry := range returned {
-		matches[n] = -1
 		m, ok := toGoMap(entry)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("entry %d of %d isn't an object, so a page sent to the hook gets no entry: give each page sent one object", n+1, len(returned))
 		}
 		path, _ := m["path"].(string)
 		candidates := byPath[path]

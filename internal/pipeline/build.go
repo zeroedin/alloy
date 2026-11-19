@@ -786,9 +786,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				return nil, fmt.Errorf("plugin hook onContentLoaded: %w", err)
 			}
 			for n, rp := range returnedPages {
-				if matches[n] >= 0 {
-					applyContentLoadedEntry(pages[matches[n]], rp)
-				}
+				applyContentLoadedEntry(pages[matches[n]], rp)
 			}
 		}
 	}
@@ -813,9 +811,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				return nil, fmt.Errorf("plugin hook onDataCascadeReady: %w", err)
 			}
 			for n, rp := range returnedPages {
-				if matches[n] >= 0 {
-					applyCascadeEntry(pages[matches[n]], rp)
-				}
+				applyCascadeEntry(pages[matches[n]], rp)
 			}
 		}
 	}

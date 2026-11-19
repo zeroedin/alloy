@@ -540,9 +540,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 						log.Printf("warning: plugin hook onContentLoaded: %v; ignoring mutations", matchErr)
 					} else {
 						for n, rp := range returnedPages {
-							if matches[n] >= 0 {
-								applyContentLoadedEntry(hookPages[matches[n]], rp)
-							}
+							applyContentLoadedEntry(hookPages[matches[n]], rp)
 						}
 					}
 				}
@@ -566,9 +564,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 						log.Printf("warning: plugin hook onDataCascadeReady: %v; ignoring mutations", matchErr)
 					} else {
 						for n, rp := range returnedPages {
-							if matches[n] >= 0 {
-								applyCascadeEntry(hookPages[matches[n]], rp)
-							}
+							applyCascadeEntry(hookPages[matches[n]], rp)
 						}
 					}
 				}
