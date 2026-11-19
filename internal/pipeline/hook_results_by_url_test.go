@@ -18,7 +18,9 @@ import (
 // several pages with one path, so each of them gets its own entry.
 // onDataCascadeReady entries carry url too. An entry with no url, or a url
 // no page sent to the hook has, is matched by path when that path is
-// unique, and fails the build when it isn't.
+// unique. Every page sent gets exactly one entry: an entry Alloy can't place
+// on exactly one page that has none yet fails a full build, and an alloy
+// dev rebuild warns and applies none of that hook's changes.
 //
 // Before, entries were matched by path alone, so every entry for a
 // paginated source landed on its last page and the others got nothing.
@@ -156,6 +158,12 @@ var _ = Describe("Hook results are matched to pages by path and URL (issue #1391
 			}
 		})
 
+		// The rebuild must write the edited page, or the checks above read
+		// what the full build wrote.
+		It("rewrites the edited page, in an alloy dev rebuild", func() {
+			Expect(rebuiltOut).To(ContainSubstring("<p>about again</p>"))
+		})
+
 		// Guard: a page with a path of its own gets its results today, from
 		// onContentLoaded even though the entries come back reversed.
 		It("still applies onContentLoaded's result to a page with its own path (guard)", func() {
@@ -217,7 +225,58 @@ var _ = Describe("Hook results are matched to pages by path and URL (issue #1391
 				"onContentLoaded", "pages.map(p => ({ ...p, url: '/nowhere/', frontMatter: { ...p.frontMatter, badge: 'x' } }))"),
 			Entry("onDataCascadeReady, with no url",
 				"onDataCascadeReady", "pages.map(p => ({ path: p.path, data: { ...p.data, cbadge: 'x' } }))"),
+			// Every entry names a page Bob's entry doesn't: two entries for
+			// /team/ann/, none for /team/bob/.
+			Entry("onContentLoaded, with two entries for one page",
+				"onContentLoaded", "pages.map(p => p.url === '/team/bob/' ? { ...pages.find(q => q.url === '/team/ann/') } : p)"),
+			Entry("onDataCascadeReady, with two entries for one page",
+				"onDataCascadeReady", "pages.map(p => p.url === '/team/bob/' ? { ...pages.find(q => q.url === '/team/ann/') } : p)"),
 		)
+
+		// An entry whose path no page sent to the hook has can't be placed
+		// either: the hook gave back as many entries as it got, so some page
+		// would get none.
+		It("fails the build for an entry with a path no page sent has, naming it", func() {
+			cfg := site(`export default function(alloy) {
+  alloy.hook('onContentLoaded', { pages: true }, (pages) =>
+    pages.map(p => p.url === '/about/' ? { ...p, path: 'content/nowhere.md' } : p));
+}
+`)
+			_, err := pipeline.Build(cfg, pipeline.BuildOptions{PipelineState: state(cfg)})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("onContentLoaded"))
+			Expect(err.Error()).To(ContainSubstring("nowhere.md"))
+		})
+
+		// An alloy dev rebuild reports a hook error as a warning and goes on.
+		// It must apply none of that hook's changes, not the ones before the
+		// entry it couldn't place. The hook here gives two entries for
+		// /team/ann/ once about.md has bad: true.
+		It("applies none of that hook's changes in an alloy dev rebuild", func() {
+			cfg := site(`export default function(alloy) {
+  alloy.hook('onContentLoaded', { pages: true }, (pages) => {
+    const out = pages.map(p => ({ ...p, frontMatter: { ...p.frontMatter, badge: 'L' + p.url } }));
+    if (pages.some(p => p.frontMatter.bad)) {
+      out[out.findIndex(p => p.url === '/team/bob/')] = { ...out.find(p => p.url === '/team/ann/') };
+    }
+    return out;
+  });
+}
+`)
+			s := state(cfg)
+			first, err := pipeline.Build(cfg, pipeline.BuildOptions{PipelineState: s})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output("about/index.html")).To(ContainSubstring("/about/=L/about/|"))
+
+			write("content/about.md", "---\ntitle: About\nlayout: list\nbad: true\n---\nabout again")
+			_, err = pipeline.BuildIncremental(cfg, nil, first.Cache, []string{"content/about.md"},
+				pipeline.BuildOptions{PipelineState: s})
+			Expect(err).NotTo(HaveOccurred())
+			out := output("about/index.html")
+			Expect(out).To(ContainSubstring("<p>about again</p>"))
+			Expect(out).To(ContainSubstring("/about/=|"))
+			Expect(out).To(ContainSubstring("/team/cy/=|"))
+		})
 
 		// Guard: an entry for a page with a path of its own needs no url.
 		// It is matched by path, as today.
