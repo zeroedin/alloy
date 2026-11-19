@@ -244,12 +244,13 @@ type hookPageKey struct {
 
 // matchHookEntries finds the page each entry a page hook returned belongs
 // to, among the pages sent to it (sent). It returns one index into pages
-// per entry, or -1 for an entry to skip: one that isn't an object, or
-// whose path no page sent has. An entry is matched by its path and url.
-// With no url, or a url no page sent has, it is matched by path alone when
-// only one page sent has that path, and otherwise it is an error naming
-// the path: nothing is guessed (issue #1391). Every entry is checked
-// before any is applied, so an error leaves every page as it was.
+// per entry, or -1 for an entry that isn't an object. An entry is matched
+// by its path and url. With no url, or a url no page sent has, it is
+// matched by path alone when only one page sent has that path. Every page
+// sent gets at most one entry. An entry that can't be placed on exactly one
+// page with no entry yet is an error naming its path: nothing is guessed
+// (issue #1391). Every entry is checked before any is applied, so an error
+// leaves every page as it was.
 func matchHookEntries(pages []*content.Page, sent []hookPageKey, returned []interface{}) ([]int, error) {
 	sentKeys := make(map[hookPageKey]bool, len(sent))
 	for _, k := range sent {
@@ -267,6 +268,7 @@ func matchHookEntries(pages []*content.Page, sent []hookPageKey, returned []inte
 	}
 
 	matches := make([]int, len(returned))
+	taken := make(map[int]bool, len(returned))
 	for n, entry := range returned {
 		matches[n] = -1
 		m, ok := toGoMap(entry)
@@ -276,21 +278,24 @@ func matchHookEntries(pages []*content.Page, sent []hookPageKey, returned []inte
 		path, _ := m["path"].(string)
 		candidates := byPath[path]
 		if len(candidates) == 0 {
-			continue
+			return nil, fmt.Errorf("an entry has path %q, which no page sent to the hook has: give each entry the path and url of the page it is for", path)
 		}
 		url, _ := m["url"].(string)
-		if i, ok := byKey[hookPageKey{path: path, url: url}]; ok {
-			matches[n] = i
-			continue
-		}
-		if len(candidates) == 1 {
-			matches[n] = candidates[0]
-			continue
-		}
-		if url == "" {
+		i, ok := byKey[hookPageKey{path: path, url: url}]
+		switch {
+		case ok:
+		case len(candidates) == 1:
+			i = candidates[0]
+		case url == "":
 			return nil, fmt.Errorf("an entry for %s has no url, and %d pages have that path: give each entry the url of the page it is for", path, len(candidates))
+		default:
+			return nil, fmt.Errorf("an entry for %s has url %s, which no page with that path has, and %d pages have that path: give each entry the url of the page it is for", path, url, len(candidates))
 		}
-		return nil, fmt.Errorf("an entry for %s has url %s, which no page with that path has, and %d pages have that path: give each entry the url of the page it is for", path, url, len(candidates))
+		if taken[i] {
+			return nil, fmt.Errorf("two entries are for the page %s (%s): give each page sent to the hook one entry", pages[i].RelPath, pages[i].URL)
+		}
+		taken[i] = true
+		matches[n] = i
 	}
 	return matches, nil
 }
