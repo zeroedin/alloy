@@ -247,6 +247,20 @@ var _ = Describe("Hook results are matched to pages by path and URL (issue #1391
 			Entry("onDataCascadeReady", "onDataCascadeReady"),
 		)
 
+		// An entry whose url is another sent page's isn't matched by its path,
+		// even when its path is unique: path and url disagree on the page.
+		It("fails the build for an entry whose url is another page's, naming the path", func() {
+			cfg := site(`export default function(alloy) {
+  alloy.hook('onContentLoaded', { pages: true }, (pages) =>
+    pages.map(p => p.url === '/about/' ? { ...p, url: '/team/ann/' } : p));
+}
+`)
+			_, err := pipeline.Build(cfg, pipeline.BuildOptions{PipelineState: state(cfg)})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("onContentLoaded"))
+			Expect(err.Error()).To(ContainSubstring("about.md"))
+		})
+
 		// An entry whose path no page sent to the hook has can't be placed
 		// either: the hook gave back as many entries as it got, so some page
 		// would get none.
