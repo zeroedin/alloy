@@ -20,6 +20,6 @@ With `data/nav.json` holding `{"home": "/", "blog": "/blog/", "docs": "/docs/", 
 | `{% for pair in site.data.nav %}{{ pair[0] }} {% endfor %}` | `about contact home blog docs`, `home blog docs about contact`, `blog docs about contact home` | `home blog docs about contact`, every build |
 | `{% assign s = "x" \| sizes %}{% for pair in s %}{{ pair[0] }} {% endfor %}` | `large medium small` | `small medium large` |
 
-This covers objects at every level, from hooks (including those run in parallel), data sources (`alloy.source`) and filters. A filter result's own `size` and `first` keys still win.
+This covers objects at every level, from hooks (including those run in parallel), data sources (`alloy.source`) and filters. A data source with `cache` set gives the same order on a later build that reads it back from `.alloy/fetch-cache/`, where before it came back sorted A to Z. A data source's or filter result's own `size` and `first` keys still win.
 
 One exception: the bridge between Alloy and Node can send an `html` or `content` string apart from the rest of a hook's message, and when it does, that field comes last among the object's keys, in what the hook receives and in what it returns.
