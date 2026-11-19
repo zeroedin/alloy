@@ -51,6 +51,7 @@ type HookPagesReadyPayload struct {
 // HookCascadePayload is one entry in the onDataCascadeReady batch payload.
 type HookCascadePayload struct {
 	Path string                 `json:"path"`
+	URL  string                 `json:"url"`
 	Data map[string]interface{} `json:"data"`
 }
 
