@@ -352,6 +352,8 @@ Changes to `html` are applied via `SetRenderedBody` — the modified HTML replac
 
 The return array must be the same length and order as the input. Virtual page injection is not supported here — use `onPagesReady` instead.
 
+In `alloy dev`, each rebuild runs this hook again on every page, with every page's rendered `html`, not only on the pages the rebuild re-renders. So what it adds stays on every page, for example in a layout that loops over `site.pages`.
+
 ### onDataCascadeReady
 
 Fires once with the full pages array after the data cascade is resolved. Each entry has `path` and `data`.
@@ -364,6 +366,8 @@ alloy.hook("onDataCascadeReady", { pages: true }, (pages) => {
   return pages;
 });
 ```
+
+In `alloy dev`, each rebuild runs this hook again on every page, as it does `onContentLoaded`, so what it adds stays on every page in `site.pages`.
 
 ### onContentTransformed
 

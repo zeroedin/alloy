@@ -478,6 +478,14 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	if renderErr != nil {
 		return nil, renderErr
 	}
+	// onContentLoaded gets every page's rendered body, as in a full build
+	// (issue #1377), so render the bodies of the other pages too. They don't
+	// count as rendered: only pagesToRender go on to their layout.
+	if ps.Hooks != nil && ps.Hooks.HasHooks(plugin.OnContentLoaded) {
+		if _, err := renderPages(pagesNotIn(allPages, pagesToRender), rc, nil); err != nil {
+			return nil, err
+		}
+	}
 
 	// Build in-memory cache early so dependency tracking hooks can populate
 	// it. Clone previous cache (preserves skipped page hashes). Hashes and
@@ -508,10 +516,15 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 
 	// Lifecycle hooks between passes — mirrors Build() flow (issue #731).
 	// Warning-only errors: dev server resilience (Build() returns fatal errors).
+	// onContentLoaded and onDataCascadeReady run on every page, as in a full
+	// build: each page is read from disk again, so a page they skipped would
+	// lose what they add (issue #1377). onContentTransformed changes only a
+	// page's own output, so it runs on the pages this rebuild re-renders.
+	hookPages := allPages
 	if ps.Hooks != nil {
 		if ps.Hooks.HasHooks(plugin.OnContentLoaded) {
 			contentScope := computeUnionScope(ps.Hooks.ScopeFor(plugin.OnContentLoaded))
-			contentPayload := serializePagesForHook(pagesToRender, contentScope)
+			contentPayload := serializePagesForHook(hookPages, contentScope)
 			contentResult, hookErr := ps.Hooks.RunWithTimeout(plugin.OnContentLoaded, contentPayload)
 			if hookErr != nil {
 				log.Printf("warning: plugin hook onContentLoaded: %v", hookErr)
@@ -523,8 +536,8 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 					for _, cp := range contentPayload {
 						scopedPaths[cp.Path] = true
 					}
-					pathToIdx := make(map[string]int, len(pagesToRender))
-					for i, page := range pagesToRender {
+					pathToIdx := make(map[string]int, len(hookPages))
+					for i, page := range hookPages {
 						pathToIdx[page.RelPath] = i
 					}
 					for _, rp := range returnedPages {
@@ -539,12 +552,12 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 							}
 							if fm, ok := toGoMap(pageMap["frontMatter"]); ok {
 								for k, v := range fm {
-									pagesToRender[origIdx].FrontMatter[k] = v
+									hookPages[origIdx].FrontMatter[k] = v
 								}
 							}
 							if htmlVal, ok := pageMap["html"]; ok {
 								if htmlStr, ok := htmlVal.(string); ok {
-									pagesToRender[origIdx].SetRenderedBody([]byte(htmlStr))
+									hookPages[origIdx].SetRenderedBody([]byte(htmlStr))
 								}
 							}
 						}
@@ -554,7 +567,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 		if ps.Hooks.HasHooks(plugin.OnDataCascadeReady) {
 			cascadeScope := computeUnionScope(ps.Hooks.ScopeFor(plugin.OnDataCascadeReady))
-			cascadePayload := serializePagesForCascadeHook(pagesToRender, cascadeScope)
+			cascadePayload := serializePagesForCascadeHook(hookPages, cascadeScope)
 			cascadeResult, hookErr := ps.Hooks.RunWithTimeout(plugin.OnDataCascadeReady, cascadePayload)
 			if hookErr != nil {
 				log.Printf("warning: plugin hook onDataCascadeReady: %v", hookErr)
@@ -566,8 +579,8 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 					for _, cp := range cascadePayload {
 						scopedPaths[cp.Path] = true
 					}
-					pathToIdx := make(map[string]int, len(pagesToRender))
-					for i, page := range pagesToRender {
+					pathToIdx := make(map[string]int, len(hookPages))
+					for i, page := range hookPages {
 						pathToIdx[page.RelPath] = i
 					}
 					for _, rp := range returnedPages {
@@ -579,7 +592,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 								}
 								if origIdx, ok := pathToIdx[returnedPath]; ok {
 									for k, v := range data {
-										pagesToRender[origIdx].FrontMatter[k] = v
+										hookPages[origIdx].FrontMatter[k] = v
 									}
 								}
 							}
@@ -1197,4 +1210,19 @@ func removeStaleTaxonomyOutputs(outputDir string, stale []string, claims []valid
 		}
 	}
 	return pending
+}
+
+// pagesNotIn returns the pages of all that aren't in some, in order.
+func pagesNotIn(all, some []*content.Page) []*content.Page {
+	skip := make(map[*content.Page]bool, len(some))
+	for _, p := range some {
+		skip[p] = true
+	}
+	var rest []*content.Page
+	for _, p := range all {
+		if !skip[p] {
+			rest = append(rest, p)
+		}
+	}
+	return rest
 }
