@@ -21,3 +21,5 @@ With `data/nav.json` holding `{"home": "/", "blog": "/blog/", "docs": "/docs/", 
 | `{% assign s = "x" \| sizes %}{% for pair in s %}{{ pair[0] }} {% endfor %}` | `large medium small` | `small medium large` |
 
 This covers objects at every level, from hooks (including those run in parallel), data sources (`alloy.source`) and filters. A filter result's own `size` and `first` keys still win.
+
+One exception: when a page hook receives or returns a non-empty `html` or `content` string, that field still comes last among the object's keys.
