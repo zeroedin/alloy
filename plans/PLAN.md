@@ -3086,7 +3086,7 @@ This also resolves #521 (virtual pages appended to wrong language batch): since 
 - **Order doesn't matter.** A hook may return its entries in any order.
 - **`onDataCascadeReady` gets `url` too.** Each entry has `path`, `url` and `data`. As with `onContentLoaded`, `path` and `url` are for matching: changing them is not applied back.
 - **A scoped hook changes only the pages in its scope.** A hook whose `pages` glob selects `/list/` changes that page and no other page made from the same file.
-- **An entry with no `url`, or a `url` no page sent to the hook has,** is matched by `path` alone when only one page sent to the hook has that path. When several do, Alloy can't tell which page it means, and the build fails with an error that names the hook and the path. Nothing is guessed. A hook that builds its entries from the ones it got, such as `pages.map(p => ({ ...p, data: { ...p.data, badge: "x" } }))`, keeps `url` and needs no change.
+- **An entry with no `url`, or a `url` no page sent to the hook has,** is matched by `path` alone when only one page sent to the hook has that path. When several do, Alloy can't tell which page it means, and the build fails with an error that names the hook and the path. Nothing is guessed. An `alloy dev` rebuild reports it the way it reports any hook error, as a warning, and applies none of that hook's changes for that rebuild. A hook that builds its entries from the ones it got, such as `pages.map(p => ({ ...p, data: { ...p.data, badge: "x" } }))`, keeps `url` and needs no change.
 
 #### Per-build hooks (JSON objects)
 
