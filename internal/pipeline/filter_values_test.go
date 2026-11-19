@@ -60,7 +60,10 @@ var _ = Describe("Plugin filters pass lists and objects as values (issue #1366)"
 		`{% assign l = "y" | items %}OUT-LIST[{{ l.size }}|{{ l.first }}|{{ l | join: "," }}]` +
 		`OUT-NUMBER[{{ 3 | dbl }}]`
 
-	build := func(runtimeLine string) string {
+	// buildWith builds a one-page site with the probe filters, on the
+	// runtime runtimeLine names, and returns the page. Each build starts the
+	// plugin in a new runtime.
+	buildWith := func(runtimeLine, layout string) string {
 		GinkgoHelper()
 		cfg := &config.Config{
 			Title:   "Filter values",
@@ -76,6 +79,10 @@ var _ = Describe("Plugin filters pass lists and objects as values (issue #1366)"
 		})
 		Expect(err).NotTo(HaveOccurred())
 		return result.RenderedContent["index.md"]
+	}
+	build := func(runtimeLine string) string {
+		GinkgoHelper()
+		return buildWith(runtimeLine, layout)
 	}
 
 	// The same checks for both runtimes. On Node they pass today and are
@@ -138,4 +145,43 @@ var _ = Describe("Plugin filters pass lists and objects as values (issue #1366)"
 	It("returns an object whose keys keep their order on QuickJS", func() {
 		Expect(build("")).To(ContainSubstring(`OUT-OBJECT-LOOP[b;a;]`))
 	})
+
+	// The first filter call a runtime makes can return an array or object
+	// too (issue #1382). The layout above calls a filter that returns text
+	// first, so it can't show a fault that only the first call has, such as
+	// storing the result in a global that doesn't exist yet. Each build here
+	// starts the plugin in a new runtime, and the layout's first filter call
+	// returns an array or object. A filter that returns text comes next, so
+	// a result kept from the call before shows.
+	for _, rt := range []struct{ name, line string }{
+		{"QuickJS, the default", ""},
+		{"Node", "export const runtime = \"node\";\n"},
+	} {
+		rt := rt
+		Describe("on "+rt.name+", when the first filter call returns an array or object (issue #1382)", func() {
+			BeforeEach(func() {
+				if rt.line != "" && plugin.CheckNodeAvailable() != nil {
+					Skip("node is not installed")
+				}
+			})
+
+			It("returns an object from the first call, then text from the next", func() {
+				out := buildWith(rt.line,
+					`{% assign o = "x" | pair %}FIRST-OBJECT[{{ o.a }}|{{ o.b }}]`+
+						`THEN-TEXT[{{ "hi" | seen }}]`)
+				Expect(out).To(ContainSubstring(`FIRST-OBJECT[x1|x2]`))
+				Expect(out).To(ContainSubstring(`THEN-TEXT[string:"hi"]`),
+					"a filter that returns text gives its text, not the object from the call before")
+			})
+
+			It("returns an array from the first call, then text from the next", func() {
+				out := buildWith(rt.line,
+					`FIRST-LIST[{{ "y" | items | join: "," }}]`+
+						`THEN-TEXT[{{ "hi" | seen }}]`)
+				Expect(out).To(ContainSubstring(`FIRST-LIST[y,yy,3]`))
+				Expect(out).To(ContainSubstring(`THEN-TEXT[string:"hi"]`),
+					"a filter that returns text gives its text, not the array from the call before")
+			})
+		})
+	}
 })
