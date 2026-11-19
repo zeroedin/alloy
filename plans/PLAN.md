@@ -2794,6 +2794,8 @@ When hook payloads pass through the plugin serialization boundary (QuickJS VM or
 - **Data sources** (`alloy.source`). An object, and each object in a returned list, is an `*ordered.Map`, as data file objects are, so `site.data.<as>` loops in the order the source returned.
 - **Filters.** A returned object keeps its order. Its own keys still win: if it has a `size` or `first` key, `{{ o.size }}` and `{{ o.first }}` give those values, as for any plugin filter result (issue #1366).
 
+**One exception: a page's body comes last.** When a page hook (`onPageRendered`, `onContentTransformed`, `onFormatRendered`) gives back a page with a non-empty `html` or `content` string, the bridge sends that string apart from the rest of the reply (split-body framing, issue #1181), and Alloy adds it back as the result's last key. Every other key keeps its order, and every value is the same. Alloy reads these results by key name, so the order of the body field is not kept: keeping it would mean changing the bridge's framing for no visible gain.
+
 Only these results change. The other replies from the Node bridge, such as the reply to loading a plugin, which lists its filters, sources and hook options, are read as they are today.
 
 Before, each of these results was decoded into a Go map, which has no order: hooks and sources gave a random order, different on each build, and filters gave sorted order.
