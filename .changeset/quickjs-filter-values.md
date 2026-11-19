@@ -21,7 +21,7 @@ With `data/nav.json` holding `{"home": "/", "blog": "/blog/", "about": "/about/"
 
 Also:
 - A date arrives as text in RFC 3339 form, `2024-01-02T00:00:00Z`.
-- An integer too big for 32 bits keeps its value: `3000000000` used to arrive as `-1294967296`.
+- An integer too big for 32 bits keeps its value, up to 2^53: `3000000000` used to arrive as `-1294967296`. Past 2^53 an integer arrives as the nearest number JavaScript can hold, as on Node: `9007199254740993` arrives as `9007199254740992`.
 - Nothing arrives as `null`, not the text `<nil>`.
 - A data file object's keys arrive in file order, and on QuickJS a returned object keeps its key order.
 - A returned object's own `size` and `first` keys win over the object's size and first pair, as on Node.
