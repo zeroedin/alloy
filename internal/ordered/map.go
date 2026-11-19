@@ -12,6 +12,9 @@ import (
 type Map struct {
 	keys   []string
 	values map[string]interface{}
+	// ownKeys makes a stored size or first key win over the map's size and
+	// first pair in a template: see OwnKeysFirst.
+	ownKeys bool
 }
 
 type KVPair struct {
@@ -190,9 +193,14 @@ func (m *Map) LiquidMethodMissing(key string) interface{} {
 // LiquidGet is how liquidgo v5 reads a key of the map in a template
 // (issue #1363): {{ site.data.team.alice }}, .size and .first. As with the
 // old library, which found the Size and First methods before the keys,
-// size and first win over a key of the same name. A missing key reads as
-// nothing.
+// size and first win over a key of the same name, except in a map marked
+// by OwnKeysFirst. A missing key reads as nothing.
 func (m *Map) LiquidGet(_ *liquid.Context, key string) (interface{}, bool, error) {
+	if m.ownKeys {
+		if v, ok := m.values[key]; ok {
+			return v, true, nil
+		}
+	}
 	switch key {
 	case "size":
 		return m.Size(), true, nil
@@ -201,6 +209,26 @@ func (m *Map) LiquidGet(_ *liquid.Context, key string) (interface{}, bool, error
 	}
 	v, ok := m.values[key]
 	return v, ok, nil
+}
+
+// OwnKeysFirst marks every *Map in v, at any depth, so that a template
+// reads its own size and first keys before the map's size and first pair:
+// {{ o.size }} gives o's size key when it has one. A plugin filter's result
+// reads this way, as a Node filter's plain map does (issue #1366); a data
+// file object keeps size and first winning (issue #1363). It returns v.
+func OwnKeysFirst(v interface{}) interface{} {
+	switch val := v.(type) {
+	case *Map:
+		val.ownKeys = true
+		for _, item := range val.values {
+			OwnKeysFirst(item)
+		}
+	case []interface{}:
+		for _, item := range val {
+			OwnKeysFirst(item)
+		}
+	}
+	return v
 }
 
 // Size returns the number of entries (accessed as .size in Liquid).

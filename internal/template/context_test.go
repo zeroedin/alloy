@@ -181,47 +181,51 @@ var _ = Describe("Template Context Shape (§3)", func() {
 	// ── Taxonomy context defaults (issue #380) ──────────────────────
 
 	// ── site.pages front matter exposure (issue #712) ──────────────
-	// site.pages items must be template maps (like collections), not
-	// raw *content.Page structs. Front matter fields must be accessible
-	// as top-level properties so Liquid filters (where, sort, map,
-	// group_by) work correctly.
+	// A site.pages item must give Liquid a page's front matter and its
+	// computed fields (url, slug, collection, summary) as top-level
+	// properties, so filters like where, sort and map work on the list.
+	//
+	// These tests check what a template renders. They used to check that
+	// ToMap() returns site as a Go map holding a ready-made list, which
+	// forced the list to be built for every render, read or not
+	// (issue #1360).
 
-	It("site.pages items in ToMap are template maps, not raw structs (issue #712)", func() {
-		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, nil, "")
-		m := ctx.ToMap()
-		site, ok := m["site"].(map[string]interface{})
-		Expect(ok).To(BeTrue())
-		pages, ok := site["pages"].([]interface{})
-		Expect(ok).To(BeTrue(),
-			"site.pages must be []interface{} of template maps — "+
-				"raw []*content.Page structs are not accessible to Liquid "+
-				"filters like where, sort, map, group_by (issue #712)")
-		Expect(pages).To(HaveLen(1))
+	renderWith := func(pages []*content.Page, source string) string {
+		GinkgoHelper()
+		ctx := template.BuildTemplateContext(page, siteData, pages, collections, nil, nil, "").ToMap()
+		engine := template.NewLiquidEngine()
+		Expect(template.RegisterBuiltinFilters(engine)).To(Succeed())
+		tpl, err := engine.Parse("site-pages", []byte(source))
+		Expect(err).NotTo(HaveOccurred())
+		out, err := tpl.Render(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		return string(out)
+	}
 
-		p, ok := pages[0].(map[string]interface{})
-		Expect(ok).To(BeTrue(),
-			"each site.pages item must be map[string]interface{} — "+
-				"ToTemplateMap() converts struct fields and front matter "+
-				"to a flat map that Liquid can access (issue #712)")
-		Expect(p).To(HaveKeyWithValue("title", "My Post"),
-			"front matter fields must be accessible as top-level keys "+
-				"on site.pages items (issue #712)")
+	It("site.pages items give templates front matter fields (issue #712)", func() {
+		out := renderWith(allPages,
+			`SIZE[{{ site.pages | size }}] TITLE[{% for p in site.pages %}{{ p.title }}{% endfor %}] `+
+				`WHERE[{{ site.pages | where: "title", "My Post" | size }}]`)
+		Expect(out).To(ContainSubstring("SIZE[1]"))
+		Expect(out).To(ContainSubstring("TITLE[My Post]"),
+			"front matter fields must be top-level properties of a "+
+				"site.pages item (issue #712)")
+		Expect(out).To(ContainSubstring("WHERE[1]"),
+			"where must be able to filter site.pages by a front matter "+
+				"field (issue #712)")
 	})
 
 	It("site.pages items expose struct fields alongside front matter (issue #712)", func() {
-		ctx := template.BuildTemplateContext(page, siteData, allPages, collections, nil, nil, "")
-		m := ctx.ToMap()
-		site := m["site"].(map[string]interface{})
-		pages := site["pages"].([]interface{})
-		p := pages[0].(map[string]interface{})
-
-		Expect(p).To(HaveKeyWithValue("url", "/blog/my-post/"),
+		out := renderWith(allPages,
+			`{% for p in site.pages %}URL[{{ p.url }}] SLUG[{{ p.slug }}] `+
+				`COLL[{{ p.collection }}] SUM[{{ p.summary }}]{% endfor %}`)
+		Expect(out).To(ContainSubstring("URL[/blog/my-post/]"),
 			"url must be accessible on site.pages items")
-		Expect(p).To(HaveKeyWithValue("slug", "my-post"),
+		Expect(out).To(ContainSubstring("SLUG[my-post]"),
 			"slug must be accessible on site.pages items")
-		Expect(p).To(HaveKeyWithValue("collection", "blog"),
+		Expect(out).To(ContainSubstring("COLL[blog]"),
 			"collection must be accessible on site.pages items")
-		Expect(p).To(HaveKeyWithValue("summary", "A test post"), // a plain string (#1285)
+		Expect(out).To(ContainSubstring("SUM[A test post]"), // a plain string (#1285)
 			"summary must be accessible on site.pages items")
 	})
 
@@ -238,29 +242,16 @@ var _ = Describe("Template Context Shape (§3)", func() {
 				"layout":     "doc",
 			},
 		}
-		multiPages := []*content.Page{page, docPage}
-		ctx := template.BuildTemplateContext(page, siteData, multiPages, collections, nil, nil, "")
-		m := ctx.ToMap()
-		site := m["site"].(map[string]interface{})
-		pages := site["pages"].([]interface{})
-		Expect(pages).To(HaveLen(2))
-
-		var found bool
-		for _, item := range pages {
-			p, ok := item.(map[string]interface{})
-			Expect(ok).To(BeTrue())
-			if p["title"] == "Quickstart" {
-				found = true
-				Expect(p).To(HaveKeyWithValue("nav_weight", 10),
-					"custom front matter fields like nav_weight must be "+
-						"accessible on site.pages items — this enables "+
-						"site.pages | where: 'layout', 'doc' | sort: 'nav_weight' "+
-						"(issue #712)")
-				Expect(p).To(HaveKeyWithValue("url", "/docs/quickstart/"))
-			}
-		}
-		Expect(found).To(BeTrue(),
-			"docPage must appear in site.pages")
+		out := renderWith([]*content.Page{page, docPage},
+			`SIZE[{{ site.pages | size }}] `+
+				`DOCS[{% assign docs = site.pages | where: "layout", "doc" | sort: "nav_weight" %}`+
+				`{% for p in docs %}{{ p.title }}|{{ p.nav_weight }}|{{ p.url }}{% endfor %}]`)
+		Expect(out).To(ContainSubstring("SIZE[2]"))
+		Expect(out).To(ContainSubstring("DOCS[Quickstart|10|/docs/quickstart/]"),
+			"custom front matter fields like nav_weight must be accessible "+
+				"on site.pages items — this enables "+
+				"site.pages | where: 'layout', 'doc' | sort: 'nav_weight' "+
+				"(issue #712)")
 	})
 
 	It("taxonomies key is present in ToMap even when nil", func() {

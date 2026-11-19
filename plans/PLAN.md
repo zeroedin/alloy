@@ -1892,6 +1892,47 @@ Paginated pages additionally receive:
 
 The `pagination` and `as` variables are only present on pages with a `pagination` front matter block. Non-paginated pages do not receive them. The `as` variable name is user-defined (e.g., `as: articles` → `{{ articles }}`) and provides a convenient top-level alias for `pagination.items`.
 
+### `site.pages` is built only when a template reads it (issue #1360)
+
+Building `site.pages` means making one template map for every page. Alloy does that only when a template reads `site.pages`:
+
+1. A render that doesn't read `site.pages` does no per-page work for it.
+2. When templates do read it, the list is built at most once per render pass, not once per page. The passes are page bodies, layouts, extra output formats, and taxonomy pages.
+3. The list is built again after any step that can change a page's front matter or computed fields. Today those are the plugin hooks that run between the body pass and the layout pass (`onContentLoaded`, `onDataCascadeReady`, `onContentTransformed`). So a layout sees front matter a hook added, and a page body doesn't, as before.
+4. Templates get the same output as before from `site` and `site.pages`:
+   - loops, `size`, `first`, `last`, an index, and `assign`
+   - filters such as `where`, `sort` and `map`
+   - the other `site` keys (`title`, `baseURL`, `data`, `language`, `collections`)
+   - `site` passed whole to a filter (`{{ site | json }}`), and a loop over `site`'s keys
+   - in a multilingual build, the pages of every language
+
+   Three uses of `site` itself change. `site` is no longer a map, so the parts of Liquid that work only on a map see it differently. These are accepted:
+
+   | Template | Before | Now |
+   |---|---|---|
+   | `{{ site \| size }}` | the number of `site` keys | `0` |
+   | `{% if site contains "title" %}` | true | false, for any key |
+   | `{{ site["size"] }}` | nothing (`site` has no `size` key) | the number of `site` keys |
+
+   `{{ site.size }}` still gives the number of `site` keys.
+
+This applies to `alloy build`, `alloy dev` and `alloy serve`. The full build and the incremental rebuild share the code that builds the template context.
+
+Why: before, every render built the list, whether or not the template read it, once per layout in the chain. The work for one page grew with the number of pages, so a build grew with the square of the page count. In a profile of a 1,000-page build, 83% of the build's own time went to these copies. Measured with a throwaway fix on a plain blog with a two-layout chain (rough numbers, about ±30%):
+
+| | Before | With the fix |
+|---|---|---|
+| Full build, 1,000 pages | 1.7–2.6s | 0.7–0.9s |
+| Title edit in `alloy dev`, 1,000 pages | 1.5s | 0.2s |
+| Full build, 4,000 pages | 24.5s | about 4s |
+| Full build, 1,000 pages and 20 data files | about 4.5s | 0.9s |
+
+Every output file was identical with and without the fix, except `sitemap.xml`, which differs between any two builds.
+
+Not part of this rule:
+- `collections.*` and `taxonomies.*` items are already built once per build.
+- A page's front matter still holds a copy of every global data key (see "Performance: Layered Lookup, Not Deep Copy").
+
 ---
 
 ## 4. Template Engine Architecture
@@ -2639,6 +2680,15 @@ export default function(alloy) {
 ```
 
 Now `{{ page.content | wordCount }}` and `{% youtube "dQw4w9WgXcQ" %}` work in templates. No compilation, no config.
+
+**Plugin filters receive and return values (issue #1366).** A plugin filter gets its input, and gives back its result, as JavaScript values, on QuickJS exactly as on Node:
+
+- **Input:** a string, number or boolean arrives as it is. An integer too big for 32 bits keeps its value, up to 2^53 (`9007199254740992`) either way: past that, a JavaScript number can't hold every integer, so a larger one is rounded to the nearest it can hold (`9007199254740993` arrives as `9007199254740992`), on both runtimes, whether it is passed alone or inside a list or map. A list arrives as an array, and a map, a data file object or front matter object as an object. Values inside them are converted the same way. A date arrives as text in RFC 3339 form (`2024-01-02T00:00:00Z`). A data file object's keys keep their file order, except keys that look like array indexes (`"2"`, `"10"`): JavaScript always lists those first, in numeric order, on both runtimes.
+- **Result:** a returned array comes back to the template as a list, and a returned object as an object the template can read by key and loop over. A returned object's own keys win: if it has a `size` or `first` key, `{{ o.size }}` and `{{ o.first }}` give those values, as on Node, not the key count or first pair that a data file object gives. On QuickJS a returned object keeps its key order. A string, number or boolean comes back as it is.
+- In both directions a value crosses as JSON does, as for Node filters and filter arguments: a function or `undefined` is dropped from an object, and becomes `null` in an array. A value with a `toJSON` method crosses as what that method returns, so the object and array rules above apply to what JSON makes of a result, not to its JavaScript type: a returned `Date` comes back as text (`1970-01-01T00:00:00.000Z`), and an object whose `toJSON` returns `5` comes back as `5`, on both runtimes.
+- **Every call, the first included.** This holds for every call a runtime makes, including its first, and each call's result is its own: a filter that returns text after one that returned an object gives its text (issue #1382).
+
+So `alloy.filter("keys", (o) => Object.keys(o))` makes `{{ site.data.nav | keys | join: ", " }}` give the keys in file order (array-index-like keys first, as above), on either runtime. Before #1366 a QuickJS filter received anything but a string, number or boolean as Go's debug text, and an array or object it returned came back as text. Tests: `internal/pipeline/filter_values_test.go`.
 
 **Site data access** — Plugins can access global data from `data/` files via `alloy.data`:
 
@@ -4004,6 +4054,7 @@ Design constraints:
 - **Pipeline stages**: Each stage uses channels to pass work to the next
 - **Template caching**: Parse templates once at startup, reuse compiled templates for every page render (liquidgo's parse-once/render-many)
 - **Data caching**: Global and directory data loaded once, shared across all page renders (read-only after assembly)
+- **Template context**: building one page's template context costs the same whatever the size of the site. `site.pages` is built on first read, at most once per render pass (issue #1360, see "`site.pages` is built only when a template reads it")
 
 ### Caching Strategy
 - `.alloy/` directory stores build cache
