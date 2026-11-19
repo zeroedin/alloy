@@ -1533,6 +1533,22 @@ Known gaps:
 
 A precise fix records which data each page reads. That's tracked in #1326 (see "Data Read Tracking (TrackedDrop)" under Future Features).
 
+**Hooks see every page in an incremental rebuild (issue #1377).** `onContentLoaded` and `onDataCascadeReady` run on every page in an incremental rebuild, as in a full build, not only on the pages it re-renders. So what they add to a page's front matter is on every page that a re-rendered page lists through `site.pages`, as in a full build.
+
+- **Same input as a full build.** Each hook gets every page, in the same order and with the same fields as in a full build. For `onContentLoaded` that includes each page's rendered body (`html`), so every page's body is rendered too. `onDataCascadeReady` gets each page's `path` and `data`, as in a full build, with no `html`. A hook is asked again on every rebuild, not answered from a previous one, so a hook whose result changes between builds, such as one that reads the time or another page, gives its new result.
+- **Only the pages that need it are re-rendered.** Running the hooks on every page doesn't change which pages go through their layout and get written: only the pages an incremental rebuild already re-renders.
+- **`onContentTransformed` is unchanged.** It changes only a page's own HTML and table of contents, which only that page's output shows, so it still runs only on the pages that are re-rendered.
+
+Why: an incremental rebuild reads every page from disk, so a page it didn't hand to the hooks came back without what they add. A page listing it showed the field on the edited page only. In a measured case with three pages and a layout that lists them, a full build gave `L/D` (one field from each hook) for all three, and a rebuild after editing one page gave it for that page only.
+
+Cost: rendering every page's body takes about 14ms for 1,000 pages. A hook takes what it takes in a full build, about 0.1–0.2s for a simple hook over 1,000 pages on QuickJS or Node. An incremental rebuild of one page on that site took about 15ms before.
+
+This matters most on a body-only edit, and on a site with no collection and no taxonomy: on a site that has one, a front matter change already re-renders every page (issue #1320), so every page already went through the hooks.
+
+Not part of this rule: `collections.*` items don't carry what these hooks add, in a full build either, since collections are built before the hooks run (issue #1385).
+
+Tests: `internal/pipeline/incremental_hooks_all_pages_test.go`.
+
 **Data file changes and PipelineState (issue #717)** — In dev mode, `PipelineState` is created once at server startup and reused across all `BuildIncremental` calls. `PipelineState.SiteData` is loaded from `cfg.Structure.Data` at creation time. When data files change on disk during a dev session, `BuildIncremental` must re-load site data from disk and update `PipelineState.SiteData` before `processPagination` runs. Without this, paginated virtual pages that reference `site.data.*` use stale data — new items are invisible, modified values don't appear, and removed items persist as ghost pages. Data file changes must also invalidate all paginated pages whose `pagination.data` references the changed data source, forcing re-rendering even when the source template's content hash is unchanged. **Error resilience (issue #1018)**: when `loadSiteData` returns an error during the data reload (e.g., a missing external data file or an external-vs-directory key collision), `BuildIncremental` logs the error as a warning and preserves the previous `ps.SiteData` — pages continue rendering with stale data rather than crashing or producing empty output.
 
 **Template invalidation** — Template changes invalidate pages that use that specific template (tracked via the layout resolution step), not all pages in a stage.
