@@ -474,6 +474,10 @@ Key points:
   - Trap: a split-body reply adds its body field to the result as a `map[string]interface{}`. With an ordered result, set the field on the `*ordered.Map`.
   - Trap: an `*ordered.Map` answers `size` and `first` before its own keys. A Node filter's result must let its own keys win (issue #1366), so wrap it or use a type that looks up its own keys first. The guard "still gives a filter result's own size and first keys" fails if the result is a bare `*ordered.Map`.
   - The tests use objects with 12 keys. A Go map of 8 keys or fewer comes back in insertion order rotated by a random amount, which is right 1 time in 8.
+  - **A plugin source's cache hit (issue #1392).** `Build` reads a cached plugin source with `fetch.GetCached`, which decodes `cacheEntry.Data` into a Go map, so a cache hit loops in sorted order. The cache file keeps the order: `SaveCache` writes the `*ordered.Map`. For plugin sources only, decode `data` with `ordered.UnmarshalJSONValue` and mark it with `ordered.OwnKeysFirst`, as `CallSource` marks a fresh result. A throwaway that did this in a separate reader for the `case "plugin"` branch passed every test and `go test -race ./...`.
+    - Trap: `GetCached` also serves REST sources (`FetchRESTWithRefetch`). They stay as they are, so don't change the shared reader's result for them.
+    - Trap: without `OwnKeysFirst` on the cache hit, the guard "still gives the result's own size and first keys" fails: a bare `*ordered.Map` answers `size` and `first` itself.
+    - Tests: "from a plugin source read back from its cache (issue #1392)" in `internal/pipeline/node_key_order_test.go`. The test writes the cache file itself, so it needs no Node and calls no source.
 
 ### 4B: Remove Go templates (issue #1285)
 

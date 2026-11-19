@@ -1,6 +1,8 @@
 package pipeline_test
 
 import (
+	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -152,11 +154,13 @@ var _ = Describe("Node plugins keep the key order of objects (issue #1374)", fun
 			cfg.Sources = map[string]*config.SourceConfig{
 				"one":  {Type: "plugin", Plugin: "one-object", As: "one"},
 				"list": {Type: "plugin", Plugin: "object-list", As: "list"},
+				"own":  {Type: "plugin", Plugin: "own-source", As: "own"},
 			}
 			out = build(cfg, map[string]string{
 				"plugins/values.js": node + "export default function(alloy) {\n" +
 					"  alloy.source('one-object', async () => (" + obj + "));\n" +
 					"  alloy.source('object-list', async () => ([" + obj + ", " + obj + "]));\n" +
+					"  alloy.source('own-source', async () => ({size: 'large', first: 'primary', zeta: 1}));\n" +
 					"  alloy.filter('make_object', () => (" + obj + "));\n" +
 					"  alloy.filter('own_keys', () => ({size: 'own', first: 'mine', zeta: 1}));\n" +
 					"}\n",
@@ -164,6 +168,7 @@ var _ = Describe("Node plugins keep the key order of objects (issue #1374)", fun
 					"LIST[" + loop("site.data.list[1]") + "] " +
 					`{% assign o = "x" | make_object %}FILTER[` + loop("o") + "] " +
 					`{% assign own = "x" | own_keys %}OWN[{{ own.size }},{{ own.first }}] ` +
+					"OWN-SOURCE[{{ site.data.own.size }},{{ site.data.own.first }}] " +
 					"{{ content }}",
 			})
 		})
@@ -182,6 +187,62 @@ var _ = Describe("Node plugins keep the key order of objects (issue #1374)", fun
 		// and keeping order must not change that.
 		It("still gives a filter result's own size and first keys (guard)", func() {
 			Expect(out).To(ContainSubstring("OWN[own,mine]"))
+		})
+
+		// A source's own size and first keys win, as a filter result's do
+		// (issue #1392). Before #1374 a source's result was a Go map, whose
+		// own keys always win.
+		It("gives a source result's own size and first keys", func() {
+			Expect(out).To(ContainSubstring("OWN-SOURCE[large,primary]"))
+		})
+	})
+
+	// A plugin source with cache: N saves its result in
+	// .alloy/fetch-cache/<plugin>.json, in the source's key order. A later
+	// build within N seconds reads it back instead of calling the source.
+	// That build must see what a fresh fetch gives: the same key order,
+	// and a result's own size and first keys winning (issue #1392). REST
+	// sources share the cache reader and are not part of this rule.
+	//
+	// The cache file is written by the test, as SaveCache writes it, so no
+	// plugin runs: the source isn't registered, and a cache miss fails the
+	// build.
+	Describe("from a plugin source read back from its cache (issue #1392)", Ordered, ContinueOnFailure, func() {
+		var out string
+		BeforeAll(func() {
+			DeferCleanup(fetch.ResetPluginSources)
+			fetch.ResetPluginSources()
+			cfg := newConfig()
+			cfg.Sources = map[string]*config.SourceConfig{
+				"one":  {Type: "plugin", Plugin: "cached-object", Cache: 3600, As: "one"},
+				"list": {Type: "plugin", Plugin: "cached-list", Cache: 3600, As: "list"},
+				"own":  {Type: "plugin", Plugin: "cached-own", Cache: 3600, As: "own"},
+			}
+			at := time.Now().UTC().Format(time.RFC3339Nano)
+			entry := func(data string) string {
+				return `{"data":` + data + `,"cached_at":"` + at + `"}`
+			}
+			out = build(cfg, map[string]string{
+				".alloy/fetch-cache/cached-object.json": entry(obj),
+				".alloy/fetch-cache/cached-list.json":   entry("[" + obj + "," + obj + "]"),
+				".alloy/fetch-cache/cached-own.json":    entry(`{"size":"large","first":"primary","zeta":1}`),
+				"layouts/default.liquid": "CACHED[" + loop("site.data.one") + "] " +
+					"CACHED-LIST[" + loop("site.data.list[1]") + "] " +
+					"CACHED-OWN[{{ site.data.own.size }},{{ site.data.own.first }}] " +
+					"{{ content }}",
+			})
+		})
+
+		It("keeps the order the source returned for an object", func() {
+			Expect(out).To(ContainSubstring("CACHED[" + order + "]"))
+		})
+		It("keeps the order the source returned for each object in a list", func() {
+			Expect(out).To(ContainSubstring("CACHED-LIST[" + order + "]"))
+		})
+		// Guard: a cache hit gives a plain Go map today, whose own keys win.
+		// Reading it back in order must keep that.
+		It("still gives the result's own size and first keys (guard)", func() {
+			Expect(out).To(ContainSubstring("CACHED-OWN[large,primary]"))
 		})
 	})
 
