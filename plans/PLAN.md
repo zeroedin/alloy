@@ -1535,7 +1535,7 @@ A precise fix records which data each page reads. That's tracked in #1326 (see "
 
 **Hooks see every page in an incremental rebuild (issue #1377).** `onContentLoaded` and `onDataCascadeReady` run on every page in an incremental rebuild, as in a full build, not only on the pages it re-renders. So what they add to a page's front matter is on every page that a re-rendered page lists through `site.pages`, as in a full build.
 
-- **Same input as a full build.** Each hook gets every page, in the same order and with the same fields as in a full build. For `onContentLoaded` that includes each page's rendered body (`html`), so every page's body is rendered too. `onDataCascadeReady` gets each page's `path` and `data`, as in a full build, with no `html`. A hook is asked again on every rebuild, not answered from a previous one, so a hook whose result changes between builds, such as one that reads the time or another page, gives its new result.
+- **Same input as a full build.** Each hook gets every page, in the same order and with the same fields as in a full build. For `onContentLoaded` that includes each page's rendered body (`html`), so every page's body is rendered too. `onDataCascadeReady` gets each page's `path`, `url` (issue #1391) and `data`, as in a full build, with no `html`. A hook is asked again on every rebuild, not answered from a previous one, so a hook whose result changes between builds, such as one that reads the time or another page, gives its new result.
 - **Only the pages that need it are re-rendered.** Running the hooks on every page doesn't change which pages go through their layout and get written: only the pages an incremental rebuild already re-renders.
 - **`onContentTransformed` is unchanged.** It changes only a page's own HTML and table of contents, which only that page's output shows, so it still runs only on the pages that are re-rendered.
 
@@ -3077,8 +3077,16 @@ This also resolves #521 (virtual pages appended to wrong language batch): since 
 
 | Event | Payload | Returns | When |
 |---|---|---|---|
-| `onContentLoaded` | `[{ path, url, frontMatter: { ... }, content: "...", html: "..." }, ...]` | Same shape, same length, same order (modify `frontMatter` and `html` on existing pages) | After content rendering. Fires once with full pages array. Plugin modifies `frontMatter` and `html` on existing pages — `content`, `path`, `url` are present for inspection but mutations are not applied back. Return array must equal input length and preserve order (indexed by position). Extra pages produce a validation error — use `onPagesReady` for injection (#525). |
-| `onDataCascadeReady` | `[{ path, data: { ... } }, ...]` | Same shape, same length | After cascade resolved. Fires once with full pages array (each entry has per-page cascade data). Plugin enriches cascade data. |
+| `onContentLoaded` | `[{ path, url, frontMatter: { ... }, content: "...", html: "..." }, ...]` | Same shape, same length (modify `frontMatter` and `html` on existing pages) | After content rendering. Fires once with full pages array. Plugin modifies `frontMatter` and `html` on existing pages — `content`, `path`, `url` are present for inspection but mutations are not applied back. Return array must equal input length. Each entry is applied to the page with its `path` and `url`, whatever its position (issue #1391). Extra pages produce a validation error — use `onPagesReady` for injection (#525). |
+| `onDataCascadeReady` | `[{ path, url, data: { ... } }, ...]` | Same shape, same length | After cascade resolved. Fires once with full pages array (each entry has per-page cascade data). Plugin enriches cascade data. Each entry is applied to the page with its `path` and `url` (issue #1391); `url` is for matching, and changing it is not applied back. |
+
+**Hook results are matched to pages by path and URL (issue #1391).** `onContentLoaded` and `onDataCascadeReady` get a list of pages and give back a list of the same length. Alloy applies each returned entry to the page it came from, found by its `path` and `url` together, in a full build and in an `alloy dev` rebuild alike:
+
+- **Every page gets its own result.** A paginated source file makes several pages with one `path` and different URLs (`/list/`, `/list/page/2/`, …). Each of them gets what the hook returned for it. Before, results were matched by `path` alone, so every result for a paginated source landed on its last page and the others got nothing.
+- **Order doesn't matter.** A hook may return its entries in any order.
+- **`onDataCascadeReady` gets `url` too.** Each entry has `path`, `url` and `data`. As with `onContentLoaded`, `path` and `url` are for matching: changing them is not applied back.
+- **A scoped hook changes only the pages in its scope.** A hook whose `pages` glob selects `/list/` changes that page and no other page made from the same file.
+- **An entry with no `url`, or a `url` no page sent to the hook has,** is matched by `path` alone when only one page sent to the hook has that path. When several do, Alloy can't tell which page it means, and the build fails with an error that names the hook and the path. Nothing is guessed. A hook that builds its entries from the ones it got, such as `pages.map(p => ({ ...p, data: { ...p.data, badge: "x" } }))`, keeps `url` and needs no change.
 
 #### Per-build hooks (JSON objects)
 
