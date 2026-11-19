@@ -52,7 +52,7 @@ func generateTaxonomyPages(taxonomies map[string]*collection.TaxonomyCollection,
 				taxPage.URL = "/" + urlPrefix + strings.TrimPrefix(taxPage.URL, "/")
 			}
 
-			ctx := tmpl.BuildTemplateContext(taxPage, combinedSiteDataForPage(cfg, rc.SiteData, rc.LangContexts, taxPage), rc.Pages, rc.CollectionsCtx, rc.TaxonomiesCtx, nil, "").ToMap()
+			ctx := rc.templateContext(taxPage).ToMap()
 			term := ""
 			if taxPage.Kind == "taxonomy_term" {
 				if t, ok := taxPage.FrontMatter["title"].(string); ok {
