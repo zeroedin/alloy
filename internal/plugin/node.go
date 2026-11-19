@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -66,6 +67,20 @@ type Message struct {
 	Result    interface{}   `json:"result,omitempty"`    // response result
 	Error     string        `json:"error,omitempty"`     // error message from bridge
 	Instances []SSRInstance `json:"instances,omitempty"` // SSR render instances
+
+	// orderedResult asks Send to decode the reply's result in key order:
+	// an object becomes an *ordered.Map, at every level (issue #1374). Set
+	// on the calls whose result reaches templates as data: hooks, sources
+	// and filters. Other replies, such as the one to loading a plugin, are
+	// read as plain maps.
+	orderedResult bool
+}
+
+// orderedReply is a reply whose result is kept as sent, to be decoded in
+// key order. Its Result hides the embedded Message's.
+type orderedReply struct {
+	Message
+	Result json.RawMessage `json:"result,omitempty"`
 }
 
 // splitBodyField extracts the field name and value to send as raw bytes
@@ -416,14 +431,17 @@ func (r *NodeRuntime) CallFilter(name string, input interface{}, args ...interfa
 		"args":  args,
 	}
 	resp, err := r.bridge.Send(&Message{
-		Type:    "filter",
-		Name:    name,
-		Payload: payload,
+		Type:          "filter",
+		Name:          name,
+		Payload:       payload,
+		orderedResult: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("node filter %q: %w", name, err)
 	}
-	return resp.Result, nil
+	// The result's own keys win over size and first, as for any plugin
+	// filter's result (issue #1366).
+	return ordered.OwnKeysFirst(resp.Result), nil
 }
 
 // RegisteredShortcodes returns the names of shortcodes registered by the Node plugin.
@@ -524,9 +542,10 @@ func (r *NodeRuntime) CallSource(name string, config map[string]interface{}) (in
 	ch := make(chan sendResult, 1)
 	go func() {
 		resp, err := r.bridge.Send(&Message{
-			Type:    "source",
-			Name:    name,
-			Payload: config,
+			Type:          "source",
+			Name:          name,
+			Payload:       config,
+			orderedResult: true,
 		})
 		ch <- sendResult{resp, err}
 	}()
@@ -558,14 +577,15 @@ func (r *NodeRuntime) CallHook(name string, payload interface{}) (interface{}, e
 		return payload, nil
 	}
 	resp, err := r.bridge.Send(&Message{
-		Type:    "hook",
-		Name:    name,
-		Payload: payload,
+		Type:          "hook",
+		Name:          name,
+		Payload:       payload,
+		orderedResult: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("node hook %q: %w", name, err)
 	}
-	return ordered.RewrapValue(resp.Result), nil
+	return resp.Result, nil
 }
 
 // PrepareWorkerPool starts n-1 additional Node bridges for parallel hook dispatch.
@@ -664,9 +684,10 @@ func (r *NodeRuntime) BatchCallHook(name string, payloads []interface{}, onProgr
 			defer wg.Done()
 			for i := lo; i < hi; i++ {
 				resp, err := bridge.Send(&Message{
-					Type:    "hook",
-					Name:    name,
-					Payload: payloads[i],
+					Type:          "hook",
+					Name:          name,
+					Payload:       payloads[i],
+					orderedResult: true,
 				})
 				if err != nil {
 					errOnce.Do(func() {
@@ -674,7 +695,7 @@ func (r *NodeRuntime) BatchCallHook(name string, payloads []interface{}, onProgr
 					})
 					return
 				}
-				results[i] = ordered.RewrapValue(resp.Result)
+				results[i] = resp.Result
 				if onProgress != nil {
 					onProgress(int(completed.Add(1)))
 				}
@@ -950,7 +971,20 @@ func (b *NodeBridge) Send(msg *Message) (*Message, error) {
 	}
 
 	var resp Message
-	if err := jsonCodec.Unmarshal(body, &resp); err != nil {
+	if msg.orderedResult {
+		var reply orderedReply
+		if err := jsonCodec.Unmarshal(body, &reply); err != nil {
+			return nil, fmt.Errorf("decoding response: %w", err)
+		}
+		resp = reply.Message
+		if len(reply.Result) > 0 {
+			result, err := ordered.UnmarshalJSONValue(reply.Result)
+			if err != nil {
+				return nil, fmt.Errorf("decoding response result: %w", err)
+			}
+			resp.Result = result
+		}
+	} else if err := jsonCodec.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("decoding response: %w", err)
 	}
 
@@ -971,12 +1005,20 @@ func (b *NodeBridge) Send(msg *Message) (*Message, error) {
 		if _, err := io.ReadFull(b.stdout, rawBody); err != nil {
 			return nil, fmt.Errorf("reading split body: %w", err)
 		}
-		resultMap, ok := resp.Result.(map[string]interface{})
-		if !ok {
-			resultMap = make(map[string]interface{})
+		switch result := resp.Result.(type) {
+		case *ordered.Map:
+			result.Set(bodyField, string(rawBody))
+		case map[string]interface{}:
+			result[bodyField] = string(rawBody)
+		default:
+			if msg.orderedResult {
+				m := ordered.New()
+				m.Set(bodyField, string(rawBody))
+				resp.Result = m
+			} else {
+				resp.Result = map[string]interface{}{bodyField: string(rawBody)}
+			}
 		}
-		resultMap[bodyField] = string(rawBody)
-		resp.Result = resultMap
 	}
 
 	if resp.Error != "" {
