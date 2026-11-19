@@ -94,7 +94,7 @@ A filter receives its input as a JavaScript value, on QuickJS and Node alike:
 | A date | text in RFC 3339 form: `"2024-01-02T00:00:00Z"` |
 | Nothing | `null` |
 
-What a filter returns comes back the same way: an array as a list the template can loop over, count and join, and an object as one it can read by key and loop over. A returned object's own keys win, so `{{ result.size }}` gives its `size` key when it has one. On QuickJS a returned object keeps its key order.
+What a filter returns comes back the same way: an array as a list the template can loop over, count and join, and an object as one it can read by key and loop over. A returned object's own keys win, so `{{ result.size }}` gives its `size` key when it has one, and it keeps its key order.
 
 Values cross the way JSON does: a function or `undefined` is dropped from an object and becomes `null` in an array. JavaScript lists keys that look like array indexes (`"2"`, `"10"`) before any other key.
 

@@ -750,14 +750,17 @@ var _ = Describe("NodeBridge", func() {
 			Expect(ok).To(BeTrue(), "source handler must return an array")
 			Expect(arr).To(HaveLen(2))
 
-			first, ok := arr[0].(map[string]interface{})
-			Expect(ok).To(BeTrue(), "array elements must be maps after JSON round-trip")
-			Expect(first["title"]).To(Equal("Post 1"))
-			Expect(first["slug"]).To(Equal("post-1"))
+			// Objects keep the key order the source gave them, as data
+			// file objects do (issue #1374).
+			first, ok := arr[0].(*ordered.Map)
+			Expect(ok).To(BeTrue(), "array elements must be *ordered.Map, got %T", arr[0])
+			Expect(first.Keys()).To(Equal([]string{"title", "slug"}))
+			Expect(first.Get("title")).To(Equal("Post 1"))
+			Expect(first.Get("slug")).To(Equal("post-1"))
 
-			second, ok := arr[1].(map[string]interface{})
+			second, ok := arr[1].(*ordered.Map)
 			Expect(ok).To(BeTrue())
-			Expect(second["title"]).To(Equal("Post 2"))
+			Expect(second.Get("title")).To(Equal("Post 2"))
 		})
 
 		It("CallSource propagates handler errors", func() {

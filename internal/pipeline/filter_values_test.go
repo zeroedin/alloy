@@ -85,8 +85,8 @@ var _ = Describe("Plugin filters pass lists and objects as values (issue #1366)"
 		return buildWith(runtimeLine, layout)
 	}
 
-	// The same checks for both runtimes. On Node they pass today and are
-	// guards; on QuickJS they fail until the fix.
+	// The same checks for both runtimes. All pass on both, except that on
+	// Node a returned object's keys come back sorted until #1374 is fixed.
 	for _, rt := range []struct{ name, line string }{
 		{"QuickJS, the default", ""},
 		{"Node", "export const runtime = \"node\";\n"},
@@ -123,6 +123,12 @@ var _ = Describe("Plugin filters pass lists and objects as values (issue #1366)"
 			It("returns an object the template can read by key", func() {
 				Expect(out).To(ContainSubstring(`OUT-OBJECT[x1|x2]`))
 			})
+			// The filter writes b before a, so a sorted decoder fails this.
+			// Node decodes a filter's result into a Go map today, and Liquid
+			// loops over one in sorted order (issue #1374).
+			It("returns an object whose keys keep their order", func() {
+				Expect(out).To(ContainSubstring(`OUT-OBJECT-LOOP[b;a;]`))
+			})
 			It("returns an object whose own size and first keys win", func() {
 				Expect(out).To(ContainSubstring(`OUT-OWN-KEYS[large|primary]`))
 			})
@@ -130,7 +136,7 @@ var _ = Describe("Plugin filters pass lists and objects as values (issue #1366)"
 				Expect(out).To(ContainSubstring(`IN-BIG-NUMBER[number:3000000000]`))
 			})
 
-			// Guards: these work on both runtimes today.
+			// Guards: these worked on both runtimes before #1366.
 			It("still receives strings and numbers as they are (guard)", func() {
 				Expect(out).To(ContainSubstring(`IN-STRING[string:"hi"]`))
 				Expect(out).To(ContainSubstring(`IN-NUMBER[number:7]`))
@@ -138,13 +144,6 @@ var _ = Describe("Plugin filters pass lists and objects as values (issue #1366)"
 			})
 		})
 	}
-
-	// Key order of a returned object is QuickJS's alone for now: a Node
-	// filter's result is decoded into a Go map, which has no order (#1374).
-	// The filter writes b before a, so a sorted decoder fails this.
-	It("returns an object whose keys keep their order on QuickJS", func() {
-		Expect(build("")).To(ContainSubstring(`OUT-OBJECT-LOOP[b;a;]`))
-	})
 
 	// The first filter call a runtime makes can return an array or object
 	// too (issue #1382). The layout above calls a filter that returns text

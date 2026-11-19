@@ -270,7 +270,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				fetched, fetchErr = fetch.FetchGraphQL(src.Endpoint, src.Query)
 			case "plugin":
 				if !cfg.Refetch && src.Cache > 0 {
-					if cached, found := fetch.GetCached(src.Plugin, cacheDir, src.Cache); found {
+					if cached, found := fetch.GetCachedPluginSource(src.Plugin, cacheDir, src.Cache); found {
 						fetched = cached
 						break
 					}

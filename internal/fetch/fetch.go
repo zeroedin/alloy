@@ -3,6 +3,7 @@ package fetch
 import (
 	"bytes"
 	"encoding/csv"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/zeroedin/alloy/internal/ordered"
 )
 
 // FetchResult holds fetched data along with cache metadata.
@@ -188,27 +191,70 @@ func CacheDir(projectRoot string) string {
 
 // GetCachedWithTTL returns cached data only if it hasn't expired.
 func GetCachedWithTTL(name, cacheDir string, ttlSeconds int) (interface{}, bool, error) {
+	raw, found := readCacheData(name, cacheDir, ttlSeconds)
+	if !found {
+		return nil, false, nil
+	}
+	if len(raw) == 0 {
+		return nil, true, nil
+	}
+
+	var data interface{}
+	if err := jsonCodec.Unmarshal(raw, &data); err != nil {
+		return nil, false, nil
+	}
+	return data, true, nil
+}
+
+// GetCachedPluginSource returns a plugin source's cached result, as a fresh
+// call gives it: objects are *ordered.Map in the order the source returned
+// their keys, with the result's own size and first keys winning
+// (issue #1392). It shares the cache file format and TTL rules with
+// GetCached, which REST sources keep using.
+func GetCachedPluginSource(name, cacheDir string, ttlSeconds int) (interface{}, bool) {
+	raw, found := readCacheData(name, cacheDir, ttlSeconds)
+	if !found {
+		return nil, false
+	}
+	if len(raw) == 0 {
+		return nil, true
+	}
+
+	data, err := ordered.UnmarshalJSONValue(raw)
+	if err != nil {
+		return nil, false
+	}
+	return ordered.OwnKeysFirst(data), true
+}
+
+// readCacheData returns the raw JSON of a cache entry's data if the entry
+// exists, parses and hasn't expired. The data is empty when the entry has no
+// data key.
+func readCacheData(name, cacheDir string, ttlSeconds int) (json.RawMessage, bool) {
+	// TTL of 0 means already expired
+	if ttlSeconds == 0 {
+		return nil, false
+	}
+
 	path := filepath.Join(cacheDir, name+".json")
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, false, nil
+		return nil, false
 	}
 
-	var entry cacheEntry
+	var entry struct {
+		Data     json.RawMessage `json:"data"`
+		CachedAt time.Time       `json:"cached_at"`
+	}
 	if err := jsonCodec.Unmarshal(b, &entry); err != nil {
-		return nil, false, nil
+		return nil, false
 	}
 
 	if ttlSeconds > 0 && time.Since(entry.CachedAt) > time.Duration(ttlSeconds)*time.Second {
-		return nil, false, nil
+		return nil, false
 	}
 
-	// TTL of 0 means already expired
-	if ttlSeconds == 0 {
-		return nil, false, nil
-	}
-
-	return entry.Data, true, nil
+	return entry.Data, true
 }
 
 // FetchRESTWithRefetch fetches from a REST endpoint, bypassing cache when refetch is true.
