@@ -5,6 +5,7 @@ import (
 	stdjson "encoding/json"
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/Notifuse/liquidgo/v5/liquid"
 )
@@ -223,12 +224,51 @@ func OwnKeysFirst(v interface{}) interface{} {
 		for _, item := range val.values {
 			OwnKeysFirst(item)
 		}
+	case map[string]interface{}:
+		for _, item := range val {
+			OwnKeysFirst(item)
+		}
 	case []interface{}:
 		for _, item := range val {
 			OwnKeysFirst(item)
 		}
 	}
 	return v
+}
+
+// DataFileValue makes every map in v, at any depth, read size and first as
+// a data file object does (issue #1363): {{ o.size }} is its key count and
+// {{ o.first }} its first pair. It clears the mark OwnKeysFirst sets, and
+// turns a Go map into a *Map with its keys sorted, since a Go map has no
+// order and always lets its own keys win. It returns the converted value
+// (issue #1396).
+func DataFileValue(v interface{}) interface{} {
+	switch val := v.(type) {
+	case *Map:
+		val.ownKeys = false
+		for _, k := range val.keys {
+			val.values[k] = DataFileValue(val.values[k])
+		}
+		return val
+	case map[string]interface{}:
+		keys := make([]string, 0, len(val))
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		m := New()
+		for _, k := range keys {
+			m.Set(k, DataFileValue(val[k]))
+		}
+		return m
+	case []interface{}:
+		for i, item := range val {
+			val[i] = DataFileValue(item)
+		}
+		return val
+	default:
+		return v
+	}
 }
 
 // Size returns the number of entries (accessed as .size in Liquid).
