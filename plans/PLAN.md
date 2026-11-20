@@ -1562,7 +1562,7 @@ Tests: `internal/pipeline/incremental_hooks_all_pages_test.go`.
 
 Before #1402, the reload replaced all of `site.data` with the data files, so every source was missing from `site.data` until a restart.
 
-Tests: `internal/pipeline/dev_keep_sources_test.go`.
+Tests: `test/integration/dev_keep_sources_test.go`. They drive the real `alloy dev` binary, since `cmd/dev.go` hands the startup build's data to the rebuilds.
 
 **Template invalidation** — Template changes invalidate pages that use that specific template (tracked via the layout resolution step), not all pages in a stage.
 
