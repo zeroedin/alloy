@@ -230,6 +230,8 @@ alloy.hook("onDataFetched", { data: ["team"] }, (data) => {
 
 This is the primary mechanism for adding computed data that templates access via `site.data.*`.
 
+After the hook, `.size` and `.first` read each entry of `site.data` by where it came from. A data file's entry gives its key count and first pair, as without a hook, even if the hook changed it. Every other entry, a data source or a key the hook adds, lets its own `size` and `first` keys win: `{{ site.data.plan.size }}` gives the source's `size` key when it has one.
+
 ### onPagesReady
 
 Fires once per language batch, after the data cascade is applied but before taxonomy collection. This is the injection point for virtual pages that need to participate in taxonomies.
@@ -328,6 +330,8 @@ alloy.hook("onAfterValidation", {}, (payload) => {
 | `cascade` | object | Merged into `siteData` — keys overwrite existing values |
 
 Returning `outputPaths` has no effect. Unrecognized keys produce a build error.
+
+`.size` and `.first` read the merged data as after [`onDataFetched`](#ondatafetched): a data file's entry gives its key count and first pair, and every other entry lets its own `size` and `first` keys win. A key `onDataFetched` added counts as a hook's key here too.
 
 ### onContentLoaded
 
