@@ -478,6 +478,15 @@ Key points:
     - Trap: `GetCached` also serves REST sources (`FetchRESTWithRefetch`). They stay as they are, so don't change the shared reader's result for them.
     - Trap: without `OwnKeysFirst` on the cache hit, the guard "still gives the result's own size and first keys" fails: a bare `*ordered.Map` answers `size` and `first` itself.
     - Tests: "from a plugin source read back from its cache (issue #1392)" in `internal/pipeline/node_key_order_test.go`. The test writes the cache file itself, so it needs no Node and calls no source.
+- **Own keys after a data hook (issue #1396)**: after `onDataFetched` or `onAfterValidation`, a data file's entry in `site.data` must read `size` and `first` as a data file, and every other entry must let its own keys win. Spec: PLAN.md → "What `.size` and `.first` give after a data hook (issue #1396)". Tests: `internal/pipeline/data_hook_own_keys_test.go`.
+  - Why it fails: a hook's result is decoded fresh. After `onDataFetched`, `Build` copies the result's `*ordered.Map` entries into `siteData` unmarked, so every entry answers `size` and `first` itself. After `onAfterValidation`, `toGoMap` turns the cascade into Go maps at every depth, and a Go map's own keys always win.
+  - Three places: the `onDataFetched` merge and the `onAfterValidation` merge in `Build`, and the `onDataFetched` merge after a data reload in `BuildIncremental`.
+  - Which keys are data files: in `Build`, the keys `siteData` holds before sources are fetched (`loadSiteData` gives the data directory and `data.files`), less each key a source then sets. In `BuildIncremental`, the keys `loadSiteData` gives, since the sources are gone there (#1402). Keep the `Build` set until `onAfterValidation`, so a key `onDataFetched` added stays a hook's key.
+  - One way that works, tried in a throwaway (about 50 lines, not committed): after each merge, walk the top-level entries. Mark every other entry with `ordered.OwnKeysFirst`. For a data file's entry, clear the mark at every depth, and turn any Go map back into an `*ordered.Map`. It passed every test, and `go test -race ./...` passed with it.
+  - Trap: `ordered.OwnKeysFirst` only marks; there's no way to clear a mark yet. A data file's object can come back marked, so it needs clearing, not just leaving alone.
+  - Trap: the throwaway turned `onAfterValidation`'s Go maps back into `*ordered.Map` with sorted keys, so file order is still lost there. That's #1401, not this issue. The tests' data files list their keys in sorted order, so `.first` doesn't depend on it. Keeping the cascade as `*ordered.Map` instead of using `toGoMap` would fix both.
+  - Trap: a source whose `as` is a data file's key is a source. The throwaway that kept it in the data file set failed the 5 "whose as is a data file's key" tests.
+  - Trap: the rebuild test needs the `BuildIncremental` change. Without it, "gives the own keys of the hook's object after the rebuild" fails.
 
 ### 4B: Remove Go templates (issue #1285)
 
