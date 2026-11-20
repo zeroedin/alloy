@@ -2814,6 +2814,16 @@ When hook payloads pass through the plugin serialization boundary (QuickJS VM or
 
 Only these results change. The other replies from the Node bridge, such as the reply to loading a plugin, which lists its filters, sources and hook options, are read as they are today.
 
+**`onAfterValidation` keeps key order too (issue #1401).** What `onAfterValidation` returns in `cascade` is written back into `site.data` with every object's keys in order, as `onDataFetched`'s result is, on QuickJS and Node:
+
+- A data file's object keeps file order, at every depth, including objects in a list.
+- A source's object keeps the order the source returned.
+- An object the hook builds keeps the order the hook set its keys in.
+
+Before #1401, Alloy read the returned cascade as Go maps, which have no order, so every object in `site.data` looped in sorted order after the hook, even when the hook returned the cascade unchanged. Only key order changes: every value is the same.
+
+Tests: `internal/pipeline/after_validation_key_order_test.go`.
+
 Before, each of these results was decoded into a Go map, which has no order: hooks and sources gave a random order, different on each build, and filters gave sorted order.
 
 Tests: `internal/plugin/node_key_order_test.go` (hooks, including the worker pool), `internal/pipeline/node_key_order_test.go` (what templates see, with guards on QuickJS and on a filter result's own keys, a page hook result that carries `html` keeping its other fields, issue #1387, and a source's own keys and a plugin source read back from its cache, issue #1392), and "CallSource invokes the registered source handler" in `internal/plugin/node_test.go`, which now expects `*ordered.Map` objects.
