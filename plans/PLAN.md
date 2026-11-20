@@ -1557,7 +1557,7 @@ Tests: `internal/pipeline/incremental_hooks_all_pages_test.go`.
 - **Sources:** the values from the last fetch, which is the startup build or the last full rebuild. The rebuild doesn't fetch them again, so it makes no network calls and doesn't call any plugin source. A source's data changes only on a restart or a full rebuild.
 - A source whose `as` is a data file's key replaces that file's data, as in a full build, and counts as a source after a data hook (issue #1396).
 - `onDataFetched` runs again on the reloaded data, as in a full build. It gets each source's value as fetched, not the value the hook returned last time, so a hook that changes a source doesn't apply its change twice.
-- Plugins' `alloy.data` gets the same data as templates.
+- `alloy.data` in QuickJS plugins gets the same data as templates. Node and WASM plugins have no `alloy.data`.
 - If the data directory is deleted, the sources still stay.
 
 Before #1402, the reload replaced all of `site.data` with the data files, so every source was missing from `site.data` until a restart.

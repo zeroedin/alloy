@@ -27,7 +27,7 @@ import (
 //   - A source whose as is a data file's key still replaces that file's data.
 //   - onDataFetched runs again on each source's value as fetched, so a
 //     hook's change to a source isn't applied twice.
-//   - Plugins' alloy.data gets the same data as templates.
+//   - alloy.data in QuickJS plugins gets the same data as templates.
 //   - If the data directory is deleted, the sources still stay.
 //
 // Before, the reload replaced all of site.data with the data files, so
@@ -224,7 +224,7 @@ var _ = Describe("alloy dev keeps sources after a data file edit (issue #1402)",
 			Expect(body).To(ContainSubstring("TAGS[new,hooked]"))
 			Expect(body).To(ContainSubstring("BUILT[yes]"))
 		})
-		It("gives plugins' alloy.data the sources too", func() {
+		It("gives QuickJS plugins' alloy.data the sources too", func() {
 			Expect(body).To(ContainSubstring("FILTER[widgets]"))
 		})
 		// Guard: the rebuild makes no network call.
