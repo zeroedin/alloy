@@ -82,6 +82,10 @@ type BuildResult struct {
 	StageTimings        []StageTiming                // per-stage durations (populated when BuildOptions.Profile is true)
 	Cache               *cache.Cache                 // in-memory cache with content hashes for incremental rebuild (issue #639)
 	SiteData            map[string]interface{}       // enriched site data (data files + external sources + hooks)
+	// SourceData holds each source's value by its site.data key, as fetched,
+	// before onDataFetched. alloy dev puts these back after a data file
+	// edit, which reloads only the data files (issue #1402).
+	SourceData map[string]interface{}
 
 	// OutputClaims is every output path this build claimed, with the source
 	// that claimed it. The dev server keeps it so a watcher recopy can check a
@@ -260,6 +264,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		dataFileKeys[k] = true
 	}
 
+	// Each source's value as fetched, before onDataFetched (issue #1402).
+	sourceData := make(map[string]interface{}, len(cfg.Sources))
+
 	// Fetch external data sources and merge into siteData
 	timer.Start("External sources")
 	if len(cfg.Sources) > 0 {
@@ -313,6 +320,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				log.Printf("warning: source %q overwrites existing data key %q", name, key)
 			}
 			siteData[key] = fetched
+			sourceData[key] = fetched
 			delete(dataFileKeys, key)
 		}
 	}
@@ -340,6 +348,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 
 	// Keep PipelineState in sync after sources merge may have replaced the map
 	ps.SiteData = siteData
+	ps.SourceData = sourceData
 
 	// Inject site data into plugin runtimes so alloy.data is available
 	// during template filter/shortcode calls and post-discovery hooks (issue #339).
@@ -1125,6 +1134,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		StageTimings:        timer.Timings(),
 		Cache:               buildCache,
 		SiteData:            siteData,
+		SourceData:          sourceData,
 		OutputClaims:        outputEntries,
 		CopyOrigins:         copyOrigins,
 	}

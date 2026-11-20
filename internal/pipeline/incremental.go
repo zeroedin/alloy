@@ -286,13 +286,34 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	}
 	if hasDataChange {
 		freshData, err := loadSiteData(cfg)
+		// freshData is nil with no error when the data directory is
+		// missing or holds no data files. A missing directory means no
+		// data files, and the sources still come back (issue #1402).
+		dataDirGone := false
+		if err == nil && freshData == nil {
+			if _, statErr := os.Stat(resolveDir(cfg.ProjectRoot, dataDir)); os.IsNotExist(statErr) {
+				dataDirGone = true
+			}
+		}
 		if err != nil {
 			log.Printf("warning: reloading site data: %v", err)
-		} else if freshData != nil {
-			ps.SiteData = freshData
-			// The sources aren't fetched again here (#1402), so every key
-			// loaded is a data file's (issue #1396).
+		} else if dataDirGone && len(ps.SourceData) == 0 {
+			ps.SiteData = nil
+		} else if freshData != nil || dataDirGone {
+			if freshData == nil {
+				freshData = make(map[string]interface{})
+			}
+			// Every key loaded is a data file's. The sources aren't fetched
+			// again: each goes back as last fetched, before onDataFetched,
+			// so the hook below changes it once. A source whose as is a
+			// data file's key replaces that file's data and counts as a
+			// source (issues #1396, #1402).
 			ps.dataFileKeys = topLevelKeys(freshData)
+			for k, v := range ps.SourceData {
+				freshData[k] = v
+				delete(ps.dataFileKeys, k)
+			}
+			ps.SiteData = freshData
 			if ps.Hooks != nil && ps.Hooks.HasHooks(plugin.OnDataFetched) {
 				dataResult, hookErr := ps.Hooks.RunWithTimeout(plugin.OnDataFetched, ps.SiteData)
 				if hookErr != nil {
@@ -318,16 +339,9 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 					}
 				}
 			}
-		} else {
-			// freshData is nil with no error: the data directory was deleted
-			// or is empty. Check whether it still exists to disambiguate.
-			dataDirAbs := resolveDir(cfg.ProjectRoot, dataDir)
-			if _, statErr := os.Stat(dataDirAbs); os.IsNotExist(statErr) {
-				ps.SiteData = nil
-			}
-			// Directory exists but contains no recognized data files;
-			// keep stale data so pagination doesn't break.
 		}
+		// Otherwise the directory exists but holds no recognized data
+		// files; keep the data as it was so pagination doesn't break.
 		// Invalidate paginated pages that reference site.data — their content
 		// hash is unchanged but their data source has, so they must re-render.
 		for _, page := range allPages {

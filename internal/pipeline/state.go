@@ -21,6 +21,10 @@ type PipelineState struct {
 	Hooks       *plugin.HookRegistry
 	CascadeData map[string]map[string]interface{}
 	SiteData    map[string]interface{}
+	// SourceData holds each source's value by its site.data key, as last
+	// fetched and before onDataFetched. A data file edit reloads only the
+	// data files, and puts these back over them (issue #1402).
+	SourceData  map[string]interface{}
 	ContentDir  string
 	ContentBase string
 
