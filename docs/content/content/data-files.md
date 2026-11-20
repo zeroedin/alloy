@@ -270,6 +270,8 @@ Built-in `rest` and `graphql` types are single-request fetchers. They send one H
 
 All fetched data is cached to `.alloy/fetch-cache/` on disk. The `cache` value sets the TTL in seconds. Cached data survives process restarts. If the TTL has not expired, the cached data is used without fetching.
 
+In `alloy dev`, sources are fetched at startup and on each full rebuild. Editing a data file reloads the data files and keeps every source as it was last fetched, without fetching it again, and `onDataFetched` runs again on the result.
+
 ### Combined with virtual pages
 
 Fetched data feeds directly into [pagination](/content/pagination/) for page generation:
