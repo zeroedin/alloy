@@ -777,6 +777,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			SSRSkipped:   cfg.SSR == nil || options.SkipSSR,
 			StageTimings: timer.Timings(),
 			SiteData:     siteData,
+			SourceData:   sourceData,
 			// A site with no content still copies static, asset, and
 			// passthrough files, so the watcher needs its claims (issue #1238).
 			OutputClaims: outputEntries,
