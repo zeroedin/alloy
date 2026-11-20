@@ -810,3 +810,28 @@ func dispatchPostRenderHooks(
 
 	return nil
 }
+
+// topLevelKeys returns the set of keys in data.
+func topLevelKeys(data map[string]interface{}) map[string]bool {
+	keys := make(map[string]bool, len(data))
+	for k := range data {
+		keys[k] = true
+	}
+	return keys
+}
+
+// markDataOrigins makes each top-level entry of siteData read size and
+// first by where it came from, after onDataFetched or onAfterValidation
+// wrote a hook's result back (issue #1396). A data file's entry reads them
+// as a data file does, at every depth, even if the hook changed it. Every
+// other entry, a source or a key a hook added, lets its own size and first
+// keys win, as a source does without a hook.
+func markDataOrigins(siteData map[string]interface{}, dataFileKeys map[string]bool) {
+	for k, v := range siteData {
+		if dataFileKeys[k] {
+			siteData[k] = ordered.DataFileValue(v)
+		} else {
+			siteData[k] = ordered.OwnKeysFirst(v)
+		}
+	}
+}

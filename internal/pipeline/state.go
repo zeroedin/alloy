@@ -31,6 +31,10 @@ type PipelineState struct {
 	// succeeds. A Build records its own failure in its cache instead
 	// (issue #1324).
 	cascadeLoadFailed bool
+	// dataFileKeys holds the top-level keys of site.data that come from
+	// data files (the data directory and data.files), as last loaded. A
+	// data hook's result reads size and first by them (issue #1396).
+	dataFileKeys map[string]bool
 
 	// OutputClaims is every output path claimed by the last full build, with
 	// the source that claimed it. It outlives Build() so the dev server's
@@ -118,6 +122,7 @@ func InitPipelineState(cfg *config.Config, registry *plugin.Registry, hooks *plu
 		// read the same files, so a load error here means that build
 		// rendered every page without folder data (issue #1306).
 		cascadeLoadFailed: cascadeErr != nil,
+		dataFileKeys:      topLevelKeys(siteData),
 	}, nil
 }
 
