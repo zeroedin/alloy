@@ -16,3 +16,5 @@ With `data/nav.json` holding `{"home": "/", "blog": "/blog/", "docs": "/docs/", 
 | Template | Before | Now |
 |---|---|---|
 | `{% for pair in site.data.nav %}{{ pair[0] }} {% endfor %}` | `about blog docs home` | `home blog docs about` |
+
+As in any JavaScript object, integer-like keys such as `"2"` and `"10"` come first, in numeric order, whatever order the hook set them in.
