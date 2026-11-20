@@ -331,4 +331,70 @@ var _ = Describe("Ordered Map", func() {
 					"avoids unnecessary allocation when data was never serialized (issue #571)")
 		})
 	})
+
+	// ── DataFileValue clears the own-keys mark (issue #1406) ────────
+	// A data file's object reads size and first as its key count and first
+	// pair (issue #1363). After a data hook, DataFileValue keeps it that way
+	// at every depth, even for an object OwnKeysFirst has marked (issue
+	// #1396). No build can mark a data file's object today, so only a unit
+	// test reaches this case.
+
+	Context("DataFileValue (issue #1406)", func() {
+		// own builds an object with its own size and first keys.
+		own := func() *ordered.Map {
+			m := ordered.New()
+			m.Set("size", "XL")
+			m.Set("first", "stored")
+			m.Set("zeta", 1)
+			return m
+		}
+
+		// read gives what a template reads for key, as liquidgo v5 asks.
+		read := func(m *ordered.Map, key string) interface{} {
+			GinkgoHelper()
+			v, ok, err := m.LiquidGet(nil, key)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeTrue())
+			return v
+		}
+
+		// Guard: the mark makes own keys win, so the checks below really
+		// test that DataFileValue clears it.
+		It("reads a marked object's own size and first keys (guard)", func() {
+			m := own()
+			ordered.OwnKeysFirst(m)
+			Expect(read(m, "size")).To(Equal("XL"))
+			Expect(read(m, "first")).To(Equal("stored"))
+		})
+
+		It("clears the mark, so size and first give the key count and first pair", func() {
+			m := own()
+			ordered.OwnKeysFirst(m)
+			out, ok := ordered.DataFileValue(m).(*ordered.Map)
+			Expect(ok).To(BeTrue())
+			Expect(read(out, "size")).To(Equal(3))
+			Expect(read(out, "first")).To(Equal([]interface{}{"size", "XL"}))
+		})
+
+		It("clears the mark on an object inside another and on one in a list", func() {
+			outer := ordered.New()
+			outer.Set("inner", own())
+			outer.Set("list", []interface{}{own()})
+			ordered.OwnKeysFirst(outer)
+
+			out, ok := ordered.DataFileValue(outer).(*ordered.Map)
+			Expect(ok).To(BeTrue())
+			inner, ok := out.Get("inner").(*ordered.Map)
+			Expect(ok).To(BeTrue())
+			list, ok := out.Get("list").([]interface{})
+			Expect(ok).To(BeTrue())
+			item, ok := list[0].(*ordered.Map)
+			Expect(ok).To(BeTrue())
+
+			for name, m := range map[string]*ordered.Map{"inner": inner, "list item": item} {
+				Expect(read(m, "size")).To(Equal(3), name)
+				Expect(read(m, "first")).To(Equal([]interface{}{"size", "XL"}), name)
+			}
+		})
+	})
 })
