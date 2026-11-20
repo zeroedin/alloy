@@ -2818,7 +2818,7 @@ Only these results change. The other replies from the Node bridge, such as the r
 
 - A data file's object keeps file order, at every depth, including objects in a list.
 - A source's object keeps the order the source returned.
-- An object the hook builds keeps the order the hook set its keys in. As in any JavaScript object, integer-like keys such as `"2"` and `"10"` come first, in numeric order, whatever order the hook set them in.
+- An object the hook builds keeps the order the hook set its keys in. As in any JavaScript object, array-index keys (whole numbers from `0` to `4294967294`, such as `"2"` and `"10"`) come first, in numeric order, whatever order the hook set them in. Larger numbers, such as `"4294967295"`, keep the hook's order like any other key.
 
 Before #1401, Alloy read the returned cascade as Go maps, which have no order, so every object in `site.data` looped in sorted order after the hook, even when the hook returned the cascade unchanged. Only key order changes: every value is the same.
 
