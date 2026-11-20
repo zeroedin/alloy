@@ -245,7 +245,8 @@ type hookPageKey struct {
 // matchHookEntries finds the page each entry a page hook returned belongs
 // to, among the pages sent to it (sent). It returns one index into pages
 // per entry. An entry is matched by its path and url. With no url, or a url no page sent has, it is
-// matched by path alone when only one page sent has that path. Every page
+// matched by path alone when only one page sent has that path. An entry
+// whose url is another sent page's is not: its path and url disagree. Every page
 // sent gets at most one entry. An entry that can't be placed on exactly one
 // page with no entry yet is an error naming its path, and an entry that
 // isn't an object is an error too: nothing is guessed (issues #1391,
@@ -258,6 +259,7 @@ func matchHookEntries(pages []*content.Page, sent []hookPageKey, returned []inte
 	}
 	byKey := make(map[hookPageKey]int, len(sent))
 	byPath := make(map[string][]int, len(sent))
+	sentURLs := make(map[string]bool, len(sent))
 	for i, page := range pages {
 		k := hookPageKey{path: page.RelPath, url: page.URL}
 		if !sentKeys[k] {
@@ -265,6 +267,7 @@ func matchHookEntries(pages []*content.Page, sent []hookPageKey, returned []inte
 		}
 		byKey[k] = i
 		byPath[k.path] = append(byPath[k.path], i)
+		sentURLs[k.url] = true
 	}
 
 	matches := make([]int, len(returned))
@@ -283,6 +286,10 @@ func matchHookEntries(pages []*content.Page, sent []hookPageKey, returned []inte
 		i, ok := byKey[hookPageKey{path: path, url: url}]
 		switch {
 		case ok:
+		case url != "" && sentURLs[url]:
+			// The url names another page sent to the hook, so path and url
+			// disagree on the page: no fallback to path (issue #1391).
+			return nil, fmt.Errorf("an entry for %s has url %s, which is another page's: give each entry the path and url of the page it is for", path, url)
 		case len(candidates) == 1:
 			i = candidates[0]
 		case url == "":
