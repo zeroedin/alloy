@@ -253,6 +253,13 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	contentDir := ps.ContentDir
 	layoutsDir := resolveDir(cfg.ProjectRoot, cfg.Structure.Layouts)
 
+	// The keys that come from data files. A source that sets one of them
+	// replaces that file's data, and counts as a source (issue #1396).
+	dataFileKeys := make(map[string]bool, len(ps.dataFileKeys))
+	for k := range ps.dataFileKeys {
+		dataFileKeys[k] = true
+	}
+
 	// Fetch external data sources and merge into siteData
 	timer.Start("External sources")
 	if len(cfg.Sources) > 0 {
@@ -306,6 +313,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 				log.Printf("warning: source %q overwrites existing data key %q", name, key)
 			}
 			siteData[key] = fetched
+			delete(dataFileKeys, key)
 		}
 	}
 
@@ -325,6 +333,9 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		for _, entry := range modified.Entries() {
 			siteData[entry.Key] = entry.Value
 		}
+	}
+	if ps.Hooks.HasHooks(plugin.OnDataFetched) {
+		markDataOrigins(siteData, dataFileKeys)
 	}
 
 	// Keep PipelineState in sync after sources merge may have replaced the map
@@ -653,6 +664,8 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("plugin hook onAfterValidation: %w", err)
 		}
+		// A key onDataFetched added is still not a data file's here.
+		markDataOrigins(siteData, dataFileKeys)
 	}
 
 	// Output directory cleaning and creation (issue #1255). This runs after the

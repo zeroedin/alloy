@@ -290,6 +290,9 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 			log.Printf("warning: reloading site data: %v", err)
 		} else if freshData != nil {
 			ps.SiteData = freshData
+			// The sources aren't fetched again here (#1402), so every key
+			// loaded is a data file's (issue #1396).
+			ps.dataFileKeys = topLevelKeys(freshData)
 			if ps.Hooks != nil && ps.Hooks.HasHooks(plugin.OnDataFetched) {
 				dataResult, hookErr := ps.Hooks.RunWithTimeout(plugin.OnDataFetched, ps.SiteData)
 				if hookErr != nil {
@@ -305,6 +308,7 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 							ps.SiteData[entry.Key] = entry.Value
 						}
 					}
+					markDataOrigins(ps.SiteData, ps.dataFileKeys)
 				}
 			}
 			if ps.Registry != nil {
