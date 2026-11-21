@@ -104,10 +104,10 @@ Map keys come out in this order:
 | Data | Key order |
 | --- | --- |
 | YAML, TOML, JSON objects | file order |
-| Plugin return values | the order the plugin built them |
+| Plugin return values | the order the plugin built them, but array-index keys such as `"2"` first |
 | Lists (any format) | file order |
 
-Every object in a YAML, TOML or JSON data file — at the top level or nested inside lists — is loaded into an ordered map that keeps the order you wrote, so renaming `nav.json` to `nav.yaml` no longer changes the order your keys come out in. Lists stay lists, and CSV files load as a list of rows, as the table above shows. Values returned from a plugin are ordered maps too, keeping the order the plugin inserted them.
+Every object in a YAML, TOML or JSON data file — at the top level or nested inside lists — is loaded into an ordered map that keeps the order you wrote, so renaming `nav.json` to `nav.yaml` no longer changes the order your keys come out in. Lists stay lists, and CSV files load as a list of rows, as the table above shows. Values returned from a plugin are ordered maps too, keeping the order the plugin inserted them. As in any JavaScript object, array-index keys, which are whole numbers from `"0"` to `"4294967294"` without leading zeros, come first, in numeric order, whatever order the plugin set them in. Every other key keeps the plugin's order, including `"4294967295"` and above, `"07"`, `"-1"` and `"1.5"`. A data file keeps every key in file order.
 
 One exception: the `_data.yaml` directory cascade still sorts its keys. It has its own loader, and it merges each file into the one above it, which is not a thing key order survives.
 
