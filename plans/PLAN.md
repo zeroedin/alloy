@@ -2820,6 +2820,8 @@ Only these results change. The other replies from the Node bridge, such as the r
 - A source's object keeps the order the source returned.
 - An object the hook builds keeps the order the hook set its keys in. As in any JavaScript object, array-index keys (whole numbers from `0` to `4294967294`, such as `"2"` and `"10"`) come first, in numeric order, whatever order the hook set them in. Larger numbers, such as `"4294967295"`, keep the hook's order like any other key.
 
+The rule covers the objects inside `site.data`, at any depth. It doesn't cover `site.data`'s own top-level keys: `{% for pair in site.data %}` loops over them in name order, with or without either data hook, as before #1401.
+
 Before #1401, Alloy read the returned cascade as Go maps, which have no order, so every object in `site.data` looped in sorted order after the hook, even when the hook returned the cascade unchanged. Only key order changes: every value is the same.
 
 Tests: `internal/pipeline/after_validation_key_order_test.go`.
