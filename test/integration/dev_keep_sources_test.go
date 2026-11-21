@@ -267,3 +267,87 @@ var _ = Describe("alloy dev keeps sources after a data file edit (issue #1402)",
 		})
 	})
 })
+
+// ── ...when alloy dev starts on a site with no pages (issue #1411) ──────
+// A site with no content pages takes an early return in Build. The sources
+// must still reach the rebuilds from there, so a data edit doesn't drop
+// them. The site starts with a REST source and a data file only. The test
+// edits the data file, then adds the page, and checks the source is there.
+var _ = Describe("alloy dev keeps sources when it starts with no pages (issue #1411)", Ordered, func() {
+	var (
+		root, base string
+		out        *gbytes.Buffer
+	)
+
+	write := func(rel, body string) {
+		GinkgoHelper()
+		path := filepath.Join(root, rel)
+		Expect(os.MkdirAll(filepath.Dir(path), 0755)).To(Succeed())
+		Expect(os.WriteFile(path, []byte(body), 0644)).To(Succeed())
+	}
+
+	get := func() string {
+		resp, err := http.Get(base + "/")
+		if err != nil {
+			return ""
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return string(b)
+	}
+
+	BeforeAll(func() {
+		rest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"name":"widgets"}`)
+		}))
+		DeferCleanup(rest.Close)
+
+		root = GinkgoT().TempDir()
+		write("alloy.config.yaml", "title: X\nbaseURL: http://localhost\nsources:\n"+
+			"  products:\n    type: rest\n    url: "+rest.URL+"/products\n    as: products\n")
+		write("layouts/default.liquid", "TEAM[{{ site.data.team.name }}] PRODUCTS[{{ site.data.products.name }}] {{ content }}")
+		write("data/team.json", `{"name":"T1"}`)
+
+		binary, err := gexec.Build("github.com/zeroedin/alloy")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(gexec.CleanupBuildArtifacts)
+
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		Expect(err).NotTo(HaveOccurred())
+		port := ln.Addr().(*net.TCPAddr).Port
+		Expect(ln.Close()).To(Succeed())
+
+		out = gbytes.NewBuffer()
+		cmd := exec.Command(binary, "dev", "--port", fmt.Sprint(port))
+		cmd.Dir = root
+		session, err := gexec.Start(cmd, out, out)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			session.Interrupt()
+			Eventually(session, 10*time.Second).Should(gexec.Exit())
+		})
+		Eventually(out, 30*time.Second).Should(gbytes.Say(`Serving at http://localhost:\d+`))
+		base = "http://localhost:" + string(regexp.MustCompile(`Serving at http://localhost:(\d+)`).FindSubmatch(out.Contents())[1])
+
+		// Edit the data file until the watcher reports it. That edit is
+		// the data reload under test.
+		Eventually(func() bool {
+			write("data/team.json", `{"name":"T2"}`)
+			return strings.Contains(string(out.Contents()), "rebuilding")
+		}, 15*time.Second, 250*time.Millisecond).Should(BeTrue(),
+			"the watcher must report the data file edit")
+		write("content/index.md", "---\ntitle: Home\nlayout: default\n---\nnew page\n")
+	})
+
+	It("keeps a REST source on a page added after a data file edit", func() {
+		var body string
+		Eventually(func() string {
+			body = get()
+			return body
+		}, 30*time.Second, 250*time.Millisecond).Should(ContainSubstring("<p>new page</p>"),
+			"sanity: alloy dev must render the added page")
+		Expect(body).To(ContainSubstring("TEAM[T2]"), "sanity: the page sees the edited data file")
+		Expect(body).To(ContainSubstring("PRODUCTS[widgets]"))
+	})
+})

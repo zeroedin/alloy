@@ -1559,6 +1559,7 @@ Tests: `internal/pipeline/incremental_hooks_all_pages_test.go`.
 - `onDataFetched` runs again on the reloaded data, as in a full build. It gets each source's value as fetched, not the value the hook returned last time, so a hook that changes a source doesn't apply its change twice.
 - `alloy.data` in QuickJS plugins gets the same data as templates. Node and WASM plugins have no `alloy.data`.
 - If the data directory is deleted, the sources still stay.
+- The same holds when `alloy dev` starts on a site with no content pages yet, which takes an early return in `Build` (issue #1411).
 
 Before #1402, the reload replaced all of `site.data` with the data files, so every source was missing from `site.data` until a restart.
 
