@@ -85,6 +85,38 @@ var _ = Describe("Data file key order (issue #1262)", func() {
 					"MetaData.Keys() rather than the plain decode")
 		})
 
+		It("preserves each inline table's key order in a TOML array", func() {
+			// MetaData.Keys() reports the keys of inline tables inside an
+			// array with no index and no separator —
+			//   items.z, items.a, items.a, items.z
+			// for [{z = 1, a = 2}, {a = 3, z = 4}] — so the element boundary
+			// is invisible in the stream. Merging them into one order made
+			// every element after the first come out in the first element's
+			// order (issue #1414).
+			om := orderedMap(load("order-inline-tables.toml"))
+
+			items, ok := om.Get("items").([]interface{})
+			Expect(ok).To(BeTrue(), "inline tables must normalize to []interface{}")
+			Expect(items).To(HaveLen(2))
+
+			first := orderedMap(items[0])
+			Expect(first.Keys()).To(Equal([]string{"z", "a"}),
+				"the first inline table must keep the order it was written in")
+
+			second := orderedMap(items[1])
+			Expect(second.Keys()).To(Equal([]string{"a", "z"}),
+				"the second inline table must keep its own written order — "+
+					"coming out as [z a] means it took the first table's order")
+
+			// Array-of-tables already keeps one order per element (issue
+			// #1414 was inline tables only); it must stay that way.
+			rows, ok := om.Get("rows").([]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(rows).To(HaveLen(2))
+			Expect(orderedMap(rows[0]).Keys()).To(Equal([]string{"z", "a"}))
+			Expect(orderedMap(rows[1]).Keys()).To(Equal([]string{"a", "z"}))
+		})
+
 		It("preserves TOML key order inside nested tables", func() {
 			// Ordering only the root passes the test above. MetaData.Keys()
 			// reports every level as dotted paths, so each level has to be
@@ -244,6 +276,7 @@ var _ = Describe("Data file key order (issue #1262)", func() {
 				"order-yaml.yaml", "order-toml.toml", "order-nested.yaml",
 				"order-nested.toml", "order-tables.toml", "order-scalars.yaml",
 				"order-merge.yaml", "dotted-keys.toml",
+				"order-inline-tables.toml",
 			} {
 				walk(load(f), f)
 			}
