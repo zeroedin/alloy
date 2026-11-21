@@ -331,7 +331,7 @@ alloy.hook("onAfterValidation", {}, (payload) => {
 
 Returning `outputPaths` has no effect. Unrecognized keys produce a build error.
 
-`.size` and `.first` read the merged data as after [`onDataFetched`](#ondatafetched): a data file's entry gives its key count and first pair, and every other entry lets its own `size` and `first` keys win. A key `onDataFetched` added counts as a hook's key here too.
+Objects in the returned `cascade` keep their key order: a data file's in file order, a plugin source's in the order it returned them, and an object the hook builds in the order the hook set its keys. As in any JavaScript object, array-index keys, which are whole numbers from `"0"` to `"4294967294"` without leading zeros, come first, in numeric order, whatever order the hook set them in. Every other key keeps the hook's order, including `"4294967295"` and above, `"07"`, `"-1"` and `"1.5"`. `.size` and `.first` read the merged data as after [`onDataFetched`](#ondatafetched): a data file's entry gives its key count and first pair, and every other entry lets its own `size` and `first` keys win. A key `onDataFetched` added counts as a hook's key here too.
 
 ### onContentLoaded
 
