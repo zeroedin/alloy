@@ -331,6 +331,16 @@ func decodeTOMLOrdered(b []byte) (interface{}, error) {
 // "items.name", "items", "items.name", with no index — so a repeat of an
 // ArrayHash path is what starts a new element, and subsequent child paths
 // belong to the most recent one.
+//
+// Inline tables inside an array are reported the same way but carry no
+// ArrayHash marker at all — "items = [{z = 1, a = 2}, {a = 3, z = 4}]" is
+// just "items.z", "items.a", "items.a", "items.z" — so their element
+// boundaries need another signal: TOML forbids a repeated key within one
+// table, so a key that repeats at a level can only be the first key of the
+// next element of the inline array that level belongs to (issue #1414).
+// Elements whose key sets are disjoint never repeat, but a merged order
+// still loads them correctly because keys the element does not have are
+// skipped.
 func buildTOMLOrder(md toml.MetaData) *tomlOrder {
 	root := newTOMLOrder()
 	for _, key := range md.Keys() {
@@ -339,6 +349,11 @@ func buildTOMLOrder(md toml.MetaData) *tomlOrder {
 			continue
 		}
 		cur := root
+		// Where cur came from: the order that holds it and the key under
+		// which it is stored, so an inline-array element boundary below can
+		// open a sibling element.
+		var parent *tomlOrder
+		via := ""
 		// Walk to the parent level, following the current element of any
 		// array on the way.
 		for _, part := range path[:len(path)-1] {
@@ -356,13 +371,23 @@ func buildTOMLOrder(md toml.MetaData) *tomlOrder {
 				kids = append(kids, newTOMLOrder())
 				cur.children[part] = kids
 			}
+			parent = cur
+			via = part
 			cur = kids[len(kids)-1]
 		}
 		name := path[len(path)-1]
+		kind := md.Type(path...)
+		if kind != "ArrayHash" && parent != nil && contains(cur.keys, name) {
+			// A repeated key inside one table cannot parse, so this is the
+			// first key of the next element of the inline array cur belongs
+			// to. Open that element and continue in it.
+			parent.children[via] = append(parent.children[via], newTOMLOrder())
+			cur = parent.children[via][len(parent.children[via])-1]
+		}
 		if !contains(cur.keys, name) {
 			cur.keys = append(cur.keys, name)
 		}
-		if md.Type(path...) == "ArrayHash" {
+		if kind == "ArrayHash" {
 			// A new element of this array starts here.
 			cur.children[name] = append(cur.children[name], newTOMLOrder())
 		} else if len(cur.children[name]) == 0 {
@@ -420,9 +445,9 @@ func applyTOMLOrder(v interface{}, ord *tomlOrder) interface{} {
 }
 
 // applyTOMLChild walks a child value, handing each element of an array
-// its own order when the document gave one per element (array-of-tables)
-// and sharing a single order otherwise (an inline array of inline tables
-// reports its keys once).
+// its own order when the document gave one per element (array-of-tables,
+// and inline arrays whose element boundary repeats made it visible in the
+// key stream) and sharing a single order otherwise.
 func applyTOMLChild(v interface{}, kids []*tomlOrder) interface{} {
 	elems, ok := tomlElements(v)
 	if !ok {
