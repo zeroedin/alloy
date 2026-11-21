@@ -168,6 +168,7 @@ func newDevCommand() *cobra.Command {
 			}
 			if ps != nil && initialResult != nil && initialResult.SiteData != nil {
 				ps.SiteData = initialResult.SiteData
+				ps.SourceData = initialResult.SourceData
 				if ps.Registry != nil {
 					for _, rt := range ps.Registry.Runtimes() {
 						if err := rt.SetSiteData(ps.SiteData); err != nil {
@@ -381,6 +382,7 @@ func newDevCommand() *cobra.Command {
 						}
 						if ps != nil && fullResult != nil && fullResult.SiteData != nil {
 							ps.SiteData = fullResult.SiteData
+							ps.SourceData = fullResult.SourceData
 							if ps.Registry != nil {
 								for _, rt := range ps.Registry.Runtimes() {
 									if err := rt.SetSiteData(ps.SiteData); err != nil {
