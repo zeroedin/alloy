@@ -19,4 +19,4 @@ With `data/nav.json` holding `{"home": "/", "blog": "/blog/", "docs": "/docs/"}`
 | `{{ site.data.plan.size }} {{ site.data.plan.first }}` | `3 sizelarge` | `large monthly` |
 | `{{ site.data.extra.size }}` | `1` | `XL` |
 
-The same hook as `onAfterValidation`, returning `{ cascade: { ...payload.cascade, extra: { size: "XL" } } }`, gave `{{ site.data.nav.first }}` nothing before. It now gives a pair from the file, `blog/blog/`. That's the first key in sorted order, since this hook doesn't keep a data file's key order yet (#1401).
+The same hook as `onAfterValidation`, returning `{ cascade: { ...payload.cascade, extra: { size: "XL" } } }`, gave `{{ site.data.nav.first }}` nothing before. It now gives the file's first pair, `home/`.

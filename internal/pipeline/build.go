@@ -656,16 +656,27 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 						return fmt.Errorf("onAfterValidation returned unrecognized key %q — only \"cascade\" and \"outputPaths\" are recognized", key)
 					}
 				}
-				cascadeVal, hasCascade := resultMap["cascade"]
-				if !hasCascade {
+				if _, hasCascade := resultMap["cascade"]; !hasCascade {
 					return nil
 				}
-				cascadeMap, ok := toGoMap(cascadeVal)
-				if !ok {
-					return fmt.Errorf("onAfterValidation cascade must be a map, got %T", cascadeVal)
+				// Read cascade from the result as it came back, not from
+				// resultMap: toGoMap turns every object in it into a Go
+				// map, which has no key order (issue #1401).
+				cascadeVal := resultMap["cascade"]
+				if om, ok := result.(*ordered.Map); ok {
+					cascadeVal = om.Get("cascade")
 				}
-				for k, v := range cascadeMap {
-					siteData[k] = v
+				switch cascade := cascadeVal.(type) {
+				case *ordered.Map:
+					for _, entry := range cascade.Entries() {
+						siteData[entry.Key] = entry.Value
+					}
+				case map[string]interface{}:
+					for k, v := range cascade {
+						siteData[k] = v
+					}
+				default:
+					return fmt.Errorf("onAfterValidation cascade must be a map, got %T", cascadeVal)
 				}
 				return nil
 			},
