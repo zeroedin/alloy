@@ -1742,6 +1742,20 @@ Collections are built once during content discovery, then frozen as read-only da
 - Collections are materialized eagerly — no lazy loading
 - Templates access them like any other data
 
+**Hook fields show in collections (issue #1385).** In a layout, every list of pages shows each page with the fields `onContentLoaded` and `onDataCascadeReady` add, as `site.pages` and `taxonomy.pages` on a taxonomy page already do. That covers:
+
+- `collections.<name>`;
+- `taxonomies.<name>.<term>`;
+- `pagination.items`, on a page that paginates a collection (`pagination.data: collections.<name>`).
+
+Which pages a list holds, and their order, are still decided before those hooks, from front matter after `onPagesReady`. A hook that changes a page's `tags`, `date` or `sortBy` field changes what the page shows, but doesn't move the page to another list, change its place in a list, or change how pagination splits the pages. To change membership or order, use `onPagesReady`, which runs before the lists are built.
+
+The rule holds in a full build and in an `alloy dev` rebuild, on QuickJS and Node. Liquid in a page's own content is rendered before the two hooks run, so there no list shows their fields, `site.pages` included.
+
+Before #1385, these three lists held copies of each page made before the hooks, so a field a hook added was empty in them.
+
+Tests: `internal/pipeline/collections_hook_fields_test.go`.
+
 **Default sort order**: date descending (newest first). When two pages share the same date, the full datetime is compared (e.g., `2026-04-10T14:30:00Z` sorts before `2026-04-10T09:00:00Z` in descending order). If the datetime is identical or no time component is provided, filename alphabetical ascending is the final tiebreaker. Pages without a date sort after all dated pages, ordered by filename alphabetical ascending. Sort is deterministic across builds.
 
 **Custom ordering** via config:
