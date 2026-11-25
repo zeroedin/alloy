@@ -1760,8 +1760,8 @@ collections:
 - **Taxonomy terms** (`taxonomies.<name>.<term>`, and `taxonomy.pages` on a term page): always by date, newest first, with the same rules. A collection's `sortBy` and `order` don't apply, since a term holds pages from any section.
 - **By date** (`sortBy: "date"`): the page's `date`, compared to the second. `order: "asc"` puts the oldest first.
 - **By another front matter key** (e.g. `sortBy: "weight"`): values compare as the `sort` filter compares them (see "Numeric Sort Rules" in the docs): whole numbers as numbers, digit-only strings as numbers, the rest as strings.
-- **Missing values go last**, in both orders: a page with no `date` when sorting by date, or without the `sortBy` key. Among themselves they go by file name.
-- **Ties go by file name**, A to Z, in both orders.
+- **Missing values go last**, in both orders: a page with no `date` when sorting by date, or without the `sortBy` key. Among themselves they go by path.
+- **Ties go by path**, A to Z, in both orders. The path is the page's path under the content directory, such as `notes/n0.md`; for a page `onPagesReady` adds, its `path`.
 - **Pages `onPagesReady` adds**: a `date` in the page's `frontMatter` counts as its date, read like a file page's `date`. Such a page has no section, so it only shows up in taxonomies.
 - **Order is fixed before the content hooks**: a date or key that `onContentLoaded` or `onDataCascadeReady` changes doesn't move a page (issue #1385).
 - **`pagination.items`** over a collection follows the collection's order.
