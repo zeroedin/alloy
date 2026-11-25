@@ -1754,6 +1754,25 @@ collections:
     order: "desc"           # "asc" or "desc" (default: "desc")
 ```
 
+**How collections and taxonomies are sorted (issue #1418).** The build sorts every collection, and every taxonomy term's list of pages, when it builds them: after `onPagesReady`, before any page renders. What a template sees is already in order.
+
+- **Collections**: by the collection's `sortBy` and `order`. With no entry under `collections:`, or an entry that leaves them out, `sortBy` is `"date"` and `order` is `"desc"`.
+- **Taxonomy terms** (`taxonomies.<name>.<term>`, and `taxonomy.pages` on a term page): always by date, newest first, with the same rules. A collection's `sortBy` and `order` don't apply, since a term holds pages from any section.
+- **By date** (`sortBy: "date"`): the page's `date`, compared to the second. `order: "asc"` puts the oldest first.
+- **By another front matter key** (e.g. `sortBy: "weight"`): values compare as the `sort` filter compares them (see "Numeric Sort Rules" in the docs): whole numbers as numbers, digit-only strings as numbers, the rest as strings.
+- **Missing values go last**, in both orders: a page with no `date` when sorting by date, or without the `sortBy` key. Among themselves they go by file name.
+- **Ties go by file name**, A to Z, in both orders.
+- **Pages `onPagesReady` adds**: a `date` in the page's `frontMatter` counts as its date, read like a file page's `date`. Such a page has no section, so it only shows up in taxonomies.
+- **Order is fixed before the content hooks**: a date or key that `onContentLoaded` or `onDataCascadeReady` changes doesn't move a page (issue #1385).
+- **`pagination.items`** over a collection follows the collection's order.
+- **`alloy dev`**: a rebuild sorts again, so editing a page's `date` moves it in the lists.
+- **Multi-language sites**: each language's lists are sorted on their own.
+- **Bad `order`**: any value other than `"asc"` or `"desc"` fails `config.Validate`, with an error that names the collection and the value: `validation error: collections.<name>.order must be "asc" or "desc" (got "<value>")`. An empty `order` means `"desc"`.
+
+Before #1418, the build sorted nothing: collections and term lists came out in file-name order. The docs site relied on that. It lists `releases` with `| reverse` and takes the latest release with `| last`. Once sorted newest first, they take `| first` and drop `| reverse` (`docs/layouts/partials/header.liquid`, `docs/content/releases/index.md`).
+
+Tests: `internal/pipeline/collection_sort_test.go`, and "rejects an unknown collection order" in `internal/config/config_test.go`.
+
 Templates can also sort inline using built-in array filters:
 
 **Liquid:**
