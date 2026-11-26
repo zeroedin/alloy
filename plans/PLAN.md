@@ -397,8 +397,12 @@ does. That holds at any depth:
 - an array inside an inline table (`t = {list = [...]}`);
 - arrays of arrays (`[[{...}], [{...}, {...}]]`);
 - mixed arrays (`[1, {...}, "s", {...}]`) and empty tables (`[{}, {...}]`);
-- dotted keys inside an inline table (`{p.y = 1, p.x = 2}`);
-- an inline array inside a `[[table]]` element.
+- dotted keys inside an inline table (`{p.y = 1, p.x = 2}`), including a dotted
+  key that comes back after another key (`{p.z = 1, q = 2, p.y = 3}` keeps `p`'s
+  keys as `z y`);
+- an inline array inside a `[[table]]` element. A later element of that
+  `[[table]]` may write keys under the same path (`x = []`, then `x.child = {...}`
+  in the next element): those keys belong to the later element (issue #1425).
 
 `Keys()` lists an inline array's tables one after another, with no index and no
 marker between them:

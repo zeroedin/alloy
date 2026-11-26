@@ -102,6 +102,24 @@ var _ = Describe("Inline tables in a TOML array keep their own key order (issue 
 		Expect(of("rows")).To(Equal("[{x:[{b a} {a b}]} {x:[{c a}]}]"))
 	})
 
+	// Issue #1425: two cases a first fix for #1414 got wrong, and more
+	// dotted keys inside inline tables.
+	It("keeps a table's order when a dotted key comes back after another key", func() {
+		Expect(of("interleaved")).To(Equal("[{p:{z y x} q}]"))
+	})
+	It("keeps every level's order when dotted keys at two depths interleave", func() {
+		Expect(of("deepdotted")).To(Equal("[{a:{b:{y x} z} c}]"))
+	})
+	It("keeps each table's order when a dotted key holds an inline array", func() {
+		Expect(of("dottedarray")).To(Equal("[{p:{l:[{b a} {a b}] m} q} {q p:{m}}]"))
+	})
+	It("starts the next table when a dotted key's parent repeats", func() {
+		Expect(of("splitdotted")).To(Equal("[{p:{z} q} {p:{y z}}]"))
+	})
+	It("gives a later [[table]] element its own keys under an earlier inline array's path", func() {
+		Expect(of("scope")).To(Equal("[{x:[]} {x:{child:{z a}}}]"))
+	})
+
 	// Guards: these hold today and must keep holding.
 	It("keeps a single inline table's order (guard)", func() {
 		Expect(of("single")).To(Equal("[{b a}]"))
@@ -117,7 +135,8 @@ var _ = Describe("Inline tables in a TOML array keep their own key order (issue 
 	It("keeps the top-level keys in file order (guard)", func() {
 		Expect(doc.Keys()).To(Equal([]string{
 			"items", "shift", "three", "deep", "inner", "nested", "mixed",
-			"empty", "emptyval", "dotted", "lists", "single", "rows",
+			"empty", "emptyval", "dotted", "lists", "single", "interleaved",
+			"deepdotted", "dottedarray", "splitdotted", "rows", "scope",
 		}))
 	})
 })
