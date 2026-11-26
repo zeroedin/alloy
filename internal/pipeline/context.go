@@ -132,17 +132,40 @@ func buildTaxonomiesContext(taxonomies map[string]*collection.TaxonomyCollection
 	return taxMap
 }
 
+// pagedItems pairs a page that paginates a collection with the items
+// pagination gave it: the collection's own maps (issue #1385).
+type pagedItems struct {
+	page  *content.Page
+	items []interface{}
+}
+
+// collectionPagination records the items of each page that paginates a
+// collection. Call it before the content hooks: they send and take back a
+// page's whole front matter, _paginationCtx included, so afterwards its items
+// are copies. Recording the items themselves, not a key such as url, keeps
+// a page with no url, or two pages with the same one, on its own map.
+func collectionPagination(pages []*content.Page) []pagedItems {
+	var out []pagedItems
+	for _, p := range pages {
+		if data, _ := fieldOf(p.FrontMatter["pagination"], "data").(string); !strings.HasPrefix(data, "collections.") {
+			continue
+		}
+		items, ok := fieldOf(p.FrontMatter["_paginationCtx"], "items").([]interface{})
+		if !ok {
+			continue
+		}
+		out = append(out, pagedItems{page: p, items: items})
+	}
+	return out
+}
+
 // refreshListMaps fills each map a collection or taxonomy list holds again
 // from its page, once onContentLoaded and onDataCascadeReady have run, so
 // the lists show what those hooks added. Each map keeps its identity, so the
 // lists keep the pages and order they were built with before the hooks.
-//
-// A paginated page's items are copies by then: the hooks send and take back
-// a page's whole front matter, _paginationCtx included. So a page that
-// paginates a collection gets its items pointed back at the refilled maps,
-// matched by url (issue #1385).
-func refreshListMaps(maps []listMap, pages []*content.Page) {
-	byURL := make(map[string]map[string]interface{}, len(maps))
+// Each paginated page gets back the items collectionPagination recorded,
+// which are those maps (issue #1385).
+func refreshListMaps(maps []listMap, paged []pagedItems) {
 	for _, lm := range maps {
 		fresh := lm.page.ToTemplateMap()
 		for k := range lm.m {
@@ -151,41 +174,14 @@ func refreshListMaps(maps []listMap, pages []*content.Page) {
 		for k, v := range fresh {
 			lm.m[k] = v
 		}
-		if u, ok := lm.m["url"].(string); ok && u != "" {
-			if _, seen := byURL[u]; !seen {
-				byURL[u] = lm.m
-			}
-		}
 	}
-	if len(byURL) == 0 {
-		return
-	}
-	for _, p := range pages {
-		ctx := p.FrontMatter["_paginationCtx"]
-		if ctx == nil {
-			continue
-		}
-		if data, _ := fieldOf(p.FrontMatter["pagination"], "data").(string); !strings.HasPrefix(data, "collections.") {
-			continue
-		}
-		items, ok := fieldOf(ctx, "items").([]interface{})
-		if !ok {
-			continue
-		}
-		fresh := make([]interface{}, len(items))
-		for i, item := range items {
-			fresh[i] = item
-			if u, ok := fieldOf(item, "url").(string); ok {
-				if m, ok := byURL[u]; ok {
-					fresh[i] = m
-				}
-			}
-		}
-		switch c := ctx.(type) {
+	for _, pi := range paged {
+		items := append([]interface{}(nil), pi.items...)
+		switch c := pi.page.FrontMatter["_paginationCtx"].(type) {
 		case map[string]interface{}:
-			c["items"] = fresh
+			c["items"] = items
 		case *ordered.Map:
-			c.Set("items", fresh)
+			c.Set("items", items)
 		}
 	}
 }

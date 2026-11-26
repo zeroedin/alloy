@@ -360,7 +360,7 @@ Alloy applies each returned entry to the page with its `path` and `url`, so the 
 
 In `alloy dev`, each rebuild runs this hook again on every page, with every page's rendered `html`, not only on the pages the rebuild re-renders. So what it adds stays on every page, for example in a layout that loops over `site.pages`.
 
-What this hook adds shows in the lists of pages a layout loops over: `site.pages`, `collections.<name>`, `taxonomies.<name>.<term>`, and `pagination.items` on a page that paginates a collection. Which pages each list holds, and their order, are decided before this hook, so a hook that changes a page's `tags` or `date` changes what the page shows, not where it is. To move pages, use [`onPagesReady`](#onpagesready). Liquid in a page's own content renders before this hook, so no list shows its fields there.
+What this hook adds shows in the lists of pages a layout loops over: `site.pages`, `collections.<name>`, `taxonomies.<name>.<term>`, and `pagination.items` on a page that paginates a collection. Which pages each list holds, and their order, come from front matter before this hook, so a hook that changes a page's `tags` or `date` changes what the page shows, not where it is. To move a page, set its `tags` or `date` in its front matter. Liquid in a page's own content renders before this hook, so no list shows its fields there.
 
 ### onDataCascadeReady
 

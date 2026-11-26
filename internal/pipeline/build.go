@@ -388,6 +388,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		taxonomies    map[string]*collection.TaxonomyCollection
 		taxonomiesCtx map[string]interface{}
 		listMaps      []listMap
+		paged         []pagedItems
 	}
 	var batches []langBatch
 	var pages []*content.Page
@@ -496,6 +497,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			taxonomies:    bc.Taxonomies,
 			taxonomiesCtx: bc.TaxonomiesCtx,
 			listMaps:      bc.listMaps,
+			paged:         collectionPagination(batchPages),
 		})
 	}
 	reportEndStage(reporter)
@@ -874,7 +876,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 	// The lists of pages were built before the hooks above: show what
 	// they added (issue #1385).
 	for _, batch := range batches {
-		refreshListMaps(batch.listMaps, batch.pages)
+		refreshListMaps(batch.listMaps, batch.paged)
 	}
 
 	// ── Pass 2: layout resolution + rendering per batch (steps 12-15) ──
