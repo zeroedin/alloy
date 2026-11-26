@@ -106,6 +106,14 @@ var _ = Describe("Inline tables in a TOML array keep their own key order (issue 
 	It("keeps a single inline table's order (guard)", func() {
 		Expect(of("single")).To(Equal("[{b a}]"))
 	})
+	It("keeps a table's key order when it is written after its sub-table (guard)", func() {
+		// A key repeats in Keys() here without any inline array: a fix that
+		// reads every repeated key as a new array element sorts these keys.
+		_, file, _, _ := runtime.Caller(0)
+		v, err := data.LoadFileAny(filepath.Join(filepath.Dir(file), "testdata-keyorder", "order-table-after-subtable.toml"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(shape(v)).To(Equal("{a:{b:{c:{x} q p} z y}}"))
+	})
 	It("keeps the top-level keys in file order (guard)", func() {
 		Expect(doc.Keys()).To(Equal([]string{
 			"items", "shift", "three", "deep", "inner", "nested", "mixed",

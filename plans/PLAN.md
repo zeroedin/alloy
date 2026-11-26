@@ -418,8 +418,12 @@ keys each one has, so the key list can be matched against them table by table.
 
 Before #1414, every table in an inline array took the first table's order. A
 table whose first key the first table didn't have came out with that key last.
+A fix must not change other tables. A table written after one of its sub-tables
+(`[a.b.c]`, then `[a.b]`) repeats a key in `Keys()` too, and keeps its own order
+today.
 Tests: "Inline tables in a TOML array keep their own key order (issue #1414)" in
-`internal/data/toml_inline_order_test.go`, with `testdata-keyorder/order-inline-arrays.toml`.
+`internal/data/toml_inline_order_test.go`, with `testdata-keyorder/order-inline-arrays.toml`
+and `testdata-keyorder/order-table-after-subtable.toml`.
 
 **TOML array-of-tables must be normalized to `[]interface{}`.** `toml.Decode`
 returns them as a typed `[]map[string]interface{}`. Normalizing keeps every
