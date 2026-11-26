@@ -360,6 +360,8 @@ Alloy applies each returned entry to the page with its `path` and `url`, so the 
 
 In `alloy dev`, each rebuild runs this hook again on every page, with every page's rendered `html`, not only on the pages the rebuild re-renders. So what it adds stays on every page, for example in a layout that loops over `site.pages`.
 
+What this hook adds shows in the lists of pages a layout loops over: `site.pages`, `collections.<name>`, `taxonomies.<name>.<term>`, and `pagination.items` on a page that paginates a collection. Which pages each list holds, and their order, are decided before this hook, so a hook that changes a page's `tags` or `date` changes what the page shows, not where it is. To move pages, use [`onPagesReady`](#onpagesready). Liquid in a page's own content renders before this hook, so no list shows its fields there.
+
 ### onDataCascadeReady
 
 Fires once with the full pages array after the data cascade is resolved. Each entry has `path`, `url` and `data`. Only changes to `data` are applied back, to the page with the entry's `path` and `url`, as for [`onContentLoaded`](#oncontentloaded).
@@ -374,6 +376,8 @@ alloy.hook("onDataCascadeReady", { pages: true }, (pages) => {
 ```
 
 In `alloy dev`, each rebuild runs this hook again on every page, as it does `onContentLoaded`, so what it adds stays on every page in `site.pages`.
+
+What it adds shows in the same lists of pages as [`onContentLoaded`](#oncontentloaded)'s fields, and isn't in a page's own content either.
 
 ### onContentTransformed
 
