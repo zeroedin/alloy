@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"sort"
+	"strings"
 
 	"github.com/zeroedin/alloy/internal/collection"
 	"github.com/zeroedin/alloy/internal/config"
@@ -58,10 +59,17 @@ func loadSiteData(cfg *config.Config) (map[string]interface{}, error) {
 	return result, nil
 }
 
+// listMap pairs a page with the map a list of pages holds for it, so the
+// map can be filled again after the content hooks (issue #1385).
+type listMap struct {
+	page *content.Page
+	m    map[string]interface{}
+}
+
 // buildCollectionsContext builds section collections (directory-based),
 // returning them as a template-friendly map. Taxonomies are handled
-// separately via buildTaxonomiesContext.
-func buildCollectionsContext(pages []*content.Page, permalinkCfg map[string]string, collectionNames []string) map[string]interface{} {
+// separately via buildTaxonomiesContext. Each page's map is added to maps.
+func buildCollectionsContext(pages []*content.Page, permalinkCfg map[string]string, collectionNames []string, maps *[]listMap) map[string]interface{} {
 	result := make(map[string]interface{})
 
 	// Section collections — convert pages to template-friendly maps so
@@ -70,7 +78,9 @@ func buildCollectionsContext(pages []*content.Page, permalinkCfg map[string]stri
 	for name, coll := range colls {
 		items := make([]interface{}, len(coll.Pages))
 		for i, p := range coll.Pages {
-			items[i] = p.ToTemplateMap()
+			m := p.ToTemplateMap()
+			*maps = append(*maps, listMap{page: p, m: m})
+			items[i] = m
 		}
 		result[name] = items
 	}
@@ -96,8 +106,9 @@ func collectionNames(cfg *config.Config) []string {
 
 // buildTaxonomiesContext converts taxonomy collections into a template-friendly
 // map for the top-level taxonomies.* namespace. Each term's pages are converted
-// via ToTemplateMap() so Liquid can access fields like {{ p.title }}.
-func buildTaxonomiesContext(taxonomies map[string]*collection.TaxonomyCollection) map[string]interface{} {
+// via ToTemplateMap() so Liquid can access fields like {{ p.title }}. Each
+// page's map is added to maps.
+func buildTaxonomiesContext(taxonomies map[string]*collection.TaxonomyCollection, maps *[]listMap) map[string]interface{} {
 	if len(taxonomies) == 0 {
 		return nil
 	}
@@ -107,7 +118,9 @@ func buildTaxonomiesContext(taxonomies map[string]*collection.TaxonomyCollection
 		for term, termPages := range tc.Terms {
 			items := make([]interface{}, len(termPages))
 			for i, p := range termPages {
-				items[i] = p.ToTemplateMap()
+				m := p.ToTemplateMap()
+				*maps = append(*maps, listMap{page: p, m: m})
+				items[i] = m
 			}
 			termMap[term] = items
 		}
@@ -117,6 +130,75 @@ func buildTaxonomiesContext(taxonomies map[string]*collection.TaxonomyCollection
 		return nil
 	}
 	return taxMap
+}
+
+// refreshListMaps fills each map a collection or taxonomy list holds again
+// from its page, once onContentLoaded and onDataCascadeReady have run, so
+// the lists show what those hooks added. Each map keeps its identity, so the
+// lists keep the pages and order they were built with before the hooks.
+//
+// A paginated page's items are copies by then: the hooks send and take back
+// a page's whole front matter, _paginationCtx included. So a page that
+// paginates a collection gets its items pointed back at the refilled maps,
+// matched by url (issue #1385).
+func refreshListMaps(maps []listMap, pages []*content.Page) {
+	byURL := make(map[string]map[string]interface{}, len(maps))
+	for _, lm := range maps {
+		fresh := lm.page.ToTemplateMap()
+		for k := range lm.m {
+			delete(lm.m, k)
+		}
+		for k, v := range fresh {
+			lm.m[k] = v
+		}
+		if u, ok := lm.m["url"].(string); ok && u != "" {
+			if _, seen := byURL[u]; !seen {
+				byURL[u] = lm.m
+			}
+		}
+	}
+	if len(byURL) == 0 {
+		return
+	}
+	for _, p := range pages {
+		ctx := p.FrontMatter["_paginationCtx"]
+		if ctx == nil {
+			continue
+		}
+		if data, _ := fieldOf(p.FrontMatter["pagination"], "data").(string); !strings.HasPrefix(data, "collections.") {
+			continue
+		}
+		items, ok := fieldOf(ctx, "items").([]interface{})
+		if !ok {
+			continue
+		}
+		fresh := make([]interface{}, len(items))
+		for i, item := range items {
+			fresh[i] = item
+			if u, ok := fieldOf(item, "url").(string); ok {
+				if m, ok := byURL[u]; ok {
+					fresh[i] = m
+				}
+			}
+		}
+		switch c := ctx.(type) {
+		case map[string]interface{}:
+			c["items"] = fresh
+		case *ordered.Map:
+			c.Set("items", fresh)
+		}
+	}
+}
+
+// fieldOf returns key's value in v, a Go map or an ordered map, or nil.
+func fieldOf(v interface{}, key string) interface{} {
+	switch m := v.(type) {
+	case map[string]interface{}:
+		return m[key]
+	case *ordered.Map:
+		return m.Get(key)
+	}
+	return nil
 }
 
 // convertedFrontMatter replaces convertOrderedMaps(page.FrontMatter) at call

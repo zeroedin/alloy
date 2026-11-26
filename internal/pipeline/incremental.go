@@ -593,6 +593,10 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 		}
 	}
 
+	// The lists of pages were built before the hooks above: show what they
+	// added (issue #1385).
+	refreshListMaps(bc.listMaps, allPages)
+
 	// Pass 2: layout resolution + rendering (issue #628). A new site.pages
 	// list for this pass: the hooks above may have changed pages
 	// (issue #1360).

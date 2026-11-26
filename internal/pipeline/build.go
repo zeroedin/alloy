@@ -387,6 +387,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		collections   map[string]interface{}
 		taxonomies    map[string]*collection.TaxonomyCollection
 		taxonomiesCtx map[string]interface{}
+		listMaps      []listMap
 	}
 	var batches []langBatch
 	var pages []*content.Page
@@ -494,6 +495,7 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 			collections:   bc.Collections,
 			taxonomies:    bc.Taxonomies,
 			taxonomiesCtx: bc.TaxonomiesCtx,
+			listMaps:      bc.listMaps,
 		})
 	}
 	reportEndStage(reporter)
@@ -869,6 +871,12 @@ func Build(cfg *config.Config, opts ...BuildOptions) (*BuildResult, error) {
 		return nil, err
 	}
 
+	// The lists of pages were built before the hooks above: show what
+	// they added (issue #1385).
+	for _, batch := range batches {
+		refreshListMaps(batch.listMaps, batch.pages)
+	}
+
 	// ── Pass 2: layout resolution + rendering per batch (steps 12-15) ──
 	timer.Start("Pass 2: layout render")
 	reportStartStage(reporter, "Layouts", len(pages))
@@ -1224,6 +1232,9 @@ type batchContext struct {
 	Collections   map[string]interface{}
 	Taxonomies    map[string]*collection.TaxonomyCollection
 	TaxonomiesCtx map[string]interface{}
+	// listMaps holds the map each list above has for a page, to fill
+	// again after the content hooks (issue #1385).
+	listMaps []listMap
 }
 
 // applyBatchContext applies cascade data, runs onPagesReady hook for virtual
@@ -1252,12 +1263,11 @@ func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineSt
 		}
 	}
 
-	bc := &batchContext{
-		Collections: buildCollectionsContext(pages, permalinkCfg, collectionNames(cfg)),
-	}
+	bc := &batchContext{}
+	bc.Collections = buildCollectionsContext(pages, permalinkCfg, collectionNames(cfg), &bc.listMaps)
 	if cfg.Taxonomies != nil {
 		bc.Taxonomies = collection.BuildTaxonomies(pages, cfg.Taxonomies)
-		bc.TaxonomiesCtx = buildTaxonomiesContext(bc.Taxonomies)
+		bc.TaxonomiesCtx = buildTaxonomiesContext(bc.Taxonomies, &bc.listMaps)
 		if cfg.Verbose {
 			for taxName, tc := range bc.Taxonomies {
 				totalPages := 0
