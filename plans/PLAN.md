@@ -422,12 +422,18 @@ keys each one has, so the key list can be matched against them table by table.
 
 Before #1414, every table in an inline array took the first table's order. A
 table whose first key the first table didn't have came out with that key last.
+The same path can be a `[[table]]` array in one `[[table]]` element and an inline
+array in another (`[[rows.x]]` in one `rows`, `x = [...]` in the next). Each keeps
+its own rule: every `[[rows.x]]` table keeps its order, and so does every inline
+table. `MetaData.Type` reports one type per path, the last one written, so it
+can't tell them apart on its own.
+
 A fix must not change other tables. A table written after one of its sub-tables
 (`[a.b.c]`, then `[a.b]`) repeats a key in `Keys()` too, and keeps its own order
 today.
 Tests: "Inline tables in a TOML array keep their own key order (issue #1414)" in
-`internal/data/toml_inline_order_test.go`, with `testdata-keyorder/order-inline-arrays.toml`
-and `testdata-keyorder/order-table-after-subtable.toml`.
+`internal/data/toml_inline_order_test.go`, with `testdata-keyorder/order-inline-arrays.toml`,
+`testdata-keyorder/order-table-after-subtable.toml` and `testdata-keyorder/order-mixed-array-kinds.toml`.
 
 **TOML array-of-tables must be normalized to `[]interface{}`.** `toml.Decode`
 returns them as a typed `[]map[string]interface{}`. Normalizing keeps every

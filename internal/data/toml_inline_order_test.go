@@ -120,6 +120,24 @@ var _ = Describe("Inline tables in a TOML array keep their own key order (issue 
 		Expect(of("scope")).To(Equal("[{x:[]} {x:{child:{z a}}}]"))
 	})
 
+	// A path that is a [[table]] array in one element and an inline array
+	// in another: MetaData keeps one type per path, the last one written.
+	Describe("when a path is a [[table]] array in one element and an inline array in another", func() {
+		var mixed *ordered.Map
+		BeforeAll(func() {
+			_, file, _, _ := runtime.Caller(0)
+			v, err := data.LoadFileAny(filepath.Join(filepath.Dir(file), "testdata-keyorder", "order-mixed-array-kinds.toml"))
+			Expect(err).NotTo(HaveOccurred())
+			mixed = v.(*ordered.Map)
+		})
+		It("keeps each [[table]]'s order when a later element writes an inline array there (guard)", func() {
+			Expect(shape(mixed.Get("aot"))).To(Equal("[{x:[{z a} {z a}]} {x:[]}]"))
+		})
+		It("keeps each inline table's order when an earlier element wrote [[table]]s there", func() {
+			Expect(shape(mixed.Get("mix"))).To(Equal("[{x:[{z a}]} {x:[{b a} {a b}]}]"))
+		})
+	})
+
 	// Guards: these hold today and must keep holding.
 	It("keeps a single inline table's order (guard)", func() {
 		Expect(of("single")).To(Equal("[{b a}]"))
