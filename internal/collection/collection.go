@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -131,6 +132,83 @@ func SortPages(pages []*content.Page, sortBy string, order string) []*content.Pa
 	})
 
 	return result
+}
+
+// Sort sorts a collection's pages by its sortBy and order: "date" and
+// "desc" when either is empty (issue #1418).
+func Sort(pages []*content.Page, sortBy, order string) []*content.Page {
+	if sortBy == "" {
+		sortBy = "date"
+	}
+	if order == "" {
+		order = "desc"
+	}
+	if sortBy == "date" {
+		return SortPages(pages, "date", order)
+	}
+	return SortByKey(pages, sortBy, order)
+}
+
+// SortByKey sorts pages by a front matter key. Values compare as the sort
+// filter compares them: numbers, and strings of digits only, as numbers,
+// anything else as text. Pages without the key go last in both orders, by
+// path, and ties go by path, A to Z (issue #1418).
+func SortByKey(pages []*content.Page, key, order string) []*content.Page {
+	result := make([]*content.Page, len(pages))
+	copy(result, pages)
+
+	sort.SliceStable(result, func(i, j int) bool {
+		a, b := result[i], result[j]
+		av, bv := a.FrontMatter[key], b.FrontMatter[key]
+		if (av != nil) != (bv != nil) {
+			return av != nil
+		}
+		if av != nil {
+			if cmp := compareKeyValues(av, bv); cmp != 0 {
+				if order == "asc" {
+					return cmp < 0
+				}
+				return cmp > 0
+			}
+		}
+		return a.RelPath < b.RelPath
+	})
+
+	return result
+}
+
+// compareKeyValues compares two non-nil front matter values for SortByKey.
+func compareKeyValues(a, b interface{}) int {
+	aNum, aOk := keyNumber(a)
+	bNum, bOk := keyNumber(b)
+	if aOk && bOk {
+		switch {
+		case aNum < bNum:
+			return -1
+		case aNum > bNum:
+			return 1
+		}
+		return 0
+	}
+	return strings.Compare(fmt.Sprintf("%v", a), fmt.Sprintf("%v", b))
+}
+
+// keyNumber reads a number, or a string of digits only, as a number.
+func keyNumber(v interface{}) (float64, bool) {
+	if n, ok := toFloat64(v); ok {
+		return n, true
+	}
+	s, ok := v.(string)
+	if !ok || s == "" {
+		return 0, false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.ParseFloat(s, 64)
+	return n, err == nil
 }
 
 // SortByFrontMatter sorts pages by a front matter field value.

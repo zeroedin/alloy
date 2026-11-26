@@ -258,7 +258,7 @@ Payload fields are `pages` and `siteData`.
 |---|---|---|
 | `path` | yes | Source-relative identifier (e.g., `demos/button.md`) |
 | `url` | yes | Permalink (e.g., `/demos/button/`) |
-| `frontMatter` | no | Page metadata, including taxonomy terms like `tags` |
+| `frontMatter` | no | Page metadata, including taxonomy terms like `tags`. A `date` here is the page's date, so it sorts in taxonomy terms like any other page |
 | `content` | no | Raw markdown content (rendered through the pipeline) |
 | `dependencies` | no | Project-root-relative file paths for incremental rebuild tracking |
 

@@ -382,6 +382,9 @@ func virtualPageFromMap(m map[string]interface{}) (*content.Page, error) {
 			page.Layout = s
 		}
 	}
+	// A date in frontMatter is the page's date, as for a file page, so it
+	// sorts in taxonomy terms (issue #1418).
+	page.Date = content.ParseDate(fm["date"])
 	// The plugin's frontMatter is the page's own, so its summary is the
 	// page's Summary, like a parsed page's (issue #1267).
 	if s, ok := fm["summary"].(string); ok {

@@ -7,7 +7,7 @@ nav_weight: 10
 description: "Alloy release notes and changelog"
 ---
 
-{% assign releases = collections.releases | reverse %}
+{% assign releases = collections.releases %}
 
 <section class="release-tiles">
   <a class="release-tile" href="https://github.com/zeroedin/alloy" target="_blank" rel="noopener">
