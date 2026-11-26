@@ -1748,7 +1748,9 @@ Collections are built once during content discovery, then frozen as read-only da
 - `taxonomies.<name>.<term>`;
 - `pagination.items`, on a page that paginates a collection (`pagination.data: collections.<name>`).
 
-Which pages a list holds, and their order, are still decided before those hooks, from front matter after `onPagesReady`. A hook that changes a page's `tags`, `date` or `sortBy` field changes what the page shows, but doesn't move the page to another list, change its place in a list, or change how pagination splits the pages. To change membership or order, use `onPagesReady`, which runs before the lists are built.
+Which pages a list holds, and their order, are still decided before those hooks, from each page's own front matter: what its file says, with the `_data.yaml` cascade applied. A page that `onPagesReady` adds joins the lists the same way, by the front matter it is given. `onPagesReady` can't change a page that is already there: it only adds pages (issue #1430). A content hook that changes a page's `tags`, its `date`, or the field its collection sorts by changes what the page shows, but doesn't move the page to another list, change its place in a list, or change how pagination splits the pages. To move a page, change its front matter in its file.
+
+A page with no URL (`permalink: false`) still belongs to its collection, and shows the hooks' fields in every list too, `pagination.items` included (issue #1430).
 
 The rule holds in a full build and in an `alloy dev` rebuild, on QuickJS and Node. Liquid in a page's own content is rendered before the two hooks run, so there no list shows their fields, `site.pages` included.
 
