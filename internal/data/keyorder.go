@@ -353,10 +353,16 @@ func buildTOMLOrder(md toml.MetaData) *tomlOrder {
 		if len(path) == 0 {
 			continue
 		}
-		if inline != nil && len(path) > len(inlineAt) && hasPathPrefix(path, inlineAt) {
-			rel := append([]string(nil), path[len(inlineAt):]...)
-			inline.inlineKeys = append(inline.inlineKeys, rel)
-			continue
+		if inline != nil {
+			if len(path) > len(inlineAt) && hasPathPrefix(path, inlineAt) {
+				rel := append([]string(nil), path[len(inlineAt):]...)
+				inline.inlineKeys = append(inline.inlineKeys, rel)
+				continue
+			}
+			// The array's keys are done. A later key under the same path
+			// belongs to something else, such as a [[table]] element that
+			// writes "x.child" after an earlier one wrote "x = []".
+			inline, inlineAt = nil, nil
 		}
 		cur := root
 		// Walk to the parent level, following the current element of any
@@ -456,7 +462,7 @@ func applyTOMLOrder(v interface{}, ord *tomlOrder) interface{} {
 func applyTOMLChild(v interface{}, kids []*tomlOrder) interface{} {
 	if len(kids) == 1 && kids[0].inline {
 		c := &tomlInlineCursor{paths: kids[0].inlineKeys}
-		return c.value(v, nil)
+		return tomlInlineFinish(c.value(v, nil))
 	}
 	elems, ok := tomlElements(v)
 	if !ok {
@@ -487,11 +493,42 @@ type tomlInlineCursor struct {
 	i     int
 }
 
+// tomlInlineTable is a table being filled from an inline array's key paths.
+// It stays open until its array element is done, so a dotted key written
+// after another key ("p.z = 1, q = 2, p.y = 3") still adds to p.
+type tomlInlineTable struct {
+	val    map[string]interface{}
+	prefix []string
+	keys   []string
+	kids   map[string]interface{}
+}
+
+// wants reports whether rel, a key path relative to t, belongs to t: its
+// first key is one t has and hasn't placed yet, or a table t has placed
+// that wants the rest of the path. TOML forbids a key twice in one table,
+// so a path t doesn't want starts the next table in the array.
+func (t *tomlInlineTable) wants(rel []string) bool {
+	if len(rel) == 0 {
+		return false
+	}
+	if _, ok := t.val[rel[0]]; !ok {
+		return false
+	}
+	kid, placed := t.kids[rel[0]]
+	if !placed {
+		return true
+	}
+	sub, ok := kid.(*tomlInlineTable)
+	return ok && len(rel) > 1 && sub.wants(rel[1:])
+}
+
 // value orders v, whose keys are listed under prefix. An array's elements
 // share the array's prefix, since Keys() gives them no index.
 func (c *tomlInlineCursor) value(v interface{}, prefix []string) interface{} {
 	if m, ok := v.(map[string]interface{}); ok {
-		return c.table(m, prefix)
+		t := &tomlInlineTable{val: m, prefix: prefix, kids: map[string]interface{}{}}
+		c.fill(t)
+		return t
 	}
 	if elems, ok := tomlElements(v); ok {
 		out := make([]interface{}, len(elems))
@@ -503,42 +540,59 @@ func (c *tomlInlineCursor) value(v interface{}, prefix []string) interface{} {
 	return v
 }
 
-// table takes keys while the next path is under prefix, names a key this
-// table has, and that key isn't placed yet. A dotted key ("p.y = 1") has no
+// fill takes the paths t wants, in order. A dotted key ("p.y = 1") has no
 // entry of its own for "p", so the cursor steps only past an exact
-// prefix+key entry and leaves "p.y" for the recursion into p's value.
-func (c *tomlInlineCursor) table(val map[string]interface{}, prefix []string) *ordered.Map {
-	om := ordered.New()
-	placed := make(map[string]bool, len(val))
-	for len(placed) < len(val) && c.i < len(c.paths) {
+// prefix+key entry and leaves "p.y" for p's table.
+func (c *tomlInlineCursor) fill(t *tomlInlineTable) {
+	for c.i < len(c.paths) {
 		p := c.paths[c.i]
-		if len(p) <= len(prefix) || !hasPathPrefix(p, prefix) {
-			break
+		if len(p) <= len(t.prefix) || !hasPathPrefix(p, t.prefix) || !t.wants(p[len(t.prefix):]) {
+			return
 		}
-		k := p[len(prefix)]
-		cv, ok := val[k]
-		if !ok || placed[k] {
-			break
+		k := p[len(t.prefix)]
+		if kid, placed := t.kids[k]; placed {
+			// A dotted key written after another key: it goes on with
+			// k's table.
+			c.fill(kid.(*tomlInlineTable))
+			continue
 		}
-		placed[k] = true
-		if len(p) == len(prefix)+1 {
+		t.keys = append(t.keys, k)
+		if len(p) == len(t.prefix)+1 {
 			c.i++
 		}
-		om.Set(k, c.value(cv, append(append([]string(nil), prefix...), k)))
+		t.kids[k] = c.value(t.val[k], append(append([]string(nil), t.prefix...), k))
 	}
-	// Anything the key stream did not cover goes last, sorted, as in
-	// applyTOMLOrder.
-	rest := make([]string, 0, len(val)-len(placed))
-	for k := range val {
-		if !placed[k] {
-			rest = append(rest, k)
+}
+
+// tomlInlineFinish turns the filled tables into ordered maps. Anything the
+// key stream did not cover goes last, sorted, as in applyTOMLOrder.
+func tomlInlineFinish(v interface{}) interface{} {
+	switch val := v.(type) {
+	case *tomlInlineTable:
+		om := ordered.New()
+		for _, k := range val.keys {
+			om.Set(k, tomlInlineFinish(val.kids[k]))
 		}
+		rest := make([]string, 0, len(val.val)-len(val.keys))
+		for k := range val.val {
+			if _, placed := val.kids[k]; !placed {
+				rest = append(rest, k)
+			}
+		}
+		sort.Strings(rest)
+		for _, k := range rest {
+			om.Set(k, applyTOMLOrder(val.val[k], nil))
+		}
+		return om
+	case []interface{}:
+		out := make([]interface{}, len(val))
+		for i, e := range val {
+			out[i] = tomlInlineFinish(e)
+		}
+		return out
+	default:
+		return v
 	}
-	sort.Strings(rest)
-	for _, k := range rest {
-		om.Set(k, applyTOMLOrder(val[k], nil))
-	}
-	return om
 }
 
 func hasPathPrefix(path, prefix []string) bool {
