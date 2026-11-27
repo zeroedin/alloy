@@ -396,10 +396,20 @@ func buildTOMLOrder(md toml.MetaData) *tomlOrder {
 			// An inline array: the keys that follow under this path are
 			// its tables' keys. A [[table]] element that repeats the
 			// array gets a fresh order of its own.
+			//
+			// md.Type keeps one type per path, the last one written, so
+			// [[x]] headers read as "Array" too when a later element
+			// writes x = [...]. Each header is then one table: keep a
+			// holder per header, and applyTOMLChild pairs them with the
+			// decoded tables (issue #1428).
 			inline = newTOMLOrder()
 			inline.inline = true
 			inlineAt = path
-			cur.children[name] = []*tomlOrder{inline}
+			if kids := cur.children[name]; len(kids) > 0 && kids[len(kids)-1].inline {
+				cur.children[name] = append(kids, inline)
+			} else {
+				cur.children[name] = []*tomlOrder{inline}
+			}
 		default:
 			if len(cur.children[name]) == 0 {
 				cur.children[name] = []*tomlOrder{newTOMLOrder()}
@@ -460,8 +470,18 @@ func applyTOMLOrder(v interface{}, ord *tomlOrder) interface{} {
 // tomlInlineCursor; an array-of-tables gets one order per element; anything
 // else shares a single order.
 func applyTOMLChild(v interface{}, kids []*tomlOrder) interface{} {
-	if len(kids) == 1 && kids[0].inline {
-		c := &tomlInlineCursor{paths: kids[0].inlineKeys}
+	if len(kids) > 0 && kids[0].inline {
+		// [[x]] headers that read as "Array": one holder per header,
+		// one decoded table each (issue #1428).
+		if tables, ok := v.([]map[string]interface{}); ok && len(tables) == len(kids) {
+			out := make([]interface{}, len(tables))
+			for i, t := range tables {
+				c := &tomlInlineCursor{paths: kids[i].inlineKeys}
+				out[i] = tomlInlineFinish(c.value(t, nil))
+			}
+			return out
+		}
+		c := &tomlInlineCursor{paths: kids[len(kids)-1].inlineKeys}
 		return tomlInlineFinish(c.value(v, nil))
 	}
 	elems, ok := tomlElements(v)
