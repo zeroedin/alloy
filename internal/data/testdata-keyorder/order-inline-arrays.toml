@@ -1,0 +1,34 @@
+# Issue #1414: every inline table in an array keeps its own key order.
+# Each line writes its tables' keys in a different order from the table
+# before, so a table that takes another table's order is caught.
+
+items = [{z = 1, a = 2}, {a = 3, z = 4}]
+shift = [{b = 1, c = 2}, {a = 3, b = 4}]
+three = [{z = 1, a = 2}, {a = 3, z = 4}, {m = 5, z = 6}]
+deep = [{n = {y = 1, x = 2}}, {n = {x = 3, y = 4}}]
+inner = {list = [{b = 1, a = 2}, {a = 3, b = 4}]}
+nested = [[{b = 1, a = 2}], [{a = 3, b = 4}, {c = 5, a = 6}]]
+mixed = [1, {b = 1, a = 2}, "s", {a = 3, b = 4}]
+empty = [{}, {b = 1, a = 2}, {}, {a = 3, b = 4}]
+emptyval = [{n = {}, b = 1}, {b = 2, n = {}}]
+dotted = [{p.y = 1, p.x = 2, q = 0}, {q = 1, p.x = 3, p.y = 4}]
+lists = [{l = [1, 2], b = 1}, {b = 2, l = [3]}]
+single = [{b = 1, a = 2}]
+interleaved = [{p.z = 1, q = 2, p.y = 3, p.x = 4}]
+deepdotted = [{a.b.y = 1, c = 0, a.b.x = 2, a.z = 3}]
+dottedarray = [{p.l = [{b = 1, a = 2}, {a = 3, b = 4}], q = 1, p.m = 1}, {q = 2, p.m = 2}]
+splitdotted = [{p.z = 1, q = 2}, {p.y = 3, p.z = 4}]
+
+[[rows]]
+x = [{b = 1, a = 2}, {a = 1, b = 2}]
+
+[[rows]]
+x = [{c = 1, a = 2}]
+
+# issue #1425: the second [[scope]] element writes x.child under the path
+# where the first element's inline array x was. Its keys belong to it.
+[[scope]]
+x = []
+
+[[scope]]
+x.child = {z = 1, a = 2}
