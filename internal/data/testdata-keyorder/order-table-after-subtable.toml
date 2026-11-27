@@ -1,0 +1,14 @@
+# Guard for issue #1414: a table written after one of its sub-tables keeps
+# its own key order. Keys() lists "a" and "a.b" twice here: once when
+# [a.b.c] creates them, and again at their own headers.
+
+[a.b.c]
+x = 1
+
+[a]
+z = 1
+y = 2
+
+[a.b]
+q = 1
+p = 2

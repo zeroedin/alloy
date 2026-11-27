@@ -151,7 +151,8 @@ func Sort(pages []*content.Page, sortBy, order string) []*content.Page {
 
 // SortByKey sorts pages by a front matter key. Values compare as the sort
 // filter compares them: numbers, and strings of digits only, as numbers,
-// anything else as text. Pages without the key go last in both orders, by
+// anything else as text, and numbers before text. Pages without the key go
+// last in both orders, by
 // path, and ties go by path, A to Z (issue #1418).
 func SortByKey(pages []*content.Page, key, order string) []*content.Page {
 	result := make([]*content.Page, len(pages))
@@ -189,6 +190,14 @@ func compareKeyValues(a, b interface{}) int {
 			return 1
 		}
 		return 0
+	}
+	// Numbers come before text, so the order is the same whatever the
+	// pages' order (issue #1418).
+	if aOk != bOk {
+		if aOk {
+			return -1
+		}
+		return 1
 	}
 	return strings.Compare(fmt.Sprintf("%v", a), fmt.Sprintf("%v", b))
 }
