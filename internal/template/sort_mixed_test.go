@@ -100,6 +100,19 @@ var _ = Describe("sort puts numbers before text (issue #1418)", func() {
 		}
 	})
 
+	// A digit-only string too long for a float64 (400 digits) is still a
+	// number (issue #1443). strconv.ParseFloat gives +Inf and an error for it.
+	It("sorts a 400-digit string as a number, before text and after smaller numbers", func() {
+		huge := strings.Repeat("9", 400)
+		for _, in := range [][]interface{}{
+			{"!", huge, 5},
+			{huge, 5, "!"},
+		} {
+			Expect(show(tmpl.Sort(items(in), "v"), true)).To(Equal("5;" + huge + ";!;"))
+			Expect(show(tmpl.Sort(in), false)).To(Equal("5;" + huge + ";!;"))
+		}
+	})
+
 	// Issue #1443: a digit-only string is a number however long it is, as in
 	// a collection's sortBy. 9223372036854775808 is one past the largest
 	// int64.
