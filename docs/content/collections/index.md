@@ -119,7 +119,7 @@ The `sort` filter is numeric-aware. Values like `order: 1, 2, 10, 20` sort corre
 
 ### Numeric Sort Rules
 
-- Numbers come first, smallest first: integers and floats, including negatives and fractions (`-3`, `1.5`, `10`), and strings of digits only (`"10"`)
+- Numbers come first, smallest first: integers and floats, including negatives and fractions (`-3`, `1.5`, `10`), and strings of digits only, however long (`"10"`)
 - A string with a sign, a dot or any other character (`"-1"`, `"1.5"`, `"1a"`) isn't a number. It sorts as text, after every number
 - Everything else sorts as text, in byte order (`"B"` before `"a"`)
 - Nil or missing values sort to the end

@@ -13,7 +13,7 @@ import (
 // ── sort puts numbers before text (issue #1418) ─────────────────────────
 // The sort filter compares values in one order, with or without a key:
 //  1. numbers, smallest first: ints and floats, negatives and fractions
-//     included, and strings of digits only;
+//     included, and strings of digits only, however long;
 //  2. everything else, as text;
 //  3. missing or nil values, last.
 //
@@ -99,6 +99,20 @@ var _ = Describe("sort puts numbers before text (issue #1418)", func() {
 			})
 		}
 	})
+
+	// Issue #1443: a digit-only string is a number however long it is, as in
+	// a collection's sortBy. 9223372036854775808 is one past the largest
+	// int64.
+	for _, in := range [][]interface{}{
+		{"9223372036854775808", "!"},
+		{"!", "9223372036854775808"},
+	} {
+		in := in
+		It(fmt.Sprintf("sorts %v as a number, then text, when the digits don't fit in an int", in), func() {
+			Expect(show(tmpl.Sort(items(in), "v"), true)).To(Equal("9223372036854775808;!;"))
+			Expect(show(tmpl.Sort(in), false)).To(Equal("9223372036854775808;!;"))
+		})
+	}
 
 	It("compares fractions as numbers (guard)", func() {
 		in := []interface{}{2, 1.5, "10", 1.25}

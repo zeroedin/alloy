@@ -60,7 +60,13 @@ var _ = Describe("A collection's sortBy puts numbers before text (issue #1418)",
 			"content/kinds/k7.md": page("TWO", `"2"`),
 			"content/kinds/k8.md": page("MINUSTHREE", "-3"),
 
-			"layouts/home.liquid": "MIXA[" + titles("collections.mixa") + "] " +
+			// A digit-only string too long for an int is still a number
+			// (issue #1443). BANG's "!" sorts before digits as text.
+			"content/big/b1.md": page("BANG", `"!"`),
+			"content/big/b2.md": page("HUGE", `"9223372036854775808"`),
+
+			"layouts/home.liquid": "BIG[" + titles("collections.big") + "] " +
+				"MIXA[" + titles("collections.mixa") + "] " +
 				"MIXB[" + titles("collections.mixb") + "] " +
 				"MIXC[" + titles("collections.mixc") + "] " +
 				"KINDS[" + titles("collections.kinds") + "] " +
@@ -82,6 +88,7 @@ var _ = Describe("A collection's sortBy puts numbers before text (issue #1418)",
 			BaseURL: "https://example.com",
 			Build:   config.BuildConfig{Output: "_site"},
 			Collections: map[string]*config.CollectionConfig{
+				"big":       asc,
 				"mixa":      asc,
 				"mixb":      asc,
 				"mixc":      asc,
@@ -98,6 +105,9 @@ var _ = Describe("A collection's sortBy puts numbers before text (issue #1418)",
 		Expect(out["index.md"]).To(ContainSubstring("MIXA[T2;T10;T1A;]"))
 		Expect(out["index.md"]).To(ContainSubstring("MIXB[T2;T10;T1A;]"))
 		Expect(out["index.md"]).To(ContainSubstring("MIXC[T2;T10;T1A;]"))
+	})
+	It("sorts a digit-only string too long for an int as a number (guard)", func() {
+		Expect(out["index.md"]).To(ContainSubstring("BIG[HUGE;BANG;]"))
 	})
 	It("sorts numbers first, then text, then pages without the key", func() {
 		Expect(out["index.md"]).To(ContainSubstring("KINDS[MINUSTHREE;HALF;TWO;TEN;MINUSONE;ONEA;B;NONE;]"))

@@ -1793,7 +1793,7 @@ The `sort` filter is numeric-aware. `{{ collection | sort: "order" }}` sorts `or
 **How the `sort` filter compares values (issues #348, #1418).** The `sort` filter, with or without a key, and a collection's `sortBy` put values in one order:
 1. **Numbers**, smallest first:
    - ints and floats, negatives and fractions included (`-3`, `1.5`, `10`, `10.0`);
-   - strings of digits only (`"10"`).
+   - strings of digits only (`"10"`), however long (issue #1443): `"9223372036854775808"`, past the largest `int`, is a number too.
 
    A string with a sign, a dot or any other character (`"-1"`, `"1.5"`, `"1a"`) isn't a number.
 2. **Everything else**, as text: strings, `true` and `false`, and any other value, by its printed form, in byte order (`"B"` before `"a"`).
