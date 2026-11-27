@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html"
 	"math"
+	"math/big"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -984,6 +985,11 @@ func compareValues(a, b interface{}) bool {
 	if b == nil {
 		return true
 	}
+	if aw, ok := wholeNumber(a); ok {
+		if bw, ok := wholeNumber(b); ok {
+			return aw.Cmp(bw) < 0
+		}
+	}
 	aNum, aOk := toFloat64(a)
 	bNum, bOk := toFloat64(b)
 	if aOk && bOk {
@@ -995,6 +1001,29 @@ func compareValues(a, b interface{}) bool {
 		return aOk
 	}
 	return toString(a) < toString(b)
+}
+
+// wholeNumber reads an int, an int64 or a string of digits only as an exact
+// whole number, so two whole numbers compare exactly however large they are
+// (issue #1443).
+func wholeNumber(v interface{}) (*big.Int, bool) {
+	switch n := v.(type) {
+	case int:
+		return big.NewInt(int64(n)), true
+	case int64:
+		return big.NewInt(n), true
+	case string:
+		if n == "" {
+			return nil, false
+		}
+		for _, c := range n {
+			if c < '0' || c > '9' {
+				return nil, false
+			}
+		}
+		return new(big.Int).SetString(n, 10)
+	}
+	return nil, false
 }
 
 func toFloat64(v interface{}) (float64, bool) {

@@ -2,6 +2,7 @@ package collection
 
 import (
 	"fmt"
+	"math/big"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -180,6 +181,11 @@ func SortByKey(pages []*content.Page, key, order string) []*content.Page {
 
 // compareKeyValues compares two non-nil front matter values for SortByKey.
 func compareKeyValues(a, b interface{}) int {
+	if aw, ok := wholeNumber(a); ok {
+		if bw, ok := wholeNumber(b); ok {
+			return aw.Cmp(bw)
+		}
+	}
 	aNum, aOk := keyNumber(a)
 	bNum, bOk := keyNumber(b)
 	if aOk && bOk {
@@ -200,6 +206,29 @@ func compareKeyValues(a, b interface{}) int {
 		return 1
 	}
 	return strings.Compare(fmt.Sprintf("%v", a), fmt.Sprintf("%v", b))
+}
+
+// wholeNumber reads an int, an int64 or a string of digits only as an exact
+// whole number, so two whole numbers compare exactly however large they are
+// (issue #1443).
+func wholeNumber(v interface{}) (*big.Int, bool) {
+	switch n := v.(type) {
+	case int:
+		return big.NewInt(int64(n)), true
+	case int64:
+		return big.NewInt(n), true
+	case string:
+		if n == "" {
+			return nil, false
+		}
+		for _, c := range n {
+			if c < '0' || c > '9' {
+				return nil, false
+			}
+		}
+		return new(big.Int).SetString(n, 10)
+	}
+	return nil, false
 }
 
 // keyNumber reads a number, or a string of digits only, as a number.
