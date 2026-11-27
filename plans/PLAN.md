@@ -388,6 +388,53 @@ items.name
 Order within an array-of-tables element is therefore not recoverable from
 `Keys()` alone and must come from the element's own decode.
 
+**Inline tables in an array keep their own order too (issue #1414).** Every inline
+table in an array keeps the order its keys were written in, like a `[[table]]`
+does. That holds at any depth:
+- an array of inline tables (`items = [{z = 1, a = 2}, {a = 3, z = 4}]` gives
+  `z a`, then `a z`);
+- an inline table inside one (`[{n = {y = 1, x = 2}}, {n = {x = 3, y = 4}}]`);
+- an array inside an inline table (`t = {list = [...]}`);
+- arrays of arrays (`[[{...}], [{...}, {...}]]`);
+- mixed arrays (`[1, {...}, "s", {...}]`) and empty tables (`[{}, {...}]`);
+- dotted keys inside an inline table (`{p.y = 1, p.x = 2}`), including a dotted
+  key that comes back after another key (`{p.z = 1, q = 2, p.y = 3}` keeps `p`'s
+  keys as `z y`);
+- an inline array inside a `[[table]]` element. A later element of that
+  `[[table]]` may write keys under the same path (`x = []`, then `x.child = {...}`
+  in the next element): those keys belong to the later element (issue #1425).
+
+`Keys()` lists an inline array's tables one after another, with no index and no
+marker between them:
+
+```
+items
+items.z
+items.a
+items.a        ← second table starts here; nothing says so
+items.z
+```
+
+A repeated key is not a reliable boundary: in `[{b = 1, c = 2}, {a = 3, b = 4}]`
+the second table starts with `a`, which the first table doesn't have. The decoded
+array gives the boundaries instead: it says how many tables there are and which
+keys each one has, so the key list can be matched against them table by table.
+
+Before #1414, every table in an inline array took the first table's order. A
+table whose first key the first table didn't have came out with that key last.
+The same path can be a `[[table]]` array in one `[[table]]` element and an inline
+array in another (`[[rows.x]]` in one `rows`, `x = [...]` in the next). Each keeps
+its own rule: every `[[rows.x]]` table keeps its order, and so does every inline
+table. `MetaData.Type` reports one type per path, the last one written, so it
+can't tell them apart on its own.
+
+A fix must not change other tables. A table written after one of its sub-tables
+(`[a.b.c]`, then `[a.b]`) repeats a key in `Keys()` too, and keeps its own order
+today.
+Tests: "Inline tables in a TOML array keep their own key order (issue #1414)" in
+`internal/data/toml_inline_order_test.go`, with `testdata-keyorder/order-inline-arrays.toml`,
+`testdata-keyorder/order-table-after-subtable.toml` and `testdata-keyorder/order-mixed-array-kinds.toml`.
+
 **TOML array-of-tables must be normalized to `[]interface{}`.** `toml.Decode`
 returns them as a typed `[]map[string]interface{}`. Normalizing keeps every
 container a loader emits to the three output shapes below, so each element can
