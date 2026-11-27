@@ -1758,6 +1758,19 @@ Before #1385, these three lists held copies of each page made before the hooks, 
 
 Tests: `internal/pipeline/collections_hook_fields_test.go`.
 
+**Pagination's `as:` name shows them too (issue #1426).** On a page that paginates a collection, the name set with `pagination.as` (default `item`) holds the same pages as `pagination.items`, and in a layout it shows them the same way: with the fields `onContentLoaded` and `onDataCascadeReady` add.
+
+- With `perPage` above 1, the name holds the page's group of items, in the same order as `pagination.items`.
+- With `perPage: 1`, it holds the one item.
+- Front matter filled in from the item, such as `title: "{{ member.title }}"` or a permalink, still uses the item as it was before the hooks. It is worked out when the pages are paginated, and the URL depends on it.
+- As with #1385, Liquid in the page's own content renders before the hooks, so the name shows no hook fields there.
+- Pagination over `site.data` is unchanged: data items are not pages, and the content hooks don't touch them.
+- The rule holds in a full build and in an `alloy dev` rebuild.
+
+Before #1426, the name held a second copy of the items, made before the hooks, so a field a hook added was empty in it even where `pagination.items` showed it.
+
+Tests: `internal/pipeline/pagination_as_hook_fields_test.go`.
+
 **Default sort order**: date descending (newest first). When two pages share the same date, the full datetime is compared (e.g., `2026-04-10T14:30:00Z` sorts before `2026-04-10T09:00:00Z` in descending order). If the datetime is identical or no time component is provided, filename alphabetical ascending is the final tiebreaker. Pages without a date sort after all dated pages, ordered by filename alphabetical ascending. Sort is deterministic across builds.
 
 **Custom ordering** via config:

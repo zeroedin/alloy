@@ -133,10 +133,13 @@ func buildTaxonomiesContext(taxonomies map[string]*collection.TaxonomyCollection
 }
 
 // pagedItems pairs a page that paginates a collection with the items
-// pagination gave it: the collection's own maps (issue #1385).
+// pagination gave it: the collection's own maps (issue #1385). single says
+// the page's as: name holds one item rather than the list (perPage 1,
+// issue #1426).
 type pagedItems struct {
-	page  *content.Page
-	items []interface{}
+	page   *content.Page
+	items  []interface{}
+	single bool
 }
 
 // collectionPagination records the items of each page that paginates a
@@ -154,7 +157,8 @@ func collectionPagination(pages []*content.Page) []pagedItems {
 		if !ok {
 			continue
 		}
-		out = append(out, pagedItems{page: p, items: items})
+		_, list := p.FrontMatter["_paginationData"].([]interface{})
+		out = append(out, pagedItems{page: p, items: items, single: !list})
 	}
 	return out
 }
@@ -164,7 +168,8 @@ func collectionPagination(pages []*content.Page) []pagedItems {
 // the lists show what those hooks added. Each map keeps its identity, so the
 // lists keep the pages and order they were built with before the hooks.
 // Each paginated page gets back the items collectionPagination recorded,
-// which are those maps (issue #1385).
+// which are those maps (issue #1385), in pagination.items and under its as:
+// name (issue #1426).
 func refreshListMaps(maps []listMap, paged []pagedItems) {
 	for _, lm := range maps {
 		fresh := lm.page.ToTemplateMap()
@@ -182,6 +187,13 @@ func refreshListMaps(maps []listMap, paged []pagedItems) {
 			c["items"] = items
 		case *ordered.Map:
 			c.Set("items", items)
+		}
+		// The as: name, as processPagination sets it: the one item with
+		// perPage 1, else the list.
+		if pi.single && len(items) == 1 {
+			pi.page.FrontMatter["_paginationData"] = convertOrderedValue(items[0])
+		} else {
+			pi.page.FrontMatter["_paginationData"] = convertOrderedValue(items)
 		}
 	}
 }
