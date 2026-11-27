@@ -136,6 +136,22 @@ var _ = Describe("Inline tables in a TOML array keep their own key order (issue 
 		It("keeps each inline table's order when an earlier element wrote [[table]]s there", func() {
 			Expect(shape(mixed.Get("mix"))).To(Equal("[{x:[{z a}]} {x:[{b a} {a b}]}]"))
 		})
+
+		// Issue #1434: the inline array comes first. The last write to the
+		// path is a [[table]] header, so MetaData calls the inline array an
+		// array of tables too.
+		It("keeps each inline table's order when a later element writes [[table]]s there", func() {
+			Expect(shape(mixed.Get("rev"))).To(Equal("[{x:[{b a} {a b}]} {x:[{z a}]}]"))
+		})
+		It("keeps each inline table's order when two earlier elements wrote inline arrays there", func() {
+			Expect(shape(mixed.Get("revtwo"))).To(Equal("[{x:[{b a}]} {x:[{d c} {c d}]} {x:[{z a}]}]"))
+		})
+		It("keeps each table's order when an inline array comes between two [[table]] elements", func() {
+			Expect(shape(mixed.Get("between"))).To(Equal("[{x:[{z a}]} {x:[{b a} {a b}]} {x:[{y c}]}]"))
+		})
+		It("keeps a [[table]]'s order after an empty inline array at the same path (guard)", func() {
+			Expect(shape(mixed.Get("revempty"))).To(Equal("[{x:[]} {x:[{z a}]}]"))
+		})
 	})
 
 	// Guards: these hold today and must keep holding.
