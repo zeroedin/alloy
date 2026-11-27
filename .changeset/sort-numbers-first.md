@@ -12,4 +12,4 @@ With three pages in a `guides` collection whose `weight` is `"2"`, `10` and `"1a
 | `"1a"`, `10`, `"2"` | `10 1a 2` | `2 10 1a` |
 | `"2"`, `"1a"`, `10` | `1a 2 10` | `2 10 1a` |
 
-A collection with `sortBy: "weight"` gives the same order as the filter.
+A collection with `sortBy: "weight"` and `order: "asc"` gives the same order as the filter. A collection's `order` defaults to `"desc"`, which gives `1a 10 2`.
