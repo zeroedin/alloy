@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -401,6 +402,20 @@ func Validate(cfg *Config) error {
 	}
 	if cfg.Plugins.Timeout < 0 {
 		return fmt.Errorf("validation error: plugins timeout must not be negative (got %d)", cfg.Plugins.Timeout)
+	}
+	// A collection's order is "asc" or "desc"; empty means "desc"
+	// (issue #1418). Names in order, so the same config fails the same way.
+	collNames := make([]string, 0, len(cfg.Collections))
+	for name := range cfg.Collections {
+		collNames = append(collNames, name)
+	}
+	sort.Strings(collNames)
+	for _, name := range collNames {
+		c := cfg.Collections[name]
+		if c == nil || c.Order == "" || c.Order == "asc" || c.Order == "desc" {
+			continue
+		}
+		return fmt.Errorf("validation error: collections.%s.order must be \"asc\" or \"desc\" (got %q)", name, c.Order)
 	}
 
 	structDir := func(configured, fallback string) string {

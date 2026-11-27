@@ -99,6 +99,12 @@ collections:
     order: "asc"
 ```
 
+Other fields compare as the `sort` filter compares them (see [Numeric Sort Rules](#numeric-sort-rules)), so `2` comes before `10`. Pages without the field go last in both orders, and ties go by file path. `order` must be `"asc"` or `"desc"`. Anything else fails the build:
+
+```
+Error: validation error: collections.guides.order must be "asc" or "desc" (got "newest")
+```
+
 ## Sorting in Templates
 
 Sort inline using built-in array filters:

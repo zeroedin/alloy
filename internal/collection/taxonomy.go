@@ -53,6 +53,12 @@ func BuildTaxonomies(pages []*content.Page, taxonomyCfg map[string]*config.Taxon
 			}
 		}
 
+		// Each term's pages, newest first, whatever their section
+		// (issue #1418).
+		for term, termPages := range tc.Terms {
+			tc.Terms[term] = SortPages(termPages, "date", "desc")
+		}
+
 		taxonomies[taxName] = tc
 	}
 
