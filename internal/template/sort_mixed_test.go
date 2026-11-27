@@ -125,6 +125,9 @@ var _ = Describe("sort puts numbers before text (issue #1418)", func() {
 		}{
 			{"ints", []interface{}{int64(9007199254740993), int64(9007199254740992)},
 				"9007199254740992;9007199254740993;"},
+			// YAML front matter gives a plain int, not an int64.
+			{"plain ints", []interface{}{int(9007199254740993), int(9007199254740992)},
+				"9007199254740992;9007199254740993;"},
 			{"digit-only strings", []interface{}{"9007199254740993", "9007199254740992"},
 				"9007199254740992;9007199254740993;"},
 			{"an int and a digit-only string", []interface{}{int64(9007199254740993), "9007199254740992"},
