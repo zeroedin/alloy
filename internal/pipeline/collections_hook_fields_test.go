@@ -197,4 +197,39 @@ var _ = Describe("Hook fields show in collections (issue #1385)", func() {
 			Expect(rebuilt).To(ContainSubstring("TAXG[A=LA,DA;B=LB,DB;C=LC,DC;]"))
 		})
 	})
+
+	// Issue #1430: a collection page with no URL (permalink: false) stays in
+	// the collection, and shows the hooks' fields in every list, including
+	// pagination.items. Pagination can't find such a page by its URL.
+	Describe("for a page with no URL", Ordered, ContinueOnFailure, func() {
+		var out map[string]string
+		BeforeAll(func() {
+			files := map[string]string{
+				"content/index.md":               "---\ntitle: Home\nlayout: home\n---\nhome",
+				"content/list.md":                "---\ntitle: List\nlayout: list\npagination:\n  data: collections.blog\n  perPage: 2\n---\nlist",
+				"content/blog/_data.yaml":        "permalink: \"/blog/:year/:slug/\"",
+				"content/blog/a.md":              "---\ntitle: A\ndate: 2026-01-03\ntags: [x]\nlayout: post\n---\na",
+				"content/blog/b.md":              "---\ntitle: B\ndate: 2026-01-02\ntags: [x]\nlayout: post\n---\nb",
+				"content/blog/d.md":              "---\ntitle: D\ndate: 2025-12-01\ntags: [x]\nlayout: post\npermalink: false\n---\nd",
+				"layouts/home.liquid":            "COLL[" + each("collections.blog") + "] TAXG[" + each("taxonomies.tags.x") + "]",
+				"layouts/list.liquid":            "PAG[" + each("pagination.items") + "]",
+				"layouts/post.liquid":            "{{ content }}",
+				"layouts/taxonomies/tags.liquid": "TAXP[" + each("taxonomy.pages") + "]",
+				"plugins/hooks.js":               hooks,
+			}
+			cfg := newConfig()
+			result, err := pipeline.BuildWithContent(cfg, files, pipeline.BuildOptions{CaptureRenderedContent: true})
+			Expect(err).NotTo(HaveOccurred())
+			out = result.RenderedContent
+		})
+
+		It("keeps the page in its collection and shows its hook fields there", func() {
+			Expect(out["index.md"]).To(ContainSubstring("COLL[A=LA,DA;B=LB,DB;D=LD,DD;]"))
+			Expect(out["index.md"]).To(ContainSubstring("TAXG[A=LA,DA;B=LB,DB;D=LD,DD;]"))
+		})
+		It("shows its hook fields in pagination.items", func() {
+			Expect(out["/list/"]).To(ContainSubstring("PAG[A=LA,DA;B=LB,DB;]"))
+			Expect(out["/list/page/2/"]).To(ContainSubstring("PAG[D=LD,DD;]"))
+		})
+	})
 })
