@@ -989,6 +989,11 @@ func compareValues(a, b interface{}) bool {
 	if aOk && bOk {
 		return aNum < bNum
 	}
+	// Numbers come before text, so the order is the same whatever the
+	// input order (issue #1418).
+	if aOk != bOk {
+		return aOk
+	}
 	return toString(a) < toString(b)
 }
 
