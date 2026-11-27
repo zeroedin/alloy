@@ -5,6 +5,7 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html"
 	"math"
@@ -1047,8 +1048,10 @@ func toFloat64(v interface{}) (float64, bool) {
 		}
 		// ParseFloat, not Atoi, so a string of digits too long for an int
 		// is still a number, as in a collection's sortBy (issue #1436).
+		// One too long even for a float64 gives +Inf and ErrRange: it is
+		// still a number, larger than any float (issue #1443).
 		f, err := strconv.ParseFloat(n, 64)
-		return f, err == nil
+		return f, err == nil || errors.Is(err, strconv.ErrRange)
 	default:
 		return 0, false
 	}

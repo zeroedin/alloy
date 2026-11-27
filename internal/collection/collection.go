@@ -1,6 +1,7 @@
 package collection
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 	"path/filepath"
@@ -245,8 +246,10 @@ func keyNumber(v interface{}) (float64, bool) {
 			return 0, false
 		}
 	}
+	// A string of digits too long for a float64 gives +Inf and ErrRange: it
+	// is still a number, larger than any float (issue #1443).
 	n, err := strconv.ParseFloat(s, 64)
-	return n, err == nil
+	return n, err == nil || errors.Is(err, strconv.ErrRange)
 }
 
 // SortByFrontMatter sorts pages by a front matter field value.
