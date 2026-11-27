@@ -426,7 +426,12 @@ The same path can be a `[[table]]` array in one `[[table]]` element and an inlin
 array in another (`[[rows.x]]` in one `rows`, `x = [...]` in the next). Each keeps
 its own rule: every `[[rows.x]]` table keeps its order, and so does every inline
 table. `MetaData.Type` reports one type per path, the last one written, so it
-can't tell them apart on its own.
+can't tell them apart on its own. That holds whichever comes first (issue #1434):
+- `[[x]]` tables, then an inline array (#1428);
+- an inline array, then `[[x]]` tables, where every write to the path reads as
+  `ArrayHash`;
+- inline arrays in several elements before a `[[x]]` one;
+- an inline array in an element between two that write `[[x]]` tables.
 
 A fix must not change other tables. A table written after one of its sub-tables
 (`[a.b.c]`, then `[a.b]`) repeats a key in `Keys()` too, and keeps its own order

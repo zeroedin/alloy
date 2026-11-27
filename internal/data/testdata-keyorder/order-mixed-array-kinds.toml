@@ -25,3 +25,49 @@ a = 2
 
 [[mix]]
 x = [{b = 1, a = 2}, {a = 3, b = 4}]
+
+# rev: the reverse of mix. An inline array of tables in the first
+# element, one [[rev.x]] table in the second (issue #1434).
+[[rev]]
+x = [{b = 1, a = 2}, {a = 3, b = 4}]
+
+[[rev]]
+[[rev.x]]
+z = 1
+a = 2
+
+# revtwo: inline arrays in two elements, then a [[revtwo.x]] table.
+[[revtwo]]
+x = [{b = 1, a = 2}]
+
+[[revtwo]]
+x = [{d = 1, c = 2}, {c = 3, d = 4}]
+
+[[revtwo]]
+[[revtwo.x]]
+z = 1
+a = 2
+
+# between: an inline array in an element between two that write
+# [[between.x]] tables.
+[[between]]
+[[between.x]]
+z = 1
+a = 2
+
+[[between]]
+x = [{b = 1, a = 2}, {a = 3, b = 4}]
+
+[[between]]
+[[between.x]]
+y = 1
+c = 2
+
+# revempty: an empty inline array, then a [[revempty.x]] table.
+[[revempty]]
+x = []
+
+[[revempty]]
+[[revempty.x]]
+z = 1
+a = 2
