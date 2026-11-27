@@ -1799,6 +1799,8 @@ The `sort` filter is numeric-aware. `{{ collection | sort: "order" }}` sorts `or
 2. **Everything else**, as text: strings, `true` and `false`, and any other value, by its printed form, in byte order (`"B"` before `"a"`).
 3. **Missing or nil values**, last.
 
+Two whole numbers, ints or digit-only strings, compare exactly, however large (issue #1443). A `float64` holds whole numbers exactly only up to 2^53 (9007199254740992), so `9007199254740993` and `9007199254740992` used to compare as equal and keep their input order. Any other pair of numbers, such as a fraction and a whole number, compares as `float64`.
+
 A number always comes before text. So `2`, `"10"` and `"1a"` sort as `2, 10, 1a`, whatever order the pages or items come in. Equal values keep their input order in `sort`, and go by path in a collection.
 
 Before #1418, a number and a text value compared as two strings. With `2`, `"10"` and `"1a"`, that made a loop: `2 < 10` as numbers, `"10" < "1a"` and `"1a" < "2"` as strings. The order then depended on the input order.

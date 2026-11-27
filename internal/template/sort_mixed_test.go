@@ -114,6 +114,43 @@ var _ = Describe("sort puts numbers before text (issue #1418)", func() {
 		})
 	}
 
+	// Issue #1443: two whole numbers compare exactly, however large. A
+	// float64 holds whole numbers exactly only up to 2^53, so 2^53 + 1 and
+	// 2^53 came out equal and kept their input order.
+	Describe("with whole numbers above 2^53", func() {
+		for _, c := range []struct {
+			name string
+			in   []interface{}
+			want string
+		}{
+			{"ints", []interface{}{int64(9007199254740993), int64(9007199254740992)},
+				"9007199254740992;9007199254740993;"},
+			{"digit-only strings", []interface{}{"9007199254740993", "9007199254740992"},
+				"9007199254740992;9007199254740993;"},
+			{"an int and a digit-only string", []interface{}{int64(9007199254740993), "9007199254740992"},
+				"9007199254740992;9007199254740993;"},
+			{"digit-only strings too long for an int", []interface{}{"100000000000000000001", "100000000000000000000"},
+				"100000000000000000000;100000000000000000001;"},
+			// As text, "1000…" comes before "9999…"; as float64, both are 1e20.
+			{"digit-only strings of different lengths", []interface{}{"100000000000000000000", "99999999999999999999"},
+				"99999999999999999999;100000000000000000000;"},
+		} {
+			c := c
+			It("sorts "+c.name+" exactly", func() {
+				Expect(show(tmpl.Sort(items(c.in), "v"), true)).To(Equal(c.want))
+				Expect(show(tmpl.Sort(c.in), false)).To(Equal(c.want))
+			})
+		}
+		It("keeps equal whole numbers in their input order (guard)", func() {
+			in := []interface{}{
+				map[string]interface{}{"v": "0007", "t": "first"},
+				map[string]interface{}{"v": int64(7), "t": "second"},
+			}
+			out := tmpl.Sort(in, "v").([]interface{})
+			Expect(out[0].(map[string]interface{})["t"]).To(Equal("first"))
+		})
+	})
+
 	It("compares fractions as numbers (guard)", func() {
 		in := []interface{}{2, 1.5, "10", 1.25}
 		Expect(show(tmpl.Sort(items(in), "v"), true)).To(Equal("1.25;1.5;2;10;"))
