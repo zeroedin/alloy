@@ -989,6 +989,11 @@ func compareValues(a, b interface{}) bool {
 	if aOk && bOk {
 		return aNum < bNum
 	}
+	// Numbers come before text, so the order is the same whatever the
+	// input order (issue #1418).
+	if aOk != bOk {
+		return aOk
+	}
 	return toString(a) < toString(b)
 }
 
@@ -1011,8 +1016,10 @@ func toFloat64(v interface{}) (float64, bool) {
 				return 0, false
 			}
 		}
-		i, err := strconv.Atoi(n)
-		return float64(i), err == nil
+		// ParseFloat, not Atoi, so a string of digits too long for an int
+		// is still a number, as in a collection's sortBy (issue #1436).
+		f, err := strconv.ParseFloat(n, 64)
+		return f, err == nil
 	default:
 		return 0, false
 	}
