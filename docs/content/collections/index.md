@@ -119,11 +119,12 @@ The `sort` filter is numeric-aware. Values like `order: 1, 2, 10, 20` sort corre
 
 ### Numeric Sort Rules
 
-- `int` values (YAML `order: 10`) are compared as integers, including negatives
-- `float64` with no fractional part (JSON `"order": 10.0`) are compared as integers
-- String values containing only digits (`order: "10"`) are parsed and compared as integers
-- Everything else falls back to string comparison
+- Numbers come first, smallest first: integers and floats, including negatives and fractions (`-3`, `1.5`, `10`), and strings of digits only (`"10"`)
+- A string with a sign, a dot or any other character (`"-1"`, `"1.5"`, `"1a"`) isn't a number. It sorts as text, after every number
+- Everything else sorts as text, in byte order (`"B"` before `"a"`)
 - Nil or missing values sort to the end
+
+So `weight: 2`, `weight: "10"` and `weight: "1a"` sort as `2, 10, 1a`, in whatever order the pages come. A collection with `sortBy: "weight"` and `order: "desc"` reverses that: text first, Z to A, then numbers, largest first. Missing values stay last.
 
 ## Filtering Collections
 
