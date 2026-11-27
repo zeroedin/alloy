@@ -305,6 +305,12 @@ func (w *yamlWalker) keyName(n *yaml.Node) (string, error) {
 type tomlOrder struct {
 	keys     []string
 	children map[string][]*tomlOrder
+	// inline marks the order of an inline array. Keys() lists the keys of
+	// every table in it one after another, with nothing between tables, so
+	// they are kept here as paths relative to the array, in document order,
+	// and matched against the decoded array in applyTOMLInline (issue #1414).
+	inline     bool
+	inlineKeys [][]string
 }
 
 func newTOMLOrder() *tomlOrder {
@@ -331,12 +337,32 @@ func decodeTOMLOrdered(b []byte) (interface{}, error) {
 // "items.name", "items", "items.name", with no index — so a repeat of an
 // ArrayHash path is what starts a new element, and subsequent child paths
 // belong to the most recent one.
+//
+// An inline array ("items = [{z = 1, a = 2}, {a = 3, z = 4}]") is one Array
+// entry followed by every key of every table in it, depth first, with no
+// marker between tables: "items", "items.z", "items.a", "items.a", "items.z".
+// A repeated key is no boundary, since a table can start with a key the one
+// before it doesn't have. So those keys go to the array's order as relative
+// paths, and the decoded array supplies the boundaries (issue #1414).
 func buildTOMLOrder(md toml.MetaData) *tomlOrder {
 	root := newTOMLOrder()
+	var inlineAt []string
+	var inline *tomlOrder
 	for _, key := range md.Keys() {
 		path := []string(key)
 		if len(path) == 0 {
 			continue
+		}
+		if inline != nil {
+			if len(path) > len(inlineAt) && hasPathPrefix(path, inlineAt) {
+				rel := append([]string(nil), path[len(inlineAt):]...)
+				inline.inlineKeys = append(inline.inlineKeys, rel)
+				continue
+			}
+			// The array's keys are done. A later key under the same path
+			// belongs to something else, such as a [[table]] element that
+			// writes "x.child" after an earlier one wrote "x = []".
+			inline, inlineAt = nil, nil
 		}
 		cur := root
 		// Walk to the parent level, following the current element of any
@@ -362,11 +388,32 @@ func buildTOMLOrder(md toml.MetaData) *tomlOrder {
 		if !contains(cur.keys, name) {
 			cur.keys = append(cur.keys, name)
 		}
-		if md.Type(path...) == "ArrayHash" {
+		switch md.Type(path...) {
+		case "ArrayHash":
 			// A new element of this array starts here.
 			cur.children[name] = append(cur.children[name], newTOMLOrder())
-		} else if len(cur.children[name]) == 0 {
-			cur.children[name] = []*tomlOrder{newTOMLOrder()}
+		case "Array":
+			// An inline array: the keys that follow under this path are
+			// its tables' keys. A [[table]] element that repeats the
+			// array gets a fresh order of its own.
+			//
+			// md.Type keeps one type per path, the last one written, so
+			// [[x]] headers read as "Array" too when a later element
+			// writes x = [...]. Each header is then one table: keep a
+			// holder per header, and applyTOMLChild pairs them with the
+			// decoded tables (issue #1428).
+			inline = newTOMLOrder()
+			inline.inline = true
+			inlineAt = path
+			if kids := cur.children[name]; len(kids) > 0 && kids[len(kids)-1].inline {
+				cur.children[name] = append(kids, inline)
+			} else {
+				cur.children[name] = []*tomlOrder{inline}
+			}
+		default:
+			if len(cur.children[name]) == 0 {
+				cur.children[name] = []*tomlOrder{newTOMLOrder()}
+			}
 		}
 	}
 	return root
@@ -419,11 +466,24 @@ func applyTOMLOrder(v interface{}, ord *tomlOrder) interface{} {
 	}
 }
 
-// applyTOMLChild walks a child value, handing each element of an array
-// its own order when the document gave one per element (array-of-tables)
-// and sharing a single order otherwise (an inline array of inline tables
-// reports its keys once).
+// applyTOMLChild walks a child value. An inline array's order goes to
+// tomlInlineCursor; an array-of-tables gets one order per element; anything
+// else shares a single order.
 func applyTOMLChild(v interface{}, kids []*tomlOrder) interface{} {
+	if len(kids) > 0 && kids[0].inline {
+		// [[x]] headers that read as "Array": one holder per header,
+		// one decoded table each (issue #1428).
+		if tables, ok := v.([]map[string]interface{}); ok && len(tables) == len(kids) {
+			out := make([]interface{}, len(tables))
+			for i, t := range tables {
+				c := &tomlInlineCursor{paths: kids[i].inlineKeys}
+				out[i] = tomlInlineFinish(c.value(t, nil))
+			}
+			return out
+		}
+		c := &tomlInlineCursor{paths: kids[len(kids)-1].inlineKeys}
+		return tomlInlineFinish(c.value(v, nil))
+	}
 	elems, ok := tomlElements(v)
 	if !ok {
 		var ord *tomlOrder
@@ -444,6 +504,127 @@ func applyTOMLChild(v interface{}, kids []*tomlOrder) interface{} {
 		out[i] = applyTOMLOrder(e, ord)
 	}
 	return out
+}
+
+// tomlInlineCursor matches an inline array's key paths, in document order,
+// against its decoded value (issue #1414).
+type tomlInlineCursor struct {
+	paths [][]string
+	i     int
+}
+
+// tomlInlineTable is a table being filled from an inline array's key paths.
+// It stays open until its array element is done, so a dotted key written
+// after another key ("p.z = 1, q = 2, p.y = 3") still adds to p.
+type tomlInlineTable struct {
+	val    map[string]interface{}
+	prefix []string
+	keys   []string
+	kids   map[string]interface{}
+}
+
+// wants reports whether rel, a key path relative to t, belongs to t: its
+// first key is one t has and hasn't placed yet, or a table t has placed
+// that wants the rest of the path. TOML forbids a key twice in one table,
+// so a path t doesn't want starts the next table in the array.
+func (t *tomlInlineTable) wants(rel []string) bool {
+	if len(rel) == 0 {
+		return false
+	}
+	if _, ok := t.val[rel[0]]; !ok {
+		return false
+	}
+	kid, placed := t.kids[rel[0]]
+	if !placed {
+		return true
+	}
+	sub, ok := kid.(*tomlInlineTable)
+	return ok && len(rel) > 1 && sub.wants(rel[1:])
+}
+
+// value orders v, whose keys are listed under prefix. An array's elements
+// share the array's prefix, since Keys() gives them no index.
+func (c *tomlInlineCursor) value(v interface{}, prefix []string) interface{} {
+	if m, ok := v.(map[string]interface{}); ok {
+		t := &tomlInlineTable{val: m, prefix: prefix, kids: map[string]interface{}{}}
+		c.fill(t)
+		return t
+	}
+	if elems, ok := tomlElements(v); ok {
+		out := make([]interface{}, len(elems))
+		for i, e := range elems {
+			out[i] = c.value(e, prefix)
+		}
+		return out
+	}
+	return v
+}
+
+// fill takes the paths t wants, in order. A dotted key ("p.y = 1") has no
+// entry of its own for "p", so the cursor steps only past an exact
+// prefix+key entry and leaves "p.y" for p's table.
+func (c *tomlInlineCursor) fill(t *tomlInlineTable) {
+	for c.i < len(c.paths) {
+		p := c.paths[c.i]
+		if len(p) <= len(t.prefix) || !hasPathPrefix(p, t.prefix) || !t.wants(p[len(t.prefix):]) {
+			return
+		}
+		k := p[len(t.prefix)]
+		if kid, placed := t.kids[k]; placed {
+			// A dotted key written after another key: it goes on with
+			// k's table.
+			c.fill(kid.(*tomlInlineTable))
+			continue
+		}
+		t.keys = append(t.keys, k)
+		if len(p) == len(t.prefix)+1 {
+			c.i++
+		}
+		t.kids[k] = c.value(t.val[k], append(append([]string(nil), t.prefix...), k))
+	}
+}
+
+// tomlInlineFinish turns the filled tables into ordered maps. Anything the
+// key stream did not cover goes last, sorted, as in applyTOMLOrder.
+func tomlInlineFinish(v interface{}) interface{} {
+	switch val := v.(type) {
+	case *tomlInlineTable:
+		om := ordered.New()
+		for _, k := range val.keys {
+			om.Set(k, tomlInlineFinish(val.kids[k]))
+		}
+		rest := make([]string, 0, len(val.val)-len(val.keys))
+		for k := range val.val {
+			if _, placed := val.kids[k]; !placed {
+				rest = append(rest, k)
+			}
+		}
+		sort.Strings(rest)
+		for _, k := range rest {
+			om.Set(k, applyTOMLOrder(val.val[k], nil))
+		}
+		return om
+	case []interface{}:
+		out := make([]interface{}, len(val))
+		for i, e := range val {
+			out[i] = tomlInlineFinish(e)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+func hasPathPrefix(path, prefix []string) bool {
+	if len(path) < len(prefix) {
+		return false
+	}
+	for i, p := range prefix {
+		if path[i] != p {
+			return false
+		}
+	}
+	return true
 }
 
 // tomlElements normalizes either slice shape toml.Decode can produce to a

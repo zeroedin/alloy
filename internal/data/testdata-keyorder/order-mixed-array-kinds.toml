@@ -1,0 +1,27 @@
+# The same key path is a [[table]] array in one element and an inline
+# array in another. MetaData keeps one type per path, so a loader can't
+# tell the two apart by type alone.
+
+# aot: [[aot.x]] tables in the first element, an inline array in the
+# second. Each [[aot.x]] table keeps its own order.
+[[aot]]
+[[aot.x]]
+z = 1
+a = 2
+
+[[aot.x]]
+z = 3
+a = 4
+
+[[aot]]
+x = []
+
+# mix: one [[mix.x]] table in the first element, an inline array of
+# tables in the second. Each table in it keeps its own order.
+[[mix]]
+[[mix.x]]
+z = 1
+a = 2
+
+[[mix]]
+x = [{b = 1, a = 2}, {a = 3, b = 4}]
