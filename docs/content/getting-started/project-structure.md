@@ -175,7 +175,7 @@ Alloy creates this directory at runtime for caches, build artifacts, and runtime
 
 | Path | Created by | Purpose |
 |---|---|---|
-| `.alloy/bridge.mjs` | `alloy build`, `alloy dev`, `alloy serve` (when Node plugins exist) | Node plugin IPC bridge script |
+| `.alloy/bridge-*.mjs` | `alloy build`, `alloy dev`, `alloy serve` (when Node plugins exist) | Node plugin IPC bridge script, one file per Node process, deleted when that process stops |
 | `.alloy/workers.pid` | `alloy build`, `alloy dev`, `alloy serve` (when Node plugins exist) | Tracks Node worker PIDs for stale process cleanup |
 | `.alloy/fetch-cache/` | `alloy build`, `alloy dev`, `alloy serve` (when `sources:` configured) | Data source response cache |
 | `.alloy/wasm-cache/` | `alloy build`, `alloy dev`, `alloy serve` (when WASM plugins exist) | Compiled WASM module cache |
