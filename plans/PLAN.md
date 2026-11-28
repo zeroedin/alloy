@@ -1869,11 +1869,13 @@ The `sort` filter is numeric-aware. `{{ collection | sort: "order" }}` sorts `or
 **How the `sort` filter compares values (issues #348, #1418).** The `sort` filter, with or without a key, and a collection's `sortBy` put values in one order:
 1. **Numbers**, smallest first:
    - ints and floats, negatives and fractions included (`-3`, `1.5`, `10`, `10.0`);
-   - strings of digits only (`"10"`), however long (issue #1443): `"9223372036854775808"`, past the largest `int`, is a number too.
+   - strings of digits only (`"10"`), however long (issue #1443): `"9223372036854775808"`, past the largest `int`, is a number too, and so is a 400-digit string, past the largest `float64`.
 
    A string with a sign, a dot or any other character (`"-1"`, `"1.5"`, `"1a"`) isn't a number.
 2. **Everything else**, as text: strings, `true` and `false`, and any other value, by its printed form, in byte order (`"B"` before `"a"`).
 3. **Missing or nil values**, last.
+
+Two whole numbers, ints or digit-only strings, compare exactly, however large (issue #1443). A `float64` holds whole numbers exactly only up to 2^53 (9007199254740992), so `9007199254740993` and `9007199254740992` used to compare as equal and keep their input order. Any other pair of numbers, such as a fraction and a whole number, compares as `float64`.
 
 In the `sort` filter and in a collection with `order: "asc"`, a number always comes before text. So `2`, `"10"` and `"1a"` sort as `2, 10, 1a`, whatever order the pages or items come in. A collection with `order: "desc"` reverses that: text first, then numbers. Equal values keep their input order in `sort`, and go by path in a collection.
 

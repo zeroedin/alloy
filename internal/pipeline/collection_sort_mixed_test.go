@@ -65,7 +65,21 @@ var _ = Describe("A collection's sortBy puts numbers before text (issue #1418)",
 			"content/big/b1.md": page("BANG", `"!"`),
 			"content/big/b2.md": page("HUGE", `"9223372036854775808"`),
 
-			"layouts/home.liquid": "BIG[" + titles("collections.big") + "] " +
+			// Whole numbers above 2^53 compare exactly (issue #1443).
+			// Path order puts the larger first.
+			"content/exact/e1.md": page("PLUSONE", "9007199254740993"),
+			"content/exact/e2.md": page("TWO53", "9007199254740992"),
+			"content/exact/e3.md": page("LONGPLUS", `"100000000000000000001"`),
+			"content/exact/e4.md": page("LONG", `"100000000000000000000"`),
+
+			// A 400-digit weight is still a number (issue #1443).
+			"content/vast/v1.md": page("BANG", `"!"`),
+			"content/vast/v2.md": page("VAST", `"`+strings.Repeat("9", 400)+`"`),
+			"content/vast/v3.md": page("FIVE", "5"),
+
+			"layouts/home.liquid": "VAST[" + titles("collections.vast") + "] " +
+				"EXACT[" + titles("collections.exact") + "] " +
+				"BIG[" + titles("collections.big") + "] " +
 				"MIXA[" + titles("collections.mixa") + "] " +
 				"MIXB[" + titles("collections.mixb") + "] " +
 				"MIXC[" + titles("collections.mixc") + "] " +
@@ -89,6 +103,8 @@ var _ = Describe("A collection's sortBy puts numbers before text (issue #1418)",
 			Build:   config.BuildConfig{Output: "_site"},
 			Collections: map[string]*config.CollectionConfig{
 				"big":       asc,
+				"exact":     asc,
+				"vast":      asc,
 				"mixa":      asc,
 				"mixb":      asc,
 				"mixc":      asc,
@@ -108,6 +124,12 @@ var _ = Describe("A collection's sortBy puts numbers before text (issue #1418)",
 	})
 	It("sorts a digit-only string too long for an int as a number (guard)", func() {
 		Expect(out["index.md"]).To(ContainSubstring("BIG[HUGE;BANG;]"))
+	})
+	It("sorts a 400-digit weight as a number, before text and after smaller numbers", func() {
+		Expect(out["index.md"]).To(ContainSubstring("VAST[FIVE;VAST;BANG;]"))
+	})
+	It("sorts whole numbers above 2^53 exactly", func() {
+		Expect(out["index.md"]).To(ContainSubstring("EXACT[TWO53;PLUSONE;LONG;LONGPLUS;]"))
 	})
 	It("sorts numbers first, then text, then pages without the key", func() {
 		Expect(out["index.md"]).To(ContainSubstring("KINDS[MINUSTHREE;HALF;TWO;TEN;MINUSONE;ONEA;B;NONE;]"))

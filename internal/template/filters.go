@@ -5,9 +5,11 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html"
 	"math"
+	"math/big"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -984,6 +986,11 @@ func compareValues(a, b interface{}) bool {
 	if b == nil {
 		return true
 	}
+	if aw, ok := wholeNumber(a); ok {
+		if bw, ok := wholeNumber(b); ok {
+			return aw.Cmp(bw) < 0
+		}
+	}
 	aNum, aOk := toFloat64(a)
 	bNum, bOk := toFloat64(b)
 	if aOk && bOk {
@@ -995,6 +1002,29 @@ func compareValues(a, b interface{}) bool {
 		return aOk
 	}
 	return toString(a) < toString(b)
+}
+
+// wholeNumber reads an int, an int64 or a string of digits only as an exact
+// whole number, so two whole numbers compare exactly however large they are
+// (issue #1443).
+func wholeNumber(v interface{}) (*big.Int, bool) {
+	switch n := v.(type) {
+	case int:
+		return big.NewInt(int64(n)), true
+	case int64:
+		return big.NewInt(n), true
+	case string:
+		if n == "" {
+			return nil, false
+		}
+		for _, c := range n {
+			if c < '0' || c > '9' {
+				return nil, false
+			}
+		}
+		return new(big.Int).SetString(n, 10)
+	}
+	return nil, false
 }
 
 func toFloat64(v interface{}) (float64, bool) {
@@ -1018,8 +1048,10 @@ func toFloat64(v interface{}) (float64, bool) {
 		}
 		// ParseFloat, not Atoi, so a string of digits too long for an int
 		// is still a number, as in a collection's sortBy (issue #1436).
+		// One too long even for a float64 gives +Inf and ErrRange: it is
+		// still a number, larger than any float (issue #1443).
 		f, err := strconv.ParseFloat(n, 64)
-		return f, err == nil
+		return f, err == nil || errors.Is(err, strconv.ErrRange)
 	default:
 		return 0, false
 	}

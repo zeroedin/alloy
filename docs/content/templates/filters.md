@@ -154,6 +154,7 @@ With front matter `order: 1`, `order: 2`, `order: 10`, `order: 20`, the sort pro
 **Sort rules:**
 - Numbers come first, smallest first: integers and floats, including negatives and fractions (`-3`, `1.5`, `10`), and strings of digits only, however long (`"10"`)
 - A string with a sign, a dot or any other character (`"-1"`, `"1.5"`, `"1a"`) isn't a number. It sorts as text, after every number
+- Two whole numbers compare exactly, however large (`9007199254740992` comes before `9007199254740993`)
 - Everything else sorts as text, in byte order (`"B"` before `"a"`)
 - Nil or missing values sort to the end
 
