@@ -1789,6 +1789,35 @@ Collections are built once during content discovery, then frozen as read-only da
 - Collections are materialized eagerly — no lazy loading
 - Templates access them like any other data
 
+**Hook fields show in collections (issue #1385).** In a layout, every list of pages shows each page with the fields `onContentLoaded` and `onDataCascadeReady` add, as `site.pages` and `taxonomy.pages` on a taxonomy page already do. That covers:
+
+- `collections.<name>`;
+- `taxonomies.<name>.<term>`;
+- `pagination.items`, on a page that paginates a collection (`pagination.data: collections.<name>`).
+
+Which pages a list holds, and their order, are still decided before those hooks, from each page's own front matter: what its file says, with the `_data.yaml` cascade applied. A page that `onPagesReady` adds joins the lists the same way, by the front matter it is given. `onPagesReady` can't change a page that is already there: it only adds pages (issue #1430). A content hook that changes a page's `tags`, its `date`, or the field its collection sorts by changes what the page shows, but doesn't move the page to another list, change its place in a list, or change how pagination splits the pages. To move a page, change its front matter in its file.
+
+A page with no URL (`permalink: false`) still belongs to its collection, and shows the hooks' fields in every list too, `pagination.items` included (issue #1430).
+
+The rule holds in a full build and in an `alloy dev` rebuild, on QuickJS and Node. Liquid in a page's own content is rendered before the two hooks run, so there no list shows their fields, `site.pages` included.
+
+Before #1385, these three lists held copies of each page made before the hooks, so a field a hook added was empty in them.
+
+Tests: `internal/pipeline/collections_hook_fields_test.go`.
+
+**Pagination's `as:` name shows them too (issue #1426).** On a page that paginates a collection, the name set with `pagination.as` (default `item`) holds the same pages as `pagination.items`, and in a layout it shows them the same way: with the fields `onContentLoaded` and `onDataCascadeReady` add.
+
+- With `perPage` above 1, the name holds the page's group of items, in the same order as `pagination.items`.
+- With `perPage: 1`, it holds the one item.
+- Front matter filled in from the item, such as `title: "{{ member.title }}"` or a permalink, still uses the item as it was before the hooks. It is worked out when the pages are paginated, and the URL depends on it.
+- As with #1385, Liquid in the page's own content renders before the hooks, so the name shows no hook fields there.
+- Pagination over `site.data` is unchanged: data items are not pages, and the content hooks don't touch them.
+- The rule holds in a full build and in an `alloy dev` rebuild.
+
+Before #1426, the name held a second copy of the items, made before the hooks, so a field a hook added was empty in it even where `pagination.items` showed it.
+
+Tests: `internal/pipeline/pagination_as_hook_fields_test.go`.
+
 **Default sort order**: date descending (newest first). When two pages share the same date, the full datetime is compared (e.g., `2026-04-10T14:30:00Z` sorts before `2026-04-10T09:00:00Z` in descending order). If the datetime is identical or no time component is provided, filename alphabetical ascending is the final tiebreaker. Pages without a date sort after all dated pages, ordered by filename alphabetical ascending. Sort is deterministic across builds.
 
 **Custom ordering** via config:
