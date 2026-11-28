@@ -468,6 +468,8 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 	if err != nil {
 		return nil, err
 	}
+	// The paginated pages' items before the hooks copy them (issue #1385).
+	paged := collectionPagination(allPages)
 
 	// Rebuild pagesToRender from post-pagination allPages so virtual pages
 	// generated from a changed source page are included.
@@ -592,6 +594,10 @@ func BuildIncremental(cfg *config.Config, contentMap map[string]string, previous
 			log.Printf("warning: plugin hook onContentTransformed: %v", err)
 		}
 	}
+
+	// The lists of pages were built before the hooks above: show what they
+	// added (issue #1385).
+	refreshListMaps(bc.listMaps, paged)
 
 	// Pass 2: layout resolution + rendering (issue #628). A new site.pages
 	// list for this pass: the hooks above may have changed pages
