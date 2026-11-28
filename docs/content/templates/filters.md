@@ -140,7 +140,7 @@ Liquid's `{% for ... limit: 5 %}` clause still works -- the `limit` filter is an
 
 ### sort
 
-The `sort` filter is numeric-aware. When values are whole numbers, they are compared numerically rather than as strings:
+The `sort` filter is numeric-aware. Numbers are compared as numbers rather than as strings:
 
 ```liquid
 {% assign sorted_nav = taxonomies.tags.foundations | sort: "order" %}
@@ -151,12 +151,13 @@ The `sort` filter is numeric-aware. When values are whole numbers, they are comp
 
 With front matter `order: 1`, `order: 2`, `order: 10`, `order: 20`, the sort produces `1, 2, 10, 20` -- not `1, 10, 2, 20` as a naive string sort would.
 
-**Numeric detection rules:**
-- Integer YAML values (`order: 10`, `order: -1`) are compared as integers
-- Float values with no fractional part (`10.0`) are compared as integers
-- String values containing only digits (`"10"`) are parsed and compared as integers
-- Everything else falls back to string comparison
+**Sort rules:**
+- Numbers come first, smallest first: integers and floats, including negatives and fractions (`-3`, `1.5`, `10`), and strings of digits only, however long (`"10"`)
+- A string with a sign, a dot or any other character (`"-1"`, `"1.5"`, `"1a"`) isn't a number. It sorts as text, after every number
+- Everything else sorts as text, in byte order (`"B"` before `"a"`)
 - Nil or missing values sort to the end
+
+So `order: 2`, `order: "10"` and `order: "1a"` sort as `2, 10, 1a`, in whatever order the items come.
 
 ### group_by
 

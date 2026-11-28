@@ -159,6 +159,8 @@ When `render: false`, duplicate term slugs are not an error since no output page
 
 ### Sorting Taxonomy Collections
 
+A term's pages come newest first by `date`, whatever section each page is in. Pages without a date go last, and ties go by file path. A collection's `sortBy` and `order` don't apply to terms. To order a term's pages another way, use the `sort` filter:
+
 ```liquid
 {% assign sorted = taxonomies.tags.foundations | sort: "order" %}
 {% for page in sorted %}

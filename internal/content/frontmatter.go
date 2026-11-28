@@ -306,6 +306,12 @@ func BuildPage(relPath string, raw []byte) (*Page, error) {
 	return page, nil
 }
 
+// ParseDate reads a front matter date as a page's date is read, for pages a
+// plugin adds (issue #1418). It returns the zero time when v isn't a date.
+func ParseDate(v interface{}) time.Time {
+	return parseDate(v)
+}
+
 func parseDate(v interface{}) time.Time {
 	switch val := v.(type) {
 	case time.Time:

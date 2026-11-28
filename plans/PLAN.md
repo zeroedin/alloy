@@ -1830,6 +1830,25 @@ collections:
     order: "desc"           # "asc" or "desc" (default: "desc")
 ```
 
+**How collections and taxonomies are sorted (issue #1418).** The build sorts every collection, and every taxonomy term's list of pages, when it builds them: after `onPagesReady`, before any page renders. What a template sees is already in order.
+
+- **Collections**: by the collection's `sortBy` and `order`. With no entry under `collections:`, or an entry that leaves them out, `sortBy` is `"date"` and `order` is `"desc"`.
+- **Taxonomy terms** (`taxonomies.<name>.<term>`, and `taxonomy.pages` on a term page): always by date, newest first, with the same rules. A collection's `sortBy` and `order` don't apply, since a term holds pages from any section.
+- **By date** (`sortBy: "date"`): the page's `date`, compared to the second. `order: "asc"` puts the oldest first.
+- **By another front matter key** (e.g. `sortBy: "weight"`): values compare as the `sort` filter compares them (see "How the `sort` filter compares values" below): numbers first, in numeric order, then everything else as text. `order: "desc"` reverses that: text first, Z to A, then numbers, largest first.
+- **Missing values go last**, in both orders: a page with no `date` when sorting by date, or without the `sortBy` key. Among themselves they go by path.
+- **Ties go by path**, A to Z, in both orders. The path is the page's path under the content directory, such as `notes/n0.md`; for a page `onPagesReady` adds, its `path`.
+- **Pages `onPagesReady` adds**: a `date` in the page's `frontMatter` counts as its date, read like a file page's `date`. Such a page has no section, so it only shows up in taxonomies.
+- **Order is fixed before the content hooks**: a date or key that `onContentLoaded` or `onDataCascadeReady` changes doesn't move a page (issue #1385).
+- **`pagination.items`** over a collection follows the collection's order.
+- **`alloy dev`**: a rebuild sorts again, so editing a page's `date` moves it in the lists.
+- **Multi-language sites**: each language's lists are sorted on their own.
+- **Bad `order`**: any value other than `"asc"` or `"desc"` fails `config.Validate`, with an error that names the collection and the value: `validation error: collections.<name>.order must be "asc" or "desc" (got "<value>")`. An empty `order` means `"desc"`.
+
+Before #1418, the build sorted nothing: collections and term lists came out in file-name order. The docs site relied on that. It lists `releases` with `| reverse` and takes the latest release with `| last`. Once sorted newest first, they take `| first` and drop `| reverse` (`docs/layouts/partials/header.liquid`, `docs/content/releases/index.md`).
+
+Tests: `internal/pipeline/collection_sort_test.go`, and "rejects an unknown collection order" in `internal/config/config_test.go`.
+
 Templates can also sort inline using built-in array filters:
 
 **Liquid:**
@@ -1845,14 +1864,22 @@ Templates can also sort inline using built-in array filters:
 {% endfor %}
 ```
 
-The `sort` filter is numeric-aware — it compares values as whole numbers when possible, falling back to string comparison otherwise. `{{ collection | sort: "order" }}` correctly sorts `order: 1, 2, 10, 20` (not `1, 10, 2, 20`).
+The `sort` filter is numeric-aware. `{{ collection | sort: "order" }}` sorts `order: 1, 2, 10, 20` as numbers (not `1, 10, 2, 20`).
 
-**Numeric detection rules:**
-- `int` values (YAML `order: 10` or `order: -1`) → compared as integers (negatives included)
-- `float64` with no fractional part (JSON `"order": 10` or `"order": -5.0`) → compared as integers
-- String values containing only digits (`order: "10"`) → parsed and compared as integers (negative strings like `"-1"` are NOT parsed — string comparison)
-- Everything else (strings, bools, floats with decimals, scientific notation) → compared as strings
-- Nil/missing values → sorted to the end of the list
+**How the `sort` filter compares values (issues #348, #1418).** The `sort` filter, with or without a key, and a collection's `sortBy` put values in one order:
+1. **Numbers**, smallest first:
+   - ints and floats, negatives and fractions included (`-3`, `1.5`, `10`, `10.0`);
+   - strings of digits only (`"10"`), however long (issue #1443): `"9223372036854775808"`, past the largest `int`, is a number too.
+
+   A string with a sign, a dot or any other character (`"-1"`, `"1.5"`, `"1a"`) isn't a number.
+2. **Everything else**, as text: strings, `true` and `false`, and any other value, by its printed form, in byte order (`"B"` before `"a"`).
+3. **Missing or nil values**, last.
+
+In the `sort` filter and in a collection with `order: "asc"`, a number always comes before text. So `2`, `"10"` and `"1a"` sort as `2, 10, 1a`, whatever order the pages or items come in. A collection with `order: "desc"` reverses that: text first, then numbers. Equal values keep their input order in `sort`, and go by path in a collection.
+
+Before #1418, a number and a text value compared as two strings. With `2`, `"10"` and `"1a"`, that made a loop: `2 < 10` as numbers, `"10" < "1a"` and `"1a" < "2"` as strings. The order then depended on the input order.
+
+Tests: `internal/template/sort_mixed_test.go` and `internal/pipeline/collection_sort_mixed_test.go`.
 
 ### Taxonomies
 

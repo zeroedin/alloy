@@ -1266,7 +1266,7 @@ func applyBatchContext(pages []*content.Page, cfg *config.Config, ps *PipelineSt
 	}
 
 	bc := &batchContext{}
-	bc.Collections = buildCollectionsContext(pages, permalinkCfg, collectionNames(cfg), &bc.listMaps)
+	bc.Collections = buildCollectionsContext(pages, permalinkCfg, collectionNames(cfg), cfg.Collections, &bc.listMaps)
 	if cfg.Taxonomies != nil {
 		bc.Taxonomies = collection.BuildTaxonomies(pages, cfg.Taxonomies)
 		bc.TaxonomiesCtx = buildTaxonomiesContext(bc.Taxonomies, &bc.listMaps)

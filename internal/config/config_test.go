@@ -940,6 +940,36 @@ components = "elements"
 	// ── Config validation (semantic errors) ──────────────────────────
 
 	Describe("Validate", func() {
+		// Issue #1418: a collection's order is "asc" or "desc"; anything
+		// else fails, naming the collection and the value.
+		It("rejects an unknown collection order", func() {
+			cfg := &config.Config{
+				Title:   "Test Site",
+				BaseURL: "https://example.com",
+				Collections: map[string]*config.CollectionConfig{
+					"blog":  {SortBy: "date", Order: "desc"},
+					"notes": {Order: "newest"},
+				},
+			}
+			err := config.Validate(cfg)
+			Expect(err).To(HaveOccurred(), "order: newest must be a validation error")
+			Expect(err.Error()).To(Equal(`validation error: collections.notes.order must be "asc" or "desc" (got "newest")`))
+		})
+
+		It("accepts asc, desc, an empty order and an empty collection entry (guard)", func() {
+			cfg := &config.Config{
+				Title:   "Test Site",
+				BaseURL: "https://example.com",
+				Collections: map[string]*config.CollectionConfig{
+					"a": {Order: "asc"},
+					"b": {Order: "desc"},
+					"c": {SortBy: "weight"},
+					"d": nil, // `d:` with nothing under it
+				},
+			}
+			Expect(config.Validate(cfg)).To(Succeed())
+		})
+
 		It("returns error for empty baseURL", func() {
 			cfg := &config.Config{
 				Title:   "Test Site",
