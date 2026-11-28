@@ -279,7 +279,7 @@ The fetched data is available as `site.data.blog` in templates and can drive [vi
 
 ## Using npm Packages
 
-The Alloy bridge script is written to `.alloy/bridge.js` in your project root. This ensures ESM `import()` resolves packages from your project's `node_modules/`. Both `import` and dynamic `import()` work:
+The Alloy bridge script is written to the `.alloy/` folder in your project root, as one `bridge-*.mjs` file per Node process. This ensures ESM `import()` resolves packages from your project's `node_modules/`. Both `import` and dynamic `import()` work:
 
 ```javascript
 export const runtime = "node";
