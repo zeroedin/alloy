@@ -1,3 +1,231 @@
+## v0.10.0 (2026-11-28)
+
+### Minor Changes
+
+- Alloy now uses liquidgo v5, a port of Shopify Liquid 5.14, so templates give the results Shopify's Liquid gives where the old library differed:
+
+  | Template | Before | Now |
+  |---|---|---|
+  | `{{ 0.1 \| plus: 0.2 }}` | `0.30000000000000004` | `0.3` |
+  | `{{ 14 \| divided_by: 3 }}` | `4.666666666666667` | `4` |
+  | `{{ "héllo" \| size }}` | `6` | `5` |
+  | `{% if n == 100 %}` with `n` read from JSON | false | true |
+  | `{{ page.tags \| join }}` with tags `a`, `b` | `a, b` | `a b` |
+  | `{% if list contains "vip" %}` with `list` = `["vip_gold", "x"]` | true | false |
+  | `{{ obj.size }}` on an object with 2 keys and no `size` key | empty | `2` |
+  | `{% case k %}{% when "a" %}A{% when "a", "b" %}AB{% endcase %}` with `k` = `"a"` | `A` | `AAB` |
+
+  Dividing two integers now gives an integer: write `14.0 | divided_by: 3` for a decimal result. `size`, `truncate`, `truncatewords`, `slice` and `capitalize` count characters, not bytes, so accented and non-Latin text isn't cut in the middle of a character. `date` follows Ruby's `strftime`.
+
+  A `for` loop over a long list is much faster. The old library copied everything a template had written so far each time a loop added to it. A 1,000-page site whose layout lists every page in its nav now builds in under a second instead of about 15 seconds, with the same output.
+
+  A data file object answers key lookups, `.size` and `.first`, as before. `{{ data.keys }}` and `{{ data.len }}` now render nothing: the old library read them from Alloy's internal Go methods, and they were never documented. Use `.size` for the number of keys, and a loop for the keys themselves, in file order:
+
+  ```liquid
+  {% for pair in site.data.nav %}{{ pair[0] }}{% unless forloop.last %}, {% endunless %}{% endfor %}
+  ```
+
+  Markup that doesn't parse, such as `{{ | broken_syntax }}`, still fails the build. An unknown tag is now reported as `Unknown tag 'name'`.
+
+### Patch Changes
+
+- Objects in `site.data` now keep their key order after an `onAfterValidation` hook, as they do after `onDataFetched`. Before, any `onAfterValidation` hook, even one that returned the cascade unchanged, made every object loop in sorted order: data files, plugin sources, and objects the hook built.
+
+  ```javascript
+  // plugins/hook.js
+  export default function(alloy) {
+    alloy.hook("onAfterValidation", {}, (payload) => ({ cascade: payload.cascade }));
+  }
+  ```
+
+  With `data/nav.json` holding `{"home": "/", "blog": "/blog/", "docs": "/docs/", "about": "/about/"}`:
+
+  | Template | Before | Now |
+  |---|---|---|
+  | `{% for pair in site.data.nav %}{{ pair[0] }} {% endfor %}` | `about blog docs home` | `home blog docs about` |
+
+  As in any JavaScript object, array-index keys, which are whole numbers from `"0"` to `"4294967294"` without leading zeros, come first, in numeric order, whatever order the hook set them in. Every other key keeps the hook's order, including `"4294967295"` and above, `"07"`, `"-1"` and `"1.5"`.
+- Collections, taxonomy terms and pagination over a collection now show the fields `onContentLoaded` and `onDataCascadeReady` add. Before, they held each page as it was before those hooks, so a field a hook added was empty in `collections.<name>`, `taxonomies.<name>.<term>` and `pagination.items`, though `site.pages` showed it. In `alloy dev`, collections and taxonomy terms show them after each rebuild too.
+
+  With posts A, B and C in a `blog` collection tagged `x`, a plugin whose `onContentLoaded` sets `loaded: 'L' + title` and whose `onDataCascadeReady` sets `cascaded: 'D' + title`, and a layout printing `{{ p.title }}={{ p.loaded }},{{ p.cascaded }};` for each page:
+
+  | List | Before | Now |
+  |---|---|---|
+  | `collections.blog` | `A=,;B=,;C=,;` | `A=LA,DA;B=LB,DB;C=LC,DC;` |
+  | `taxonomies.tags.x` | `A=,;B=,;C=,;` | `A=LA,DA;B=LB,DB;C=LC,DC;` |
+  | `pagination.items` over `collections.blog`, two to a page | `A=,;B=,;` then `C=,;` | `A=LA,DA;B=LB,DB;` then `C=LC,DC;` |
+
+  Which pages each list holds, and their order, are still decided before the hooks: a hook that changes a page's `tags` or `date` doesn't move it.
+- After an `onDataFetched` or `onAfterValidation` hook, `.size` and `.first` now read each entry of `site.data` by where it came from. A data file's entry gives its key count and first pair, as without a hook. Every other entry, a data source or a key the hook adds, lets its own `size` and `first` keys win, as a source does without a hook. Before, `onDataFetched` made every entry read like a data file, and `onAfterValidation` made every entry, data files included, let its own keys win.
+
+  ```javascript
+  // plugins/hook.js
+  export default function(alloy) {
+    alloy.hook("onDataFetched", { data: ["*"] }, (data) => ({ ...data, extra: { size: "XL" } }));
+  }
+  ```
+
+  With `data/nav.json` holding `{"home": "/", "blog": "/blog/", "docs": "/docs/"}`, and a plugin source `plan` returning `{ size: "large", first: "monthly", price: 9 }`:
+
+  | Template | Before | Now |
+  |---|---|---|
+  | `{{ site.data.nav.size }}` | `3` | `3` |
+  | `{{ site.data.plan.size }} {{ site.data.plan.first }}` | `3 sizelarge` | `large monthly` |
+  | `{{ site.data.extra.size }}` | `1` | `XL` |
+
+  The same hook as `onAfterValidation`, returning `{ cascade: { ...payload.cascade, extra: { size: "XL" } } }`, gave `{{ site.data.nav.first }}` nothing before. It now gives the file's first pair, `home/`.
+- In `alloy dev`, data sources now stay in `site.data` after you edit a data file. Before, the rebuild reloaded `site.data` from the data files alone, so every plugin, REST and GraphQL source was missing until a restart. The rebuild now keeps each source as it was last fetched, at startup or on the last full rebuild, without fetching it again. `onDataFetched` runs again on the result, and `alloy.data` in QuickJS plugins sees the sources too.
+
+  With a plugin source `plan` returning `{ name: "pro", price: 9 }`, a data file `data/site.json`, and a layout printing `DATA[{{ site.data.site.title }}] PLAN[{{ site.data.plan.name }}]`:
+
+  | In `alloy dev` | Before | Now |
+  |---|---|---|
+  | At startup | `DATA[one] PLAN[pro]` | `DATA[one] PLAN[pro]` |
+  | After editing `data/site.json`, then the page | `DATA[two] PLAN[]` | `DATA[two] PLAN[pro]` |
+
+  Editing `data/site.json` alone doesn't re-render this page, before or now, so the second row edits the page too.
+- What an `onContentLoaded` or `onDataCascadeReady` hook returns now reaches each page made from a paginated file. Before, Alloy matched each returned entry to a page by its source file's path alone. Every page from one paginated file has that path, so every entry landed on the last of them, and the other pages got nothing. Each entry now goes to the page with its `path` and `url`, in `alloy build` and `alloy dev` alike.
+
+  ```javascript
+  // plugins/badge.js
+  export default function(alloy) {
+    alloy.hook('onContentLoaded', { pages: true }, (pages) =>
+      pages.map(p => ({ ...p, frontMatter: { ...p.frontMatter, badge: 'for ' + p.url } })));
+  }
+  ```
+
+  With `content/team.md` paginating Ann, Bob and Cy, one page each, and a layout printing `badge=[{{ page.badge }}]`:
+
+  | Page | Before | Now |
+  |---|---|---|
+  | `/team/ann/` | `badge=[]` | `badge=[for /team/ann/]` |
+  | `/team/bob/` | `badge=[]` | `badge=[for /team/bob/]` |
+  | `/team/cy/` | `badge=[for /team/cy/]` | `badge=[for /team/cy/]` |
+
+  `onDataCascadeReady` entries now have `url` too. A hook that builds its entries from the ones it gets, as above, needs no change. An entry with no `url`, or one no page has, is still matched by `path` when only one page has that path. Each page must now get exactly one entry. When an entry can't be placed on one page, because several pages share its path, no page has its path, its `url` is another page's, or another entry already went to that page, or when an entry isn't an object, such as `null`, `alloy build` now fails with an error. Before, such an entry went to the last page with that path, or was dropped:
+
+  ```text
+  Error: plugin hook onContentLoaded: an entry for team.md has no url, and 3 pages have that path: give each entry the url of the page it is for
+  ```
+- In `alloy dev`, what an `onContentLoaded` or `onDataCascadeReady` hook adds to pages now stays on every page after a rebuild. Before, a rebuild ran these hooks only on the pages it re-rendered, so every other page lost what they added, for example in a layout that lists `site.pages`.
+
+  ```javascript
+  // plugins/badge.js
+  export default function(alloy) {
+    alloy.hook('onContentLoaded', { pages: true }, (pages) =>
+      pages.map(p => { p.frontMatter.badge = 'hooked'; return p; }));
+  }
+  ```
+
+  With three pages, A, B and C, and a layout printing `{% for p in site.pages %}{{ p.title }}={{ p.badge }} {% endfor %}`:
+
+  | In `alloy dev` | Before | Now |
+  |---|---|---|
+  | First build | `A=hooked B=hooked C=hooked` | `A=hooked B=hooked C=hooked` |
+  | After editing `a.md` | `A=hooked B= C=` | `A=hooked B=hooked C=hooked` |
+
+  Each rebuild runs both hooks again on every page, as a full build does, and `onContentLoaded` gets every page's rendered body. A rebuild still lays out and writes only the pages it re-renders.
+- Large sites build much faster. Alloy used to copy every page into `site.pages` for every page it rendered, once per layout, whether or not a template read it. It now builds the list only when a template reads `site.pages`, once per render pass.
+
+  On a plain blog with a two-layout chain, with the same output:
+
+  | Pages | Before | Now |
+  |---|---|---|
+  | 1,000 | 1.21s | 0.12s |
+  | 4,000 | 11.3s | 0.37s |
+  | 4,000, with a layout that reads `site.pages` | 11.0s | 0.64s |
+
+  Templates read `site` and `site.pages` as before, with three exceptions that count or test the keys of `site` itself:
+
+  | Template | Before | Now |
+  |---|---|---|
+  | `{{ site \| size }}` | the number of keys in `site` | `0` |
+  | `{% if site contains "title" %}`, or any other key | true | false |
+  | `{{ site["size"] }}` | nothing | the number of keys in `site` |
+
+  `{{ site.size }}` still gives the number of keys in `site`.
+- Objects that a Node plugin gives back now keep their key order, as they do on QuickJS. Before, a Node hook or data source scrambled the order, differently on each build, and a Node filter's result came back sorted A to Z.
+
+  ```javascript
+  // plugins/p.js
+  export const runtime = "node";
+  export default function(alloy) {
+    alloy.hook("onDataFetched", { data: ["*"] }, (data) => data);
+    alloy.filter("sizes", () => ({ small: "S", medium: "M", large: "L" }));
+  }
+  ```
+
+  With `data/nav.json` holding `{"home": "/", "blog": "/blog/", "docs": "/docs/", "about": "/about/", "contact": "/contact/"}`:
+
+  | Template | Before, three builds | Now |
+  |---|---|---|
+  | `{% for pair in site.data.nav %}{{ pair[0] }} {% endfor %}` | `about contact home blog docs`, `home blog docs about contact`, `blog docs about contact home` | `home blog docs about contact`, every build |
+  | `{% assign s = "x" \| sizes %}{% for pair in s %}{{ pair[0] }} {% endfor %}` | `large medium small` | `small medium large` |
+
+  This covers objects at every level, from hooks (including those run in parallel), data sources (`alloy.source`) and filters. A data source with `cache` set gives the same order on a later build that reads it back from `.alloy/fetch-cache/`, where before it came back sorted A to Z. A data source's or filter result's own `size` and `first` keys still win.
+
+  One exception: the bridge between Alloy and Node can send an `html` or `content` string apart from the rest of a hook's message, and when it does, that field comes last among the object's keys, in what the hook receives and in what it returns.
+- On a page that paginates a collection, the name set by `pagination.as` (`item` by default) now shows the fields `onContentLoaded` and `onDataCascadeReady` add, as `pagination.items` does. Before, it held a copy of the items made before those hooks, so a field a hook added was empty in it. This works with `perPage: 1` too, where the name holds one item, and in `alloy dev` rebuilds.
+
+  With posts A, B and C in a `blog` collection, a plugin whose `onContentLoaded` sets `loaded: 'L' + title` and whose `onDataCascadeReady` sets `cascaded: 'D' + title`, and a layout printing `{{ p.title }}={{ p.loaded }},{{ p.cascaded }};` for each item:
+
+  | Page | Before | Now |
+  |---|---|---|
+  | `as: posts`, two to a page | `A=,;B=,;` then `C=,;` | `A=LA,DA;B=LB,DB;` then `C=LC,DC;` |
+  | `as: member`, `perPage: 1` | `A=,` | `A=LA,DA` |
+  | No `as:` (`item`), `perPage: 3` | `A=,;B=,;C=,;` | `A=LA,DA;B=LB,DB;C=LC,DC;` |
+
+  Front matter filled in from the item, such as `title: "One {{ member.title }}"` or a permalink, still uses the item as it was before the hooks.
+- QuickJS plugin filters now receive and return lists and objects as JavaScript values, as Node filters do. Before, a QuickJS filter, the default runtime, got anything but text, a number or `true`/`false` as Go's debug text, and an array or object it returned came back as text, with no error.
+
+  ```javascript
+  // plugins/filters.js
+  export default function(alloy) {
+    alloy.filter("keys", (obj) => Object.keys(obj));
+    alloy.filter("summary", (tags) => ({ count: tags.length, first: tags[0] }));
+  }
+  ```
+
+  With `data/nav.json` holding `{"home": "/", "blog": "/blog/", "about": "/about/"}` and `tags: [go, liquid]` in front matter:
+
+  | Template | Before | Now |
+  |---|---|---|
+  | `{{ site.data.nav \| keys \| join: ", " }}` | `0,1,2,…,57` | `home, blog, about` |
+  | `{% assign s = page.tags \| summary %}{{ s.count }} tags, first {{ s.first }}` | ` tags, first [` | `2 tags, first go` |
+
+  Also:
+  - A date arrives as text in RFC 3339 form, `2024-01-02T00:00:00Z`.
+  - An integer too big for 32 bits keeps its value, up to 2^53: `3000000000` used to arrive as `-1294967296`. Past 2^53 an integer arrives as the nearest number JavaScript can hold, as on Node: `9007199254740993` arrives as `9007199254740992`.
+  - Nothing arrives as `null`, not the text `<nil>`.
+  - A data file object's keys arrive in file order, and on QuickJS a returned object keeps its key order.
+  - A returned object's own `size` and `first` keys win over the object's size and first pair, as on Node.
+
+  The plugin docs now describe what a filter receives and returns.
+- A plugin shortcode used as a block no longer fails the build with `Unknown tag 'end<name>'` when a partial or the spacing of its end tag differs from what the page uses:
+
+  - **Partials decide for themselves.** A partial loaded with `{% render %}` or `{% include %}` can use a shortcode as a block while the page uses it inline, the other way round, or when the page doesn't use it at all. Before, a partial followed the page that included it.
+  - **Any spacing Liquid accepts closes a block:** `{%endbox%}`, `{%-endbox-%}` and `{%   endbox   %}`, not only `{% endbox %}` and `{%- endbox %}`.
+
+  An `{% endname %}` closes the nearest open use of the same name before it. In `{% box "a" %}x{% box "b" %}y{% endbox %}`, `box "a"` is inline and `box "b"` is a block, so the page renders both. Before, `box "a"` took everything up to `{% endbox %}` as its body, including `{% box "b" %}` as text.
+- Inline tables in a TOML array now keep their own key order. Before, every table after the first came out in the first table's order, and a key the first table didn't have went last.
+
+  With `data/t.toml` holding:
+
+  ```toml
+  items = [{z = 1, a = 2}, {a = 3, z = 4}]
+  shift = [{b = 1, c = 2}, {a = 3, b = 4}]
+  ```
+
+  and a layout with `{% for it in site.data.t.items %}({% for p in it %}{{ p[0] }} {% endfor %}){% endfor %}`:
+
+  | Array | Before | Now |
+  |---|---|---|
+  | `items` | `(z a )(z a )` | `(z a )(a z )` |
+  | `shift` | `(b c )(b a )` | `(b c )(a b )` |
+
+  This holds at any depth: inline tables inside them, dotted keys, and inline arrays inside a `[[table]]` element. Arrays of tables (`[[rows]]`) already kept each table's order.
+- `alloy dev`'s live reload now uses `github.com/gorilla/websocket` at the commit that fixes [GO-2026-6278](https://pkg.go.dev/vuln/GO-2026-6278), in place of v1.5.3. The advisory is a weak random number generator for the WebSocket mask key. `govulncheck` passes again.
+
 ## v0.9.0 (2026-11-17)
 
 - Building Alloy from source with `go install` now requires Go 1.26 or later. Go 1.25 no longer gets security fixes, and the newest Go 1.25 release has 12 known vulnerabilities in standard library code that Alloy calls, in `net/http`, `crypto/tls`, `crypto/x509`, and `net/textproto`. Release binaries are now built with the newest Go 1.26 patch, which fixes all of them.
