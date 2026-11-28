@@ -121,6 +121,36 @@ var _ = Describe("alloy dev after a failed full build (issue #1316)", func() {
 			"the watcher must report a change before the test writes its input")
 	}
 
+	// fullRebuild makes alloy dev run a full rebuild, and waits until ran
+	// says it has. A full rebuild needs at least 10 changes in one 50 ms
+	// debounce window. On a slow machine the writes can split across
+	// windows, and each part then rebuilds incrementally. So each poll that
+	// finds no full rebuild yet writes a fresh batch of 11 static files.
+	//
+	// A batch of static files alone never rebuilds while the last full
+	// build succeeded: it is only copied. So each batch also rewrites the
+	// content file rel with body, a pipeline change that leaves the site
+	// as it is.
+	//
+	// The output's read point then moves to its end, so later expectations
+	// only match what comes after.
+	fullRebuild := func(r running, why, rel, body string, ran func() bool) {
+		GinkgoHelper()
+		batch := 0
+		Eventually(func() bool {
+			if ran() {
+				return true
+			}
+			batch++
+			write(r.root, rel, body)
+			for i := 1; i <= 11; i++ {
+				write(r.root, fmt.Sprintf("static/extra%d-%d.css", batch, i), "a{}")
+			}
+			return false
+		}, 30*time.Second, 2*time.Second).Should(BeTrue(), why)
+		Expect(r.out).To(gbytes.Say(`(?s).*`))
+	}
+
 	expectWholeSite := func(r running, why string) {
 		GinkgoHelper()
 		for _, path := range []string{"/n1/", "/n5/", "/n12/", "/site.css", "/sitemap.xml"} {
@@ -135,14 +165,14 @@ var _ = Describe("alloy dev after a failed full build (issue #1316)", func() {
 			"sanity: the initial build serves the site")
 		waitWatching(r)
 
-		// More than 10 changes at once make alloy dev run a full rebuild.
-		// One page names a layout that doesn't exist, so it fails.
-		for i := 1; i <= 10; i++ {
-			write(r.root, fmt.Sprintf("static/extra%d.css", i), "a{}")
-		}
+		// One page names a layout that doesn't exist, so a full rebuild
+		// fails. The edit alone rebuilds incrementally, which fails too but
+		// leaves _site in place. Each batch writes the broken page again.
 		write(r.root, "content/n5.md", page(5, "nonexistent"))
-		Eventually(r.out, 15*time.Second).Should(gbytes.Say(`rebuild failed: layout "nonexistent" not found`),
-			"sanity: the full rebuild fails")
+		failed := regexp.MustCompile(`rebuild failed: layout "nonexistent" not found`)
+		fullRebuild(r, "sanity: the full rebuild fails", "content/n5.md", page(5, "nonexistent"), func() bool {
+			return failed.Match(r.out.Contents()) && status(r.base+"/n1/") == 404
+		})
 		Expect(status(r.base+"/n1/")).To(Equal(404),
 			"sanity: the failed rebuild was a full one, which empties _site. An incremental "+
 				"rebuild would have left the site in place and the test would prove nothing")
@@ -152,7 +182,7 @@ var _ = Describe("alloy dev after a failed full build (issue #1316)", func() {
 		Eventually(r.out, 30*time.Second).Should(gbytes.Say(`rebuild complete`))
 
 		expectWholeSite(r, "the rebuild after a failed full rebuild has to be a full one")
-		Expect(status(r.base+"/extra1.css")).To(Equal(200),
+		Expect(status(r.base+"/extra1-1.css")).To(Equal(200),
 			"static files added during the failed rebuild must be copied too")
 
 		// Once a full build succeeds, rebuilds go back to incremental
@@ -173,14 +203,15 @@ var _ = Describe("alloy dev after a failed full build (issue #1316)", func() {
 			"sanity: the initial build serves the page at /n3.html")
 		waitWatching(r)
 
-		// More than 10 changes at once make alloy dev run a full rebuild.
-		// static/n3.html claims the same output path as the page, so it fails.
-		for i := 1; i <= 10; i++ {
-			write(r.root, fmt.Sprintf("static/extra%d.css", i), "a{}")
-		}
+		// static/n3.html claims the same output path as the page, so a full
+		// rebuild fails. The file alone is a static-only change: it is
+		// skipped with a warning, and nothing rebuilds. Each batch rewrites
+		// n1 as it is, so the batch counts as a pipeline change.
 		write(r.root, "static/n3.html", "<p>static</p>")
-		Eventually(r.out, 15*time.Second).Should(gbytes.Say(`rebuild failed: .*output path conflict`),
-			"sanity: the full rebuild fails on the output path conflict")
+		conflict := regexp.MustCompile(`rebuild failed: .*output path conflict`)
+		fullRebuild(r, "sanity: the full rebuild fails on the output path conflict", "content/n1.md", page(1, "default"), func() bool {
+			return conflict.Match(r.out.Contents())
+		})
 
 		// Fix it by deleting the static file: a static-only change.
 		Expect(os.Remove(filepath.Join(r.root, "static/n3.html"))).To(Succeed())
