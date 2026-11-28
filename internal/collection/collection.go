@@ -1,7 +1,9 @@
 package collection
 
 import (
+	"errors"
 	"fmt"
+	"math/big"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -180,6 +182,11 @@ func SortByKey(pages []*content.Page, key, order string) []*content.Page {
 
 // compareKeyValues compares two non-nil front matter values for SortByKey.
 func compareKeyValues(a, b interface{}) int {
+	if aw, ok := wholeNumber(a); ok {
+		if bw, ok := wholeNumber(b); ok {
+			return aw.Cmp(bw)
+		}
+	}
 	aNum, aOk := keyNumber(a)
 	bNum, bOk := keyNumber(b)
 	if aOk && bOk {
@@ -202,6 +209,29 @@ func compareKeyValues(a, b interface{}) int {
 	return strings.Compare(fmt.Sprintf("%v", a), fmt.Sprintf("%v", b))
 }
 
+// wholeNumber reads an int, an int64 or a string of digits only as an exact
+// whole number, so two whole numbers compare exactly however large they are
+// (issue #1443).
+func wholeNumber(v interface{}) (*big.Int, bool) {
+	switch n := v.(type) {
+	case int:
+		return big.NewInt(int64(n)), true
+	case int64:
+		return big.NewInt(n), true
+	case string:
+		if n == "" {
+			return nil, false
+		}
+		for _, c := range n {
+			if c < '0' || c > '9' {
+				return nil, false
+			}
+		}
+		return new(big.Int).SetString(n, 10)
+	}
+	return nil, false
+}
+
 // keyNumber reads a number, or a string of digits only, as a number.
 func keyNumber(v interface{}) (float64, bool) {
 	if n, ok := toFloat64(v); ok {
@@ -216,8 +246,10 @@ func keyNumber(v interface{}) (float64, bool) {
 			return 0, false
 		}
 	}
+	// A string of digits too long for a float64 gives +Inf and ErrRange: it
+	// is still a number, larger than any float (issue #1443).
 	n, err := strconv.ParseFloat(s, 64)
-	return n, err == nil
+	return n, err == nil || errors.Is(err, strconv.ErrRange)
 }
 
 // SortByFrontMatter sorts pages by a front matter field value.
